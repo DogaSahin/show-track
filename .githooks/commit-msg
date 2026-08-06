@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+msg_file="$1"
+first_line="$(head -n1 "$msg_file")"
+
+# Allow merge and revert commits through untouched.
+if [[ "$first_line" =~ ^(Merge|Revert) ]]; then
+  exit 0
+fi
+
+pattern='^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-z0-9just-]+\))?!?: .{1,}$'
+
+if [[ ! "$first_line" =~ $pattern ]]; then
+  echo "ERROR: commit message must follow Conventional Commits." >&2
+  echo "  got:      $first_line" >&2
+  echo "  expected: <type>(<optional-scope>): <description>" >&2
+  echo "  types:    feat fix docs style refactor perf test build ci chore revert" >&2
+  echo "  example:  feat(sync): add airing-data refresh job" >&2
+  exit 1
+fi
+
+if grep -qiE 'claude|co-authored-by|generated with' "$msg_file"; then
+  echo "ERROR: commit messages must not mention AI tooling or carry an AI trailer." >&2
+  exit 1
+fi

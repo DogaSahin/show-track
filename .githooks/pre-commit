@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+
+# Ruff over staged Python files only.
+staged_py="$(git diff --cached --name-only --diff-filter=ACM -- '*.py' || true)"
+if [[ -n "$staged_py" ]]; then
+  ruff_bin="$repo_root/backend/.venv/bin/ruff"
+  if [[ -x "$ruff_bin" ]]; then
+    echo "$staged_py" | xargs "$ruff_bin" check
+    echo "$staged_py" | xargs "$ruff_bin" format --check
+  else
+    echo "WARN: $ruff_bin not found; skipping Python lint." >&2
+  fi
+fi
+
+# Secret scan, if gitleaks is installed.
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks protect --staged --redact --no-banner
+else
+  echo "WARN: gitleaks not installed; skipping local secret scan (CI still runs it)." >&2
+fi
