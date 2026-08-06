@@ -8,8 +8,8 @@ staged_py="$(git diff --cached --name-only --diff-filter=ACM -- '*.py' || true)"
 if [[ -n "$staged_py" ]]; then
   ruff_bin="$repo_root/backend/.venv/bin/ruff"
   if [[ -x "$ruff_bin" ]]; then
-    echo "$staged_py" | xargs "$ruff_bin" check
-    echo "$staged_py" | xargs "$ruff_bin" format --check
+    printf '%s\n' "$staged_py" | xargs -d '\n' "$ruff_bin" check
+    printf '%s\n' "$staged_py" | xargs -d '\n' "$ruff_bin" format --check
   else
     echo "WARN: $ruff_bin not found; skipping Python lint." >&2
   fi

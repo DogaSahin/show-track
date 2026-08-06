@@ -15,11 +15,19 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# IMPORTANT: import every domain model module here. Alembic autogenerate only sees
-# models that have been imported — a model nothing imports produces a silently EMPTY
-# migration. Phase 1 adds: users, media, library, sync, notifications, recommendations.
 from app.config import get_settings  # noqa: E402
 from app.db import Base  # noqa: E402
+
+# IMPORTANT: Alembic autogenerate only sees models that have been imported somewhere —
+# a model nothing imports produces a silently EMPTY migration (exit 0, no error). The
+# imports below are what make autogenerate work; every new domain module must be added
+# to this list when it grows real models.
+from app.library import models as _library_models  # noqa: F401,E402
+from app.media import models as _media_models  # noqa: F401,E402
+from app.notifications import models as _notifications_models  # noqa: F401,E402
+from app.recommendations import models as _recommendations_models  # noqa: F401,E402
+from app.sync import models as _sync_models  # noqa: F401,E402
+from app.users import models as _users_models  # noqa: F401,E402
 
 target_metadata = Base.metadata
 

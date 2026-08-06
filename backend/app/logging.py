@@ -58,3 +58,21 @@ def setup_logging() -> None:
     root.handlers.clear()
     root.addHandler(handler)
     root.setLevel(get_settings().log_level.upper())
+
+    # uvicorn installs its own handlers on these loggers (with propagate=False) as
+    # part of Config.configure_logging(), which runs *before* this module is even
+    # imported (uvicorn configures logging, then imports the app). Left alone, their
+    # records never reach JsonFormatter: the stream ends up half JSON / half plain
+    # text, and every request is logged twice (once here via showtrack.access, once
+    # by uvicorn.access). Strip uvicorn's handlers and let the records propagate to
+    # our root handler instead.
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        uvicorn_logger = logging.getLogger(name)
+        uvicorn_logger.handlers.clear()
+        uvicorn_logger.propagate = True
+
+    # RequestIDMiddleware already emits a richer "request completed"/"request failed"
+    # line (method, path, status, duration_ms, request_id) for every request, so
+    # uvicorn.access's line would be a pure duplicate now that it propagates. Disable
+    # it outright rather than emit two JSON lines per request.
+    logging.getLogger("uvicorn.access").disabled = True

@@ -197,6 +197,48 @@ async def test_unhandled_exception_is_logged_with_request_id_and_traceback() -> 
     assert "RuntimeError: kaboom" in payload["exception"]
 
 
+def test_setup_logging_brings_uvicorns_loggers_under_our_formatter() -> None:
+    """Uvicorn installs its own handlers on these three loggers with propagate=False,
+    so their records never reach JsonFormatter unless setup_logging() strips the
+    handlers and re-enables propagation. uvicorn.access is additionally disabled to
+    avoid duplicating RequestIDMiddleware's own request-completion log line.
+    """
+    uvicorn_logger = logging.getLogger("uvicorn")
+    uvicorn_error_logger = logging.getLogger("uvicorn.error")
+    uvicorn_access_logger = logging.getLogger("uvicorn.access")
+
+    loggers = (uvicorn_logger, uvicorn_error_logger, uvicorn_access_logger)
+    original_handlers = [list(logger.handlers) for logger in loggers]
+    original_propagate = [logger.propagate for logger in loggers]
+    original_disabled = [logger.disabled for logger in loggers]
+    for logger in loggers:
+        logger.addHandler(logging.NullHandler())
+        logger.propagate = False
+        logger.disabled = False
+
+    root = logging.getLogger()
+    original_root_handlers = list(root.handlers)
+    original_root_level = root.level
+    try:
+        setup_logging()
+
+        for logger in (uvicorn_logger, uvicorn_error_logger, uvicorn_access_logger):
+            assert logger.propagate is True
+            assert logger.handlers == []
+        assert uvicorn_access_logger.disabled is True
+    finally:
+        root.handlers.clear()
+        root.handlers.extend(original_root_handlers)
+        root.setLevel(original_root_level)
+        for logger, handlers, propagate, disabled in zip(
+            loggers, original_handlers, original_propagate, original_disabled, strict=True
+        ):
+            logger.handlers.clear()
+            logger.handlers.extend(handlers)
+            logger.propagate = propagate
+            logger.disabled = disabled
+
+
 async def test_unhandled_exception_response_still_carries_request_id_header() -> None:
     """Finding 3(b): the 500 response the client actually receives must carry
     X-Request-ID too, even though the contextvar has already been reset by the time
