@@ -48,10 +48,13 @@ jobs:
       # A venv, not `--system`: the runner's system interpreter is Debian-packaged and
       # marked EXTERNALLY-MANAGED (PEP 668), which uv honours and refuses to install into.
       # This also makes CI run the same `.venv/bin/...` commands as the documented local gate.
+      # --python is explicit on purpose: setup-uv exports UV_SYSTEM_PYTHON, which makes a
+      # bare `uv pip install` ignore the venv we just created and target the runner's
+      # system interpreter, leaving .venv/bin empty. Naming the interpreter overrides it.
       - name: Install dependencies
         run: |
           uv venv
-          uv pip install -r requirements-dev.txt
+          uv pip install --python .venv/bin/python -r requirements-dev.txt
 
       - name: Lint
         run: |
