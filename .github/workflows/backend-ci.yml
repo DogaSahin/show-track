@@ -45,16 +45,21 @@ jobs:
         with:
           python-version: '3.12'
 
+      # A venv, not `--system`: the runner's system interpreter is Debian-packaged and
+      # marked EXTERNALLY-MANAGED (PEP 668), which uv honours and refuses to install into.
+      # This also makes CI run the same `.venv/bin/...` commands as the documented local gate.
       - name: Install dependencies
-        run: uv pip install --system -r requirements-dev.txt
+        run: |
+          uv venv
+          uv pip install -r requirements-dev.txt
 
       - name: Lint
         run: |
-          ruff check .
-          ruff format --check .
+          .venv/bin/ruff check .
+          .venv/bin/ruff format --check .
 
       - name: Apply migrations
-        run: alembic upgrade head
+        run: .venv/bin/alembic upgrade head
 
       - name: Test
-        run: pytest -v
+        run: .venv/bin/pytest -v
