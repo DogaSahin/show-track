@@ -1,0 +1,41 @@
+name: showtrack
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: showtrack
+      POSTGRES_PASSWORD: showtrack
+      POSTGRES_DB: showtrack
+    ports:
+      - "5432:5432"
+    volumes:
+      - showtrack-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U showtrack -d showtrack"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    # Bash does not export UID, and GID is not a bash variable at all, so Compose never
+    # sees either from the environment: this always resolves to the literal 1000:1000
+    # default (`docker compose config` confirms it), which only matches this machine's
+    # uid. A developer with a different uid must `export UID` and `export GID` (e.g. in
+    # their shell profile) before running compose for files to land with their own uid.
+    user: "${UID:-1000}:${GID:-1000}"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://showtrack:showtrack@db:5432/showtrack
+      LOG_LEVEL: INFO
+      ENVIRONMENT: local
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  showtrack-pgdata:

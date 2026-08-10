@@ -1,0 +1,13 @@
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+# extend-exclude, not exclude: `exclude` REPLACES ruff's built-in list (.venv, __pycache__,
+# build, ...), which left the virtualenv lintable outside a git checkout.
+extend-exclude = ["migrations/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

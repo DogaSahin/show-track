@@ -1,0 +1,77 @@
+name: backend-ci
+
+on:
+  pull_request:
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend-ci.yml'
+  push:
+    branches: [dev, main]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend-ci.yml'
+
+defaults:
+  run:
+    working-directory: backend
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: showtrack
+          POSTGRES_PASSWORD: showtrack
+          POSTGRES_DB: showtrack
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U showtrack -d showtrack"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://showtrack:showtrack@localhost:5432/showtrack
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # No python-version input on purpose: it makes setup-uv create AND activate its own
+      # venv at the workspace root and export VIRTUAL_ENV, which competes with the venv we
+      # create in backend/ — the install lands in one and the lint step reads the other.
+      # Python is pinned on `uv venv` below instead, so there is exactly one venv.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      # A venv, not `uv pip install --system`: the runner's system interpreter is
+      # Debian-packaged and marked EXTERNALLY-MANAGED (PEP 668), which uv honours and
+      # refuses to install into. Using a venv also makes CI run the same `.venv/bin/...`
+      # commands as the documented local gate. --python names the target interpreter so the
+      # install cannot drift to whatever uv would otherwise discover.
+      - name: Install dependencies
+        run: |
+          echo "cwd=$(pwd)"
+          uv --version
+          env | grep -i '^UV_' || echo "(no UV_* variables set)"
+          uv venv --python 3.12
+          uv pip install --python .venv/bin/python -r requirements-dev.txt
+          echo "--- .venv/bin after install ---"
+          ls -la .venv/bin || echo "NO .venv/bin DIRECTORY"
+          test -x .venv/bin/ruff || { echo "FATAL: ruff absent from .venv/bin"; exit 1; }
+
+      - name: Lint
+        run: |
+          echo "cwd=$(pwd)"
+          ls -la .venv/bin/ruff || echo "ruff missing at lint time"
+          .venv/bin/ruff check .
+          .venv/bin/ruff format --check .
+
+      - name: Apply migrations
+        run: .venv/bin/alembic upgrade head
+
+      - name: Test
+        run: .venv/bin/pytest -v
