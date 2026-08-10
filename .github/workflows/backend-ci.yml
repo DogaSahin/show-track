@@ -53,11 +53,19 @@ jobs:
       # system interpreter, leaving .venv/bin empty. Naming the interpreter overrides it.
       - name: Install dependencies
         run: |
+          echo "cwd=$(pwd)"
+          uv --version
+          env | grep -i '^UV_' || echo "(no UV_* variables set)"
           uv venv
           uv pip install --python .venv/bin/python -r requirements-dev.txt
+          echo "--- .venv/bin after install ---"
+          ls -la .venv/bin || echo "NO .venv/bin DIRECTORY"
+          test -x .venv/bin/ruff || { echo "FATAL: ruff absent from .venv/bin"; exit 1; }
 
       - name: Lint
         run: |
+          echo "cwd=$(pwd)"
+          ls -la .venv/bin/ruff || echo "ruff missing at lint time"
           .venv/bin/ruff check .
           .venv/bin/ruff format --check .
 
