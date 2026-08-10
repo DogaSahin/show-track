@@ -10,4 +10,9 @@ select = ["E", "F", "I", "UP", "B", "ASYNC"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# One event loop for the whole run, so the session-scoped `engine` fixture is coherent.
+# Left at the default ("function"), a session-scoped async fixture would execute in the
+# first test's loop and every later test would inherit a pool bound to a closed loop.
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
 testpaths = ["tests"]

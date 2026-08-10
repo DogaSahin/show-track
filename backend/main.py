@@ -1,7 +1,11 @@
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, Response
 
+from app.db import dispose_engine
 from app.library import routes as library_routes
 from app.logging import setup_logging
 from app.media import routes as media_routes
@@ -22,7 +26,17 @@ DOMAIN_ROUTERS = (
 
 setup_logging()
 
-app = FastAPI(title="ShowTrack API", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    """Startup does nothing — the engine builds lazily on first use. Shutdown releases the
+    connection pool so a reload or redeploy does not leak Postgres connections.
+    """
+    yield
+    await dispose_engine()
+
+
+app = FastAPI(title="ShowTrack API", version="0.1.0", lifespan=lifespan)
 app.add_middleware(RequestIDMiddleware)
 
 
