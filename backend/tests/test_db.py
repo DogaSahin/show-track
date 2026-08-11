@@ -6,31 +6,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import db
 
 
-async def test_session_executes_a_statement(db_session: AsyncSession) -> None:
-    """First half of a deliberate pair — see the next test for why there are two."""
-    result = await db_session.execute(text("SELECT 1"))
+async def test_db_session_runs_on_the_configured_loop(db_session: AsyncSession) -> None:
+    """Guards both pytest-asyncio loop-scope settings in pyproject.toml.
 
-    assert result.scalar_one() == 1
-
-
-async def test_a_second_session_executes_in_the_same_run(db_session: AsyncSession) -> None:
-    """Guards the pytest loop-scope configuration as a pair, not `app.db` directly.
-
-    `db_session` runs on the session-scoped `engine` fixture in conftest.py — its own
-    `create_async_engine` call, independent of `app.db`'s. Verified experimentally: dropping
-    only `asyncio_default_fixture_loop_scope = "session"` (test-loop kept at "session"), or
-    only `asyncio_default_test_loop_scope = "session"` (fixture-loop kept at "session"), each
-    already breaks this FIRST test in isolation — one test alone catches either partial
-    misconfiguration. The pair earns its keep against the scenario where BOTH settings revert
-    to pytest-asyncio's true defaults at once (e.g. the whole two-line block is deleted): then
-    the first test passes — a fresh engine has nothing to conflict with yet — and only this
-    SECOND test fails, with `RuntimeError: Task got Future attached to a different loop`,
-    because by now the pool is bound to the first test's already-closed per-test loop. A
-    single test cannot catch that: the failure only appears on the pool's second use.
+    Measured: dropping asyncio_default_fixture_loop_scope gives ScopeMismatch at setup;
+    dropping asyncio_default_test_loop_scope gives RuntimeError, Task got Future attached
+    to a different loop. Both hit the first test that uses the fixture, so one test suffices.
     """
-    result = await db_session.execute(text("SELECT 1"))
-
-    assert result.scalar_one() == 1
+    assert (await db_session.execute(text("SELECT 1"))).scalar_one() == 1
 
 
 async def test_get_engine_is_memoised_and_dispose_clears_it() -> None:
