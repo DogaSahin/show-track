@@ -40,10 +40,7 @@ async def test_the_app_session_dependency_survives_two_round_trips() -> None:
     Not a laziness regression test: this whole suite runs on a single session-scoped event
     loop (`asyncio_default_test_loop_scope = "session"`), so an import-time engine would
     survive two round-trips here just as well — the loop-binding bug needs two DIFFERENT
-    loops to reproduce, and this file only ever has one. Building the engine lazily is still
-    correct, but for lifecycle reasons rather than a loop one: importing `main` no longer
-    opens a database connection as a side effect, and `dispose_engine()` gives `lifespan`
-    shutdown something to actually release.
+    loops to reproduce, and this file only ever has one.
     """
     try:
         # aclosing, not a bare `async for`: if an assertion fails mid-body, a bare loop
