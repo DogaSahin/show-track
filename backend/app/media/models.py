@@ -56,17 +56,19 @@ class Episode(UUIDPrimaryKeyMixin, Base):
 
     The unique constraint is what lets the Phase 5 sync job write
     `INSERT ... ON CONFLICT (media_id, season_number, number) DO UPDATE` — without a unique
-    index that statement cannot be expressed at all, forcing SELECT-then-INSERT, which
-    races between sync passes.
+    index that statement cannot be expressed at all.
     """
 
     __tablename__ = "episodes"
 
     media_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("media.id", ondelete="CASCADE"), nullable=False)
+    # A source without seasons (e.g. an AniList cour) is season 1 — that's the domain
+    # assumption this default encodes, not a backfill convenience.
     season_number: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
     number: Mapped[int] = mapped_column(Integer, nullable=False)
-    # `date`, not `timestamptz`: TMDB gives day granularity only. The countdown UI reads
-    # Media.next_episode_date, which does carry a time.
+    # `date`, not `timestamptz`: TMDB gives day granularity only, and AniList's
+    # `AiringSchedule.airingAt` (a Unix timestamp with time-of-day) has its time discarded
+    # here. The countdown UI reads Media.next_episode_date, which does carry a time.
     air_date: Mapped[date | None] = mapped_column(Date, nullable=True)
 
     __table_args__ = (UniqueConstraint("media_id", "season_number", "number"),)

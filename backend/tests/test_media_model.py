@@ -74,6 +74,11 @@ async def test_deleting_media_cascades_to_its_episodes(db_session: AsyncSession)
     db_session.add(make_episode(media.id, number=2))
     await db_session.flush()
 
+    before = (
+        await db_session.execute(select(func.count()).select_from(Episode).where(Episode.media_id == media.id))
+    ).scalar_one()
+    assert before == 2
+
     await db_session.execute(delete(Media).where(Media.id == media.id))
     await db_session.flush()
 
