@@ -1,6 +1,8 @@
 """Minimal *valid* instances, so each test states only the field it is about."""
 
-from app.media.models import Media, MediaSource, MediaStatus, MediaType
+import uuid
+
+from app.media.models import Episode, Media, MediaSource, MediaStatus, MediaType
 from app.users.models import User
 
 
@@ -23,3 +25,8 @@ def make_media(**overrides: object) -> Media:
         "status": MediaStatus.FINISHED,
     }
     return Media(**{**defaults, **overrides})
+
+
+def make_episode(media_id: uuid.UUID, **overrides: object) -> Episode:
+    defaults: dict[str, object] = {"media_id": media_id, "season_number": 1, "number": 1}
+    return Episode(**{**defaults, **overrides})

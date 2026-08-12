@@ -1,10 +1,10 @@
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.media.models import Media, MediaStatus
-from tests.factories import make_media
+from app.media.models import Episode, Media, MediaStatus
+from tests.factories import make_episode, make_media
 
 
 async def test_duplicate_source_and_external_id_is_rejected(db_session: AsyncSession) -> None:
@@ -62,3 +62,54 @@ async def test_status_reads_back_as_an_enum_member(db_session: AsyncSession) -> 
 
     reloaded = (await db_session.execute(select(Media).where(Media.id == media_id))).scalar_one()
     assert reloaded.status is MediaStatus.AIRING
+
+
+async def test_deleting_media_cascades_to_its_episodes(db_session: AsyncSession) -> None:
+    """FK cascade is a database behaviour, not an ORM one — there is no relationship() to
+    do it in Python, so this proves the ON DELETE CASCADE really made it into the DDL."""
+    media = make_media(external_id="cascade-me")
+    db_session.add(media)
+    await db_session.flush()
+    db_session.add(make_episode(media.id, number=1))
+    db_session.add(make_episode(media.id, number=2))
+    await db_session.flush()
+
+    await db_session.execute(delete(Media).where(Media.id == media.id))
+    await db_session.flush()
+
+    remaining = (
+        await db_session.execute(select(func.count()).select_from(Episode).where(Episode.media_id == media.id))
+    ).scalar_one()
+    assert remaining == 0
+
+
+async def test_duplicate_episode_within_a_season_is_rejected(db_session: AsyncSession) -> None:
+    media = make_media(external_id="dupe-episode")
+    db_session.add(media)
+    await db_session.flush()
+
+    db_session.add(make_episode(media.id, season_number=1, number=1))
+    await db_session.flush()
+
+    db_session.add(make_episode(media.id, season_number=1, number=1))
+    with pytest.raises(IntegrityError) as excinfo:
+        await db_session.flush()
+
+    assert "uq_episodes_media_id_season_number_number" in str(excinfo.value)
+    await db_session.rollback()
+
+
+async def test_the_same_episode_number_is_allowed_in_a_different_season(db_session: AsyncSession) -> None:
+    """The reason season_number exists: a TMDB show's S1E1 and S2E1 must coexist."""
+    media = make_media(external_id="two-seasons")
+    db_session.add(media)
+    await db_session.flush()
+
+    db_session.add(make_episode(media.id, season_number=1, number=1))
+    db_session.add(make_episode(media.id, season_number=2, number=1))
+    await db_session.flush()
+
+    stored = (
+        await db_session.execute(select(func.count()).select_from(Episode).where(Episode.media_id == media.id))
+    ).scalar_one()
+    assert stored == 2

@@ -1,7 +1,8 @@
 import enum
-from datetime import datetime
+import uuid
+from datetime import date, datetime
 
-from sqlalchemy import ARRAY, DateTime, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import ARRAY, Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base, UUIDPrimaryKeyMixin, enum_column
@@ -47,3 +48,25 @@ class Media(UUIDPrimaryKeyMixin, Base):
     status: Mapped[MediaStatus] = mapped_column(enum_column(MediaStatus, "status"), nullable=False)
 
     __table_args__ = (UniqueConstraint("source", "external_id"),)
+
+
+class Episode(UUIDPrimaryKeyMixin, Base):
+    """One row per episode. `season_number` exists because a Media row can be a whole TMDB
+    show, in which case S1E1 and S2E1 both have number 1.
+
+    The unique constraint is what lets the Phase 5 sync job write
+    `INSERT ... ON CONFLICT (media_id, season_number, number) DO UPDATE` — without a unique
+    index that statement cannot be expressed at all, forcing SELECT-then-INSERT, which
+    races between sync passes.
+    """
+
+    __tablename__ = "episodes"
+
+    media_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("media.id", ondelete="CASCADE"), nullable=False)
+    season_number: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
+    number: Mapped[int] = mapped_column(Integer, nullable=False)
+    # `date`, not `timestamptz`: TMDB gives day granularity only. The countdown UI reads
+    # Media.next_episode_date, which does carry a time.
+    air_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+
+    __table_args__ = (UniqueConstraint("media_id", "season_number", "number"),)
