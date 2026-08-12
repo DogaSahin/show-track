@@ -2,7 +2,7 @@ import asyncio
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import pool
+from sqlalchemy import Enum, pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -31,26 +31,48 @@ from app.users import models as _users_models  # noqa: F401,E402
 
 target_metadata = Base.metadata
 
+# The constraint names `enum_column()` produces, e.g. {"ck_media_type", "ck_media_source", ...}.
+# Derived from the model's own Enum columns and its own naming convention — not hardcoded and
+# not imported from Alembic's private internals — so it tracks the model automatically and stays
+# correct if NAMING_CONVENTION in app/db.py ever changes. Computed once at import time since
+# target_metadata doesn't change within a process.
+_TYPE_BOUND_CHECK_NAMES = {
+    target_metadata.naming_convention["ck"] % {"table_name": table.name, "constraint_name": column.type.name}
+    for table in target_metadata.tables.values()
+    for column in table.columns
+    if isinstance(column.type, Enum) and column.type.create_constraint
+}
+
 
 def _include_object(object: object, name: str, type_: str, reflected: bool, compare_to: object) -> bool:
-    """Exclude reflected CHECK constraints that only exist because `enum_column()` put them there.
+    """Exclude, specifically, the CHECK constraints `enum_column()` generates from Alembic's
+    "removed constraint" diff — nothing else.
 
     `Enum(create_constraint=True)` ties its CHECK constraint to the column's type
-    (SQLAlchemy's `SchemaType`, `_type_bound=True`) rather than adding it as a regular
-    schema object. Alembic's own check-constraint comparator
-    (`alembic/autogenerate/compare/check_constraints.py`) filters these out of the
-    *model* side of every diff for that reason, but still picks them up on the
-    *reflected* side once the table exists in the database — so every `enum_column()`
-    constraint is reported as "removed" on every run, regardless of whether it actually
-    changed. Confirmed by testing directly against this table: adding a new enum member
-    (an actual constraint change) produced the identical generic removal message as no
-    change at all — the comparator gives no real signal for this constraint type once
-    the table exists, only a constant false positive. This is a known upstream gap
-    (alembic issue #363, open since 2016). `reflected and compare_to is None` is exactly
-    that no-model-side-match case; type_-checking `"check_constraint"` keeps this from
-    touching PK/UQ/FK/index comparisons, which are unaffected.
+    (SQLAlchemy's `SchemaType`, an internal `_type_bound` flag) rather than adding it as a
+    regular schema object. Alembic's own check-constraint comparator
+    (`alembic/autogenerate/compare/check_constraints.py`) filters these out of the *model*
+    side of every diff for that reason, but still picks them up on the *reflected* side once
+    the table exists in the database — so every `enum_column()` constraint is reported as
+    "removed" on every run, regardless of whether it actually changed. Confirmed directly
+    against this table: adding a new enum member (an actual constraint change) produced the
+    identical generic removal message as no change at all — the comparator gives no real
+    signal for this constraint type once the table exists, only a constant false positive.
+    This is a known upstream gap (alembic issue #363, open since 2016).
+
+    `reflected and compare_to is None` alone is *not* specific to type-bound constraints — a
+    plain, hand-written `CheckConstraint` deleted from the model reflects the same way, and a
+    blanket exclusion on that condition alone would silently swallow that real drift too.
+    `_TYPE_BOUND_CHECK_NAMES` narrows the exclusion to exactly the names `enum_column()`
+    produces, so a hand-written CHECK constraint added directly to a table stays fully subject
+    to normal drift detection: its deletion or addition still surfaces. Verified on a scratch
+    table carrying both kinds of CHECK (see the Task 4 fix report) — a plain constraint's SQL
+    text changing under the same name is the one case that still doesn't surface, but that's a
+    pre-existing Alembic limitation independent of this filter: its own comparator can't
+    reliably diff reflected vs. model SQL text and logs "assuming equal and skipping" rather
+    than reporting a change, for any named CHECK constraint, filtered or not.
     """
-    if type_ == "check_constraint" and reflected and compare_to is None:
+    if type_ == "check_constraint" and reflected and compare_to is None and name in _TYPE_BOUND_CHECK_NAMES:
         return False
     return True
 
