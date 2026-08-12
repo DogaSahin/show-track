@@ -8,10 +8,20 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from app.config import get_settings
 
-# Alembic writes `op.drop_constraint("<name>", ...)` into migrations. Without a convention
-# that name is whatever Postgres generated, which can differ between machines — so the
-# "drop and recreate the CHECK" path that adding an enum value depends on becomes a
-# name-lookup archaeology exercise. With one, every name is derivable from the model.
+# Without this convention, PK/UNIQUE constraints are anonymous in SQLAlchemy's own
+# metadata (`.name` is `None` on the Python object) even though Postgres assigns them a
+# name at creation time using its own deterministic algorithm (`<table>_pkey`,
+# `<table>_<column>_key` — confirmed identical for separately-created tables, not
+# something that varies by machine). Alembic's autogenerate still works without this
+# convention: it reflects that Postgres-assigned name from the live database at diff
+# time and renders a working `op.drop_constraint(op.f('<reflected name>'), ...)`.
+#
+# What the convention actually buys is a name readable off the model itself — the way
+# `tests/test_users_model.py` asserts on `uq_users_username` — without needing to query
+# Postgres or trust what autogenerate happened to reflect. For a CHECK
+# constraint from `enum_column`, the name always comes from that function's own `name=`
+# argument regardless of this convention; the convention's contribution there is the
+# `ck_<table>_` prefix it wraps around whatever `name=` value is passed in.
 NAMING_CONVENTION = {
     "ix": "ix_%(table_name)s_%(column_0_name)s",
     "uq": "uq_%(table_name)s_%(column_0_N_name)s",
@@ -64,9 +74,11 @@ def enum_column(enum_cls: type[enum.Enum], name: str) -> Enum:
 
     `create_constraint=True` is not optional: SQLAlchemy defaults it to False, which would
     emit a bare VARCHAR with no constraint at all. `length=32` stops the column being sized
-    to today's longest value. `values_callable` stores the member value ('watching') rather
-    than its name ('WATCHING'), and lets `24h` exist as a value despite not being a legal
-    Python identifier.
+    to today's longest value. Without `values_callable`, SQLAlchemy's default is to store
+    the member *name* ('WATCHING'); `values_callable` makes it store the member *value*
+    ('watching') instead — so the CHECK admits `'24h'` rather than the member name
+    `'TWENTY_FOUR_HOURS'`, which is what lets a value that isn't a legal Python identifier
+    be the stored string.
     """
     return Enum(
         enum_cls,

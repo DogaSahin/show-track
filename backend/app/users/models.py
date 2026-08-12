@@ -18,4 +18,9 @@ class User(UUIDPrimaryKeyMixin, Base):
     # Case-insensitive uniqueness as a database guarantee, with the original case preserved
     # on disk. Phase 2 must therefore query `WHERE lower(email) = lower(:email)` — a plain
     # equality lookup is both a sequential scan and semantically wrong.
+    #
+    # This is an Index, not a UniqueConstraint, despite the `uq_` name — a functional
+    # unique constraint on `lower(email)` isn't expressible as a UniqueConstraint, only
+    # as a unique Index. A later migration must drop it with `op.drop_index(...)`, not
+    # `op.drop_constraint(..., type_="unique")`.
     __table_args__ = (Index("uq_users_lower_email", func.lower(email), unique=True),)
