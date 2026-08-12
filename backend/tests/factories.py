@@ -4,6 +4,7 @@ import uuid
 
 from app.library.models import UserMedia, UserMediaStatus
 from app.media.models import Episode, Media, MediaSource, MediaStatus, MediaType
+from app.notifications.models import NotificationPrefs
 from app.users.models import User
 
 
@@ -40,3 +41,8 @@ def make_user_media(user_id: uuid.UUID, media_id: uuid.UUID, **overrides: object
         "status": UserMediaStatus.WATCHING,
     }
     return UserMedia(**{**defaults, **overrides})
+
+
+def make_notification_prefs(user_id: uuid.UUID, **overrides: object) -> NotificationPrefs:
+    defaults: dict[str, object] = {"user_id": user_id}
+    return NotificationPrefs(**{**defaults, **overrides})
