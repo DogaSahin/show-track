@@ -27,8 +27,11 @@ async def test_a_user_cannot_have_two_preference_rows(db_session: AsyncSession) 
 
 
 async def test_a_new_task_starts_pending_with_no_attempts(db_session: AsyncSession) -> None:
-    """The factory sets no `status`/`attempts`/`sent_at` — these come back from the
-    server_default via RETURNING, not from anything Python assigned."""
+    """The factory sets neither `status` nor `attempts`: both come back from their
+    `server_default` via RETURNING, not from anything Python assigned. `sent_at` is
+    asserted `None` for a different reason — nothing sets it at insert, server or
+    client — so that assertion checks that no default was accidentally added, not
+    that one fired."""
     user, media = await make_parents(db_session)
     task = make_notification_task(user.id, media.id)
     db_session.add(task)
