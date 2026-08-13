@@ -11,8 +11,9 @@ on:
       - 'backend/**'
       - '.github/workflows/backend-ci.yml'
 
-# The default GITHUB_TOKEN scope is broader than any of these jobs needs. Widen per-job
-# only if a step actually fails for lack of a permission.
+# Every job in this workflow only reads the repository, so the token is pinned to exactly
+# that rather than left to inherit whatever the repository or organisation default is set to.
+# Widen per-job only if a step actually fails for lack of a permission.
 permissions:
   contents: read
 
@@ -70,9 +71,17 @@ jobs:
       - name: Apply migrations
         run: .venv/bin/alembic upgrade head
 
-      # Fails if the models and the migration head disagree — i.e. someone edited a model
-      # and forgot to generate the migration. That drift is invisible to the test suite,
-      # which runs against whatever `upgrade head` produced.
+      # Fails if the models and the migration head disagree — i.e. someone edited a model and
+      # forgot to generate the migration. One blind spot, and it is the most likely edit of
+      # all: adding or removing a member on a StrEnum moves only the CHECK constraint bound to
+      # the column's type, which Alembic's comparator does not diff (see migrations/env.py), so
+      # `check` reports "No new upgrade operations detected" and exits 0. That case is covered
+      # by tests/test_enum_constraints.py instead, not here.
+      #
+      # Structural drift is otherwise invisible to the test suite, which only ever sees the
+      # schema `upgrade head` produced — nothing calls `create_all`. A model that gains a
+      # *column* is the exception and fails loudly, because the column reaches the emitted SQL;
+      # an index, `server_default`, nullability or enum-value change never does.
       - name: Check for model/migration drift
         run: .venv/bin/alembic check
 
