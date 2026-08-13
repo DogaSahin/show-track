@@ -11,7 +11,13 @@ from tests.factories import make_user
 async def test_create_user_inserts_a_row(db_session: AsyncSession) -> None:
     user = await create_user(db_session, username="doga", email="doga@example.com", hashed_password="not-a-real-hash")
 
-    found = (await db_session.execute(select(User).where(User.id == user.id))).scalar_one()
+    # Without this the select returns the very instance `create_user` added — the identity
+    # map hands back the same object — and the assertions below re-check Python state rather
+    # than what Postgres stored. Expiring forces the attributes to be reloaded from the row.
+    user_id = user.id
+    db_session.expire_all()
+
+    found = (await db_session.execute(select(User).where(User.id == user_id))).scalar_one()
     assert found.username == "doga"
     assert found.id is not None
     assert found.created_at is not None

@@ -2,6 +2,7 @@ import json
 import logging
 import sys
 
+import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.logging import JsonFormatter, RequestIDFilter, request_id_var, setup_logging
@@ -313,10 +314,15 @@ async def test_client_disconnect_is_logged_as_a_warning_without_a_traceback() ->
     access_logger = logging.getLogger("showtrack.access")
     access_logger.addHandler(handler)
 
-    transport = ASGITransport(app=fastapi_app, raise_app_exceptions=False)
+    # raise_app_exceptions=True so the exception leaving the middleware is observable. This
+    # is what pins the `raise` in the ClientDisconnect branch: without it `dispatch` falls off
+    # the end returning None and BaseHTTPMiddleware raises TypeError instead, which every
+    # other assertion here would still accept.
+    transport = ASGITransport(app=fastapi_app, raise_app_exceptions=True)
     try:
         async with AsyncClient(transport=transport, base_url="http://test") as ac:
-            await ac.get("/__test/disconnect")
+            with pytest.raises(ClientDisconnect):
+                await ac.get("/__test/disconnect")
     finally:
         access_logger.removeHandler(handler)
         fastapi_app.routes.remove(route)

@@ -30,7 +30,6 @@ async def test_a_score_of_seven_point_one_reads_back_exactly(db_session: AsyncSe
     db_session.add(entry)
     await db_session.flush()
     entry_id = entry.id
-    db_session.expire(entry)
 
     stored = (await db_session.execute(select(UserMedia.score).where(UserMedia.id == entry_id))).scalar_one()
     assert stored == Decimal("7.1")

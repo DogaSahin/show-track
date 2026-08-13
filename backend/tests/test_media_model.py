@@ -25,7 +25,6 @@ async def test_genres_round_trip_as_a_list_of_strings(db_session: AsyncSession) 
     db_session.add(media)
     await db_session.flush()
     media_id = media.id
-    db_session.expire(media)
 
     stored = (await db_session.execute(select(Media.genres).where(Media.id == media_id))).scalar_one()
     assert stored == ["Action", "Thriller"]
