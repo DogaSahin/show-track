@@ -55,4 +55,11 @@ class NotificationTask(UUIDPrimaryKeyMixin, Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # This constraint's generated name, uq_notification_tasks_user_id_media_id_episode_number_threshold,
+    # is 63 characters — exactly Postgres's max_identifier_length, with zero characters of headroom.
+    # It is not truncated today (confirmed against pg_constraint). If a future column ever joins this
+    # key, SQLAlchemy's IdentifierPreparer truncates the over-length name itself, deterministically,
+    # replacing the tail with a short hash before the DDL is ever sent — so the name Postgres stores
+    # would no longer match this literal, and neither would the hardcoded string in
+    # tests/test_notifications_model.py that asserts on it.
     __table_args__ = (UniqueConstraint("user_id", "media_id", "episode_number", "threshold"),)

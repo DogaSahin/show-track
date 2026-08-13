@@ -63,9 +63,9 @@ def make_notification_task(user_id: uuid.UUID, media_id: uuid.UUID, **overrides:
 async def make_parents(db_session: AsyncSession) -> tuple[User, Media]:
     """A flushed `User` + `Media` pair, for tests whose subject is a row that FKs to both.
 
-    Promoted from the near-identical `_entry_parents` (test_library_model.py) and
-    `_task_parents` (test_notifications_model.py) so both modules share one definition
-    instead of two copies drifting apart.
+    Promoted from `test_library_model.py`'s local `_entry_parents` once
+    `test_notifications_model.py` needed the identical setup, so the two modules share
+    one definition instead of a second copy drifting from the first.
     """
     user = make_user()
     media = make_media()
