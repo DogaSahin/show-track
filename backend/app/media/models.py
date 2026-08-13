@@ -2,7 +2,8 @@ import enum
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import ARRAY, Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base, UUIDPrimaryKeyMixin, enum_column
@@ -40,6 +41,12 @@ class Media(UUIDPrimaryKeyMixin, Base):
     title: Mapped[str] = mapped_column(Text, nullable=False)
     # Canonical genre names, not raw provider strings. Provider -> canonical mapping is
     # Phase 3.4's job, at the provider boundary.
+    #
+    # The dialect ARRAY, not `sqlalchemy.ARRAY`: only the postgresql one exposes
+    # `overlap`/`contains`/`contained_by`, which compile to `&&`/`@>`/`<@` — the operators
+    # Phase 7's genre-overlap scoring is built on. On the generic type the first two are
+    # absent and `contains()` raises NotImplementedError. The emitted DDL is `TEXT[]` either
+    # way, so the swap needs no migration.
     genres: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, server_default=text("'{}'::text[]"))
     cover_image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     next_episode_season: Mapped[int | None] = mapped_column(Integer, nullable=True)
