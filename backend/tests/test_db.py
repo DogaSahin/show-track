@@ -41,6 +41,11 @@ async def test_the_app_session_dependency_survives_two_round_trips() -> None:
     loop (`asyncio_default_test_loop_scope = "session"`), so an import-time engine would
     survive two round-trips here just as well — the loop-binding bug needs two DIFFERENT
     loops to reproduce, and this file only ever has one.
+
+    Do not copy this shape for a test that WRITES. It is the only test in the suite running
+    outside `db_session`'s external transaction, so nothing rolls back what it does, and there
+    is no separate test database: `.env.example` and docker-compose both point DATABASE_URL at
+    the one `showtrack` database, which is also the development one. SELECT only.
     """
     try:
         # aclosing, not a bare `async for`: if an assertion fails mid-body, a bare loop

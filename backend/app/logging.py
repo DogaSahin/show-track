@@ -71,8 +71,9 @@ def setup_logging() -> None:
         uvicorn_logger.handlers.clear()
         uvicorn_logger.propagate = True
 
-    # RequestIDMiddleware already emits a richer "request completed"/"request failed"
-    # line (method, path, status, duration_ms, request_id) for every request, so
-    # uvicorn.access's line would be a pure duplicate now that it propagates. Disable
-    # it outright rather than emit two JSON lines per request.
+    # RequestIDMiddleware already emits a richer line for every request — method, path,
+    # client_addr, http_version, duration_ms and request_id, plus status on the "request
+    # completed" branch. uvicorn.access's own line carries only client address, request line
+    # (method, path, HTTP version) and status code, so for a completed request it is redundant
+    # with ours. Disable it outright rather than emit two JSON lines per request.
     logging.getLogger("uvicorn.access").disabled = True

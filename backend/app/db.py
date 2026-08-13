@@ -72,6 +72,11 @@ def enum_column(enum_cls: type[enum.Enum], name: str) -> Enum:
     value means creating a new type and rewriting the column. A CHECK is a transactional
     drop-and-recreate.
 
+    `name` is the bare identifier, not the finished constraint name: `NAMING_CONVENTION["ck"]`
+    wraps `ck_<table>_` around it, so `enum_column(MediaStatus, "status")` on `media` yields
+    `ck_media_status` — and passing `name="ck_media_status"` would yield
+    `ck_media_ck_media_status`.
+
     `create_constraint=True` is not optional: SQLAlchemy defaults it to False, which would
     emit a bare VARCHAR with no constraint at all. `length=32` stops the column being sized
     to today's longest value. Without `values_callable`, SQLAlchemy's default is to store

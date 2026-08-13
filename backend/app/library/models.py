@@ -47,7 +47,10 @@ class UserMedia(UUIDPrimaryKeyMixin, Base):
     score: Mapped[Decimal | None] = mapped_column(Numeric(3, 1), nullable=True)
     progress: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     favorite: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
-    # onupdate is emitted client-side by SQLAlchemy; a raw SQL UPDATE will not bump it.
+    # SQLAlchemy is what adds `updated_at` to the SET clause of every UPDATE it emits; the
+    # timestamp itself is Postgres's, because `func.now()` renders inline as SQL
+    # (`SET progress=%(progress)s, updated_at=now()`). Supplying the assignment is the
+    # client-side half, so a raw SQL UPDATE that does not name the column will not bump it.
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
