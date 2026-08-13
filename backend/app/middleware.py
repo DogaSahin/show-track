@@ -3,7 +3,7 @@ import time
 import uuid
 
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
-from starlette.requests import Request
+from starlette.requests import ClientDisconnect, Request
 from starlette.responses import Response
 
 from app.logging import request_id_var
@@ -30,24 +30,36 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         request.state.request_id = request_id
         token = request_id_var.set(request_id)
         started = time.perf_counter()
+
+        client = request.client
+        context = {
+            "method": request.method,
+            "path": request.url.path,
+            # Request.client returns None when the ASGI scope has no "client" key, so
+            # this must not assume a value is present.
+            "client_addr": f"{client.host}:{client.port}" if client else "-",
+            "http_version": request.scope.get("http_version", "-"),
+        }
+
         try:
             response = await call_next(request)
+        except ClientDisconnect:
+            logger.warning(
+                "client disconnected",
+                extra={**context, "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
+            )
+            raise
         except Exception:
             logger.exception(
                 "request failed",
-                extra={
-                    "method": request.method,
-                    "path": request.url.path,
-                    "duration_ms": round((time.perf_counter() - started) * 1000, 2),
-                },
+                extra={**context, "duration_ms": round((time.perf_counter() - started) * 1000, 2)},
             )
             raise
         else:
             logger.info(
                 "request completed",
                 extra={
-                    "method": request.method,
-                    "path": request.url.path,
+                    **context,
                     "status": response.status_code,
                     "duration_ms": round((time.perf_counter() - started) * 1000, 2),
                 },
