@@ -5,6 +5,11 @@ on:
   push:
     branches: [dev, main]
 
+# The default GITHUB_TOKEN scope is broader than any of these jobs needs. Widen per-job
+# only if a step actually fails for lack of a permission.
+permissions:
+  contents: read
+
 jobs:
   scan:
     runs-on: ubuntu-latest
@@ -15,6 +20,6 @@ jobs:
           fetch-depth: 0
 
       - name: Scan for secrets
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@dcedce43c6f43de0b836d1fe38946645c9c638dc # v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

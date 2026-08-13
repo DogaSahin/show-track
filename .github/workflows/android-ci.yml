@@ -11,6 +11,11 @@ on:
       - 'android/**'
       - '.github/workflows/android-ci.yml'
 
+# The default GITHUB_TOKEN scope is broader than any of these jobs needs. Widen per-job
+# only if a step actually fails for lack of a permission.
+permissions:
+  contents: read
+
 defaults:
   run:
     working-directory: android

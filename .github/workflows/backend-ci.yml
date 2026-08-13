@@ -11,6 +11,11 @@ on:
       - 'backend/**'
       - '.github/workflows/backend-ci.yml'
 
+# The default GITHUB_TOKEN scope is broader than any of these jobs needs. Widen per-job
+# only if a step actually fails for lack of a permission.
+permissions:
+  contents: read
+
 defaults:
   run:
     working-directory: backend
@@ -21,7 +26,7 @@ jobs:
 
     services:
       postgres:
-        image: postgres:17-alpine
+        image: postgres@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193 # postgres:17-alpine
         env:
           POSTGRES_USER: showtrack
           POSTGRES_PASSWORD: showtrack
@@ -54,24 +59,22 @@ jobs:
       # install cannot drift to whatever uv would otherwise discover.
       - name: Install dependencies
         run: |
-          echo "cwd=$(pwd)"
-          uv --version
-          env | grep -i '^UV_' || echo "(no UV_* variables set)"
           uv venv --python 3.12
           uv pip install --python .venv/bin/python -r requirements-dev.txt
-          echo "--- .venv/bin after install ---"
-          ls -la .venv/bin || echo "NO .venv/bin DIRECTORY"
-          test -x .venv/bin/ruff || { echo "FATAL: ruff absent from .venv/bin"; exit 1; }
 
       - name: Lint
         run: |
-          echo "cwd=$(pwd)"
-          ls -la .venv/bin/ruff || echo "ruff missing at lint time"
           .venv/bin/ruff check .
           .venv/bin/ruff format --check .
 
       - name: Apply migrations
         run: .venv/bin/alembic upgrade head
+
+      # Fails if the models and the migration head disagree — i.e. someone edited a model
+      # and forgot to generate the migration. That drift is invisible to the test suite,
+      # which runs against whatever `upgrade head` produced.
+      - name: Check for model/migration drift
+        run: .venv/bin/alembic check
 
       - name: Test
         run: .venv/bin/pytest -v
