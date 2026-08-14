@@ -7,8 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import Base
 
 # These imports are what put the tables into Base.metadata — the same requirement, and the
-# same silent failure mode, as the import block in migrations/env.py. The list below is built
-# at collection time, so a domain module missing from here would simply drop its enum columns
+# same silent failure mode, as the import block in migrations/env.py. The snapshot below is
+# built at import time, so a domain module missing from here would simply drop its enum columns
 # out of the parametrisation. `test_every_enum_check_constraint_in_the_database_is_covered`
 # is the backstop that turns that omission into a failure instead of a gap.
 from app.library import models as _library_models  # noqa: F401
@@ -49,7 +49,13 @@ def _enum_check_constraints() -> list[tuple[str, frozenset[str]]]:
     )
 
 
-@pytest.mark.parametrize(("constraint_name", "expected_values"), _enum_check_constraints())
+# Snapshotted at this module's import, before pytest imports the test modules that would fill
+# `Base.metadata` in behind this file's back. Both the parametrisation and the backstop read
+# this one snapshot rather than re-deriving, so the two cannot disagree about what is covered.
+_DERIVED_AT_IMPORT = _enum_check_constraints()
+
+
+@pytest.mark.parametrize(("constraint_name", "expected_values"), _DERIVED_AT_IMPORT)
 async def test_enum_check_constraint_admits_exactly_the_python_enum_values(
     db_session: AsyncSession, constraint_name: str, expected_values: frozenset[str]
 ) -> None:
@@ -77,9 +83,30 @@ async def test_enum_check_constraint_admits_exactly_the_python_enum_values(
 async def test_every_enum_check_constraint_in_the_database_is_covered(db_session: AsyncSession) -> None:
     """Guards the parametrisation above against under-collection.
 
-    The list it runs on is only as complete as the model imports at the top of this file, and
-    a missing import removes cases rather than failing. Comparing it against what the database
+    The set it runs on is only as complete as the model imports at the top of this file, and a
+    missing import removes cases rather than failing. Comparing it against what the database
     actually carries makes that omission loud.
+
+    It compares `_DERIVED_AT_IMPORT`, the snapshot taken when this module was imported, rather
+    than re-deriving here. Re-deriving is vacuous: by the time any test *runs*, pytest has
+    imported every other test module, and `tests/factories.py` imports
+    `app.notifications.models`, so the fresh set is complete even when this file's imports are
+    not. Measured with the `app.notifications` import below deleted — re-deriving gave
+    `1 failed, 4 passed` for this module alone but a green `51 passed` under the full `pytest`,
+    the two dropped cases vanishing in silence; against the snapshot the same deletion gives
+    `1 failed, 50 passed` under the full `pytest`.
+
+    Two limits worth stating rather than over-claiming. A module imported by *nothing* is out
+    of reach: autogenerate emits an empty migration for it, so its constraints are missing from
+    the database and from the snapshot alike and the two still agree. And the snapshot only
+    leads the rest of the suite while this file's imports are what register these models first
+    — `conftest.py` does `from main import app`, whose route modules are still stubs. Measured:
+    make `app/notifications/routes.py` import its models and delete the import below, and the
+    full suite is green at `53 passed`, parametrisation complete and this assertion proving
+    nothing. What it does catch is the realistic omission today: a module `migrations/env.py`
+    imports, so its CHECK constraints reach the database, that this file forgot.
+    `migrations/env.py:21-29` documents the same import-order hazard for
+    `_TYPE_BOUND_CHECK_NAMES`, which derives these names the same way.
     """
     found = (
         await db_session.execute(
@@ -92,4 +119,4 @@ async def test_every_enum_check_constraint_in_the_database_is_covered(db_session
         )
     ).scalars()
 
-    assert set(found) == {name for name, _ in _enum_check_constraints()}
+    assert set(found) == {name for name, _ in _DERIVED_AT_IMPORT}
