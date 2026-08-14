@@ -20,7 +20,18 @@ if [[ ! "$first_line" =~ $pattern ]]; then
   exit 1
 fi
 
-if grep -qiE 'claude|co-authored-by|generated with' "$msg_file"; then
-  echo "ERROR: commit messages must not mention AI tooling or carry an AI trailer." >&2
+# Under `git commit -v` (or commit.verbose=true) git appends the staged diff below a scissors
+# line and drops it during cleanup. Scan only what survives that cleanup: otherwise a diff hunk
+# that happens to contain one of the words below rejects the commit for the code being
+# committed rather than for the message, which is not what this check is about.
+message="$(sed '/^# ------------------------ >8/,$d' "$msg_file")"
+
+# Deliberately narrow. The rule is "no AI attribution", not "no co-authors" and not "no such
+# words anywhere": a bare `co-authored-by:` blocks a legitimate human trailer, and a bare
+# `generated with` is ordinary English — it is the natural way to describe an Alembic
+# autogenerate migration, so it rejected a real commit on this branch.
+if grep -qiE '^co-authored-by:.*(claude|anthropic)|generated with \[?claude|\bclaude code\b' <<<"$message"; then
+  echo "ERROR: commit messages must not carry AI attribution." >&2
+  echo "  drop the AI co-author trailer / 'generated with Claude' line and commit again." >&2
   exit 1
 fi

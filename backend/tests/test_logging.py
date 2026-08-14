@@ -2,6 +2,7 @@ import json
 import logging
 import sys
 
+import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.logging import JsonFormatter, RequestIDFilter, request_id_var, setup_logging
@@ -261,3 +262,73 @@ async def test_unhandled_exception_response_still_carries_request_id_header() ->
 
     assert response.status_code == 500
     assert response.headers["x-request-id"] == "boom-header-id"
+
+
+async def test_access_log_carries_client_address_and_http_version(client: AsyncClient) -> None:
+    """Phase 0 disabled uvicorn.access to stop double-logging, which dropped these two
+    fields. They belong on our JSON line instead — re-enabling uvicorn.access would bring
+    the duplicate back.
+    """
+    captured: list[logging.LogRecord] = []
+
+    class _CaptureHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            captured.append(record)
+
+    handler = _CaptureHandler()
+    access_logger = logging.getLogger("showtrack.access")
+    access_logger.addHandler(handler)
+    try:
+        await client.get("/health")
+    finally:
+        access_logger.removeHandler(handler)
+
+    assert captured, "expected an access log record"
+    payload = json.loads(JsonFormatter().format(captured[0]))
+    assert payload["client_addr"] == "127.0.0.1:123"
+    assert payload["http_version"] == "1.1"
+    assert payload["status"] == 200
+
+
+async def test_client_disconnect_is_logged_as_a_warning_without_a_traceback() -> None:
+    """A client closing a tab is not an application error. Logged at ERROR with a
+    traceback, routine disconnects bury the real failures.
+    """
+    from starlette.requests import ClientDisconnect
+
+    from main import app as fastapi_app
+
+    async def _disconnect() -> None:
+        raise ClientDisconnect
+
+    fastapi_app.add_api_route("/__test/disconnect", _disconnect, methods=["GET"])
+    route = fastapi_app.routes[-1]
+
+    captured: list[logging.LogRecord] = []
+
+    class _CaptureHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            captured.append(record)
+
+    handler = _CaptureHandler()
+    access_logger = logging.getLogger("showtrack.access")
+    access_logger.addHandler(handler)
+
+    # raise_app_exceptions=True so the exception leaving the middleware is observable. This
+    # is what pins the `raise` in the ClientDisconnect branch: without it `dispatch` falls off
+    # the end returning None and BaseHTTPMiddleware raises TypeError instead, which every
+    # other assertion here would still accept.
+    transport = ASGITransport(app=fastapi_app, raise_app_exceptions=True)
+    try:
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            with pytest.raises(ClientDisconnect):
+                await ac.get("/__test/disconnect")
+    finally:
+        access_logger.removeHandler(handler)
+        fastapi_app.routes.remove(route)
+
+    assert captured, "expected a record on showtrack.access"
+    record = captured[0]
+    assert record.levelno == logging.WARNING
+    assert record.exc_info is None
+    assert not [r for r in captured if r.levelno >= logging.ERROR]
