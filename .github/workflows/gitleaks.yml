@@ -20,6 +20,27 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Layer 1: tracked FILENAMES. Checks something gitleaks does not — that a sensitive
+      # path is absent from the index, regardless of whether its content looks like a
+      # credential. A binary keystore is the motivating case: no regex flags it. Runs first
+      # because it is instant and its failure is unambiguous.
+      - name: Assert no credential-shaped path is tracked
+        run: |
+          tracked="$(
+            git ls-files |
+              grep -iE '(^|/)\.env($|\.)|\.(jks|keystore|pem|p12)$|(^|/)google-services\.json$|service-account.*\.json$|(^|/)firebase-adminsdk.*\.json$|(^|/)secrets\.properties$' |
+              grep -vE '(^|/)\.env\.example$' || true
+          )"
+          if [ -n "$tracked" ]; then
+            echo "::error::credential-shaped files are tracked in git:"
+            printf '  %s\n' $tracked
+            echo "Removing them from HEAD is not enough — they remain in history."
+            echo "Rotate the credential, then rewrite history before merging."
+            exit 1
+          fi
+          echo "no credential-shaped paths tracked"
+
+      # Layer 2: file CONTENT, across the full history (fetch-depth: 0 above).
       - name: Scan for secrets
         uses: gitleaks/gitleaks-action@dcedce43c6f43de0b836d1fe38946645c9c638dc # v2
         env:
