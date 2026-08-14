@@ -5,7 +5,7 @@ from app.config import Settings
 
 
 def _base_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Everything Settings needs except the field under test."""
+    """Every setting Settings requires; callers delete the one under test."""
     monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://u:p@localhost:5432/d")
     monkeypatch.setenv("SECRET_KEY", "test-secret")
     monkeypatch.setenv("REGISTRATION_CODE", "test-code")
