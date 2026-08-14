@@ -1,2 +1,18 @@
 .DS_Store
 *.log
+
+# Credentials — see design doc §10.1. Listed here rather than only in the per-project
+# ignore files so a stray copy anywhere in the tree is covered, and added before the
+# phases that produce them: the window in which a credential gets committed is the
+# window between creating the file and remembering to ignore it.
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
+*.pem
+*.p12
+google-services.json
+*service-account*.json
+firebase-adminsdk*.json
+secrets.properties

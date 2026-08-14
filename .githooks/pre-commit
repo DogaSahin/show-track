@@ -20,9 +20,35 @@ if [[ -n "$staged_py" ]]; then
   fi
 fi
 
-# Secret scan, if gitleaks is installed.
+# Credential guard, layer 1 of 2: staged FILENAMES. Deliberately dependency-free.
+#
+# The gitleaks call below scans file *content*, which is strictly more powerful — but only
+# when gitleaks is installed, and it frequently is not (it was absent for all of Phase 1 on
+# the dev machine, so that check warned and passed on every commit). This one needs nothing
+# but bash and git, so it runs everywhere, and it catches the case content scanning is worst
+# at: a binary keystore, which matches no credential regex.
+#
+# Patterns mirror .gitignore and design doc §10.1. A file matching one of these can only be
+# staged if it was force-added past .gitignore, which is exactly the accident worth blocking.
+secret_paths="$(
+  git diff --cached --name-only --diff-filter=ACM |
+    grep -iE '(^|/)\.env($|\.)|\.(jks|keystore|pem|p12)$|(^|/)google-services\.json$|service-account.*\.json$|(^|/)firebase-adminsdk.*\.json$|(^|/)secrets\.properties$' |
+    grep -vE '(^|/)\.env\.example$' || true
+)"
+if [[ -n "$secret_paths" ]]; then
+  echo "ERROR: refusing to commit files that look like credentials:" >&2
+  printf '  %s\n' $secret_paths >&2
+  echo "" >&2
+  echo "  These match .gitignore, so staging one means it was force-added." >&2
+  echo "  Unstage with: git restore --staged <file>" >&2
+  echo "  If this is a false positive, widen the allowlist in .githooks/pre-commit." >&2
+  exit 1
+fi
+
+# Credential guard, layer 2 of 2: staged CONTENT, if gitleaks is installed.
 if command -v gitleaks >/dev/null 2>&1; then
   gitleaks protect --staged --redact --no-banner
 else
-  echo "WARN: gitleaks not installed; skipping local secret scan (CI still runs it)." >&2
+  echo "WARN: gitleaks not installed — content scanning skipped locally (CI still runs it)." >&2
+  echo "      The filename guard above ran regardless. Install: https://github.com/gitleaks/gitleaks" >&2
 fi

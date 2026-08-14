@@ -1,1 +1,175 @@
-# show-track
+# ShowTrack
+
+A personal anime and TV watch tracker, built for small closed groups — a household, a couple, a
+friend group. You track what you're watching; the people you've invited see your progress, scores and
+reviews, and you see theirs.
+
+It is deliberately **not** a social network. There is no follow graph, no discovery of strangers, and
+no public profiles. Membership of a group *is* the relationship, which is what makes the useful part
+possible: because everyone in a group can see everyone's exact progress, the app can tell you who is
+ahead on a show and how far.
+
+**Status:** early. The backend schema and migrations are in place; auth, the provider integrations,
+and the Android client are not built yet. See [Project status](#project-status).
+
+## What it does
+
+- **Track** anime and TV in one library — status, 1–10 score, episode progress, favourites.
+- **Know when the next episode airs**, with a push notification 24 hours before and again on the day.
+- **Import** an existing AniList list by username. Read-only and one-way — ShowTrack never writes
+  back to AniList.
+- **Share with a group** — a feed of what members watched and rated, a shared "we should watch this"
+  watchlist, side-by-side progress on titles you're both watching, and reviews.
+- **Get recommendations** from genre overlap weighted by your own scores.
+
+Data comes from **AniList** (anime, GraphQL) and **TMDB** (TV, REST), normalised behind a single
+provider interface so nothing downstream knows which one a title came from.
+
+## Layout
+
+A monorepo with two independently-pipelined projects.
+
+```
+show-track/
+├── backend/     FastAPI · SQLAlchemy 2.0 (async) · Alembic · PostgreSQL
+├── android/     Kotlin · Jetpack Compose · Hilt · Retrofit · Room
+├── .github/     backend-ci · android-ci · gitleaks
+└── .githooks/   commit-msg · pre-commit
+```
+
+They live together because they share one source of truth for the API contract between them: a change
+to an endpoint and the client that calls it lands as a single reviewable unit instead of two repos
+with a version-skew problem.
+
+**Backend module pattern.** Each domain is four files — `models.py`, `schemas.py`, `service.py`,
+`routes.py` — across `users`, `media`, `library`, `sync`, `notifications`, `recommendations`, and
+`groups`. All routes mount under `/v1`; `/health` stays unversioned, because it is an infrastructure
+probe rather than client contract.
+
+**Android module pattern.** Feature-first and multi-module: `:core:*` plus one `:feature:*` per
+screen. Feature modules never depend on each other, and never on `:core:network` or `:core:database`
+— all data access goes through `:core:data`, which is the only module that knows Retrofit and Room
+exist. That is what keeps "Room is a cache, never the source of truth" structural rather than a
+convention that erodes.
+
+## Getting started
+
+### Prerequisites
+
+- [`uv`](https://docs.astral.sh/uv/) for the backend's Python environment
+- Docker and Docker Compose (PostgreSQL 17)
+- JDK 21 for Android
+
+### Backend
+
+```bash
+cd backend
+uv venv
+uv pip install -r requirements-dev.txt
+
+cp .env.example .env          # fill in AniList/TMDB/FCM config locally
+docker compose up -d db       # PostgreSQL on :5432
+
+.venv/bin/alembic upgrade head    # REQUIRED before running the tests
+.venv/bin/uvicorn main:app --reload --port 8000
+```
+
+`DATABASE_URL` has no default — an unset value fails loudly at startup rather than silently
+connecting to a plausible-looking wrong database. `alembic upgrade head` is not optional before
+running tests: the suite runs against a real PostgreSQL schema built by the migrations, never by
+`metadata.create_all()`, so the migrations themselves are exercised rather than merely stored.
+
+New migrations:
+
+```bash
+.venv/bin/alembic revision --autogenerate -m "..."
+```
+
+Always open the generated file and read it against the model before committing. Autogenerate is a
+starting point, not an output to trust unread — notably, it cannot see a changed enum value set.
+
+### Android
+
+```bash
+cd android
+./gradlew build      # or just open the folder in Android Studio
+```
+
+Local secrets — the TMDB API key, FCM config — go in `local.properties` or a gitignored config file.
+Never in a committed Gradle file.
+
+### Git hooks
+
+Once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+This enables a Conventional Commit message check, ruff on staged Python files, and two layers of
+credential guarding. Installing [`gitleaks`](https://github.com/gitleaks/gitleaks) is strongly
+recommended — without it the content scan is skipped locally and only the filename guard runs.
+
+## The gate
+
+Run before every push. CI runs the same checks, but the local gate is the real one — branch
+protection is not enabled.
+
+**Backend**, from `backend/`:
+
+```bash
+.venv/bin/ruff check .
+.venv/bin/ruff format --check .
+.venv/bin/alembic check      # fails if models and migrations have drifted apart
+.venv/bin/pytest
+```
+
+**Android**, from `android/`:
+
+```bash
+./gradlew ktlintCheck detekt     # not registered until the module split lands
+./gradlew testDebugUnitTest
+./gradlew assembleDebug
+```
+
+## Contributing
+
+- Work on a branch off `dev`. Releases go `dev` → `main`, tagged CalVer `vYYYY.0M.MICRO`.
+- **Conventional Commits**, enforced by the commit-msg hook.
+- Tests are required for new logic and bugfixes. Write useful tests, not exhaustive ones — a test
+  earns its place by catching a real regression in behaviour we own, not by raising a number.
+- Every change carries its CI updates, its README updates, and its `.gitignore` updates with it.
+
+### Never commit credentials
+
+Two layers guard this, and they fail in different ways:
+
+- **`gitleaks`** scans file *content* for credential-shaped strings, in CI across the full history and
+  locally via the pre-commit hook. It must be installed to do anything.
+- **A filename guard** in the pre-commit hook, and the same check in CI, rejects sensitive *paths* —
+  keystores, `.env`, `google-services.json`, service-account JSON. It needs nothing installed, so it
+  works on every machine, and it catches the binary keystore no regex would flag.
+
+If a secret does reach a commit, say so immediately. It needs a key rotation and a history rewrite,
+and both get worse the longer they wait.
+
+## Project status
+
+| Phase | | |
+|---|---|---|
+| 0 | Foundations — FastAPI skeleton, structured logging, Alembic, Android skeleton, CI | done |
+| 1 | Data models — six tables, six migrations, async test harness | done |
+| 1.5 | Repository hygiene — credential guarding, this README | in progress |
+| 2 | Auth — JWT register/login, protected routes | next |
+| 3–4.5 | Providers, library CRUD, AniList import | |
+| 5–7 | Sync worker, notifications, recommendations | |
+| 7.5 | Groups — membership, feed, reviews, shared watchlist | |
+| 8–9 | Android foundations and feature modules | |
+| 10 | Polish and deployment | |
+
+Architecture documentation lives outside this repository, alongside the working copy: a design doc, a
+phased task breakdown, and a decision record. This README is the orientation a fresh clone gets.
+
+## Licence
+
+See [LICENSE](LICENSE).
