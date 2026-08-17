@@ -16,7 +16,9 @@ _hasher = PasswordHasher()
 # Verified against this hash when no user matches the submitted email, so that an unknown
 # address costs the same as a wrong password. Without it the endpoint answers "does this
 # account exist?" in the time it takes to reply: a lookup miss returns in microseconds
-# against ~50 ms for a real verify (measured, argon2-cffi 25.1.0 at default parameters).
+# against tens of milliseconds for a real verify (argon2-cffi 25.1.0 at default parameters;
+# order of magnitude measured — the exact figure varies with machine load and isn't a constant
+# of the code).
 DUMMY_PASSWORD_HASH = _hasher.hash("dummy-password-for-constant-time-login")
 
 
@@ -80,7 +82,7 @@ def hash_refresh_token(token: str) -> str:
 
     Argon2 is slow on purpose because passwords are low-entropy and brute-forcible. A refresh
     token is already 32 bytes of CSPRNG output, so there is nothing to brute-force and the
-    ~50 ms an argon2 verify costs (measured) would be paid on every refresh for no gain.
+    tens of milliseconds an argon2 verify costs would be paid on every refresh for no gain.
     Hashing at all is what keeps a database leak from handing over live sessions.
     """
     return hashlib.sha256(token.encode()).hexdigest()

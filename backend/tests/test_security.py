@@ -36,9 +36,11 @@ def test_dummy_hash_costs_the_same_as_a_real_verify() -> None:
     an unknown email costs the same as a wrong password. If this hash were cheap — or empty —
     the timing gap would make the endpoint an account-existence oracle.
 
-    Measured: argon2-cffi 25.1.0 at default parameters takes ~50 ms per verify, against
-    microseconds for a lookup miss. The assertion is deliberately loose (>10 ms) because
-    absolute timings vary by machine; the point is the order of magnitude, not the number.
+    Measured: argon2-cffi 25.1.0 at default parameters takes tens of milliseconds per verify,
+    against microseconds for a malformed-hash rejection or a lookup miss — a gap of several
+    orders of magnitude. The exact figure moves with machine load (three separate measurements
+    on this same machine this session ranged from ~50 ms to ~100 ms), so the assertion is
+    deliberately loose (>10 ms): the point is the order of magnitude, not a specific number.
     """
     real = security.hash_password("whatever")
 
@@ -63,8 +65,21 @@ def test_access_token_round_trips() -> None:
 
 
 def test_tampered_access_token_is_rejected() -> None:
+    """Tampers with a character well inside the signature, not the last one.
+
+    An HS256 signature is 32 bytes, encoded as 43 base64url characters — 258 bits of encoding
+    for 256 bits of data, so the final character carries only 4 significant bits. Two of the
+    64 base64url alphabet characters share their top 4 bits ('Y' and 'a'), so substituting the
+    last character sometimes decodes to a byte-identical signature: measured at ~4.9% of runs
+    over 2000 tokens, concentrated entirely on tokens ending in 'Y'. That made this test flaky
+    — asserting nothing, about 1 run in 20, while looking green. Tampering an offset inside the
+    signature instead of at its edge measured 0 such collisions over the same 2000 runs.
+    """
     token = security.create_access_token(uuid.uuid4())
-    tampered = token[:-1] + ("a" if token[-1] != "a" else "b")
+    signature_start = token.rindex(".") + 1
+    offset = signature_start + 10
+    tampered_char = "a" if token[offset] != "a" else "b"
+    tampered = token[:offset] + tampered_char + token[offset + 1 :]
 
     assert security.decode_access_token(tampered) is None
 
