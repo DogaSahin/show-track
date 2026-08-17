@@ -1,6 +1,7 @@
+import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Index, String, func
+from sqlalchemy import DateTime, ForeignKey, Index, String, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base, UUIDPrimaryKeyMixin
@@ -24,3 +25,23 @@ class User(UUIDPrimaryKeyMixin, Base):
     # as a unique Index. A later migration must drop it with `op.drop_index(...)`, not
     # `op.drop_constraint(..., type_="unique")`.
     __table_args__ = (Index("uq_users_lower_email", func.lower(email), unique=True),)
+
+
+class RefreshToken(UUIDPrimaryKeyMixin, Base):
+    """One row per issued refresh token, rotated on every use.
+
+    `family_id` links a rotation chain. Presenting an already-revoked token means someone
+    replayed a stolen one, so the whole family is revoked — that is the only signal available
+    that a token was stolen rather than merely expired.
+    """
+
+    __tablename__ = "refresh_tokens"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    family_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    # sha256 hexdigest, measured at 64 characters. The token itself is never stored: a
+    # database leak must not hand over live sessions.
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
