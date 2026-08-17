@@ -56,6 +56,8 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> Respo
 for router in DOMAIN_ROUTERS:
     app.include_router(router, prefix="/v1")
 
+app.include_router(users_routes.auth_router, prefix="/v1")
+
 
 @app.get("/health", tags=["infra"])
 async def health() -> dict[str, str]:
