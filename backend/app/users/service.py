@@ -54,9 +54,11 @@ async def authenticate(session: AsyncSession, *, email: str, password: str) -> U
     semantically wrong.
 
     When no user matches we still verify against DUMMY_PASSWORD_HASH. Skipping that would let
-    an unknown email skip the ~120 ms argon2 verify a wrong password pays (measured on this
-    machine: PasswordHasher.verify at default parameters averaged ~124 ms over 20 runs),
-    which makes the endpoint an account-existence oracle for anyone with a stopwatch.
+    an unknown email return in microseconds while a wrong password pays the tens-of-
+    milliseconds cost of a real argon2 verify (order of magnitude measured; see
+    `security.DUMMY_PASSWORD_HASH` — the exact figure varies with machine load and isn't a
+    constant of the code), which makes the endpoint an account-existence oracle for anyone
+    with a stopwatch.
     """
     result = await session.execute(select(User).where(func.lower(User.email) == func.lower(email)))
     user = result.scalar_one_or_none()

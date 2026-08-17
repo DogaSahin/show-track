@@ -1,6 +1,8 @@
+import pytest
 from httpx import AsyncClient
 
 from app.config import get_settings
+from app.users import service
 
 VALID = {"username": "doga", "email": "doga@example.com", "password": "correct horse battery staple"}
 
@@ -82,3 +84,25 @@ async def test_unknown_email_and_wrong_password_are_indistinguishable(client: As
 
     assert wrong_password.status_code == unknown_email.status_code == 401
     assert wrong_password.json() == unknown_email.json()
+
+
+async def test_unknown_email_still_calls_verify_password(client: AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Matching status codes and bodies (see the test above) pass identically whether or not
+    the dummy verify against DUMMY_PASSWORD_HASH actually runs — both branches could just
+    return 401 immediately. This asserts the mechanism itself: the unknown-email path must
+    still pay for exactly one argon2 verify, not skip it.
+    """
+    calls = 0
+    original_verify = service.security.verify_password
+
+    def counting_verify(hashed: str, password: str) -> bool:
+        nonlocal calls
+        calls += 1
+        return original_verify(hashed, password)
+
+    monkeypatch.setattr(service.security, "verify_password", counting_verify)
+
+    response = await client.post("/v1/auth/login", json={"email": "nobody@example.com", "password": "wrong"})
+
+    assert response.status_code == 401
+    assert calls == 1
