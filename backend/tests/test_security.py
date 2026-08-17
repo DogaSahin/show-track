@@ -68,12 +68,17 @@ def test_tampered_access_token_is_rejected() -> None:
     """Tampers with a character well inside the signature, not the last one.
 
     An HS256 signature is 32 bytes, encoded as 43 base64url characters — 258 bits of encoding
-    for 256 bits of data, so the final character carries only 4 significant bits. Two of the
-    64 base64url alphabet characters share their top 4 bits ('Y' and 'a'), so substituting the
-    last character sometimes decodes to a byte-identical signature: measured at ~4.9% of runs
-    over 2000 tokens, concentrated entirely on tokens ending in 'Y'. That made this test flaky
-    — asserting nothing, about 1 run in 20, while looking green. Tampering an offset inside the
-    signature instead of at its edge measured 0 such collisions over the same 2000 runs.
+    for 256 bits of data, so the final character's low 2 bits are always zero-padding: its
+    alphabet index must be a multiple of 4, which leaves exactly 16 legal terminal characters
+    (verified: "AEIMQUYcgkosw048"), uniformly distributed. Of those 16, only 'Y' shares its top
+    4 bits with 'a' — so on the 1/16 = 6.25% of tokens whose signature ends in 'Y' (a closed
+    form fixed by the encoding, not a sampled estimate; three independent runs of 2000-8000
+    tokens measured 6.10-6.65%, consistent with 6.25%), substituting the last character with
+    'a' decodes to a byte-identical signature. The "tampered" token is then indistinguishable
+    from the original, so `decode_access_token` returns the original subject instead of None
+    and the assertion below fails — an intermittent, spurious red, not a false green: the bug
+    was in the test's tampering, not in the code being tested. Tampering an offset well inside
+    the signature instead of its low-entropy edge measured 0 such collisions over 2000 runs.
     """
     token = security.create_access_token(uuid.uuid4())
     signature_start = token.rindex(".") + 1
