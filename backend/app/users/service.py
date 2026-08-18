@@ -99,10 +99,12 @@ async def _find_refresh_token(session: AsyncSession, raw_token: str) -> RefreshT
 async def rotate_refresh_token(session: AsyncSession, raw_token: str) -> tuple[str, str] | None:
     """Issue a new pair and revoke the presented token. Returns None if it cannot be used.
 
-    A token that is already revoked means someone replayed one — the legitimate client would
-    be holding the newest token, not this one. Every token in the family is revoked in
-    response, which logs out the thief and the real user together. That is the intended
-    outcome: it is the only way to be sure the thief is out.
+    A token that is already revoked usually means someone replayed a stolen one, but the same
+    evidence also fits a legitimate client retrying with a stale token because its rotation
+    response was lost in flight — the mechanism cannot tell the two apart. Either way, every
+    token in the family is revoked in response, which logs out the thief and the real user
+    together. That is the intended outcome: it is the only way to be sure the thief is out, at
+    the cost of an occasional false-positive logout on a dropped response.
     """
     stored = await _find_refresh_token(session, raw_token)
     if stored is None:

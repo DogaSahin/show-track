@@ -1,10 +1,16 @@
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.users import service
+from app.users.models import RefreshToken
 
 VALID = {"username": "doga", "email": "doga@example.com", "password": "correct horse battery staple"}
+SECOND_USER = {"username": "kai", "email": "kai@example.com", "password": "another correct horse battery staple"}
 
 
 def _register_body(**overrides: object) -> dict[str, object]:
@@ -117,6 +123,19 @@ async def _login(client: AsyncClient) -> dict[str, str]:
     return response.json()
 
 
+async def _login_second_user(client: AsyncClient) -> dict[str, str]:
+    """A distinct account, so a cascade test can tell "scoped to one family" apart from
+    "scoped to one user's only family" — the latter is indistinguishable from a table-wide
+    wipe when the suite only ever has one user in it.
+    """
+    body = {**SECOND_USER, "invite_code": get_settings().registration_code}
+    await client.post("/v1/auth/register", json=body)
+    response = await client.post(
+        "/v1/auth/login", json={"email": SECOND_USER["email"], "password": SECOND_USER["password"]}
+    )
+    return response.json()
+
+
 async def test_refresh_returns_a_new_pair(client: AsyncClient) -> None:
     tokens = await _login(client)
 
@@ -174,3 +193,63 @@ async def test_logout_is_idempotent_and_does_not_leak(client: AsyncClient) -> No
 
     assert again.status_code == 204
     assert unknown.status_code == 204
+
+
+async def test_the_cascade_is_scoped_to_the_replayed_tokens_family(client: AsyncClient) -> None:
+    """The cascade must revoke only the family the replayed token belongs to, not every
+    unrevoked refresh token in the table. With a single account in play, "this family" and
+    "every family" are indistinguishable — a second, unrelated account is what tells them
+    apart. Without the `family_id` filter, one attacker replaying their own stale token would
+    log out every user in the system.
+    """
+    victim = await _login(client)
+    bystander = await _login_second_user(client)
+
+    await client.post("/v1/auth/refresh", json={"refresh_token": victim["refresh_token"]})
+    # The thief replays the victim's old token, triggering a cascade — but only in the
+    # victim's family.
+    replay = await client.post("/v1/auth/refresh", json={"refresh_token": victim["refresh_token"]})
+    assert replay.status_code == 401
+
+    unaffected = await client.post("/v1/auth/refresh", json={"refresh_token": bystander["refresh_token"]})
+    assert unaffected.status_code == 200
+
+
+async def test_an_expired_token_is_refused_without_revoking_its_family(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Expiry alone is not evidence of theft, so it must not trigger the reuse cascade the way
+    a revoked-token replay does. A second, still-live token is placed in the same family by
+    hand (rotation normally leaves only one live token per family) — if expiry incorrectly
+    ran the cascade, this is the row that would prove it by dying too.
+    """
+    tokens = await _login(client)
+    stored = (
+        await db_session.execute(
+            select(RefreshToken).where(
+                RefreshToken.token_hash == service.security.hash_refresh_token(tokens["refresh_token"])
+            )
+        )
+    ).scalar_one()
+
+    sibling_raw = service.security.generate_refresh_token()
+    db_session.add(
+        RefreshToken(
+            user_id=stored.user_id,
+            family_id=stored.family_id,
+            token_hash=service.security.hash_refresh_token(sibling_raw),
+            expires_at=datetime.now(UTC) + timedelta(days=1),
+        )
+    )
+    await db_session.execute(
+        update(RefreshToken)
+        .where(RefreshToken.id == stored.id)
+        .values(expires_at=datetime.now(UTC) - timedelta(days=1))
+    )
+    await db_session.flush()
+
+    expired = await client.post("/v1/auth/refresh", json={"refresh_token": tokens["refresh_token"]})
+    assert expired.status_code == 401
+
+    sibling = await client.post("/v1/auth/refresh", json={"refresh_token": sibling_raw})
+    assert sibling.status_code == 200
