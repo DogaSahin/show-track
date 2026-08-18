@@ -109,3 +109,68 @@ async def test_unknown_email_still_calls_verify_password(client: AsyncClient, mo
     # False for it in microseconds (InvalidHashError, caught) — while silently restoring the
     # timing gap this test exists to prevent.
     assert hashes_checked == [service.security.DUMMY_PASSWORD_HASH]
+
+
+async def _login(client: AsyncClient) -> dict[str, str]:
+    await client.post("/v1/auth/register", json=_register_body())
+    response = await client.post("/v1/auth/login", json={"email": VALID["email"], "password": VALID["password"]})
+    return response.json()
+
+
+async def test_refresh_returns_a_new_pair(client: AsyncClient) -> None:
+    tokens = await _login(client)
+
+    response = await client.post("/v1/auth/refresh", json={"refresh_token": tokens["refresh_token"]})
+
+    assert response.status_code == 200
+    assert response.json()["refresh_token"] != tokens["refresh_token"]
+
+
+async def test_the_old_refresh_token_stops_working(client: AsyncClient) -> None:
+    tokens = await _login(client)
+    await client.post("/v1/auth/refresh", json={"refresh_token": tokens["refresh_token"]})
+
+    replay = await client.post("/v1/auth/refresh", json={"refresh_token": tokens["refresh_token"]})
+
+    assert replay.status_code == 401
+
+
+async def test_replaying_a_revoked_token_revokes_the_whole_family(client: AsyncClient) -> None:
+    """The reason refresh tokens are stored at all. A revoked token being presented means
+    someone replayed a stolen one, so every token in the chain dies and the user must log in
+    again — including the token the legitimate client is currently holding.
+    """
+    first = await _login(client)
+    second = (await client.post("/v1/auth/refresh", json={"refresh_token": first["refresh_token"]})).json()
+
+    # The thief replays the old one.
+    replay = await client.post("/v1/auth/refresh", json={"refresh_token": first["refresh_token"]})
+    assert replay.status_code == 401
+
+    # The legitimate client's current token is now dead too.
+    legitimate = await client.post("/v1/auth/refresh", json={"refresh_token": second["refresh_token"]})
+    assert legitimate.status_code == 401
+
+
+async def test_logout_revokes_the_token(client: AsyncClient) -> None:
+    tokens = await _login(client)
+
+    logout = await client.post("/v1/auth/logout", json={"refresh_token": tokens["refresh_token"]})
+    assert logout.status_code == 204
+
+    after = await client.post("/v1/auth/refresh", json={"refresh_token": tokens["refresh_token"]})
+    assert after.status_code == 401
+
+
+async def test_logout_is_idempotent_and_does_not_leak(client: AsyncClient) -> None:
+    """204 for an unknown token as well as a known one: retries must not fail, and the status
+    must not reveal whether the token existed.
+    """
+    tokens = await _login(client)
+    await client.post("/v1/auth/logout", json={"refresh_token": tokens["refresh_token"]})
+
+    again = await client.post("/v1/auth/logout", json={"refresh_token": tokens["refresh_token"]})
+    unknown = await client.post("/v1/auth/logout", json={"refresh_token": "never-issued"})
+
+    assert again.status_code == 204
+    assert unknown.status_code == 204

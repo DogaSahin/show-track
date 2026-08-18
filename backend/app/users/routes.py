@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
 from app.users import service
-from app.users.schemas import LoginRequest, RegisterRequest, TokenPair, UserOut
+from app.users.schemas import LoginRequest, RefreshRequest, RegisterRequest, TokenPair, UserOut
 
 router = APIRouter(prefix="/users", tags=["users"])
 auth_router = APIRouter(prefix="/auth", tags=["auth"])
@@ -46,3 +46,22 @@ async def login(payload: LoginRequest, session: SessionDep) -> TokenPair:
     access, refresh = await service.issue_token_pair(session, user)
     await session.commit()
     return TokenPair(access_token=access, refresh_token=refresh)
+
+
+@auth_router.post("/refresh", response_model=TokenPair)
+async def refresh(payload: RefreshRequest, session: SessionDep) -> TokenPair:
+    pair = await service.rotate_refresh_token(session, payload.refresh_token)
+    if pair is None:
+        await session.commit()  # a reuse cascade may have revoked a family; persist it
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid refresh token")
+
+    await session.commit()
+    return TokenPair(access_token=pair[0], refresh_token=pair[1])
+
+
+# Unauthenticated on purpose: requiring a valid access token to log out would mean an expired
+# session could never be revoked, which is exactly when revocation matters.
+@auth_router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+async def logout(payload: RefreshRequest, session: SessionDep) -> None:
+    await service.revoke_refresh_token(session, payload.refresh_token)
+    await session.commit()

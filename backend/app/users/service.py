@@ -1,7 +1,7 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -87,3 +87,51 @@ async def issue_token_pair(session: AsyncSession, user: User, *, family_id: uuid
     )
     await session.flush()
     return security.create_access_token(user.id), refresh
+
+
+async def _find_refresh_token(session: AsyncSession, raw_token: str) -> RefreshToken | None:
+    result = await session.execute(
+        select(RefreshToken).where(RefreshToken.token_hash == security.hash_refresh_token(raw_token))
+    )
+    return result.scalar_one_or_none()
+
+
+async def rotate_refresh_token(session: AsyncSession, raw_token: str) -> tuple[str, str] | None:
+    """Issue a new pair and revoke the presented token. Returns None if it cannot be used.
+
+    A token that is already revoked means someone replayed one — the legitimate client would
+    be holding the newest token, not this one. Every token in the family is revoked in
+    response, which logs out the thief and the real user together. That is the intended
+    outcome: it is the only way to be sure the thief is out.
+    """
+    stored = await _find_refresh_token(session, raw_token)
+    if stored is None:
+        return None
+
+    now = datetime.now(UTC)
+
+    if stored.revoked_at is not None:
+        await session.execute(
+            update(RefreshToken)
+            .where(RefreshToken.family_id == stored.family_id, RefreshToken.revoked_at.is_(None))
+            .values(revoked_at=now)
+        )
+        return None
+
+    if stored.expires_at <= now:
+        return None
+
+    stored.revoked_at = now
+    user = await session.get(User, stored.user_id)
+    if user is None:
+        return None
+    return await issue_token_pair(session, user, family_id=stored.family_id)
+
+
+async def revoke_refresh_token(session: AsyncSession, raw_token: str) -> None:
+    """Idempotent by design: an unknown or already-revoked token is a no-op, so retries work
+    and the caller cannot learn whether the token existed.
+    """
+    stored = await _find_refresh_token(session, raw_token)
+    if stored is not None and stored.revoked_at is None:
+        stored.revoked_at = datetime.now(UTC)
