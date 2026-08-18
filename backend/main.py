@@ -1,7 +1,7 @@
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, Response
 
@@ -14,6 +14,7 @@ from app.notifications import routes as notifications_routes
 from app.recommendations import routes as recommendations_routes
 from app.sync import routes as sync_routes
 from app.users import routes as users_routes
+from app.users.dependencies import get_current_user
 
 DOMAIN_ROUTERS = (
     users_routes.router,
@@ -53,11 +54,13 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> Respo
     return response
 
 
+# Protection is a property of where a router is mounted, not of a decorator on each route.
+# A route added in a later phase is protected because it joined a protected router — which is
+# what keeps this true as the API grows. tests/test_auth_protection.py walks app.routes and
+# fails if any path outside the auth/health/docs allowlist answers without a token.
 for router in DOMAIN_ROUTERS:
-    app.include_router(router, prefix="/v1")
+    app.include_router(router, prefix="/v1", dependencies=[Depends(get_current_user)])
 
-# Deliberately outside DOMAIN_ROUTERS: that loop is where the auth dependency gets
-# attached, and register/login must stay reachable without a token.
 app.include_router(users_routes.auth_router, prefix="/v1")
 
 

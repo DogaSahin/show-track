@@ -5,6 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
 from app.users import service
+from app.users.dependencies import get_current_user
+from app.users.models import User
 from app.users.schemas import LoginRequest, RefreshRequest, RegisterRequest, TokenPair, UserOut
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -18,6 +20,12 @@ _INVALID_CREDENTIALS = "invalid email or password"
 # default-argument, part of this project's selected `B` rules) flags `= Depends(get_session)`
 # but not `Annotated[AsyncSession, Depends(get_session)]`.
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
+CurrentUserDep = Annotated[User, Depends(get_current_user)]
+
+
+@router.get("/me", response_model=UserOut)
+async def read_current_user(current_user: CurrentUserDep) -> UserOut:
+    return UserOut.model_validate(current_user)
 
 
 @auth_router.post("/register", response_model=UserOut, status_code=status.HTTP_201_CREATED)

@@ -62,3 +62,26 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
         # pop, not clear(): this fixture only owns the one key it set, and Phase 2 adds an
         # auth-dependency override that an outer fixture may already have installed.
         app.dependency_overrides.pop(get_session, None)
+
+
+@pytest.fixture
+async def auth_client(client: AsyncClient) -> AsyncGenerator[AsyncClient, None]:
+    """A client carrying a bearer token for a freshly registered user.
+
+    Registers and logs in through the real endpoints rather than minting a token directly, so
+    the fixture exercises the same path a device does and cannot drift from it.
+    """
+    from app.config import get_settings
+
+    body = {
+        "username": "fixture-user",
+        "email": "fixture@example.com",
+        "password": "fixture-password",
+        "invite_code": get_settings().registration_code,
+    }
+    await client.post("/v1/auth/register", json=body)
+    tokens = (await client.post("/v1/auth/login", json={"email": body["email"], "password": body["password"]})).json()
+
+    client.headers["Authorization"] = f"Bearer {tokens['access_token']}"
+    yield client
+    client.headers.pop("Authorization", None)
