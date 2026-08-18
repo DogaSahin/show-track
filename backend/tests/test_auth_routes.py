@@ -92,12 +92,11 @@ async def test_unknown_email_still_calls_verify_password(client: AsyncClient, mo
     return 401 immediately. This asserts the mechanism itself: the unknown-email path must
     still pay for exactly one argon2 verify, not skip it.
     """
-    calls = 0
+    hashes_checked = []
     original_verify = service.security.verify_password
 
     def counting_verify(hashed: str, password: str) -> bool:
-        nonlocal calls
-        calls += 1
+        hashes_checked.append(hashed)
         return original_verify(hashed, password)
 
     monkeypatch.setattr(service.security, "verify_password", counting_verify)
@@ -105,4 +104,8 @@ async def test_unknown_email_still_calls_verify_password(client: AsyncClient, mo
     response = await client.post("/v1/auth/login", json={"email": "nobody@example.com", "password": "wrong"})
 
     assert response.status_code == 401
-    assert calls == 1
+    # Not just "a verify happened": it must be checked against DUMMY_PASSWORD_HASH specifically.
+    # A malformed placeholder would also satisfy a bare call count — verify_password returns
+    # False for it in microseconds (InvalidHashError, caught) — while silently restoring the
+    # timing gap this test exists to prevent.
+    assert hashes_checked == [service.security.DUMMY_PASSWORD_HASH]

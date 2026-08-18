@@ -56,8 +56,8 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> Respo
 for router in DOMAIN_ROUTERS:
     app.include_router(router, prefix="/v1")
 
-# Deliberately outside DOMAIN_ROUTERS: Task 6 attaches the auth dependency to that loop,
-# and register/login must stay reachable without a token.
+# Deliberately outside DOMAIN_ROUTERS: that loop is where the auth dependency gets
+# attached, and register/login must stay reachable without a token.
 app.include_router(users_routes.auth_router, prefix="/v1")
 
 
