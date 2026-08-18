@@ -33,10 +33,14 @@ def _protected_cases() -> list[tuple[str, str, bool]]:
     does: measured empty (`[]`) for `/v1/auth/*` and containing `get_current_user` for
     `/v1/users/me`.
 
-    Two guards against this function silently going back to collecting nothing (the exact defect
-    it was written to fix): `assert found` catches `iter_route_contexts` changing shape in a way
-    that empties the list outright; the canary assert catches it changing shape in a way that
-    keeps the list non-empty but drops the one route this suite actually knows about.
+    Routes with no HTTP methods (e.g. a `Mount`) are skipped before `.dependencies` is ever
+    touched: only `APIRoute`-backed contexts carry that attribute — a plain Starlette `Route` or
+    `Mount` does not, and `RouteContext.__getattr__` proxies straight through to an
+    `AttributeError` for one that doesn't. `getattr(..., None) or []` is a second, independent
+    guard against the same crash for any route shape that has methods but still lacks
+    `.dependencies`. Measured against an appended `Mount("/v1/static", routes=[])`: before either
+    guard, collection raised `AttributeError: 'Mount' object has no attribute 'dependencies'`; with
+    them, the same route is silently skipped, as the docstring below now correctly claims.
     """
     found: list[tuple[str, str, bool]] = []
     for route_context in iter_route_contexts(app.routes):
@@ -46,13 +50,32 @@ def _protected_cases() -> list[tuple[str, str, bool]]:
             continue
         if "{" in path:  # path params need real ids; covered by their own feature tests
             continue
-        mount_requires_auth = any(dep.dependency is get_current_user for dep in route_context.dependencies)
+        if not methods:  # no HTTP methods to protect (Mount, WebSocketRoute, ...)
+            continue
+        dependencies = getattr(route_context, "dependencies", None) or []
+        mount_requires_auth = any(dep.dependency is get_current_user for dep in dependencies)
         for method in sorted(methods - {"HEAD", "OPTIONS"}):
             found.append((method, path, mount_requires_auth))
+    return found
+
+
+def test_protected_cases_are_collected() -> None:
+    """Guards `_protected_cases()` against silently going back to collecting nothing — the exact
+    defect that motivated switching to `iter_route_contexts` in the first place.
+
+    Deliberately a separate, non-parametrized test rather than assertions inside
+    `_protected_cases()` itself: that function's return value is also the argument to
+    `@pytest.mark.parametrize` below, which pytest evaluates at collection time. An assertion
+    failing there aborts the entire session — every test in every file, not just this one —
+    before anything runs. Measured: with `dependencies=[Depends(get_current_user)]` stripped from
+    the `main.py` mounting loop, an in-function assertion here produced `Interrupted: 1 error
+    during collection`, exit code 2, zero tests run. Moved out here, the equivalent regression is
+    one named failing test among the rest.
+    """
+    found = _protected_cases()
 
     assert found, "collected zero protected routes — iter_route_contexts may have changed shape"
     assert ("GET", "/v1/users/me", True) in found, "the one known protected route dropped out of collection"
-    return found
 
 
 @pytest.mark.parametrize(("method", "path", "mount_requires_auth"), _protected_cases())
@@ -60,18 +83,22 @@ async def test_every_non_auth_route_requires_a_token(
     client: AsyncClient, method: str, path: str, mount_requires_auth: bool
 ) -> None:
     """Two assertions guarding two different things for every non-allowlisted,
-    non-path-parameterized, method-bearing route: that `get_current_user` sits in the route's
-    mount-level dependency list, and that a request without a token actually gets a 401.
+    non-path-parameterized route that has at least one HTTP method: that `get_current_user` sits
+    in the route's mount-level dependency list, and that a request without a token actually gets
+    a 401.
 
     The first is what fails if `dependencies=[Depends(get_current_user)]` is dropped from the
     `main.py` mounting loop — some handlers (e.g. `GET /users/me`) also depend on
     `get_current_user` for their own data needs, which would otherwise mask that loss and leave
-    the second assertion passing for the wrong reason. The second is what fails if a route stops
-    enforcing auth at the handler level while the mount-level dependency stays in place.
+    the second assertion passing for the wrong reason (the handler's own dependency still 401s on
+    its own). The second assertion catches a different failure: a route that is reachable
+    without a token for any reason at all — today that means a router mounted outside the
+    protected loop entirely, bypassing the first assertion too since there'd be no mount-level
+    dependency list to check in the first place.
 
     Not covered by either: routes with a `{param}` in their path (skipped — need a real id,
-    covered by their own feature tests), and any future route with no HTTP methods at all (e.g.
-    a `Mount`), since there is nothing to iterate in that case.
+    covered by their own feature tests), and any route with no HTTP methods at all (e.g. a
+    `Mount`) — `_protected_cases()` skips those before either check runs.
     """
     assert mount_requires_auth, f"{method} {path} is mounted without get_current_user as a dependency"
 

@@ -8,13 +8,14 @@ from app.db import get_session
 from app.users import security
 from app.users.models import User
 
-# auto_error=False so a missing/empty header returns None instead of HTTPBearer raising its own
-# 401 (fastapi.security.http.HTTPBase.make_not_authenticated_error, fastapi 0.141.1 — both
-# auto_error branches are 401, never 403). The point of turning that off is the body, not the
-# status: every unauthenticated outcome then falls through to the single _UNAUTHENTICATED raise
-# below, so the detail string and headers stay under this module's control instead of FastAPI's
-# own "Not authenticated" leaking through for the one case (no header at all) it would otherwise
-# handle itself.
+# auto_error=False turns both of HTTPBearer's own raise sites into `return None` instead
+# (fastapi.security.http.HTTPBearer.__call__, fastapi 0.141.1: one site for a missing or
+# malformed Authorization header — including one with no space, so no scheme or credentials parse
+# out — the other for a header with a scheme other than "bearer"; both are 401 there too, never
+# 403). The point of turning that off is the body, not the status: every case it would otherwise
+# handle itself now falls through to the single _UNAUTHENTICATED raise below instead, so the
+# detail string and headers stay under this module's control rather than FastAPI's own
+# "Not authenticated" leaking through for some inputs and ours for others.
 _bearer = HTTPBearer(auto_error=False)
 
 _UNAUTHENTICATED = HTTPException(
