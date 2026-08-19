@@ -1,8 +1,10 @@
+import asyncio
 from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
 
+from app.media.providers import http as http_module
 from app.media.providers.errors import ProviderRateLimited, ProviderTimeout, ProviderUnavailable
 from app.media.providers.http import ProviderHTTPClient, RateLimiter
 
@@ -80,3 +82,70 @@ async def test_absent_rate_limit_headers_do_not_disable_the_provider():
     for _ in range(3):
         await client.request("GET", "/thing")
     assert calls == 3
+
+
+async def test_out_of_range_reset_header_does_not_raise():
+    """A reset header that IS a valid integer but out of datetime's representable range must
+    fail open to UNKNOWN, not escape as an untyped ValueError/OverflowError past every caller's
+    `except ProviderError`.
+    """
+    client = build_client(lambda request: httpx.Response(200, headers={REMAINING: "5", RESET: "99999999999999"}))
+    response = await client.request("GET", "/thing")
+    assert response.status_code == 200
+
+
+async def test_remaining_zero_without_reset_header_still_short_circuits():
+    """A missing reset header alongside remaining: 0 must not disable the limiter forever —
+    it must fall back to a bounded window instead of never firing check() again.
+    """
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, headers={REMAINING: "0"})
+
+    client = build_client(handler)
+    await client.request("GET", "/thing")
+    assert calls == 1
+
+    with pytest.raises(ProviderRateLimited):
+        await client.request("GET", "/thing")
+    assert calls == 1
+
+
+async def test_remaining_zero_with_delta_style_reset_still_short_circuits():
+    """A reset header expressed as delta-seconds (rather than absolute epoch) parses to an
+    epoch timestamp in 1970 — always in the past — which would otherwise leave `now >=
+    self._reset_at` permanently true and the limiter permanently dead.
+    """
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, headers={REMAINING: "0", RESET: "60"})
+
+    client = build_client(handler)
+    await client.request("GET", "/thing")
+    assert calls == 1
+
+    with pytest.raises(ProviderRateLimited):
+        await client.request("GET", "/thing")
+    assert calls == 1
+
+
+async def test_total_timeout_ceiling_becomes_provider_timeout(monkeypatch):
+    """httpx's read timeout bounds a single read operation, not the request as a whole, and
+    follow_redirects=True can compound it across hops. The wall-clock ceiling is what actually
+    bounds a slow-trickle upstream, and it must map to the same typed exception.
+    """
+    monkeypatch.setattr(http_module, "TOTAL_TIMEOUT_SECONDS", 0.05)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(0.2)
+        return httpx.Response(200)
+
+    client = build_client(handler)
+    with pytest.raises(ProviderTimeout):
+        await client.request("GET", "/thing")
