@@ -85,6 +85,32 @@ async def test_get_by_id_returns_none_on_404():
     assert await build_provider(handler).get_by_id("999999") is None
 
 
+async def test_search_raises_on_404_instead_of_returning_empty_page():
+    """A 404 on search has no "no such record" reading the way get_by_id's does — a search
+    endpoint has no single record to be missing. It means the endpoint moved or an edge refused
+    the request, so it must surface as ProviderUnavailable, not a silent empty result set.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"errors": [{"message": "Not Found"}]})
+
+    with pytest.raises(ProviderUnavailable):
+        await build_provider(handler).search("frieren", page=1)
+
+
+async def test_search_wraps_non_json_error_body_as_provider_unavailable():
+    """A Cloudflare block page or similar non-2xx, non-404 response with an HTML body must not
+    leak json.JSONDecodeError (a bare ValueError) past this layer — Task 3.7's search service
+    only catches ProviderError.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, text="<html>blocked</html>")
+
+    with pytest.raises(ProviderUnavailable):
+        await build_provider(handler).search("frieren", page=1)
+
+
 async def test_search_query_filters_adult_titles_and_pins_per_page():
     captured = {}
 
