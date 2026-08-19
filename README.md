@@ -9,8 +9,9 @@ no public profiles. Membership of a group *is* the relationship, which is what m
 possible: because everyone in a group can see everyone's exact progress, the app can tell you who is
 ahead on a show and how far.
 
-**Status:** early. The backend schema and migrations are in place; auth, the provider integrations,
-and the Android client are not built yet. See [Project status](#project-status).
+**Status:** early. The backend schema and migrations, auth, and the AniList/TMDB provider
+integrations with unified search are in place; the Android client is not built yet. See
+[Project status](#project-status).
 
 ## What it does
 
@@ -23,7 +24,10 @@ and the Android client are not built yet. See [Project status](#project-status).
 - **Get recommendations** from genre overlap weighted by your own scores.
 
 Data comes from **AniList** (anime, GraphQL) and **TMDB** (TV, REST), normalised behind a single
-provider interface so nothing downstream knows which one a title came from.
+provider interface so nothing downstream knows which one a title came from. `GET /v1/media/search`
+fans out to both live, on the request path, with a per-provider timeout — a slow or down provider
+degrades its own share of the results instead of failing the whole search. Every other read path
+stays database-only.
 
 ## Layout
 
@@ -31,7 +35,7 @@ A monorepo with two independently-pipelined projects.
 
 ```
 show-track/
-├── backend/     FastAPI · SQLAlchemy 2.0 (async) · Alembic · PostgreSQL
+├── backend/     FastAPI · SQLAlchemy 2.0 (async) · Alembic · PostgreSQL · httpx
 ├── android/     Kotlin · Jetpack Compose · Hilt · Retrofit · Room
 ├── .github/     backend-ci · android-ci · gitleaks
 └── .githooks/   commit-msg · pre-commit
@@ -67,7 +71,8 @@ cd backend
 uv venv
 uv pip install -r requirements-dev.txt
 
-cp .env.example .env          # fill in AniList/TMDB/FCM config locally
+cp .env.example .env          # fill in TMDB_API_KEY if you have one; every other value has a
+                               # working default or is already filled in
 docker compose up -d db       # PostgreSQL on :5432
 
 .venv/bin/alembic upgrade head    # REQUIRED before running the tests
@@ -79,6 +84,39 @@ connecting to a plausible-looking wrong database. `alembic upgrade head` is not 
 running tests: the suite runs against a real PostgreSQL schema built by the migrations, never by
 `metadata.create_all()`, so the migrations themselves are exercised rather than merely stored.
 
+**Settings** (`.env`, copied from `.env.example`):
+
+- `DATABASE_URL`, `SECRET_KEY`, `REGISTRATION_CODE` — required, no default; the app fails loudly at
+  startup rather than falling back to something plausible-looking but wrong.
+- `TMDB_API_KEY` — **optional**. Without it, `/v1/media/search` returns AniList (anime) results only
+  and reports `not_configured` for TMDB. AniList itself needs no key at all — that half works with
+  zero signup.
+- `LOG_LEVEL` (default `INFO`), `ENVIRONMENT` (default `local`) — optional, both already set in
+  `.env.example`.
+- `ACCESS_TOKEN_TTL_MINUTES` (default `30`), `REFRESH_TOKEN_TTL_DAYS` (default `30`) — optional, not
+  in `.env.example` since the defaults are fine to start with; set them to override.
+
+Every route except `/v1/auth/*` and `/health` requires a bearer access token, so the first working
+request is registering and logging in:
+
+```bash
+# invite_code is the REGISTRATION_CODE from your .env.
+curl -s -X POST localhost:8000/v1/auth/register \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"me","email":"me@example.com","password":"change-this-password","invite_code":"change-me"}'
+
+TOKEN=$(curl -s -X POST localhost:8000/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"me@example.com","password":"change-this-password"}' \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')
+
+curl -s -H "Authorization: Bearer $TOKEN" 'localhost:8000/v1/media/search?q=frieren'
+```
+
+Without a `TMDB_API_KEY`, that last response carries `"sources":{"anilist":"ok","tmdb":"not_configured"}`
+alongside AniList results — the degradation contract (§8 of the design doc) working, not just documented.
+`/docs` (Swagger UI) is the interactive alternative to curl for exploring the rest of the API.
+
 New migrations:
 
 ```bash
@@ -87,6 +125,29 @@ New migrations:
 
 Always open the generated file and read it against the model before committing. Autogenerate is a
 starting point, not an output to trust unread — notably, it cannot see a changed enum value set.
+
+**Recorded provider fixtures.** `backend/tests/fixtures/{anilist,tmdb}/*.json` are upstream responses
+captured by hand and committed; no test ever calls a live API. Two of them are the providers' published
+genre lists, and `tests/test_genre_mapping.py` checks the tables in `app/media/providers/genres.py`
+against *those recordings* rather than against the live endpoints — so an upstream adding a genre
+cannot turn CI red on its own schedule, and the tables only ever move as a deliberate commit.
+
+Re-record when an upstream changes its list:
+
+```bash
+# TMDB — record from an English response; TMDB localises genre names, which is why the table is
+# keyed by integer id.
+curl -s "https://api.themoviedb.org/3/genre/tv/list?api_key=$TMDB_API_KEY&language=en-US" \
+  > backend/tests/fixtures/tmdb/genre_tv_list.json
+
+# AniList — no key needed.
+curl -s https://graphql.anilist.co -H 'Content-Type: application/json' \
+  -d '{"query":"{ GenreCollection }"}' > backend/tests/fixtures/anilist/genre_collection.json
+```
+
+Then run `pytest`. A newly published genre fails `test_*_table_matches_the_published_list_exactly`
+until it is added to `genres.py` — mapped to a canonical genre, or mapped to nothing on purpose, in
+which case `test_only_the_deliberately_excluded_genres_map_to_nothing` has to name it too.
 
 ### Android
 
@@ -159,9 +220,10 @@ and both get worse the longer they wait.
 |---|---|---|
 | 0 | Foundations — FastAPI skeleton, structured logging, Alembic, Android skeleton, CI | done |
 | 1 | Data models — six tables, six migrations, async test harness | done |
-| 1.5 | Repository hygiene — credential guarding, this README | in progress |
-| 2 | Auth — JWT register/login, protected routes | next |
-| 3–4.5 | Providers, library CRUD, AniList import | |
+| 1.5 | Repository hygiene — credential guarding, this README | done |
+| 2 | Auth — JWT register/login, protected routes | done |
+| 3 | Providers — AniList + TMDB integration, unified search, media persistence | done |
+| 4–4.5 | Library CRUD, AniList import | next |
 | 5–7 | Sync worker, notifications, recommendations | |
 | 7.5 | Groups — membership, feed, reviews, shared watchlist | |
 | 8–9 | Android foundations and feature modules | |

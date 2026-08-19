@@ -21,3 +21,18 @@ def test_settings_requires_database_url(monkeypatch: pytest.MonkeyPatch, tmp_pat
 
     with pytest.raises(ValidationError, match="database_url"):
         Settings()
+
+
+def test_tmdb_api_key_defaults_to_none(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """Optional by design — a fresh clone must boot without a TMDB signup.
+
+    Same chdir-to-an-empty-directory guard as test_settings_requires_database_url above:
+    Settings reads `env_file=".env"` relative to the working directory, so without it the real
+    backend/.env would supply a value and this would pass or fail for the wrong reason.
+    """
+    monkeypatch.delenv("TMDB_API_KEY", raising=False)
+    monkeypatch.chdir(tmp_path)
+
+    settings = Settings(database_url="postgresql+asyncpg://x/y", secret_key="s", registration_code="r")
+
+    assert settings.tmdb_api_key is None

@@ -31,7 +31,10 @@ async def test_email_uniqueness_is_case_insensitive_and_preserves_case(db_sessio
     db_session.add(make_user(username="first", email="Doga@Example.com"))
     await db_session.flush()
 
-    stored = (await db_session.execute(select(User.email))).scalar_one()
+    # Scoped to the row this test inserted: the suite runs against a developer database that
+    # may already hold rows (the README walkthrough registers a user), so a bare `select` here
+    # would raise MultipleResultsFound for reasons unrelated to what is being asserted.
+    stored = (await db_session.execute(select(User.email).where(User.username == "first"))).scalar_one()
     assert stored == "Doga@Example.com"
 
     db_session.add(make_user(username="second", email="doga@example.com"))

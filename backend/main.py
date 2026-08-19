@@ -9,6 +9,8 @@ from app.db import dispose_engine
 from app.library import routes as library_routes
 from app.logging import setup_logging
 from app.media import routes as media_routes
+from app.media.providers import get_providers, reset_providers
+from app.media.providers.http import close_http_client
 from app.middleware import REQUEST_ID_HEADER, RequestIDMiddleware
 from app.notifications import routes as notifications_routes
 from app.recommendations import routes as recommendations_routes
@@ -30,11 +32,19 @@ setup_logging()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Startup does nothing — the engine builds lazily on first use. Shutdown releases the
-    connection pool so a reload or redeploy does not leak Postgres connections.
+    """Startup builds the provider registry; the database engine still builds lazily on first
+    use. Shutdown releases the database connection pool and the outbound HTTP pool, so a reload
+    or redeploy leaks neither.
     """
+    # Eager on purpose, unlike everything else here. build_registry logs the "TMDB_API_KEY is not
+    # set" warning, which is the whole mitigation for a mistyped variable name degrading search
+    # to AniList-only; emitted lazily it lands in the middle of request traffic hours after boot,
+    # where nobody is looking. A warning nobody reads is not a mitigation.
+    get_providers()
     yield
     await dispose_engine()
+    await close_http_client()
+    reset_providers()
 
 
 app = FastAPI(title="ShowTrack API", version="0.1.0", lifespan=lifespan)

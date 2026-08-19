@@ -1,0 +1,13 @@
+{
+  "data": {
+    "Media": {
+      "id": 21,
+      "title": {"romaji": "ONE PIECE", "english": "ONE PIECE"},
+      "startDate": {"year": 1999},
+      "genres": ["Action", "Adventure", "Comedy", "Drama", "Fantasy"],
+      "coverImage": {"large": "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx21.jpg"},
+      "status": "RELEASING",
+      "nextAiringEpisode": {"episode": 1122, "airingAt": 1755500400}
+    }
+  }
+}
