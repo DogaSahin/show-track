@@ -9,8 +9,9 @@ no public profiles. Membership of a group *is* the relationship, which is what m
 possible: because everyone in a group can see everyone's exact progress, the app can tell you who is
 ahead on a show and how far.
 
-**Status:** early. The backend schema and migrations are in place; auth, the provider integrations,
-and the Android client are not built yet. See [Project status](#project-status).
+**Status:** early. The backend schema and migrations, auth, and the AniList/TMDB provider
+integrations with unified search are in place; the Android client is not built yet. See
+[Project status](#project-status).
 
 ## What it does
 
@@ -70,7 +71,8 @@ cd backend
 uv venv
 uv pip install -r requirements-dev.txt
 
-cp .env.example .env          # fill in AniList/TMDB/FCM config locally
+cp .env.example .env          # fill in TMDB_API_KEY if you have one; every other value has a
+                               # working default or is already filled in
 docker compose up -d db       # PostgreSQL on :5432
 
 .venv/bin/alembic upgrade head    # REQUIRED before running the tests
@@ -87,7 +89,33 @@ running tests: the suite runs against a real PostgreSQL schema built by the migr
 - `DATABASE_URL`, `SECRET_KEY`, `REGISTRATION_CODE` — required, no default; the app fails loudly at
   startup rather than falling back to something plausible-looking but wrong.
 - `TMDB_API_KEY` — **optional**. Without it, `/v1/media/search` returns AniList (anime) results only
-  and reports `not_configured` for TMDB.
+  and reports `not_configured` for TMDB. AniList itself needs no key at all — that half works with
+  zero signup.
+- `LOG_LEVEL` (default `INFO`), `ENVIRONMENT` (default `local`) — optional, both already set in
+  `.env.example`.
+- `ACCESS_TOKEN_TTL_MINUTES` (default `30`), `REFRESH_TOKEN_TTL_DAYS` (default `30`) — optional, not
+  in `.env.example` since the defaults are fine to start with; set them to override.
+
+Every route except `/v1/auth/*` and `/health` requires a bearer access token, so the first working
+request is registering and logging in:
+
+```bash
+# invite_code is the REGISTRATION_CODE from your .env.
+curl -s -X POST localhost:8000/v1/auth/register \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"me","email":"me@example.com","password":"change-this-password","invite_code":"change-me"}'
+
+TOKEN=$(curl -s -X POST localhost:8000/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"me@example.com","password":"change-this-password"}' \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')
+
+curl -s -H "Authorization: Bearer $TOKEN" 'localhost:8000/v1/media/search?q=frieren'
+```
+
+Without a `TMDB_API_KEY`, that last response carries `"sources":{"anilist":"ok","tmdb":"not_configured"}`
+alongside AniList results — the degradation contract (§8 of the design doc) working, not just documented.
+`/docs` (Swagger UI) is the interactive alternative to curl for exploring the rest of the API.
 
 New migrations:
 
