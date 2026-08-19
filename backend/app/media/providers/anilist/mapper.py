@@ -51,16 +51,31 @@ def _status(raw_status: str | None) -> MediaStatus:
     return mapped
 
 
+def _airs_at(airing_at: int | None) -> datetime | None:
+    """Guarded for the same reason http.py's `_parse_reset_at` is: an integer that is perfectly
+    valid but outside `datetime`'s representable range raises ValueError, OverflowError or OSError
+    depending on platform. Not reachable today — GraphQL's `Int` is 32-bit, so `airingAt` is
+    bounded — but this is the same unguarded conversion of third-party bytes that this phase
+    already had a Critical about, and a mapper degrades a field rather than raising.
+    """
+    if airing_at is None:
+        return None
+    try:
+        return datetime.fromtimestamp(airing_at, tz=UTC)
+    except (ValueError, OverflowError, OSError):
+        logger.warning("unusable AniList airingAt %r; leaving airs_at unset", airing_at)
+        return None
+
+
 def _next_episode(raw: dict[str, Any] | None) -> NextEpisode | None:
     if not raw:
         return None
-    airing_at = raw.get("airingAt")
     return NextEpisode(
         # AniList models a cour as its own entity, so there is only ever one season — the same
         # domain assumption Episode.season_number's server_default of 1 encodes.
         season_number=1,
         number=raw["episode"],
-        airs_at=datetime.fromtimestamp(airing_at, tz=UTC) if airing_at is not None else None,
+        airs_at=_airs_at(raw.get("airingAt")),
     )
 
 

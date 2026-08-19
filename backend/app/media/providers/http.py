@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import math
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -63,9 +64,15 @@ def _parse_retry_after(response: httpx.Response) -> float | None:
     if raw is None:
         return None
     try:
-        return float(raw)
+        seconds = float(raw)
     except ValueError:
         return None
+    if not math.isfinite(seconds):
+        # "nan" and "inf" both parse as floats. Harmless while retry_after is only logged, but
+        # Phase 5's sync job is expected to sleep on it: NaN makes every comparison false and
+        # inf sleeps forever. Unknown is honest; a value that poisons arithmetic is not.
+        return None
+    return seconds
 
 
 class RateLimiter:

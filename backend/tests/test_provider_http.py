@@ -57,6 +57,17 @@ async def test_429_raises_with_retry_after_seconds():
     assert excinfo.value.retry_after == 42.0
 
 
+@pytest.mark.parametrize("raw", ["nan", "inf", "-inf"], ids=["nan", "inf", "negative-inf"])
+async def test_a_non_finite_retry_after_reads_as_unknown(raw: str):
+    """`float("nan")` and `float("inf")` parse without raising. Only logged today, but Phase 5
+    will sleep on this value: NaN makes every comparison false and inf sleeps forever.
+    """
+    client = build_client(lambda request: httpx.Response(429, headers={"Retry-After": raw}))
+    with pytest.raises(ProviderRateLimited) as excinfo:
+        await client.request("GET", "/thing")
+    assert excinfo.value.retry_after is None
+
+
 async def test_404_is_returned_not_raised():
     """A missing title is an ordinary answer; the provider decides what it means."""
     client = build_client(lambda request: httpx.Response(404))
