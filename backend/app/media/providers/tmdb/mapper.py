@@ -23,6 +23,12 @@ _STATUS_MAP = {
     "Returning Series": MediaStatus.AIRING,
     "Ended": MediaStatus.FINISHED,
     "Canceled": MediaStatus.FINISHED,
+    # NOT_YET_AIRED, though it is not unambiguous: TMDB also flips a mid-run show to "In
+    # Production" between seasons, and the pre-premiere reading is what drives the choice
+    # because it is by far the common case. This is safe only while Phase 5's sync job polls
+    # NOT_YET_AIRED as well as AIRING and skips only FINISHED. If it is ever narrowed to poll
+    # AIRING exclusively, this mapping strands every mid-run show in the same silent, permanent
+    # way a wrong FINISHED would (see the HIATUS note in anilist/mapper.py).
     "In Production": MediaStatus.NOT_YET_AIRED,
     "Planned": MediaStatus.NOT_YET_AIRED,
     "Pilot": MediaStatus.NOT_YET_AIRED,
@@ -58,9 +64,10 @@ def _airs_at(air_date: str | None) -> datetime | None:
         # imprecision: TV countdowns are day-accurate where anime countdowns are hour-accurate.
         return datetime.strptime(air_date, "%Y-%m-%d").replace(tzinfo=UTC)
     except ValueError:
-        # A malformed date (e.g. a truncated "2026-09") must not raise out of a mapper whose
-        # contract is that it is pure and total over provider input. The season/episode numbers
-        # are still real and worth keeping; only the timestamp is unknown.
+        # A malformed date (e.g. a truncated "2026-09") must not raise out of a mapper that is
+        # pure, and total over the date strings it is handed — not over the payload as a whole,
+        # where a missing `id`, `season_number` or `episode_number` still raises KeyError. The
+        # season/episode numbers are still real and worth keeping; only the timestamp is unknown.
         logger.warning("unparseable TMDB air_date %r; leaving airs_at unset", air_date)
         return None
 

@@ -126,6 +126,29 @@ New migrations:
 Always open the generated file and read it against the model before committing. Autogenerate is a
 starting point, not an output to trust unread — notably, it cannot see a changed enum value set.
 
+**Recorded provider fixtures.** `backend/tests/fixtures/{anilist,tmdb}/*.json` are upstream responses
+captured by hand and committed; no test ever calls a live API. Two of them are the providers' published
+genre lists, and `tests/test_genre_mapping.py` checks the tables in `app/media/providers/genres.py`
+against *those recordings* rather than against the live endpoints — so an upstream adding a genre
+cannot turn CI red on its own schedule, and the tables only ever move as a deliberate commit.
+
+Re-record when an upstream changes its list:
+
+```bash
+# TMDB — record from an English response; TMDB localises genre names, which is why the table is
+# keyed by integer id.
+curl -s "https://api.themoviedb.org/3/genre/tv/list?api_key=$TMDB_API_KEY&language=en-US" \
+  > backend/tests/fixtures/tmdb/genre_tv_list.json
+
+# AniList — no key needed.
+curl -s https://graphql.anilist.co -H 'Content-Type: application/json' \
+  -d '{"query":"{ GenreCollection }"}' > backend/tests/fixtures/anilist/genre_collection.json
+```
+
+Then run `pytest`. A newly published genre fails `test_*_table_matches_the_published_list_exactly`
+until it is added to `genres.py` — mapped to a canonical genre, or mapped to nothing on purpose, in
+which case `test_only_the_deliberately_excluded_genres_map_to_nothing` has to name it too.
+
 ### Android
 
 ```bash
