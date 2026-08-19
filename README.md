@@ -23,7 +23,10 @@ and the Android client are not built yet. See [Project status](#project-status).
 - **Get recommendations** from genre overlap weighted by your own scores.
 
 Data comes from **AniList** (anime, GraphQL) and **TMDB** (TV, REST), normalised behind a single
-provider interface so nothing downstream knows which one a title came from.
+provider interface so nothing downstream knows which one a title came from. `GET /v1/media/search`
+fans out to both live, on the request path, with a per-provider timeout — a slow or down provider
+degrades its own share of the results instead of failing the whole search. Every other read path
+stays database-only.
 
 ## Layout
 
@@ -31,7 +34,7 @@ A monorepo with two independently-pipelined projects.
 
 ```
 show-track/
-├── backend/     FastAPI · SQLAlchemy 2.0 (async) · Alembic · PostgreSQL
+├── backend/     FastAPI · SQLAlchemy 2.0 (async) · Alembic · PostgreSQL · httpx
 ├── android/     Kotlin · Jetpack Compose · Hilt · Retrofit · Room
 ├── .github/     backend-ci · android-ci · gitleaks
 └── .githooks/   commit-msg · pre-commit
@@ -78,6 +81,13 @@ docker compose up -d db       # PostgreSQL on :5432
 connecting to a plausible-looking wrong database. `alembic upgrade head` is not optional before
 running tests: the suite runs against a real PostgreSQL schema built by the migrations, never by
 `metadata.create_all()`, so the migrations themselves are exercised rather than merely stored.
+
+**Settings** (`.env`, copied from `.env.example`):
+
+- `DATABASE_URL`, `SECRET_KEY`, `REGISTRATION_CODE` — required, no default; the app fails loudly at
+  startup rather than falling back to something plausible-looking but wrong.
+- `TMDB_API_KEY` — **optional**. Without it, `/v1/media/search` returns AniList (anime) results only
+  and reports `not_configured` for TMDB.
 
 New migrations:
 
@@ -159,9 +169,10 @@ and both get worse the longer they wait.
 |---|---|---|
 | 0 | Foundations — FastAPI skeleton, structured logging, Alembic, Android skeleton, CI | done |
 | 1 | Data models — six tables, six migrations, async test harness | done |
-| 1.5 | Repository hygiene — credential guarding, this README | in progress |
-| 2 | Auth — JWT register/login, protected routes | next |
-| 3–4.5 | Providers, library CRUD, AniList import | |
+| 1.5 | Repository hygiene — credential guarding, this README | done |
+| 2 | Auth — JWT register/login, protected routes | done |
+| 3 | Providers — AniList + TMDB integration, unified search, media persistence | done |
+| 4–4.5 | Library CRUD, AniList import | next |
 | 5–7 | Sync worker, notifications, recommendations | |
 | 7.5 | Groups — membership, feed, reviews, shared watchlist | |
 | 8–9 | Android foundations and feature modules | |
