@@ -39,5 +39,9 @@ class MediaSearchResponse(BaseModel):
 
     items: list[MediaSummary]
     page: int
+    # True if any provider that ANSWERED reports more. A provider that timed out or errored
+    # contributes nothing here, so `has_more: false` alongside a non-ok entry in `sources` means
+    # "no more from the providers that answered", not "no more results exist". Clients deciding
+    # whether to retry should read `sources`, which is why that field is not merely diagnostic.
     has_more: bool
     sources: dict[MediaSource, SourceStatus]

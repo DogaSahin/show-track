@@ -15,9 +15,11 @@ CONNECT_TIMEOUT_SECONDS = 3.0
 READ_TIMEOUT_SECONDS = 5.0
 # Wall-clock ceiling on a single request. httpx's read timeout is per read operation, not a
 # total, and follow_redirects=True can compound it across up to 20 hops — a slow-trickle
-# upstream could otherwise hold a request open indefinitely. Sits above READ_TIMEOUT_SECONDS
-# and below the 6s guard the search service adds on top (Task 3.7), so search stays snappy
-# while background callers still get a hard ceiling.
+# upstream could otherwise hold a request open indefinitely. Sits above READ_TIMEOUT_SECONDS.
+# On the search path this 8s ceiling is unreachable in practice: Task 3.7's search service
+# wraps each provider call in its own 6s asyncio.timeout, which fires first and surfaces as
+# SourceStatus.TIMEOUT. This constant is what actually bounds background callers with no outer
+# guard of their own, such as Phase 5's sync job.
 TOTAL_TIMEOUT_SECONDS = 8.0
 # Fallback window used when a rate limiter observes remaining == 0 but cannot trust the
 # provider's reset time (missing, unparseable, out-of-range, or a delta-seconds header

@@ -106,6 +106,27 @@ async def test_one_provider_failing_still_returns_the_others_results(auth_client
     assert body["sources"] == {"anilist": "ok", "tmdb": "error"}
 
 
+async def test_an_unexpected_exception_is_caught_not_propagated(auth_client, use_providers):
+    """Regression for the CRITICAL finding: _search_one must never let a non-ProviderError
+    escape into asyncio.gather, or one provider's bug 500s the whole request and discards the
+    healthy sibling's page. KeyError stands in for the real shapes that trigger this (a mapper
+    indexing a missing "id", a 200 body that is a bare JSON array reaching `.get()`).
+    """
+    use_providers(
+        {
+            MediaSource.ANILIST: anilist(["a1"]),
+            MediaSource.TMDB: tmdb([], error=KeyError("id")),
+        }
+    )
+
+    response = await auth_client.get("/v1/media/search", params={"q": "x"})
+    body = response.json()
+
+    assert response.status_code == 200
+    assert [item["title"] for item in body["items"]] == ["a1"]
+    assert body["sources"] == {"anilist": "ok", "tmdb": "error"}
+
+
 @pytest.mark.parametrize(
     ("error", "expected"),
     [(ProviderTimeout("slow"), "timeout"), (ProviderRateLimited(retry_after=5), "rate_limited")],
