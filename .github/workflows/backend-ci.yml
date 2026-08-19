@@ -42,6 +42,10 @@ jobs:
 
     env:
       DATABASE_URL: postgresql+asyncpg://showtrack:showtrack@localhost:5432/showtrack
+      # Throwaway CI-only values, not credentials — nothing they protect exists outside this
+      # job, so there is nothing to rotate.
+      SECRET_KEY: ci-test-secret-not-used-outside-ci
+      REGISTRATION_CODE: ci-test-code
 
     steps:
       - uses: actions/checkout@v4

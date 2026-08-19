@@ -29,6 +29,8 @@ services:
       DATABASE_URL: postgresql+asyncpg://showtrack:showtrack@db:5432/showtrack
       LOG_LEVEL: INFO
       ENVIRONMENT: local
+      SECRET_KEY: change-me-use-openssl-rand-hex-32
+      REGISTRATION_CODE: change-me
     ports:
       - "8000:8000"
     volumes:
