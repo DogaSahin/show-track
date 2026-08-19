@@ -39,6 +39,11 @@ class Media(UUIDPrimaryKeyMixin, Base):
     source: Mapped[MediaSource] = mapped_column(enum_column(MediaSource, "source"), nullable=False)
     external_id: Mapped[str] = mapped_column(String(64), nullable=False)
     title: Mapped[str] = mapped_column(Text, nullable=False)
+    # First air year. Nullable because both providers omit it for unannounced titles. Added in
+    # Phase 3 rather than later because search results need it to disambiguate (there are three
+    # "Fullmetal Alchemist" entries) — and while `media` is still empty this is a pure DDL add,
+    # where after Phase 4 it would need a backfill re-sync of every row.
+    year: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Canonical genre names, not raw provider strings. Provider -> canonical mapping is
     # Phase 3.4's job, at the provider boundary.
     #

@@ -1,8 +1,10 @@
+import uuid
+from datetime import datetime
 from enum import StrEnum
 
 from pydantic import BaseModel
 
-from app.media.models import MediaSource, MediaType
+from app.media.models import MediaSource, MediaStatus, MediaType
 
 
 class SourceStatus(StrEnum):
@@ -29,6 +31,17 @@ class MediaSummary(BaseModel):
     year: int | None
     genres: list[str]
     cover_image_url: str | None
+
+
+class MediaDetail(MediaSummary):
+    """A persisted title. Unlike MediaSummary it has an internal id, because a row exists."""
+
+    id: uuid.UUID
+    status: MediaStatus
+    next_episode_season: int | None
+    next_episode_number: int | None
+    next_episode_date: datetime | None
+    days_until_next_episode: int | None
 
 
 class MediaSearchResponse(BaseModel):

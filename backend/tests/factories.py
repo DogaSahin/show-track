@@ -25,7 +25,9 @@ def make_media(**overrides: object) -> Media:
         "source": MediaSource.ANILIST,
         "external_id": "16498",
         "title": "Shingeki no Kyojin",
-        "genres": ["Action", "Drama"],
+        # Canonical names, matching what the provider boundary now writes. Raw provider strings
+        # would make fixtures disagree with production rows.
+        "genres": ["action", "drama"],
         "status": MediaStatus.FINISHED,
     }
     return Media(**{**defaults, **overrides})
