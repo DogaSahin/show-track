@@ -1,0 +1,23 @@
+{
+  "data": {
+    "Page": {
+      "pageInfo": {"hasNextPage": true},
+      "media": [
+        {
+          "id": 16498,
+          "title": {"romaji": "Shingeki no Kyojin", "english": "Attack on Titan"},
+          "startDate": {"year": 2013},
+          "genres": ["Action", "Drama", "Fantasy"],
+          "coverImage": {"large": "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx16498.jpg"}
+        },
+        {
+          "id": 154587,
+          "title": {"romaji": "Sousou no Frieren", "english": null},
+          "startDate": {"year": null},
+          "genres": ["Adventure", "Drama", "Fantasy"],
+          "coverImage": {"large": null}
+        }
+      ]
+    }
+  }
+}
