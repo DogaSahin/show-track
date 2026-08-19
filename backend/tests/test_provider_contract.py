@@ -22,7 +22,7 @@ from app.media.models import MediaSource, MediaStatus, MediaType
 from app.media.providers import build_registry, get_providers, reset_providers
 from app.media.providers.anilist.client import AniListProvider
 from app.media.providers.base import MediaProvider, ProviderMedia, ProviderSearchPage
-from app.media.providers.errors import ProviderRateLimited, ProviderTimeout
+from app.media.providers.errors import ProviderError, ProviderRateLimited, ProviderTimeout
 from app.media.providers.genres import CANONICAL_GENRES
 from app.media.providers.http import ProviderHTTPClient, RateLimiter
 from app.media.providers.tmdb.client import TMDBProvider
@@ -152,6 +152,33 @@ async def test_a_hanging_upstream_raises_provider_timeout(case: Case, method: st
 
     provider = build(case, handler)
     with pytest.raises(ProviderTimeout):
+        if method == "search":
+            await provider.search("anything", page=1)
+        else:
+            await provider.get_by_id(case.known_id)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [b"[]", b'{"data": "\xff\xfe"}'],
+    ids=["json-array", "invalid-utf8"],
+)
+@pytest.mark.parametrize("method", ["search", "get_by_id"])
+async def test_an_unreadable_200_body_raises_a_provider_error(case: Case, method: str, body: bytes):
+    """base.py promises both methods raise ProviderError subclasses. Two 200 bodies break that
+    promise if a client trusts its own type annotation instead of checking:
+
+    - a JSON **array** parses fine and then raises AttributeError/KeyError/TypeError on the first
+      `.get()` or mapper index;
+    - an **invalid-UTF-8** body raises UnicodeDecodeError from `Response.json()`, which is a
+      ValueError but *not* a json.JSONDecodeError, so a client catching the narrower class lets
+      it through.
+
+    Asserted here rather than per provider because the promise is the ABC's, so a provider not
+    yet written inherits the assertion by appearing in CASES.
+    """
+    provider = build(case, lambda request: httpx.Response(200, content=body))
+    with pytest.raises(ProviderError):
         if method == "search":
             await provider.search("anything", page=1)
         else:

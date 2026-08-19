@@ -1,4 +1,3 @@
-import json
 from typing import Any, ClassVar
 
 from app.media.models import MediaSource, MediaType
@@ -32,7 +31,13 @@ class AniListProvider(MediaProvider):
             # the request, so returning an empty page would hide that as a permanent, silent
             # zero-results answer instead of surfacing it as the outage it is.
             raise ProviderUnavailable("AniList search endpoint returned 404")
-        return mapper.to_search_page(body["data"]["Page"])
+        raw_page = body["data"].get("Page")
+        if not isinstance(raw_page, dict):
+            # Same reasoning as the 404 above: a body with no Page object is not "zero results",
+            # it is a response we cannot read, and mapping it would answer with a silent empty
+            # page instead of the failure it is.
+            raise ProviderUnavailable("AniList search response carried no Page object")
+        return mapper.to_search_page(raw_page)
 
     async def get_by_id(self, external_id: str) -> ProviderMedia | None:
         try:
@@ -42,14 +47,22 @@ class AniListProvider(MediaProvider):
             # same answer as a 404 rather than an error.
             return None
         body = await self._post(MEDIA_QUERY, {"id": media_id})
-        if body is None or body.get("data", {}).get("Media") is None:
+        if body is None:
             return None
-        return mapper.to_media(body["data"]["Media"])
+        # `data` is guaranteed to be an object by _post, so this reads it the same way search()
+        # does. AniList answers a missing title with a 404, but `data: {"Media": null}` is the
+        # documented GraphQL shape for the same thing and costs nothing to honour.
+        raw_media = body["data"].get("Media")
+        if not isinstance(raw_media, dict):
+            return None
+        return mapper.to_media(raw_media)
 
     async def _post(self, query: str, variables: dict[str, Any]) -> dict[str, Any] | None:
         """None means "404" — callers decide what that means: get_by_id treats it as "no such
         record", search() cannot (a search endpoint has no record to be missing) and raises.
-        Anything else returned here is a dict with a populated `data` key.
+        Anything else returned here is a JSON object carrying no `errors` entry and a `data`
+        object — checked here rather than assumed, so both callers can index `body["data"]`
+        instead of each inventing its own reading of the same untrusted body.
         """
         response = await self._client.request("POST", ANILIST_URL, json={"query": query, "variables": variables})
         # 404 is checked BEFORE the errors array, not after: AniList's 404 body also carries an
@@ -57,13 +70,22 @@ class AniListProvider(MediaProvider):
         if response.status_code == 404:
             return None
         try:
-            body: dict[str, Any] = response.json()
-        except json.JSONDecodeError as exc:
-            # A non-2xx, non-404 response (a Cloudflare block page, a plain-text error page) has
-            # no JSON body. Left unwrapped, json.JSONDecodeError is a ValueError, not a
-            # ProviderError, so it would escape past Task 3.7's `except ProviderError` and
-            # surface as an unhandled 500 instead of a mapped provider failure.
-            raise ProviderUnavailable(f"AniList returned {response.status_code} with a non-JSON body") from exc
+            body: Any = response.json()
+        except ValueError as exc:
+            # The shared transport already turns every non-2xx, non-404 response into
+            # ProviderUnavailable, so what reaches here is a 2xx carrying a body we cannot read:
+            # a proxy interstitial, a truncated payload, a mis-encoded one. `ValueError`, not
+            # `json.JSONDecodeError`: httpx calls json.loads on raw *bytes*, so an invalid-UTF-8
+            # body raises UnicodeDecodeError — also a ValueError, but not a JSONDecodeError.
+            # Either one left unwrapped escapes Task 3.7's `except ProviderError` as a 500.
+            raise ProviderUnavailable(f"AniList returned {response.status_code} with an unreadable body") from exc
+        if not isinstance(body, dict):
+            # An annotation is not a check. A 200 whose body is a JSON array parses fine and then
+            # raises AttributeError on the first `.get()` — untyped, out of a method whose
+            # contract is that it raises ProviderError subclasses.
+            raise ProviderUnavailable("AniList returned a JSON body that is not an object")
         if body.get("errors"):
             raise ProviderUnavailable(f"AniList returned errors: {body['errors']}")
+        if not isinstance(body.get("data"), dict):
+            raise ProviderUnavailable("AniList returned a body with no data object")
         return body

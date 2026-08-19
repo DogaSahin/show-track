@@ -1,4 +1,3 @@
-import json
 from typing import Any, ClassVar
 
 from app.media.models import MediaSource, MediaType
@@ -46,10 +45,18 @@ class TMDBProvider(MediaProvider):
         if response.status_code == 404:
             return None
         try:
-            data: dict[str, Any] = response.json()
-        except json.JSONDecodeError as exc:
+            data: Any = response.json()
+        except ValueError as exc:
             # The shared transport already turns non-2xx, non-404 responses into
             # ProviderUnavailable before this is reached, so this covers the remaining case: a
-            # 2xx response carrying a non-JSON body (a proxy interstitial).
-            raise ProviderUnavailable(f"TMDB returned {response.status_code} with a non-JSON body") from exc
+            # 2xx response carrying a body we cannot read (a proxy interstitial). `ValueError`,
+            # not `json.JSONDecodeError`: httpx calls json.loads on raw *bytes*, so an
+            # invalid-UTF-8 body raises UnicodeDecodeError — also a ValueError, but not a
+            # JSONDecodeError, and it would escape untyped past Task 3.7's `except ProviderError`.
+            raise ProviderUnavailable(f"TMDB returned {response.status_code} with an unreadable body") from exc
+        if not isinstance(data, dict):
+            # An annotation is not a check. A 200 whose body is a JSON array parses fine and then
+            # raises out of the mapper as AttributeError or TypeError — untyped, out of methods
+            # whose contract (base.py) is that they raise ProviderError subclasses.
+            raise ProviderUnavailable("TMDB returned a JSON body that is not an object")
         return data
