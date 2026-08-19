@@ -70,6 +70,15 @@ async def test_get_or_create_returns_none_when_upstream_has_no_such_title(db_ses
     assert await service.get_or_create_media(db_session, {MediaSource.TMDB: provider}, ref) is None
 
 
+async def test_get_or_create_returns_none_when_the_source_has_no_configured_provider(db_session):
+    """An absent TMDB_API_KEY leaves TMDB out of the registry entirely, so the lookup misses.
+    That must read as None — the same answer as "upstream has no such title" — rather than a
+    KeyError out of a read path.
+    """
+    ref = MediaRef(source=MediaSource.TMDB, external_id="999999999")
+    assert await service.get_or_create_media(db_session, {}, ref) is None
+
+
 async def test_detail_endpoint_returns_the_row(auth_client, db_session):
     media = make_media(next_episode_date=datetime.now(tz=UTC) + timedelta(days=3))
     db_session.add(media)

@@ -66,6 +66,16 @@ def test_hiatus_maps_to_airing_not_finished():
     assert mapper.to_media(raw).status is MediaStatus.AIRING
 
 
+def test_unknown_status_falls_back_to_airing():
+    """Same rule HIATUS encodes, applied to a status AniList has not shipped yet. Prefer the
+    value that keeps Phase 5's sync job polling: a wrong FINISHED is silent and permanent, a
+    wrong AIRING costs one wasted request per cycle. The fallback is the load-bearing half —
+    HIATUS is only the one case we happen to know about.
+    """
+    raw = load_fixture("anilist", "media_detail")["data"]["Media"] | {"status": "REBOOTING"}
+    assert mapper.to_media(raw).status is MediaStatus.AIRING
+
+
 async def test_graphql_error_body_with_http_200_raises():
     """GraphQL signals application errors in the body, not the status line. A client that reads
     only status_code parses a failed query as an empty result set.
