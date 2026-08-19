@@ -9,6 +9,7 @@ from app.db import dispose_engine
 from app.library import routes as library_routes
 from app.logging import setup_logging
 from app.media import routes as media_routes
+from app.media.providers import reset_providers
 from app.media.providers.http import close_http_client
 from app.middleware import REQUEST_ID_HEADER, RequestIDMiddleware
 from app.notifications import routes as notifications_routes
@@ -37,6 +38,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     yield
     await dispose_engine()
     await close_http_client()
+    reset_providers()
 
 
 app = FastAPI(title="ShowTrack API", version="0.1.0", lifespan=lifespan)
