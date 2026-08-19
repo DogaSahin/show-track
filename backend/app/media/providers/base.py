@@ -1,0 +1,88 @@
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from datetime import datetime
+from typing import ClassVar
+
+from app.media.models import MediaSource, MediaStatus, MediaType
+
+
+@dataclass(frozen=True, slots=True)
+class MediaRef:
+    """Provider-scoped identity — the only way to name a title that has no database row yet.
+
+    This one type is simultaneously the identity of a search result, the body of
+    POST /v1/library, and the argument to get_or_create_media(). Without it those three grow
+    independent (source, external_id) pairs that drift apart.
+    """
+
+    source: MediaSource
+    external_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class NextEpisode:
+    season_number: int
+    number: int
+    # tz-aware. TMDB supplies a date only, so TMDB values are midnight UTC — fabricated
+    # precision, documented in the spec. AniList supplies a real airing timestamp.
+    airs_at: datetime | None
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderMediaSummary:
+    """What search returns. Thinner than ProviderMedia because TMDB's /search/tv physically
+    cannot fill the rest: it returns no `status` and no `next_episode_to_air`.
+    """
+
+    ref: MediaRef
+    type: MediaType
+    title: str
+    year: int | None
+    genres: tuple[str, ...]  # canonical names, already mapped at the provider boundary
+    cover_image_url: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderMedia:
+    """What detail returns."""
+
+    ref: MediaRef
+    type: MediaType
+    title: str
+    year: int | None
+    genres: tuple[str, ...]
+    cover_image_url: str | None
+    status: MediaStatus
+    next_episode: NextEpisode | None
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderSearchPage:
+    items: tuple[ProviderMediaSummary, ...]
+    # Not derivable from len(items): a provider can return a full page and still be the last one.
+    has_more: bool
+
+
+class MediaProvider(ABC):
+    """One external source of titles, normalized.
+
+    An ABC rather than a Protocol: providers share a constructor taking the HTTP client, and a
+    future batched get_many() wants a default implementation that loops with AniList overriding
+    it (one GraphQL query can fetch many ids; TMDB's REST API cannot). Protocols carry no
+    defaults. get_many() is not defined here — Phase 5 does not exist yet.
+
+    There is deliberately no get_next_episode(): both upstreams return the next episode inside
+    the detail payload, so a separate method would issue a second identical request per title
+    per sync cycle, and requests are what a rate limit counts.
+    """
+
+    source: ClassVar[MediaSource]
+    media_type: ClassVar[MediaType]
+
+    @abstractmethod
+    async def search(self, query: str, page: int) -> ProviderSearchPage:
+        """Page 1-indexed. Raises ProviderError subclasses; never returns a partial page."""
+
+    @abstractmethod
+    async def get_by_id(self, external_id: str) -> ProviderMedia | None:
+        """None when the provider has no such title. Raises ProviderError subclasses otherwise."""
