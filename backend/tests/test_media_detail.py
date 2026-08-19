@@ -1,5 +1,5 @@
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import select
@@ -79,6 +79,8 @@ async def test_detail_endpoint_returns_the_row(auth_client, db_session):
 
     assert body["title"] == media.title
     assert body["days_until_next_episode"] == 3
+    assert body["status"] == media.status.value
+    assert body["year"] == media.year
 
 
 async def test_detail_endpoint_404s_for_an_unknown_id(auth_client):
@@ -102,3 +104,15 @@ def test_days_until_next_episode(delta, expected):
     now = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
     next_date = now + delta if delta is not None else None
     assert service.days_until(next_date, now) == expected
+
+
+def test_days_until_normalizes_non_utc_timezones():
+    """`.date()` reads the datetime's own tzinfo, not UTC — without normalizing first, a
+    non-UTC-but-equal instant would silently shift the answer by a day.
+    """
+    now = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+    plus_five = timezone(timedelta(hours=5))
+    # Same instant as `now + 2 days` in UTC, just expressed in a +05:00 offset.
+    next_date_non_utc = (now + timedelta(days=2)).astimezone(plus_five)
+
+    assert service.days_until(next_date_non_utc, now) == service.days_until(now + timedelta(days=2), now)

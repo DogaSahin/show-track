@@ -3,7 +3,7 @@ import logging
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from itertools import zip_longest
 
 from sqlalchemy import select
@@ -126,10 +126,17 @@ def days_until(next_date: datetime | None, now: datetime) -> int | None:
     A countdown should say "1" for tomorrow even when tomorrow is two hours away. Computed on
     the server so "3 days" means the same thing regardless of the device's clock; the accepted
     cost is that a user far from UTC can see the boundary shift by a day.
+
+    `.date()` reads the date in the datetime's OWN tzinfo, not in UTC, so both inputs are
+    normalized with `.astimezone(UTC)` first — without it "in UTC" would hold only by
+    convention (true today because asyncpg returns `timestamptz` as UTC-aware and both
+    providers build `airs_at` with `tzinfo=UTC`), a non-UTC aware datetime would silently shift
+    the answer by a day, and a naive datetime would not even raise: `date - date` is
+    timezone-free, so it would quietly return a plausible but unanchored number.
     """
     if next_date is None:
         return None
-    return max((next_date.date() - now.date()).days, 0)
+    return max((next_date.astimezone(UTC).date() - now.astimezone(UTC).date()).days, 0)
 
 
 async def _select_by_ref(session: AsyncSession, ref: MediaRef) -> Media | None:
@@ -161,6 +168,12 @@ async def get_or_create_media(
     Insert-once: an existing row is returned untouched and costs no provider request. Refreshing
     here would put unpredictable third-party latency on a read path and give freshness two
     owners.
+
+    `None` currently collapses three different outcomes into one sentinel: the source has no
+    configured provider, the upstream has no such title, and — see the race-fallback comment
+    below — a genuine race where a concurrent insert exists but is not yet visible. Phase 4's
+    `POST /v1/library`, the first caller, must split these apart before it can tell a plain
+    404 from a retryable 409.
     """
     existing = await _select_by_ref(session, ref)
     if existing is not None:
@@ -185,7 +198,13 @@ async def get_or_create_media(
     )
     media_id = await session.scalar(statement)
     if media_id is None:
-        # A concurrent insert won the race; the row exists now.
+        # ON CONFLICT DO NOTHING returned no row, so a concurrent transaction holds a
+        # conflicting insert. Postgres does NOT block on or lock that row for DO NOTHING
+        # (unlike DO UPDATE, which blocks until the other transaction resolves), and this
+        # SELECT runs at READ COMMITTED, so it cannot see an uncommitted sibling either: this
+        # can legitimately return None for a title that exists moments later. Unreachable until
+        # Phase 4 adds the first caller; resolving it is a Phase 4 decision, because the fix and
+        # the None-sentinel split above have to be chosen together.
         return await _select_by_ref(session, ref)
     return await session.get(Media, media_id)
 
