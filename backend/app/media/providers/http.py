@@ -175,6 +175,16 @@ class ProviderHTTPClient:
             # Never log the full URL: TMDB's API key travels in the query string.
             logger.warning("provider rate limited %s; retry_after=%s", method, retry_after)
             raise ProviderRateLimited(retry_after=retry_after)
-        if response.status_code >= 500:
+        if response.status_code == 404:
+            # A missing resource is an ordinary answer (get_by_id returns None for it); the
+            # provider client decides what 404 means, not this shared layer.
+            return response
+        if response.status_code >= 400:
+            # Covers 4xx other than 429/404 as well as 5xx. TMDB's invalid-key response is a 401
+            # carrying a *valid* JSON body — {"success": false, "status_code": 7, ...} — so a
+            # caller that only checks whether json() parses would read it as an empty result
+            # instead of a failure. A status guard here, ahead of any body parsing, is what
+            # makes a revoked/mistyped key a raised ProviderUnavailable instead of a silent
+            # empty page.
             raise ProviderUnavailable(f"{method} {url} returned {response.status_code}")
         return response

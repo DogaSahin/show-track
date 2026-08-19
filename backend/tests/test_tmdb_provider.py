@@ -1,9 +1,11 @@
 from datetime import UTC, datetime
 
 import httpx
+import pytest
 
 from app.media.models import MediaSource, MediaStatus, MediaType
 from app.media.providers.base import MediaRef
+from app.media.providers.errors import ProviderUnavailable
 from app.media.providers.http import ProviderHTTPClient, RateLimiter
 from app.media.providers.tmdb import mapper
 from app.media.providers.tmdb.client import TMDBProvider
@@ -63,6 +65,18 @@ def test_detail_mapper_returns_none_next_episode_when_absent():
     assert mapper.to_media(raw).next_episode is None
 
 
+def test_detail_mapper_tolerates_a_malformed_air_date():
+    """A mapper is supposed to be pure and total over provider input — a truncated date must
+    not raise out of it. The season/episode numbers are still real and worth keeping.
+    """
+    raw = load_fixture("tmdb", "media_detail") | {
+        "next_episode_to_air": {"season_number": 4, "episode_number": 1, "air_date": "2026-09"}
+    }
+    media = mapper.to_media(raw)
+    assert media.next_episode is not None
+    assert media.next_episode.airs_at is None
+
+
 def test_unknown_status_falls_back_to_airing():
     """Prefer the value that keeps Phase 5's sync job polling. A wrong FINISHED is silent and
     permanent; a wrong AIRING costs one wasted request per cycle.
@@ -75,13 +89,38 @@ async def test_get_by_id_returns_none_on_404():
     assert await build_provider(lambda request: httpx.Response(404, json={})).get_by_id("0") is None
 
 
-async def test_api_key_is_sent_and_search_params_pass_through():
-    captured = {}
+async def test_search_raises_on_404_instead_of_returning_an_empty_page():
+    """TMDB returns 404 for any unrecognized path, not just missing records. A search endpoint
+    has no single record to be missing, so a typo'd route or a v3-to-v4 deprecation must surface
+    as an outage rather than a permanent, silent zero-results page.
+    """
+    with pytest.raises(ProviderUnavailable):
+        await build_provider(lambda request: httpx.Response(404, json={})).search("witcher", page=1)
+
+
+async def test_search_raises_on_invalid_key_response_instead_of_returning_an_empty_page():
+    """TMDB's invalid-key response is a 401 with a well-formed JSON body, so a page that only
+    checks whether the body parses would silently read a revoked key as zero results.
+    """
 
     def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, json={"success": False, "status_code": 7, "status_message": "Invalid API key"})
+
+    with pytest.raises(ProviderUnavailable):
+        await build_provider(handler).search("witcher", page=1)
+
+
+async def test_api_key_is_sent_and_search_params_pass_through():
+    captured = {}
+    captured_path = None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal captured_path
         captured.update(dict(request.url.params))
+        captured_path = request.url.path
         return httpx.Response(200, json=load_fixture("tmdb", "search_page"))
 
     await build_provider(handler).search("witcher", page=2)
 
     assert captured == {"query": "witcher", "page": "2", "api_key": "dummy-key"}
+    assert captured_path == "/3/search/tv", "a wrong path must be visible in the suite, not just in production"

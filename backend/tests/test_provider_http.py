@@ -34,6 +34,22 @@ async def test_server_error_becomes_provider_unavailable():
         await client.request("GET", "/thing")
 
 
+async def test_401_becomes_provider_unavailable_even_with_a_valid_json_body():
+    """TMDB's invalid-key response is a 401 carrying well-formed JSON
+    ({"success": false, "status_code": 7, ...}) — a parse-only guard would never catch it. This
+    must be a status check, not a JSON-decode check.
+    """
+    client = build_client(lambda request: httpx.Response(401, json={"success": False, "status_code": 7}))
+    with pytest.raises(ProviderUnavailable):
+        await client.request("GET", "/thing")
+
+
+async def test_403_becomes_provider_unavailable():
+    client = build_client(lambda request: httpx.Response(403, text="<html>blocked</html>"))
+    with pytest.raises(ProviderUnavailable):
+        await client.request("GET", "/thing")
+
+
 async def test_429_raises_with_retry_after_seconds():
     client = build_client(lambda request: httpx.Response(429, headers={"Retry-After": "42"}))
     with pytest.raises(ProviderRateLimited) as excinfo:

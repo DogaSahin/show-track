@@ -50,16 +50,28 @@ def _status(raw_status: str | None) -> MediaStatus:
     return mapped
 
 
+def _airs_at(air_date: str | None) -> datetime | None:
+    if not air_date:
+        return None
+    try:
+        # TMDB gives day granularity only, so the time is fabricated as midnight UTC. Accepted
+        # imprecision: TV countdowns are day-accurate where anime countdowns are hour-accurate.
+        return datetime.strptime(air_date, "%Y-%m-%d").replace(tzinfo=UTC)
+    except ValueError:
+        # A malformed date (e.g. a truncated "2026-09") must not raise out of a mapper whose
+        # contract is that it is pure and total over provider input. The season/episode numbers
+        # are still real and worth keeping; only the timestamp is unknown.
+        logger.warning("unparseable TMDB air_date %r; leaving airs_at unset", air_date)
+        return None
+
+
 def _next_episode(raw: dict[str, Any] | None) -> NextEpisode | None:
     if not raw:
         return None
-    air_date = raw.get("air_date")
     return NextEpisode(
         season_number=raw["season_number"],
         number=raw["episode_number"],
-        # TMDB gives day granularity only, so the time is fabricated as midnight UTC. Accepted
-        # imprecision: TV countdowns are day-accurate where anime countdowns are hour-accurate.
-        airs_at=datetime.strptime(air_date, "%Y-%m-%d").replace(tzinfo=UTC) if air_date else None,
+        airs_at=_airs_at(raw.get("air_date")),
     )
 
 

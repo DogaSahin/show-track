@@ -1,7 +1,9 @@
+import json
 from typing import Any, ClassVar
 
 from app.media.models import MediaSource, MediaType
 from app.media.providers.base import MediaProvider, ProviderMedia, ProviderSearchPage
+from app.media.providers.errors import ProviderUnavailable
 from app.media.providers.http import ProviderHTTPClient
 from app.media.providers.tmdb import mapper
 
@@ -26,7 +28,11 @@ class TMDBProvider(MediaProvider):
     async def search(self, query: str, page: int) -> ProviderSearchPage:
         raw = await self._get("/search/tv", {"query": query, "page": page})
         if raw is None:
-            return ProviderSearchPage(items=(), has_more=False)
+            # Unlike get_by_id, a 404 here has no "no such record" reading — TMDB returns 404
+            # for any unrecognized path, so a typo'd route, a v3-to-v4 deprecation, or an edge
+            # refusal would otherwise all read as a permanent, silent zero-results page instead
+            # of the outage they are.
+            raise ProviderUnavailable("TMDB search endpoint returned 404")
         return mapper.to_search_page(raw)
 
     async def get_by_id(self, external_id: str) -> ProviderMedia | None:
@@ -39,5 +45,11 @@ class TMDBProvider(MediaProvider):
         )
         if response.status_code == 404:
             return None
-        data: dict[str, Any] = response.json()
+        try:
+            data: dict[str, Any] = response.json()
+        except json.JSONDecodeError as exc:
+            # The shared transport already turns non-2xx, non-404 responses into
+            # ProviderUnavailable before this is reached, so this covers the remaining case: a
+            # 2xx response carrying a non-JSON body (a proxy interstitial).
+            raise ProviderUnavailable(f"TMDB returned {response.status_code} with a non-JSON body") from exc
         return data
