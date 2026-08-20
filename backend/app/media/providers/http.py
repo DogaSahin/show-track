@@ -67,10 +67,11 @@ def _parse_retry_after(response: httpx.Response) -> float | None:
         seconds = float(raw)
     except ValueError:
         return None
-    if not math.isfinite(seconds):
-        # "nan" and "inf" both parse as floats. Harmless while retry_after is only logged, but
-        # Phase 5's sync job is expected to sleep on it: NaN makes every comparison false and
-        # inf sleeps forever. Unknown is honest; a value that poisons arithmetic is not.
+    if not math.isfinite(seconds) or seconds < 0:
+        # "nan" and "inf" both parse as floats, and a negative value parses fine too. Harmless
+        # while retry_after was only logged; now it reaches the client as a Retry-After header,
+        # where a negative is invalid, and Phase 5's sync job is expected to sleep on it. Unknown
+        # is honest; a value that poisons arithmetic or an HTTP header is not.
         return None
     return seconds
 

@@ -1,11 +1,14 @@
 import logging
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any
 
 from app.media.models import MediaSource, MediaStatus, MediaType
 from app.media.providers.base import (
+    ListEntryStatus,
     MediaRef,
     NextEpisode,
+    ProviderListEntry,
     ProviderMedia,
     ProviderMediaSummary,
     ProviderSearchPage,
@@ -108,3 +111,109 @@ def to_media(raw: dict[str, Any]) -> ProviderMedia:
         status=_status(raw.get("status")),
         next_episode=_next_episode(raw.get("nextAiringEpisode")),
     )
+
+
+_LIST_STATUS_MAP = {
+    "CURRENT": ListEntryStatus.WATCHING,
+    # A rewatch is still watching. PAUSED stays distinct from DROPPED because collapsing them
+    # destroys information no re-import can recover.
+    "REPEATING": ListEntryStatus.WATCHING,
+    "PLANNING": ListEntryStatus.PLANNED,
+    "COMPLETED": ListEntryStatus.COMPLETED,
+    "DROPPED": ListEntryStatus.DROPPED,
+    "PAUSED": ListEntryStatus.PAUSED,
+}
+
+
+def _list_score(raw: Any) -> Decimal | None:
+    """AniList's 0 means UNSCORED — a sentinel, not a rating. Stored as 0.0 it drags the
+    average-score stat down and tells Phase 7's recommender you hated everything you never rated.
+
+    Range-checked BEFORE quantizing. Decimal(str(1e30)).quantize(Decimal("0.1")) raises
+    InvalidOperation (the result exceeds context precision), and json.loads("1e400") yields inf —
+    so a merely malformed upstream body, not only a hostile one, would escape this mapper as a
+    500 and abort the whole atomic import. Comparing first also disposes of inf and nan for free:
+    `1 <= inf <= 10` and `1 <= nan <= 10` are both False.
+
+    Out-of-range values are refused rather than clipped: 85 on a 1-10 column means the score
+    format assumption is wrong, and clipping to 10.0 would write a plausible wrong number and
+    hide the misconfiguration.
+
+    `isinstance(raw, bool)` is excluded explicitly because bool subclasses int in Python, so
+    `True` would otherwise arrive as the score 1.
+    """
+    if isinstance(raw, bool) or not isinstance(raw, int | float):
+        return None
+    if not (1 <= raw <= 10):
+        if raw > 0:
+            logger.warning("AniList score %r is outside 1-10; treating as unscored", raw)
+        return None
+    return Decimal(str(raw)).quantize(Decimal("0.1"))
+
+
+def _list_progress(raw: Any) -> int:
+    """Bounded, for the same reason _list_score is. user_media.progress is int4, so a value at or
+    beyond 2**31 is an asyncpg DataError — and because the import is a single transaction, ONE
+    bad entry anywhere in a 10,000-title list aborts the whole thing as a 500 instead of landing
+    in `failed`.
+    """
+    if isinstance(raw, bool) or not isinstance(raw, int) or not (0 <= raw <= 100_000):
+        return 0
+    return raw
+
+
+def to_list_entries(raw_collection: dict[str, Any], seen: set[str]) -> tuple[tuple[ProviderListEntry, ...], int]:
+    """Returns (entries, dropped).
+
+    `seen` is owned by the caller and mutated here, so deduplication carries across chunk
+    responses rather than restarting per chunk.
+
+    Deduplication is load-bearing, not tidiness: AniList groups entries into `lists` (confirmed
+    by introspection — MediaListGroup carries `isCustomList`), and with custom lists enabled a
+    title appears in its status list and every custom list it belongs to. A duplicated conflict
+    key inside one INSERT ... ON CONFLICT DO UPDATE raises cardinality_violation.
+    """
+    entries: list[ProviderListEntry] = []
+    dropped = 0
+
+    for raw_list in raw_collection.get("lists") or []:
+        for raw_entry in raw_list.get("entries") or []:
+            raw_media = raw_entry.get("media")
+            if not isinstance(raw_media, dict) or raw_media.get("id") is None:
+                # Counted once per occurrence and NOT deduplicated — there is no id to dedupe on.
+                # A malformed entry repeated across two custom lists therefore adds 2 to
+                # `dropped`. Accepted and stated rather than silently wrong: the alternative is
+                # inventing an identity for an entry that has none.
+                logger.warning("AniList list entry carried no usable media object; dropping it")
+                dropped += 1
+                continue
+
+            external_id = str(raw_media["id"])
+            if external_id in seen:
+                continue
+            # Marked seen as soon as the id resolves, BEFORE the status branch. Otherwise an
+            # entry with an unmappable status never enters `seen`, so a title AniList returns in
+            # two lists is counted in `dropped` twice and the summary's `failed` over-reports the
+            # very number decision 4-I exists to make trustworthy.
+            seen.add(external_id)
+
+            status = _LIST_STATUS_MAP.get(raw_entry.get("status") or "")
+            if status is None:
+                logger.warning(
+                    "unknown AniList list status %r on entry %s; dropping it",
+                    raw_entry.get("status"),
+                    external_id,
+                )
+                dropped += 1
+                continue
+
+            entries.append(
+                ProviderListEntry(
+                    media=to_media(raw_media),
+                    status=status,
+                    score=_list_score(raw_entry.get("score")),
+                    progress=_list_progress(raw_entry.get("progress")),
+                )
+            )
+
+    return tuple(entries), dropped

@@ -57,10 +57,11 @@ async def test_429_raises_with_retry_after_seconds():
     assert excinfo.value.retry_after == 42.0
 
 
-@pytest.mark.parametrize("raw", ["nan", "inf", "-inf"], ids=["nan", "inf", "negative-inf"])
-async def test_a_non_finite_retry_after_reads_as_unknown(raw: str):
-    """`float("nan")` and `float("inf")` parse without raising. Only logged today, but Phase 5
-    will sleep on this value: NaN makes every comparison false and inf sleeps forever.
+@pytest.mark.parametrize("raw", ["nan", "inf", "-inf", "-5"], ids=["nan", "inf", "negative-inf", "negative"])
+async def test_an_unusable_retry_after_reads_as_unknown(raw: str):
+    """`float("nan")` and `float("inf")` parse without raising, and so does a negative. Phase 5
+    will sleep on this value (NaN makes every comparison false, inf sleeps forever), and Phase 4
+    now emits it as a Retry-After header, where a negative is invalid.
     """
     client = build_client(lambda request: httpx.Response(429, headers={"Retry-After": raw}))
     with pytest.raises(ProviderRateLimited) as excinfo:

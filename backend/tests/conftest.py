@@ -1,11 +1,16 @@
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Mapping
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 
 from app.config import get_settings
 from app.db import get_session
+from app.media.models import MediaSource
+from app.media.providers import get_providers
+from app.media.providers.base import MediaProvider
+from app.users.models import User
 from main import app
 
 
@@ -85,3 +90,34 @@ async def auth_client(client: AsyncClient) -> AsyncGenerator[AsyncClient, None]:
     client.headers["Authorization"] = f"Bearer {tokens['access_token']}"
     yield client
     client.headers.pop("Authorization", None)
+
+
+@pytest.fixture
+def use_providers():
+    """Install a registry for one test, then remove it. Mirrors conftest.py's get_session
+    override rather than monkeypatching a module global — which is the reason get_providers is
+    a FastAPI dependency at all.
+
+    Lives here rather than in one test module because Phase 4 gives it three consumers.
+    """
+
+    def install(providers: Mapping[MediaSource, MediaProvider]) -> None:
+        app.dependency_overrides[get_providers] = lambda: providers
+
+    yield install
+    app.dependency_overrides.pop(get_providers, None)
+
+
+@pytest.fixture
+async def auth_user(auth_client: AsyncClient, db_session: AsyncSession) -> User:
+    """The User row behind `auth_client`'s bearer token.
+
+    Route tests need its id twice over: to seed rows the endpoint must return, and to seed a
+    second user's rows it must not. Depends on auth_client so registration has already run.
+
+    NOTE for 401 tests: requesting this fixture pulls in `auth_client`, which MUTATES the shared
+    `client` object with an Authorization header. A test asserting 401 must not request it.
+    """
+    user = await db_session.scalar(select(User).where(User.email == "fixture@example.com"))
+    assert user is not None, "auth_client did not register its fixture user"
+    return user

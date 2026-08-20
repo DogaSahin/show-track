@@ -6,6 +6,7 @@ from starlette.requests import Request
 from starlette.responses import PlainTextResponse, Response
 
 from app.db import dispose_engine
+from app.errors import register_exception_handlers
 from app.library import routes as library_routes
 from app.logging import setup_logging
 from app.media import routes as media_routes
@@ -49,6 +50,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 app = FastAPI(title="ShowTrack API", version="0.1.0", lifespan=lifespan)
 app.add_middleware(RequestIDMiddleware)
+
+# Domain and provider failures become statuses here rather than in four route bodies. The
+# response returns through RequestIDMiddleware's `call_next`, so it takes that middleware's
+# `else` branch and is logged as "request completed" with a real status, rather than as an
+# untyped "request failed".
+register_exception_handlers(app)
 
 
 @app.exception_handler(Exception)

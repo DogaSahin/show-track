@@ -26,3 +26,15 @@ class ProviderRateLimited(ProviderError):
 
 class ProviderUnavailable(ProviderError):
     """A 5xx, a transport failure, or a GraphQL error body — the provider is not answering usefully."""
+
+
+class UserListNotAvailable(ProviderError):
+    """The named profile has no readable list — it does not exist, or it is private.
+
+    A deliberate divergence from this module's convention that 404 stays out of the hierarchy.
+    That convention works for `get_by_id`, where None is distinguishable from a successful
+    answer. It does not work here: an empty tuple is indistinguishable from a public user with
+    an empty list, so the caller would silently report a successful zero-title import.
+
+    Vendor-neutral on purpose — it is the outcome `library` catches, so it must not name AniList.
+    """

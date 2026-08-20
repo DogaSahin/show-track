@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from itertools import zip_longest
@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db import BULK_INSERT_CHUNK_SIZE, chunked
 from app.media.models import Media, MediaSource
 from app.media.providers.base import (
     MediaProvider,
@@ -139,6 +140,19 @@ def days_until(next_date: datetime | None, now: datetime) -> int | None:
     return max((next_date.astimezone(UTC).date() - now.astimezone(UTC).date()).days, 0)
 
 
+class MediaSourceNotConfigured(Exception):
+    """No provider is registered for the requested source.
+
+    A fact about this server's configuration, not about the request — which is why it is
+    distinct from MediaNotFound and answers 503 rather than 404. Reached whenever TMDB_API_KEY
+    is unset and someone adds a TMDB title, which is the default local setup.
+    """
+
+
+class MediaNotFound(Exception):
+    """The provider answered and has no title with that id."""
+
+
 async def _select_by_ref(session: AsyncSession, ref: MediaRef) -> Media | None:
     return await session.scalar(select(Media).where(Media.source == ref.source, Media.external_id == ref.external_id))
 
@@ -160,56 +174,113 @@ def _insert_values(detail: ProviderMedia) -> dict[str, object]:
     }
 
 
+async def persist_media(session: AsyncSession, detail: ProviderMedia) -> Media:
+    """Insert-once and race-free.
+
+    ON CONFLICT DO UPDATE with a no-op SET, not DO NOTHING: DO NOTHING neither locks nor waits
+    on a conflicting row held by an uncommitted transaction, and the fallback SELECT at READ
+    COMMITTED cannot see that row either — so the loser of a concurrent add got None back for a
+    title that existed moments later. DO UPDATE takes the lock, waits for the other transaction
+    to resolve, and always RETURNS a row.
+
+    The SET references the TARGET column rather than EXCLUDED. Both are no-ops (it is the
+    conflict key, so the values are equal by definition), but the target form cannot later be
+    misread as "refresh this field from the incoming payload". No column changes value:
+    freshness is Phase 5's job and has exactly one owner.
+    """
+    statement = (
+        pg_insert(Media)
+        .values(**_insert_values(detail))
+        .on_conflict_do_update(
+            index_elements=["source", "external_id"],
+            set_={"external_id": Media.__table__.c.external_id},
+        )
+        .returning(Media.id)
+    )
+    media_id = await session.scalar(statement)
+    # Never None: DO UPDATE always returns a row. That is the whole point of the clause above.
+    return await session.get(Media, media_id)
+
+
+async def persist_media_bulk(session: AsyncSession, details: Sequence[ProviderMedia]) -> dict[MediaRef, uuid.UUID]:
+    """The import path's writer: one statement per chunk instead of one per title.
+
+    Deduplicating by ref first is not hygiene. A single INSERT carrying two rows with the same
+    conflict key raises cardinality_violation under DO UPDATE ("cannot affect row a second
+    time") — DO NOTHING tolerates it, DO UPDATE does not. Doing it here makes the function
+    total, so a title AniList returns in two lists cannot become a 500 in a caller that forgot.
+    """
+    unique: dict[MediaRef, ProviderMedia] = {}
+    for detail in details:
+        unique.setdefault(detail.ref, detail)
+
+    # Sorted, and not for tidiness: DO UPDATE takes a row lock per conflicting row, so two
+    # concurrent imports sharing popular titles would otherwise acquire those locks in whatever
+    # order each user's list happened to arrive in. Postgres detects the resulting deadlock and
+    # kills one import outright. A global lock order removes the cycle; it also makes the
+    # emitted SQL deterministic, which matters when reading a failing statement.
+    ordered = sorted(unique.values(), key=lambda detail: (detail.ref.source, detail.ref.external_id))
+
+    resolved: dict[MediaRef, uuid.UUID] = {}
+    for chunk in chunked(ordered, BULK_INSERT_CHUNK_SIZE):
+        statement = (
+            pg_insert(Media)
+            .values([_insert_values(detail) for detail in chunk])
+            .on_conflict_do_update(
+                index_elements=["source", "external_id"],
+                set_={"external_id": Media.__table__.c.external_id},
+            )
+            .returning(Media.id, Media.source, Media.external_id)
+        )
+        for media_id, source, external_id in (await session.execute(statement)).all():
+            resolved[MediaRef(source=MediaSource(source), external_id=external_id)] = media_id
+    return resolved
+
+
 async def get_or_create_media(
     session: AsyncSession, providers: Mapping[MediaSource, MediaProvider], ref: MediaRef
-) -> Media | None:
+) -> Media:
     """The only writer of `media` rows outside Phase 5's sync job.
 
     Insert-once: an existing row is returned untouched and costs no provider request. Refreshing
     here would put unpredictable third-party latency on a read path and give freshness two
     owners.
 
-    `None` currently collapses three different outcomes into one sentinel: the source has no
-    configured provider, the upstream has no such title, and — see the race-fallback comment
-    below — a genuine race where a concurrent insert exists but is not yet visible. Phase 4's
-    `POST /v1/library`, the first caller, must split these apart before it can tell a plain
-    404 from a retryable 409.
+    Raises rather than returning None, because "no provider configured" (503) and "no such
+    title" (404) are different answers to the caller. Provider failures propagate untouched:
+    this function does not catch ProviderError, so a timeout reaches app/errors.py as a 504
+    rather than being flattened into one of these.
     """
     existing = await _select_by_ref(session, ref)
     if existing is not None:
         return existing
 
+    # Decision 4-M. get_current_user's own read has already BEGUN a transaction, and the
+    # provider call below can take up to TOTAL_TIMEOUT_SECONDS (8s). Holding a pooled connection
+    # idle-in-transaction across an external HTTP call is the exact objection that got the
+    # advisory-lock option rejected in 4-A; it would be incoherent to reject it there and do it
+    # here. Discarding this transaction costs nothing: the read it contains found no row.
+    #
+    # CALLERS BEWARE: rollback() expires every persistent object in the identity map, primary
+    # key included. Read anything you need off an ORM object (notably current_user.id) BEFORE
+    # calling this, or the next attribute access is a lazy load in async code -> MissingGreenlet.
+    await session.rollback()
+
     provider = providers.get(ref.source)
     if provider is None:
-        return None
+        raise MediaSourceNotConfigured(f"no provider registered for source {ref.source}")
+
     detail = await provider.get_by_id(ref.external_id)
     if detail is None:
-        return None
+        raise MediaNotFound(f"{ref.source} has no title {ref.external_id}")
 
-    # ON CONFLICT DO NOTHING ... RETURNING, not SELECT-then-INSERT: the latter has a TOCTOU
-    # window where two concurrent adds of the same title make one raise IntegrityError. The
-    # Phase 1 unique constraint on (source, external_id) is what makes the atomic form
-    # expressible at all.
-    statement = (
-        pg_insert(Media)
-        .values(**_insert_values(detail))
-        .on_conflict_do_nothing(index_elements=["source", "external_id"])
-        .returning(Media.id)
-    )
-    media_id = await session.scalar(statement)
-    if media_id is None:
-        # ON CONFLICT DO NOTHING returned no row, so a concurrent transaction holds a
-        # conflicting insert. Postgres does NOT block on or lock that row for DO NOTHING
-        # (unlike DO UPDATE, which blocks until the other transaction resolves), and this
-        # SELECT runs at READ COMMITTED, so it cannot see an uncommitted sibling either: this
-        # can legitimately return None for a title that exists moments later. Unreachable until
-        # Phase 4 adds the first caller; resolving it is a Phase 4 decision, because the fix and
-        # the None-sentinel split above have to be chosen together.
-        return await _select_by_ref(session, ref)
-    return await session.get(Media, media_id)
+    return await persist_media(session, detail)
 
 
-def _to_detail(media: Media, now: datetime) -> MediaDetail:
+def to_detail(media: Media, now: datetime) -> MediaDetail:
+    """Public because `library` embeds MediaDetail in every entry; one owner of the
+    Media -> schema mapping means the two cannot drift.
+    """
     return MediaDetail(
         id=media.id,
         source=media.source,
@@ -229,4 +300,4 @@ def _to_detail(media: Media, now: datetime) -> MediaDetail:
 
 async def get_media_detail(session: AsyncSession, media_id: uuid.UUID, now: datetime) -> MediaDetail | None:
     media = await session.get(Media, media_id)
-    return _to_detail(media, now) if media is not None else None
+    return to_detail(media, now) if media is not None else None

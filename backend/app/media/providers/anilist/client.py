@@ -1,15 +1,31 @@
+import logging
 from typing import Any, ClassVar
 
 from app.media.models import MediaSource, MediaType
 from app.media.providers.anilist import mapper
-from app.media.providers.anilist.queries import MEDIA_QUERY, SEARCH_QUERY
-from app.media.providers.base import MediaProvider, ProviderMedia, ProviderSearchPage
-from app.media.providers.errors import ProviderUnavailable
+from app.media.providers.anilist.errors import AniListGraphQLError
+from app.media.providers.anilist.queries import MEDIA_QUERY, SEARCH_QUERY, USER_LIST_QUERY
+from app.media.providers.base import (
+    MediaProvider,
+    ProviderListEntry,
+    ProviderMedia,
+    ProviderSearchPage,
+    ProviderUserList,
+)
+from app.media.providers.errors import ProviderUnavailable, UserListNotAvailable
 from app.media.providers.http import ProviderHTTPClient
+
+logger = logging.getLogger(__name__)
 
 ANILIST_URL = "https://graphql.anilist.co"
 # Pinned to TMDB's fixed page size so both providers advance in lockstep as `page` increments.
 PER_PAGE = 20
+# AniList's documented per-chunk maximum. A 400-title list is one request; chunking exists for
+# the long tail.
+PER_CHUNK = 500
+# Liveness guard, not a scale limit: an upstream that always answers hasNextChunk: true must not
+# spin forever inside a request. 20 x 500 bounds a synchronous import at 10,000 entries.
+MAX_LIST_CHUNKS = 20
 
 
 class AniListProvider(MediaProvider):
@@ -57,6 +73,61 @@ class AniListProvider(MediaProvider):
             return None
         return mapper.to_media(raw_media)
 
+    async def fetch_user_list(self, username: str) -> ProviderUserList:
+        """Read a public AniList anime list. No auth: MediaListCollection is readable
+        anonymously for public profiles, and this integration is read-only and one-way,
+        permanently.
+
+        Each chunk request goes through the shared ProviderHTTPClient and this provider's own
+        RateLimiter, so the loop is throttled by machinery that already exists.
+        """
+        entries: list[ProviderListEntry] = []
+        seen: set[str] = set()
+        dropped = 0
+        truncated = False
+
+        for chunk in range(1, MAX_LIST_CHUNKS + 1):
+            collection = await self._fetch_list_chunk(username, chunk)
+            chunk_entries, chunk_dropped = mapper.to_list_entries(collection, seen)
+            entries.extend(chunk_entries)
+            dropped += chunk_dropped
+            if not collection.get("hasNextChunk"):
+                break
+        else:
+            # Decision 4-L: reported to the caller, not only to the log.
+            truncated = True
+            logger.warning(
+                "AniList list for %r exceeded %d chunks; importing the first %d entries only",
+                username,
+                MAX_LIST_CHUNKS,
+                len(entries),
+            )
+
+        return ProviderUserList(entries=tuple(entries), dropped=dropped, truncated=truncated)
+
+    async def _fetch_list_chunk(self, username: str, chunk: int) -> dict[str, Any]:
+        try:
+            body = await self._post(USER_LIST_QUERY, {"name": username, "chunk": chunk, "perChunk": PER_CHUNK})
+        except AniListGraphQLError as exc:
+            if exc.mentions_missing_user():
+                raise UserListNotAvailable(f"no public AniList list for {username!r}") from exc
+            raise
+
+        if body is None:
+            # _post returns None for a 404, which is how AniList answers an unknown username —
+            # verified against the live API.
+            raise UserListNotAvailable(f"no public AniList list for {username!r}")
+
+        collection = body["data"].get("MediaListCollection")
+        if not isinstance(collection, dict):
+            if chunk > 1:
+                # Only chunk 1 can mean "no such list". Past the end, a null collection is the
+                # ordinary "you asked for more than exists" answer; 404-ing here would discard
+                # chunk 1's entries and report a readable profile as missing.
+                return {"hasNextChunk": False, "lists": []}
+            raise UserListNotAvailable(f"no public AniList list for {username!r}")
+        return collection
+
     async def _post(self, query: str, variables: dict[str, Any]) -> dict[str, Any] | None:
         """None means "404" — callers decide what that means: get_by_id treats it as "no such
         record", search() cannot (a search endpoint has no record to be missing) and raises.
@@ -85,7 +156,7 @@ class AniListProvider(MediaProvider):
             # contract is that it raises ProviderError subclasses.
             raise ProviderUnavailable("AniList returned a JSON body that is not an object")
         if body.get("errors"):
-            raise ProviderUnavailable(f"AniList returned errors: {body['errors']}")
+            raise AniListGraphQLError(f"AniList returned errors: {body['errors']}", body["errors"])
         if not isinstance(body.get("data"), dict):
             raise ProviderUnavailable("AniList returned a body with no data object")
         return body
