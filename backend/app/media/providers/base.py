@@ -1,7 +1,9 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
-from typing import ClassVar
+from decimal import Decimal
+from enum import StrEnum
+from typing import ClassVar, Protocol, runtime_checkable
 
 from app.media.models import MediaSource, MediaStatus, MediaType
 
@@ -86,3 +88,63 @@ class MediaProvider(ABC):
     @abstractmethod
     async def get_by_id(self, external_id: str) -> ProviderMedia | None:
         """None when the provider has no such title. Raises ProviderError subclasses otherwise."""
+
+
+class ListEntryStatus(StrEnum):
+    """A user's relationship to a title, in provider-neutral vocabulary.
+
+    Duplicates library.models.UserMediaStatus member for member, and that is the point: the
+    alternative is `media` importing from `library`, which inverts the existing library -> media
+    dependency into a cycle. The cost is five members and one mapping dict; what it buys is an
+    anti-corruption layer, so a provider's vocabulary can change without the domain caring.
+    """
+
+    WATCHING = "watching"
+    PLANNED = "planned"
+    COMPLETED = "completed"
+    DROPPED = "dropped"
+    PAUSED = "paused"
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderListEntry:
+    """One row of somebody's list, normalized.
+
+    `score` is Decimal, not float: routing it through binary floating point would reintroduce
+    exactly the drift NUMERIC(3,1) exists to prevent. None means unscored, never 0.
+    """
+
+    media: ProviderMedia
+    status: ListEntryStatus
+    score: Decimal | None
+    progress: int
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderUserList:
+    """`dropped` counts entries the provider returned that could not be mapped, so the import
+    summary's `failed` is a real number rather than always zero.
+
+    `truncated` is decision 4-L: a list longer than the chunk cap returns a prefix, and without
+    this flag that outcome is byte-identical to a complete import in the API response.
+    """
+
+    entries: tuple[ProviderListEntry, ...]
+    dropped: int
+    truncated: bool = False
+
+
+@runtime_checkable
+class UserListProvider(Protocol):
+    """A capability, not a provider family.
+
+    Deliberately NOT a method on MediaProvider: TMDB has no concept of a user's list, and both
+    possible defaults are wrong. Returning empty turns a wiring bug into "import succeeded, 0
+    titles" — the failure this package's own comments reject for search. Raising
+    NotImplementedError means the caller catches it anyway, expressed as an exception type that
+    means "programmer error", which is not what happened.
+
+    runtime_checkable verifies method PRESENCE, not signature: a smoke alarm, not a contract.
+    """
+
+    async def fetch_user_list(self, username: str) -> ProviderUserList: ...
