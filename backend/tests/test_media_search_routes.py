@@ -1,10 +1,8 @@
-from collections.abc import Mapping
 from typing import Any
 
 import pytest
 
 from app.media.models import MediaSource, MediaType
-from app.media.providers import get_providers
 from app.media.providers.base import (
     MediaProvider,
     MediaRef,
@@ -13,7 +11,6 @@ from app.media.providers.base import (
     ProviderSearchPage,
 )
 from app.media.providers.errors import ProviderRateLimited, ProviderTimeout, ProviderUnavailable
-from main import app
 
 
 class FakeProvider(MediaProvider):
@@ -54,20 +51,6 @@ class FakeProvider(MediaProvider):
 
     async def get_by_id(self, external_id: str) -> ProviderMedia | None:
         return None
-
-
-@pytest.fixture
-def use_providers():
-    """Install a registry for one test, then remove it. Mirrors conftest.py's get_session
-    override rather than monkeypatching a module global — which is the reason get_providers is
-    a FastAPI dependency at all.
-    """
-
-    def install(providers: Mapping[MediaSource, MediaProvider]) -> None:
-        app.dependency_overrides[get_providers] = lambda: providers
-
-    yield install
-    app.dependency_overrides.pop(get_providers, None)
 
 
 def anilist(titles: list[str], **kwargs: Any) -> FakeProvider:
