@@ -1,6 +1,7 @@
 import enum
 import uuid
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Iterator, Sequence
+from typing import TypeVar
 
 from sqlalchemy import Enum, MetaData, Uuid, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
@@ -140,3 +141,26 @@ async def dispose_engine() -> None:
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
     async with get_sessionmaker()() as session:
         yield session
+
+
+# Postgres' Bind message encodes the parameter count as an int16, so one statement carries at
+# most 32,767 bound parameters, and asyncpg enforces that. `media` binds twelve parameters per
+# row — eleven columns plus the client-side `id` from UUIDPrimaryKeyMixin's uuid4 default, which
+# SQLAlchemy includes in the INSERT — putting the wall near 2,730 rows. Reachable by a large
+# AniList import, and invisible until it fires.
+BULK_INSERT_CHUNK_SIZE = 500
+
+T = TypeVar("T")
+
+
+def chunked(items: Sequence[T], size: int) -> Iterator[Sequence[T]]:  # noqa: UP047
+    """`itertools.batched` does this in one line but is 3.12+, and this project's supported
+    floor is 3.11.
+
+    The noqa is that same floor showing up a second way. ruff's `target-version = "py312"` makes
+    UP047 demand PEP 695 syntax (`def chunked[T](...)`), which is 3.12-only — taking its advice
+    would break the floor this docstring exists to respect. If the floor ever moves to 3.12,
+    delete the TypeVar, the noqa and this paragraph, and let ruff have its way.
+    """
+    for start in range(0, len(items), size):
+        yield items[start : start + size]
