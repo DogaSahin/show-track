@@ -10,7 +10,7 @@ from app.library.models import UserMedia, UserMediaStatus
 from app.media.models import Media, MediaSource, MediaStatus, MediaType
 from app.media.providers.base import MediaProvider, MediaRef, NextEpisode, ProviderMedia
 from app.media.providers.errors import ProviderTimeout
-from tests.factories import make_media, make_user_media
+from tests.factories import make_media, make_user, make_user_media
 
 FRIEREN = ProviderMedia(
     ref=MediaRef(source=MediaSource.ANILIST, external_id="154587"),
@@ -169,3 +169,176 @@ async def test_a_malformed_body_is_a_422(auth_client, use_providers, body):
     use_providers({MediaSource.ANILIST: StubProvider(FRIEREN)})
 
     assert (await auth_client.post("/v1/library", json=body)).status_code == 422
+
+
+async def _seed_entry(db_session, user_id, **overrides):
+    media = make_media(source=MediaSource.ANILIST, external_id="154587")
+    db_session.add(media)
+    await db_session.flush()
+    entry = make_user_media(user_id, media.id, **overrides)
+    db_session.add(entry)
+    await db_session.flush()
+    return entry
+
+
+async def test_patching_one_field_leaves_the_others_alone(auth_client, db_session, auth_user):
+    entry = await _seed_entry(db_session, auth_user.id, status=UserMediaStatus.WATCHING, progress=12, favorite=True)
+
+    body = (await auth_client.patch(f"/v1/library/{entry.id}", json={"progress": 13})).json()
+
+    assert body["progress"] == 13
+    assert body["status"] == "watching"
+    assert body["favorite"] is True
+
+
+async def test_patching_score_to_null_unrates_the_title(auth_client, db_session, auth_user):
+    """The exclude_unset proof. `{"score": null}` is a real update — it unrates — and must stay
+    distinguishable from a body that simply omits score. exclude_none would make unrating
+    impossible to express at all.
+    """
+    entry = await _seed_entry(db_session, auth_user.id, score=Decimal("9.0"))
+
+    body = (await auth_client.patch(f"/v1/library/{entry.id}", json={"score": None})).json()
+
+    assert body["score"] is None
+
+
+async def test_an_empty_patch_returns_the_row_unchanged(auth_client, db_session, auth_user):
+    entry = await _seed_entry(db_session, auth_user.id, progress=7)
+
+    response = await auth_client.patch(f"/v1/library/{entry.id}", json={})
+
+    assert response.status_code == 200
+    assert response.json()["progress"] == 7
+
+
+async def test_a_non_empty_patch_returns_200_and_not_500(auth_client, db_session, auth_user):
+    """The regression guard for the flush-expiry bug, and the STATUS is the guard — not the
+    timestamp.
+
+    `updated_at` carries `onupdate=func.now()`, and Postgres' now() is transaction_timestamp():
+    the whole test runs inside one transaction, so the seed INSERT and this UPDATE stamp an
+    identical value. Measured — `updated_at > before` is False here even when the route is
+    correct, and `updated_at == before` is True even when it is not. A timestamp assertion in
+    this harness is unfalsifiable in both directions.
+
+    What the bug actually produced was a 500 after a successful commit, so that is what this
+    asserts. The empty-patch test above cannot catch it: an empty body dirties nothing, so
+    nothing is expired and nothing lazy-loads.
+    """
+    entry = await _seed_entry(db_session, auth_user.id, progress=7)
+
+    response = await auth_client.patch(f"/v1/library/{entry.id}", json={"progress": 8})
+
+    assert response.status_code == 200
+    assert response.json()["progress"] == 8
+
+
+async def test_patching_another_users_entry_is_a_404_not_a_403(auth_client, db_session):
+    """A 403 would confirm the entry exists, turning the endpoint into an existence oracle. Same
+    reasoning as the auth module's single _UNAUTHENTICATED response.
+    """
+    other = make_user(username="someone-else", email="else@example.com")
+    db_session.add(other)
+    await db_session.flush()
+    entry = await _seed_entry(db_session, other.id)
+
+    response = await auth_client.patch(f"/v1/library/{entry.id}", json={"progress": 1})
+
+    assert response.status_code == 404
+
+
+async def test_patching_an_unknown_entry_is_a_404(auth_client):
+    assert (await auth_client.patch(f"/v1/library/{uuid.uuid4()}", json={"progress": 1})).status_code == 404
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"score": 0.5},
+        {"score": 10.5},
+        {"score": 8.25},
+        {"progress": -1},
+        {"progress": 2**31},
+        {"status": "nope"},
+        {"status": None},
+        {"progress": None},
+        {"favorite": None},
+        {"scores": 9},
+    ],
+    ids=[
+        "score-below-range",
+        "score-above-range",
+        "score-too-precise",
+        "negative-progress",
+        "progress-overflows-int4",
+        "unknown-status",
+        "null-status",
+        "null-progress",
+        "null-favorite",
+        "unknown-field",
+    ],
+)
+async def test_an_invalid_patch_body_is_a_422(auth_client, db_session, auth_user, body):
+    """score is NUMERIC(3,1): without decimal_places=1, 8.25 is silently rounded by Postgres and
+    the client reads back a number it never sent. Only `score` is nullable in user_media, so an
+    explicit null on the other three would reach the flush as an IntegrityError 500 — and an
+    unknown field would 200 having changed nothing. `{"score": null}` stays in the SUCCESS test
+    above: the two must remain distinguishable, which is the whole reason for exclude_unset.
+    """
+    entry = await _seed_entry(db_session, auth_user.id)
+
+    assert (await auth_client.patch(f"/v1/library/{entry.id}", json=body)).status_code == 422
+
+
+async def test_patching_requires_authentication(client):
+    """The auth-protection invariant test skips routes with a {param} in their path — see the
+    comment in main.py. This route is one of the first two such routes in the codebase, so its
+    401 is asserted explicitly or not at all.
+
+    Do NOT request `auth_user` (or `auth_client`) here. `auth_client` does not build a second
+    client: it MUTATES the shared `client` object, setting an Authorization header, and yields
+    the same instance. Pulling either fixture in authenticates the very client this test asserts
+    is anonymous. No seeded row is needed — authentication runs before the lookup.
+    """
+    assert (await client.patch(f"/v1/library/{uuid.uuid4()}", json={"progress": 1})).status_code == 401
+
+
+async def test_deleting_an_entry_leaves_the_shared_media_row(auth_client, db_session, auth_user):
+    """media is shared across users, so removing one person's entry must not remove the title.
+    Structurally guaranteed — the CASCADE is declared on user_media.media_id, so it fires when a
+    MEDIA row is deleted, and there is no path from a user_media delete back to media — but this
+    is the phase's stated acceptance criterion, so it is asserted rather than assumed.
+    """
+    entry = await _seed_entry(db_session, auth_user.id)
+
+    response = await auth_client.delete(f"/v1/library/{entry.id}")
+
+    assert response.status_code == 204
+    assert await db_session.scalar(select(func.count()).select_from(UserMedia)) == 0
+    assert await db_session.scalar(select(func.count()).select_from(Media)) == 1
+
+
+async def test_deleting_twice_is_a_404_the_second_time(auth_client, db_session, auth_user):
+    entry = await _seed_entry(db_session, auth_user.id)
+
+    assert (await auth_client.delete(f"/v1/library/{entry.id}")).status_code == 204
+    assert (await auth_client.delete(f"/v1/library/{entry.id}")).status_code == 404
+
+
+async def test_deleting_another_users_entry_is_a_404(auth_client, db_session):
+    other = make_user(username="someone-else", email="else@example.com")
+    db_session.add(other)
+    await db_session.flush()
+    entry = await _seed_entry(db_session, other.id)
+
+    assert (await auth_client.delete(f"/v1/library/{entry.id}")).status_code == 404
+    assert await db_session.scalar(select(func.count()).select_from(UserMedia)) == 1
+
+
+async def test_deleting_requires_authentication(client):
+    """The second of the two {param} routes the auth invariant test cannot reach.
+
+    As in the PATCH case: no `auth_user`, no `auth_client` — they mutate this same client object.
+    """
+    assert (await client.delete(f"/v1/library/{uuid.uuid4()}")).status_code == 401

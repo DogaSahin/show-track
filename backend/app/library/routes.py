@@ -1,3 +1,4 @@
+import uuid
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Annotated
@@ -8,7 +9,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import get_session
 from app.library import service
 from app.library.models import UserMediaStatus
-from app.library.schemas import AddLibraryEntryRequest, LibraryEntry, LibraryPage, LibrarySort
+from app.library.schemas import (
+    AddLibraryEntryRequest,
+    LibraryEntry,
+    LibraryPage,
+    LibrarySort,
+    UpdateLibraryEntryRequest,
+)
 from app.media import service as media_service
 from app.media.models import MediaSource
 from app.media.providers import get_providers
@@ -110,3 +117,41 @@ async def list_library(
         now=datetime.now(tz=UTC),
     )
     return LibraryPage(items=items, next_cursor=next_cursor)
+
+
+_ENTRY_NOT_FOUND = "library entry not found"
+
+
+# Declared after the collection routes above. Ownership failures answer 404 rather than 403: a
+# 403 on another user's entry id confirms that entry exists.
+@router.patch("/{entry_id}", response_model=LibraryEntry, responses={404: {"description": _ENTRY_NOT_FOUND}})
+async def update_library_entry(
+    entry_id: uuid.UUID,
+    payload: UpdateLibraryEntryRequest,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+) -> LibraryEntry:
+    found = await service.get_entry(session, entry_id=entry_id, user_id=current_user.id)
+    if found is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_ENTRY_NOT_FOUND)
+    entry, media = found
+
+    # exclude_unset, never exclude_none: `{"score": null}` unrates a title and must stay
+    # distinguishable from a body that omits score entirely.
+    await service.update_entry(session, entry, payload.model_dump(exclude_unset=True))
+    await session.commit()
+    return service.to_entry(entry, media, datetime.now(tz=UTC))
+
+
+@router.delete(
+    "/{entry_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses={404: {"description": _ENTRY_NOT_FOUND}},
+)
+async def remove_from_library(entry_id: uuid.UUID, session: SessionDep, current_user: CurrentUserDep) -> None:
+    found = await service.get_entry(session, entry_id=entry_id, user_id=current_user.id)
+    if found is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_ENTRY_NOT_FOUND)
+
+    await service.delete_entry(session, found[0])
+    await session.commit()

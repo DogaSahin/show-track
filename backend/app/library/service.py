@@ -155,6 +155,59 @@ def sort_expression(spec: SortSpec) -> ColumnElement[Any]:
     return func.coalesce(spec.column, spec.sentinel) if spec.sentinel is not None else spec.column
 
 
+async def get_entry(
+    session: AsyncSession, *, entry_id: uuid.UUID, user_id: uuid.UUID
+) -> tuple[UserMedia, Media] | None:
+    """Ownership is in the WHERE clause, not a post-fetch check.
+
+    That is what makes "this entry is not yours" and "this entry does not exist" the same answer
+    with no branch to forget — and the reason the route can only ever produce a 404.
+    """
+    row = (
+        await session.execute(
+            select(UserMedia, Media)
+            .join(Media, UserMedia.media_id == Media.id)
+            .where(UserMedia.id == entry_id, UserMedia.user_id == user_id)
+        )
+    ).first()
+    return (row.UserMedia, row.Media) if row is not None else None
+
+
+async def update_entry(session: AsyncSession, entry: UserMedia, changes: dict[str, Any]) -> UserMedia:
+    """`changes` comes from model_dump(exclude_unset=True), so an absent field never appears here
+    and an explicit null does. An empty dict dirties nothing, so SQLAlchemy emits no UPDATE and
+    `updated_at` is not bumped — correct, because nothing was updated.
+
+    The `refresh` is load-bearing, not defensive. `updated_at` carries `onupdate=func.now()`, a
+    SQL-expression default: SQLAlchemy cannot know the value the server computed, so it EXPIRES
+    the attribute after the UPDATE flush. `expire_on_commit=False` does not help — that governs
+    commit, not flush-time expiry. The route then reads `entry.updated_at` while serialising,
+    which is a synchronous attribute access triggering a lazy reload inside async code:
+    MissingGreenlet, a 500 raised AFTER the route has already committed the write.
+
+    Measured against the dev database:
+        EXPIRED after UPDATE flush: {'updated_at'}
+        access -> MissingGreenlet: greenlet_spawn has not been called
+    """
+    if not changes:
+        return entry
+
+    for field, value in changes.items():
+        setattr(entry, field, value)
+    await session.flush()
+    await session.refresh(entry)
+    return entry
+
+
+async def delete_entry(session: AsyncSession, entry: UserMedia) -> None:
+    """Deletes only the library entry. The shared `media` row is untouched — nothing here can
+    reach it, since the CASCADE is declared on user_media.media_id and so fires only when a
+    MEDIA row is deleted.
+    """
+    await session.delete(entry)
+    await session.flush()
+
+
 async def list_entries(
     session: AsyncSession,
     *,
