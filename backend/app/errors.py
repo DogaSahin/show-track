@@ -7,7 +7,12 @@ from fastapi.responses import JSONResponse
 from starlette.requests import Request
 from starlette.responses import Response
 
-from app.media.providers.errors import ProviderError, ProviderRateLimited, ProviderTimeout
+from app.media.providers.errors import (
+    ProviderError,
+    ProviderRateLimited,
+    ProviderTimeout,
+    UserListNotAvailable,
+)
 from app.media.service import MediaNotFound, MediaSourceNotConfigured
 
 logger = logging.getLogger(__name__)
@@ -32,6 +37,7 @@ logger = logging.getLogger(__name__)
 HANDLED: dict[type[Exception], tuple[int, str]] = {
     MediaSourceNotConfigured: (503, "media source is not configured on this server"),
     MediaNotFound: (404, "no such title"),
+    UserListNotAvailable: (404, "no public list for that username"),
     ProviderTimeout: (504, "the upstream provider timed out"),
     ProviderRateLimited: (429, "the upstream provider rate limited this server"),
     ProviderError: (502, "the upstream provider is unavailable"),
