@@ -1,8 +1,11 @@
+from datetime import UTC, datetime, timedelta
+
 import pytest
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.notifications.models import NotificationTaskStatus, NotificationThreshold
+from app.notifications.models import NotificationTask, NotificationTaskStatus, NotificationThreshold
 from tests.factories import make_notification_prefs, make_notification_task, make_parents, make_user
 
 
@@ -53,17 +56,57 @@ async def test_the_same_notification_cannot_be_queued_twice(db_session: AsyncSes
     with pytest.raises(IntegrityError) as excinfo:
         await db_session.flush()
 
-    assert "uq_notification_tasks_user_id_media_id_episode_number_threshold" in str(excinfo.value)
+    assert "uq_notification_tasks_dedup" in str(excinfo.value)
     await db_session.rollback()
 
 
 async def test_both_thresholds_can_be_queued_for_one_episode(db_session: AsyncSession) -> None:
-    """The threshold is part of the key on purpose — a 24h reminder and a day-of reminder
-    for the same episode are two legitimate rows, not a duplicate."""
+    """The threshold is part of the key on purpose — a 24h reminder and an airing-soon
+    reminder for the same episode are two legitimate rows, not a duplicate."""
     user, media = await make_parents(db_session)
     db_session.add(
         make_notification_task(user.id, media.id, episode_number=5, threshold=NotificationThreshold.TWENTY_FOUR_HOURS)
     )
-    db_session.add(make_notification_task(user.id, media.id, episode_number=5, threshold=NotificationThreshold.DAY_OF))
+    db_session.add(
+        make_notification_task(user.id, media.id, episode_number=5, threshold=NotificationThreshold.AIRING_SOON)
+    )
 
     await db_session.flush()  # must not raise
+
+
+async def test_a_rescheduled_episode_can_be_queued_again(db_session: AsyncSession) -> None:
+    """Decision 5-C, and the entire reason airs_on joins the dedup key.
+
+    Under the Phase 1 key, an episode delayed after its 24h notification was created could never
+    be enqueued again: the user was told "airs in 24 hours", it did not, and no notification ever
+    fired for the true date. Anime episodes are delayed routinely, so that failed in exactly the
+    case an airing tracker exists for.
+    """
+    user, media = await make_parents(db_session)
+    original = datetime(2026, 9, 25, tzinfo=UTC)
+    db_session.add(make_notification_task(user.id, media.id, episode_number=5, airs_on=original))
+    await db_session.flush()
+
+    delayed = original + timedelta(days=7)
+    db_session.add(make_notification_task(user.id, media.id, episode_number=5, airs_on=delayed))
+
+    await db_session.flush()  # must NOT raise: a different air DATE is a different key
+
+    assert await db_session.scalar(select(func.count()).select_from(NotificationTask)) == 2
+
+
+async def test_provider_jitter_does_not_make_a_new_key(db_session: AsyncSession) -> None:
+    """Decision 5-L. AniList revises airingAt by seconds for ordinary corrections; a precise key
+    would mint a fresh notification for every nudge. The column stores the DATE, so two tasks for
+    the same air date collide however the time moved within it.
+    """
+    user, media = await make_parents(db_session)
+    day = datetime(2026, 9, 25, tzinfo=UTC)
+    db_session.add(make_notification_task(user.id, media.id, episode_number=5, airs_on=day))
+    await db_session.flush()
+
+    db_session.add(make_notification_task(user.id, media.id, episode_number=5, airs_on=day))
+    with pytest.raises(IntegrityError):
+        await db_session.flush()
+
+    await db_session.rollback()

@@ -1,6 +1,7 @@
 """Minimal *valid* instances, so each test states only the field it is about."""
 
 import uuid
+from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -58,6 +59,11 @@ def make_notification_task(user_id: uuid.UUID, media_id: uuid.UUID, **overrides:
         "media_id": media_id,
         "episode_number": 1,
         "threshold": NotificationThreshold.TWENTY_FOUR_HOURS,
+        # A fixed UTC midnight, not `now()`: two tasks built by this factory must collide on the
+        # dedup key by default, which is what test_the_same_notification_cannot_be_queued_twice
+        # asserts. A moving default would make that test pass for the wrong reason — or fail
+        # intermittently, depending on clock resolution.
+        "airs_on": datetime(2026, 9, 25, tzinfo=UTC),
     }
     return NotificationTask(**{**defaults, **overrides})
 
