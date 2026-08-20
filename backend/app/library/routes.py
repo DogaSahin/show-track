@@ -7,10 +7,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
-from app.library import service
+from app.library import import_service, service
 from app.library.models import UserMediaStatus
 from app.library.schemas import (
     AddLibraryEntryRequest,
+    ImportRequest,
+    ImportSummary,
     LibraryEntry,
     LibraryPage,
     LibrarySort,
@@ -67,9 +69,9 @@ async def add_to_library(
     # touching `current_user.id` afterwards is an expired-attribute load, which in async code is
     # MissingGreenlet: a 500 on the ordinary add path.
     #
-    # The test suite CANNOT catch this: conftest's savepoint-joined session makes rollback() a
-    # savepoint rollback, which does not expire. Verified separately against a production-shaped
-    # session.
+    # Measured both ways: removing this line fails two tests in tests/test_library_routes.py,
+    # AND fails against a production-shaped session outside the harness. An earlier review claimed
+    # conftest's savepoint-joined session hides the expiry; it does not.
     user_id = current_user.id
 
     media = await media_service.get_or_create_media(
@@ -117,6 +119,36 @@ async def list_library(
         now=datetime.now(tz=UTC),
     )
     return LibraryPage(items=items, next_cursor=next_cursor)
+
+
+@router.post(
+    "/import/anilist",
+    response_model=ImportSummary,
+    # UPSTREAM_RESPONSES first: it carries its own 404 ("no such title upstream"), and a later
+    # key wins in a dict literal. Spread the other way round and this endpoint publishes the
+    # wrong meaning for its most important error — measured, not theorised.
+    responses={**UPSTREAM_RESPONSES, 404: {"description": "no public AniList list for that username"}},
+)
+async def import_from_anilist(
+    payload: ImportRequest,
+    session: SessionDep,
+    providers: ProvidersDep,
+    current_user: CurrentUserDep,
+) -> ImportSummary:
+    """Synchronous (decision 4-H). A typical list is a few hundred titles: one or two GraphQL
+    requests plus a handful of INSERTs. A background job would need a task table, a polling
+    endpoint and a status model to shave seconds off something run roughly once.
+
+    user_id comes from the token, never the body, so the import can only ever write to the
+    caller's own library. Read before the call for the same reason as add_to_library: 4-M's
+    rollback expires the identity map.
+    """
+    user_id = current_user.id
+    summary = await import_service.import_anilist_library(
+        session, providers, user_id=user_id, username=payload.username
+    )
+    await session.commit()
+    return summary
 
 
 _ENTRY_NOT_FOUND = "library entry not found"

@@ -1,5 +1,5 @@
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -10,6 +10,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
 
+from app.db import BULK_INSERT_CHUNK_SIZE, chunked
 from app.library.models import UserMedia, UserMediaStatus
 from app.library.schemas import LibraryEntry, LibrarySort
 from app.media import service as media_service
@@ -260,3 +261,37 @@ async def list_entries(
     rows = rows[:limit]
     next_cursor = encode_cursor(sort.value, rows[-1].sort_value, rows[-1].UserMedia.id) if has_more and rows else None
     return [to_entry(row.UserMedia, row.Media, now) for row in rows], next_cursor
+
+
+async def bulk_add_entries(session: AsyncSession, *, user_id: uuid.UUID, rows: Sequence[dict[str, Any]]) -> int:
+    """Insert the rows that are missing, leave the rest alone, and return how many landed.
+
+    ON CONFLICT DO NOTHING is what makes "local wins" a DATABASE property rather than application
+    logic: there is no code path that could overwrite an existing score or progress, so no future
+    refactor can introduce one by accident. The same philosophy as the notification dedup
+    constraint.
+
+    DO NOTHING here, rather than the no-op DO UPDATE used for `media`, because the intent is the
+    opposite: there we needed the conflicting row's id back, here we need the conflicting row
+    left untouched. DO NOTHING also tolerates duplicate conflict keys inside one statement, which
+    DO UPDATE does not.
+    """
+    # user_id is stamped HERE, not carried inside caller-supplied dicts. Every other function in
+    # this module takes it as a keyword-only parameter, which is what makes "scoped to the
+    # caller" structural instead of a convention another module has to remember.
+    #
+    # Sorted by media_id for the same reason persist_media_bulk sorts: a stable global lock
+    # order. Two concurrent imports by the same user would otherwise take user_media index locks
+    # in arrival order and can deadlock.
+    stamped = sorted(({**row, "user_id": user_id} for row in rows), key=lambda row: row["media_id"])
+
+    inserted = 0
+    for chunk in chunked(stamped, BULK_INSERT_CHUNK_SIZE):
+        statement = (
+            pg_insert(UserMedia)
+            .values(list(chunk))
+            .on_conflict_do_nothing(index_elements=["user_id", "media_id"])
+            .returning(UserMedia.id)
+        )
+        inserted += len((await session.execute(statement)).all())
+    return inserted

@@ -4,7 +4,7 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from app.library.models import UserMediaStatus
 from app.media.models import MediaSource
@@ -102,3 +102,25 @@ class UpdateLibraryEntryRequest(BaseModel):
         if nulled:
             raise ValueError(f"{', '.join(nulled)} cannot be null")
         return self
+
+
+class ImportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # strip_whitespace inside the constraint, so min_length applies to the STRIPPED value.
+    # Validating first and stripping in the route lets "   " pass as a valid username and reach
+    # AniList as an empty name — an upstream round trip to produce what should have been a 422.
+    #
+    # No character-class pattern: narrowing to ^[A-Za-z0-9_]+$ would 422 any legitimate AniList
+    # username outside that class with no workaround, and this plan has no recorded evidence for
+    # that charset. external_id's pattern is different — there the evidence was measured.
+    username: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=50)]
+
+
+class ImportSummary(BaseModel):
+    imported: int
+    skipped: int
+    failed: int
+    # Decision 4-L. Without this, a list truncated at the chunk cap returns a body byte-identical
+    # to a complete import and the caller cannot tell it got a prefix.
+    truncated: bool = False
