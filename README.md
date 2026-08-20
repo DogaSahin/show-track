@@ -10,15 +10,17 @@ possible: because everyone in a group can see everyone's exact progress, the app
 ahead on a show and how far.
 
 **Status:** early. The backend schema and migrations, auth, the AniList/TMDB provider
-integrations with unified search, and the personal library — add, list, update, remove — are in
-place; the Android client is not built yet. See [Project status](#project-status).
+integrations with unified search, the personal library — add, list, update, remove — and AniList
+list import are in place; the Android client is not built yet. See
+[Project status](#project-status).
 
 ## What it does
 
 - **Track** anime and TV in one library — status, 1–10 score, episode progress, favourites.
 - **Know when the next episode airs**, with a push notification 24 hours before and again on the day.
-- **Import** an existing AniList list by username. Read-only and one-way — ShowTrack never writes
-  back to AniList.
+- **Import** an existing AniList list by username. **The profile must be public** — the import
+  sends no credentials, so a private list is not readable and returns a 404. Read-only and
+  one-way: ShowTrack never writes back to AniList.
 - **Share with a group** — a feed of what members watched and rated, a shared "we should watch this"
   watchlist, side-by-side progress on titles you're both watching, and reviews.
 - **Get recommendations** from genre overlap weighted by your own scores.
@@ -128,6 +130,21 @@ curl -s -X PATCH "localhost:8000/v1/library/$ENTRY" \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -d '{"score":8.5,"progress":12,"status":"watching"}'
 ```
+
+```bash
+# import a public AniList profile — read-only, one-way, and local edits always win
+curl -s -X POST localhost:8000/v1/library/import/anilist \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"username":"your-anilist-username"}'
+# -> {"imported": 412, "skipped": 0, "failed": 0, "truncated": false}
+```
+
+Re-running an import inserts only titles missing from your library and **never overwrites a score
+or progress set in ShowTrack** — that is a database constraint, not a code path, so it cannot
+regress. `failed` counts entries AniList returned that could not be mapped (an unrecognised
+status, a malformed entry); `truncated` is true if the list was longer than the 10,000-entry
+ceiling and only its first chunk-run was imported. A private or nonexistent username returns
+**404**, not an error about the server.
 
 Adding a title you already track returns **200** with the existing entry rather than an error, and
 changes nothing — so a retry after a dropped connection is safe. `score` travels as a JSON string
@@ -247,7 +264,7 @@ and both get worse the longer they wait.
 | 2 | Auth — JWT register/login, protected routes | done |
 | 3 | Providers — AniList + TMDB integration, unified search, media persistence | done |
 | 4 | Library CRUD — add, list, update, remove, cursor-paginated | done |
-| 4.5 | AniList import | next |
+| 4.5 | AniList import — public profiles, one-way, local wins | done |
 | 5–7 | Sync worker, notifications, recommendations | |
 | 7.5 | Groups — membership, feed, reviews, shared watchlist | |
 | 8–9 | Android foundations and feature modules | |
