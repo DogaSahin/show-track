@@ -9,9 +9,9 @@ no public profiles. Membership of a group *is* the relationship, which is what m
 possible: because everyone in a group can see everyone's exact progress, the app can tell you who is
 ahead on a show and how far.
 
-**Status:** early. The backend schema and migrations, auth, and the AniList/TMDB provider
-integrations with unified search are in place; the Android client is not built yet. See
-[Project status](#project-status).
+**Status:** early. The backend schema and migrations, auth, the AniList/TMDB provider
+integrations with unified search, and the personal library — add, list, update, remove — are in
+place; the Android client is not built yet. See [Project status](#project-status).
 
 ## What it does
 
@@ -111,7 +111,30 @@ TOKEN=$(curl -s -X POST localhost:8000/v1/auth/login \
   | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')
 
 curl -s -H "Authorization: Bearer $TOKEN" 'localhost:8000/v1/media/search?q=frieren'
+
+# add a search result to your library, by the (source, external_id) it came back with
+curl -s -X POST localhost:8000/v1/library \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"source":"anilist","external_id":"154587"}'
+
+# read it back — soonest-airing first, 20 per page
+curl -s -H "Authorization: Bearer $TOKEN" \
+  'localhost:8000/v1/library?sort=next_episode_date&limit=20'
+
+# rate it, and mark how far you have got
+ENTRY=$(curl -s -H "Authorization: Bearer $TOKEN" localhost:8000/v1/library \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["items"][0]["id"])')
+curl -s -X PATCH "localhost:8000/v1/library/$ENTRY" \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"score":8.5,"progress":12,"status":"watching"}'
 ```
+
+Adding a title you already track returns **200** with the existing entry rather than an error, and
+changes nothing — so a retry after a dropped connection is safe. `score` travels as a JSON string
+(`"8.5"`) because the column is `NUMERIC(3,1)`: a JSON number is a float, and floats cannot hold
+8.5-style values exactly. `/v1/library` is cursor-paginated — follow `next_cursor` until it is
+`null`, and do not change `sort` while paging (the cursor is bound to the sort it was issued for
+and answers 400 otherwise).
 
 Without a `TMDB_API_KEY`, that last response carries `"sources":{"anilist":"ok","tmdb":"not_configured"}`
 alongside AniList results — the degradation contract (§8 of the design doc) working, not just documented.
@@ -223,7 +246,8 @@ and both get worse the longer they wait.
 | 1.5 | Repository hygiene — credential guarding, this README | done |
 | 2 | Auth — JWT register/login, protected routes | done |
 | 3 | Providers — AniList + TMDB integration, unified search, media persistence | done |
-| 4–4.5 | Library CRUD, AniList import | next |
+| 4 | Library CRUD — add, list, update, remove, cursor-paginated | done |
+| 4.5 | AniList import | next |
 | 5–7 | Sync worker, notifications, recommendations | |
 | 7.5 | Groups — membership, feed, reviews, shared watchlist | |
 | 8–9 | Android foundations and feature modules | |
