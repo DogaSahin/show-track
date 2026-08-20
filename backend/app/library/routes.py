@@ -2,16 +2,18 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
 from app.library import service
-from app.library.schemas import AddLibraryEntryRequest, LibraryEntry
+from app.library.models import UserMediaStatus
+from app.library.schemas import AddLibraryEntryRequest, LibraryEntry, LibraryPage, LibrarySort
 from app.media import service as media_service
 from app.media.models import MediaSource
 from app.media.providers import get_providers
 from app.media.providers.base import MediaProvider, MediaRef
+from app.pagination import InvalidCursor, decode_cursor
 from app.users.dependencies import get_current_user
 from app.users.models import User
 
@@ -72,3 +74,39 @@ async def add_to_library(
     if not created:
         response.status_code = status.HTTP_200_OK
     return service.to_entry(entry, media, datetime.now(tz=UTC))
+
+
+@router.get("", response_model=LibraryPage, responses={400: {"description": "unusable cursor"}})
+async def list_library(
+    session: SessionDep,
+    current_user: CurrentUserDep,
+    # Named status_filter because `status` is already the imported fastapi.status module here.
+    # The alias is what the client actually sends.
+    status_filter: Annotated[UserMediaStatus | None, Query(alias="status")] = None,
+    sort: LibrarySort = LibrarySort.TITLE,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    # Capped: decode_cursor contains RecursionError, but not paying for a megabyte of nesting in
+    # the first place is cheaper than containing it.
+    cursor: Annotated[str | None, Query(max_length=2048)] = None,
+) -> LibraryPage:
+    spec = service.SORTS[sort]
+    decoded = None
+    if cursor is not None:
+        try:
+            decoded = decode_cursor(cursor, sort.value, spec.parse)
+        except InvalidCursor as exc:
+            # A fixed detail, not str(exc): the message would echo client-supplied cursor content
+            # straight back. Local rather than in app/errors.py because it has exactly one call
+            # site.
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid cursor") from exc
+
+    items, next_cursor = await service.list_entries(
+        session,
+        user_id=current_user.id,
+        sort=sort,
+        limit=limit,
+        status=status_filter,
+        cursor=decoded,
+        now=datetime.now(tz=UTC),
+    )
+    return LibraryPage(items=items, next_cursor=next_cursor)
