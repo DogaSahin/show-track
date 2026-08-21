@@ -6,15 +6,16 @@ from typing import Any
 
 import httpx
 
+# On the search path this 8s ceiling is unreachable in practice: Task 3.7's search service wraps
+# each provider call in its own 6s asyncio.timeout, which fires first and surfaces as
+# SourceStatus.TIMEOUT. It's what actually bounds background callers with no outer guard of their
+# own, such as Phase 5's sync job. Why a wall-clock ceiling is needed at all is documented where
+# the constant is defined, in app/http.py.
 from app.http import TOTAL_TIMEOUT_SECONDS
 from app.media.providers.errors import ProviderRateLimited, ProviderTimeout, ProviderUnavailable
 
 logger = logging.getLogger(__name__)
 
-# On the search path this 8s ceiling (imported from app.http) is unreachable in practice: Task
-# 3.7's search service wraps each provider call in its own 6s asyncio.timeout, which fires first
-# and surfaces as SourceStatus.TIMEOUT. It's what actually bounds background callers with no
-# outer guard of their own, such as Phase 5's sync job.
 # Fallback window used when a rate limiter observes remaining == 0 but cannot trust the
 # provider's reset time (missing, unparseable, out-of-range, or a delta-seconds header
 # misread as an epoch timestamp already in the past). Fail-open stays the direction — we would

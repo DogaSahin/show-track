@@ -4,8 +4,13 @@ import httpx
 # would add an .env surface to document for something nobody will tune.
 CONNECT_TIMEOUT_SECONDS = 3.0
 READ_TIMEOUT_SECONDS = 5.0
-# Wall-clock ceiling on a single request. httpx's read timeout is per read operation, not a
-# total, and follow_redirects=True can compound it across up to 20 hops.
+# Wall-clock ceiling on a single request, and the reason it sits ABOVE READ_TIMEOUT_SECONDS
+# rather than replacing it: httpx's read timeout is per READ OPERATION, not a total. An upstream
+# that trickles a byte every four seconds resets it forever, so the request never returns and no
+# httpx timeout ever fires. follow_redirects=True can compound the same effect across up to 20
+# hops. The client cannot enforce this itself — every caller must wrap its request in
+# asyncio.timeout(TOTAL_TIMEOUT_SECONDS); ProviderHTTPClient.request and NtfyTransport.send both
+# do, and a future caller that forgets inherits the hang.
 TOTAL_TIMEOUT_SECONDS = 8.0
 
 _client: httpx.AsyncClient | None = None

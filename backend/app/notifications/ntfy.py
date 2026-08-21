@@ -1,10 +1,11 @@
+import asyncio
 import logging
 from typing import ClassVar
 
 import httpx
 
 from app.config import get_settings
-from app.http import get_http_client
+from app.http import TOTAL_TIMEOUT_SECONDS, get_http_client
 from app.notifications.transport import (
     NotificationTransport,
     PushMessage,
@@ -52,12 +53,35 @@ class NtfyTransport:
             "tags": ["tv"],
         }
         try:
+            # The wall-clock ceiling, and it is not redundant with the client's timeout: httpx's
+            # READ_TIMEOUT_SECONDS is per READ OPERATION, not a total, so an upstream trickling a
+            # byte every four seconds resets it forever and the request never returns. That is
+            # exactly why TOTAL_TIMEOUT_SECONDS sits above READ_TIMEOUT_SECONDS in app/http.py.
+            # Without it a slow ntfy hangs send(), which hangs run_dispatch, which holds the
+            # DISPATCH advisory lock forever — every subsequent minute logs an APScheduler
+            # "maximum number of running instances reached" warning while notifications stop
+            # dead. ProviderHTTPClient.request wraps its call the same way for the same reason;
+            # the transport is not covered by that one.
+            #
             # follow_redirects=False overrides the shared client's default. httpx turns a
             # redirected POST into a GET and drops the JSON body; ntfy would then answer 200 to
             # an empty GET, is_success would be True, and the dispatcher would mark the task SENT
             # with no push ever delivered. Keeping the redirect as a 3xx response here lets it
             # fall into the retryable branch below instead of a silent, undetectable loss.
-            response = await client.post(self._base_url, json=payload, headers=self._headers(), follow_redirects=False)
+            async with asyncio.timeout(TOTAL_TIMEOUT_SECONDS):
+                response = await client.post(
+                    self._base_url, json=payload, headers=self._headers(), follow_redirects=False
+                )
+        except TimeoutError as exc:
+            # Its OWN clause, ordered first: asyncio.timeout raises TimeoutError, which is a
+            # builtin and NOT an httpx.HTTPError, so the clause below would never catch it and it
+            # would escape send() uncaught — aborting the dispatcher's whole send loop after some
+            # tasks already had `attempts` incremented. Retryable, like every other transport
+            # fault here: a slow server is the definition of a transient one.
+            #
+            # Note httpx.TimeoutException is unrelated to this class and is covered below, since
+            # it DOES subclass httpx.HTTPError.
+            raise TransportRetryable(f"ntfy request exceeded {TOTAL_TIMEOUT_SECONDS}s") from exc
         except httpx.HTTPError as exc:
             # Fail open, deliberately: an unclassified failure is treated as retryable, the same
             # direction _parse_retry_after takes. A bug that loses notifications forever is worse

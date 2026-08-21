@@ -1,3 +1,4 @@
+import asyncio
 import json
 import uuid
 
@@ -99,6 +100,28 @@ async def test_a_connection_failure_is_retryable():
 
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("refused")
+
+    with pytest.raises(TransportRetryable):
+        await _transport(handler).send("t", MESSAGE)
+
+
+async def test_a_slow_trickling_server_hits_the_wall_clock_ceiling(monkeypatch):
+    """The shared client's timeout is PER READ, not a total, so a server that dribbles bytes
+    resets it indefinitely and send() never returns. run_dispatch would then never return either,
+    holding the dispatch advisory lock forever while APScheduler logs "maximum number of running
+    instances reached" every minute and notifications stop dead.
+
+    The ceiling is monkeypatched down rather than slept through: this must cost milliseconds, and
+    the assertion is about the branch existing, not about the constant's value.
+
+    asyncio.timeout raises the BUILTIN TimeoutError, which is not an httpx.HTTPError — so without
+    its own except clause it escapes send() entirely rather than becoming TransportRetryable.
+    """
+    monkeypatch.setattr(ntfy_module, "TOTAL_TIMEOUT_SECONDS", 0.05)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(5)
+        return httpx.Response(200)
 
     with pytest.raises(TransportRetryable):
         await _transport(handler).send("t", MESSAGE)
