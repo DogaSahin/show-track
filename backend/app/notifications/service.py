@@ -223,6 +223,12 @@ async def dispatch_once(session: AsyncSession, transport: NotificationTransport,
         verdict = _verdict(task, row.Media, row.tracked is not None, bool(row.push_enabled), now)
         if verdict is None and not targets_by_user[task.user_id]:
             # Push is on but no device is registered. Nowhere to send is not a failure.
+            #
+            # A SAFETY NET, no longer the primary guard: scan_thresholds now refuses to enqueue
+            # for a user with no target at all, because burning the dedup key to `skipped` is
+            # permanent — on_conflict_do_nothing ignores status, so that key can never be
+            # re-enqueued. What is left for this branch is the narrow race it is actually right
+            # for: the user's last target was DELETED between enqueue and dispatch. Keep it.
             verdict = NotificationTaskStatus.SKIPPED
         if verdict is not None:
             task.status = verdict
