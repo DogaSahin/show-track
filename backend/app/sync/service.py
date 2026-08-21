@@ -2,17 +2,21 @@ import logging
 import uuid
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import exists, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db import get_sessionmaker
+from app.config import get_settings
+from app.db import BULK_INSERT_CHUNK_SIZE, chunked, get_sessionmaker
 from app.library.models import UserMedia
 from app.media.models import Media, MediaSource, MediaStatus
 from app.media.providers.base import MediaProvider, ProviderMedia
 from app.media.providers.errors import ProviderError, ProviderRateLimited
-from app.sync.locks import SYNC_LOCK_KEY, advisory_lock
-from app.sync.schemas import SyncSummary
+from app.notifications.models import NotificationPrefs, NotificationTask, NotificationThreshold
+from app.sync.locks import SYNC_LOCK_KEY, THRESHOLD_LOCK_KEY, advisory_lock
+from app.sync.schemas import SyncSummary, ThresholdScanSummary
 
 logger = logging.getLogger(__name__)
 
@@ -183,5 +187,128 @@ async def run_sync(providers: Mapping[MediaSource, MediaProvider]) -> SyncSummar
             fetched, failed = await fetch_all(providers, worklist)
 
             summary = await apply_refresh(session, worklist, fetched, failed)
+            await session.commit()
+            return summary
+
+
+# The SQL prefilter's window. One horizon covers both thresholds because notify_soon_hours is
+# bounded at 24 by its `le=` — without that bound a larger lead time would silently start dropping
+# candidates the AIRING_SOON threshold should have caught.
+NOTIFY_HORIZON = timedelta(hours=24)
+
+
+def _crossed(airs_at: datetime, now: datetime, *, soon_hours: int) -> tuple[NotificationThreshold, ...]:
+    """Which thresholds `now` has crossed for this air time.
+
+    Both are LEAD TIMES. The earlier calendar rule for the second threshold fired only between UTC
+    midnight and the air time, so an episode airing at 00:05 UTC had a five-minute window against
+    a fifteen-minute scan — never late, simply never enqueued, and indistinguishable in the summary
+    from a healthy quiet scan. A lead time has no midnight cliff: the window is the same width
+    whatever the air time.
+    """
+    remaining = airs_at - now
+    thresholds: list[NotificationThreshold] = []
+    if timedelta(0) < remaining <= NOTIFY_HORIZON:
+        thresholds.append(NotificationThreshold.TWENTY_FOUR_HOURS)
+    if timedelta(0) < remaining <= timedelta(hours=soon_hours):
+        thresholds.append(NotificationThreshold.AIRING_SOON)
+    return tuple(thresholds)
+
+
+def _airs_on(airs_at: datetime) -> datetime:
+    """UTC midnight of the air date — the dedup key's time component.
+
+    Truncated, because AniList revises airingAt by seconds for ordinary corrections and a precise
+    key would mint a fresh notification for every nudge. `.astimezone(UTC)` first so the truncation
+    is anchored to UTC rather than to whatever tzinfo the value happens to carry.
+    """
+    return airs_at.astimezone(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+async def scan_thresholds(session: AsyncSession, *, now: datetime, soon_hours: int) -> ThresholdScanSummary:
+    """Enqueue notifications for approaching episodes. Makes NO provider calls.
+
+    That is the whole point of splitting the jobs: evaluating "airs within 24h" never needed
+    provider data, so this can run far more often than the provider sync at zero upstream cost —
+    and it keeps working through a provider outage, when dates go stale but the dates already
+    known are still worth notifying about.
+
+    `soon_hours` is a parameter rather than a settings read, so no test depends on the developer's
+    .env for its expected counts.
+    """
+    candidates = (
+        select(
+            UserMedia.user_id,
+            Media.id.label("media_id"),
+            Media.next_episode_number,
+            Media.next_episode_date,
+        )
+        .join(Media, UserMedia.media_id == Media.id)
+        # Inner join: no prefs row means push was never configured, and defaulting it on here
+        # would send pushes nobody asked for.
+        .join(NotificationPrefs, NotificationPrefs.user_id == UserMedia.user_id)
+        .where(NotificationPrefs.push_enabled.is_(True))
+        .where(Media.next_episode_date.is_not(None))
+        # NotificationTask.episode_number is NOT NULL, so a date without a number would raise at
+        # insert time. Excluding it here is cheaper than a 500 in a background job.
+        .where(Media.next_episode_number.is_not(None))
+        # An episode that has already aired is never a notification.
+        .where(Media.next_episode_date > now)
+        .where(Media.next_episode_date <= now + NOTIFY_HORIZON)
+    )
+    rows = (await session.execute(candidates)).all()
+    if not rows:
+        return ThresholdScanSummary(ran=True)
+
+    wanted = [
+        {
+            "user_id": row.user_id,
+            "media_id": row.media_id,
+            "episode_number": row.next_episode_number,
+            "threshold": threshold,
+            "airs_on": _airs_on(row.next_episode_date),
+        }
+        for row in rows
+        for threshold in _crossed(row.next_episode_date, now, soon_hours=soon_hours)
+    ]
+    if not wanted:
+        return ThresholdScanSummary(ran=True, considered=len(rows))
+
+    enqueued = 0
+    for chunk in chunked(wanted, BULK_INSERT_CHUNK_SIZE):
+        statement = (
+            pg_insert(NotificationTask)
+            .values(list(chunk))
+            # Dedup is the constraint, never application logic. Every scan between a threshold
+            # crossing and the airing re-derives the same rows; being refused is the steady state,
+            # not an error.
+            .on_conflict_do_nothing(constraint="uq_notification_tasks_dedup")
+            .returning(NotificationTask.id)
+        )
+        enqueued += len((await session.execute(statement)).all())
+
+    await session.flush()
+    return ThresholdScanSummary(
+        ran=True, considered=len(rows), enqueued=enqueued, already_queued=len(wanted) - enqueued
+    )
+
+
+async def run_threshold_scan(*, now: datetime | None = None) -> ThresholdScanSummary:
+    """The locked, session-owning entry point, mirroring run_sync.
+
+    A separate lock key from the provider sync, so a slow six-hourly job never stalls the
+    fifteen-minute one.
+    """
+    async with advisory_lock(THRESHOLD_LOCK_KEY) as acquired:
+        if not acquired:
+            return ThresholdScanSummary(ran=False)
+        async with get_sessionmaker()() as session:
+            summary = await scan_thresholds(
+                session,
+                now=now or datetime.now(tz=UTC),
+                # Resolved HERE, not inside scan_thresholds: a settings read buried in the service
+                # makes every threshold test depend on the developer's .env.
+                soon_hours=get_settings().notify_soon_hours,
+            )
             await session.commit()
             return summary

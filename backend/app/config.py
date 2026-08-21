@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,6 +22,11 @@ class Settings(BaseSettings):
     tmdb_api_key: str | None = None
     access_token_ttl_minutes: int = 30
     refresh_token_ttl_days: int = 30
+    # The lead time for the AIRING_SOON notification threshold. le=24 is not decoration: the
+    # threshold scan's SQL prefilter is a hard 24-hour window, so a larger lead time would
+    # silently drop candidates the threshold should have caught — the same "never enqueued and
+    # indistinguishable from a healthy quiet scan" failure the lead-time rule replaced.
+    notify_soon_hours: int = Field(default=6, ge=1, le=24)
     log_level: str = "INFO"
     environment: str = "local"
 
