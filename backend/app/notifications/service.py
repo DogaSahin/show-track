@@ -1,10 +1,16 @@
+import secrets
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.notifications.models import NotificationPrefs
+from app.notifications.models import NotificationPrefs, PushTarget, PushTransport
+
+# 32 bytes via token_urlsafe -> 43 characters of A-Za-z0-9-_, which is exactly the character set
+# ntfy accepts in a topic. Sized for unguessability rather than tidiness: this string is the ONLY
+# thing standing between a stranger and the notification stream.
+TOPIC_ENTROPY_BYTES = 32
 
 
 async def read_prefs(session: AsyncSession, *, user_id: uuid.UUID) -> bool:
@@ -32,3 +38,43 @@ async def set_prefs(session: AsyncSession, *, user_id: uuid.UUID, push_enabled: 
     result = await session.scalar(statement)
     await session.flush()
     return bool(result)
+
+
+async def create_target(session: AsyncSession, *, user_id: uuid.UUID, label: str | None) -> PushTarget:
+    """Server-generated topic, never client-supplied (6-L). Flushes; the caller commits.
+
+    Not idempotent on re-registration, and cannot be: the server mints the topic, so there is no
+    client-supplied key to be idempotent ON. Registering twice yields two targets and two
+    notifications — which is why DELETE exists and why `label` matters.
+    """
+    target = PushTarget(
+        user_id=user_id,
+        transport=PushTransport.NTFY,
+        target=secrets.token_urlsafe(TOPIC_ENTROPY_BYTES),
+        label=label,
+    )
+    session.add(target)
+    await session.flush()
+    return target
+
+
+async def list_targets(session: AsyncSession, *, user_id: uuid.UUID) -> list[PushTarget]:
+    """Unpaginated, a deliberate exception to architecture rule 4. That rule exists because
+    unbounded lists silently become slow; this one is bounded by how many devices a person owns.
+    """
+    rows = await session.scalars(
+        select(PushTarget).where(PushTarget.user_id == user_id).order_by(PushTarget.created_at)
+    )
+    return list(rows)
+
+
+async def delete_target(session: AsyncSession, *, user_id: uuid.UUID, target_id: uuid.UUID) -> bool:
+    """False when it does not exist OR is not this user's — the caller turns both into 404.
+
+    Scoping the DELETE by user_id in the same statement, rather than fetching then checking, is
+    what makes "not yours" and "not there" indistinguishable from outside. Confirming that an id
+    exists but belongs to someone else is itself a disclosure.
+    """
+    result = await session.execute(delete(PushTarget).where(PushTarget.id == target_id, PushTarget.user_id == user_id))
+    await session.flush()
+    return result.rowcount > 0
