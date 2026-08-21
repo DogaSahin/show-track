@@ -4,8 +4,10 @@ import uuid
 import httpx
 import pytest
 
+from app.config import Settings
+from app.notifications import ntfy as ntfy_module
 from app.notifications.models import NotificationThreshold
-from app.notifications.ntfy import NtfyTransport
+from app.notifications.ntfy import NtfyTransport, get_transport
 from app.notifications.transport import PushMessage, TransportPermanent, TransportRetryable
 
 MESSAGE = PushMessage(
@@ -59,16 +61,35 @@ async def test_an_unknown_topic_is_permanent():
         await _transport(lambda request: httpx.Response(404)).send("t", MESSAGE)
 
 
-async def test_a_redirect_is_retryable():
-    """httpx would otherwise follow a 3xx, turning the POST into a GET and dropping the JSON
-    body — ntfy answers 200 to the empty GET and the push is lost with no error anywhere. With
-    follow_redirects=False on this call the 3xx reaches classification and must retry, not
-    silently succeed.
+async def test_a_followed_redirect_would_be_a_silent_success():
+    """The regression this pins: with follow_redirects on, httpx converts POST to GET and DROPS
+    the JSON body, ntfy's web UI answers 200, is_success returns, the task is marked sent, and
+    the push is lost with no error anywhere. NTFY_BASE_URL=http:// behind a TLS-terminating
+    proxy is the likeliest real misconfiguration and it fails invisibly.
+
+    The client below deliberately sets follow_redirects=True to MATCH app/http.py — the process
+    client the transport uses in production. A MockTransport client built via `_transport()`
+    defaults follow_redirects to False, so a test built on that default would pass even with the
+    fix in send() removed — which is exactly what the previous version of this test did.
+
+    Hop 2 answers 200 rather than another 302: that is what makes the assertion meaningful. If
+    the redirect were followed, send() would return normally and this test would fail.
     """
+    hops = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        hops.append(request.url)
+        if len(hops) == 1:
+            return httpx.Response(302, headers={"Location": "http://ntfy.test/redirected"})
+        return httpx.Response(200)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), follow_redirects=True)
+    transport = NtfyTransport(base_url="http://ntfy.test", token=None, client=client)
+
     with pytest.raises(TransportRetryable):
-        await _transport(lambda request: httpx.Response(302, headers={"Location": "https://ntfy.test/"})).send(
-            "t", MESSAGE
-        )
+        await transport.send("t", MESSAGE)
+
+    assert len(hops) == 1, "the transport must not follow the redirect"
 
 
 async def test_a_connection_failure_is_retryable():
@@ -138,3 +159,39 @@ async def test_neither_secret_leaks_through_a_chained_transport_error():
     rendered = f"{caught.value}{caught.value.__cause__!r}"
     assert "tk_supersecret" not in rendered
     assert "very-secret-topic" not in rendered
+
+
+def _settings(**overrides) -> Settings:
+    """Settings built without reading the developer's real .env.
+
+    Same convention and reason as tests/test_scheduler.py's helper of the same name: without
+    `_env_file=None` these assertions would read whatever NTFY_BASE_URL happens to be set in the
+    developer's environment rather than the value passed here.
+    """
+    base = {
+        "_env_file": None,
+        "database_url": "postgresql+asyncpg://x/y",
+        "secret_key": "x",
+        "registration_code": "x",
+    }
+    return Settings(**{**base, **overrides})
+
+
+def test_get_transport_returns_none_when_ntfy_base_url_is_unset(monkeypatch):
+    """Absent config is the documented way ntfy stays optional (6-K): no transport, no
+    dispatch job, tasks simply queue as pending.
+    """
+    monkeypatch.setattr(ntfy_module, "get_settings", lambda: _settings(ntfy_base_url=None))
+
+    assert get_transport() is None
+
+
+def test_get_transport_returns_none_for_a_scheme_less_base_url(monkeypatch):
+    """A scheme-less NTFY_BASE_URL (e.g. copy-pasted without "http://") would otherwise make
+    httpx raise InvalidURL from inside send() — which does not subclass HTTPError, so it would
+    escape uncaught and abort the dispatcher's send loop mid-batch. Disabling here instead keeps
+    that failure mode out of send() entirely.
+    """
+    monkeypatch.setattr(ntfy_module, "get_settings", lambda: _settings(ntfy_base_url="ntfy.example.com"))
+
+    assert get_transport() is None
