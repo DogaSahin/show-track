@@ -71,10 +71,23 @@ async def test_deleting_a_nonexistent_target_is_404(auth_client):
 
 
 async def test_deleting_a_target_without_a_token_is_rejected(client):
-    """/v1/notifications/targets/{target_id} contains "{", and test_auth_protection.py skips any
-    path with a param — so 401 is asserted explicitly here or nowhere.
+    """test_auth_protection.py's generic sweep already covers this route's mount-level
+    dependency (that check needs no id, so it runs even for `{param}` paths) — but it skips the
+    HTTP-level 401 request for any path with a param, since that DOES need a real id. So the
+    actual "does an anonymous DELETE get rejected" behaviour is asserted here or nowhere.
 
     Takes `client`, NEVER `auth_client`: the authenticated fixture sets an Authorization header
     that would make this pass regardless.
     """
     assert (await client.delete(f"/v1/notifications/targets/{uuid.uuid4()}")).status_code == 401
+
+
+async def test_supplying_a_target_is_rejected_rather_than_ignored(auth_client):
+    """The topic must be server-minted and unguessable, so a client-supplied one is refused
+    outright rather than silently dropped. Without extra="forbid" this body 201s with the
+    attacker's value discarded — harmless in outcome, but it pins the schema's field list rather
+    than the guarantee.
+    """
+    response = await auth_client.post("/v1/notifications/targets", json={"label": "phone", "target": "guessable-topic"})
+
+    assert response.status_code == 422
