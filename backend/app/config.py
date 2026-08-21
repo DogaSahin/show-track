@@ -43,6 +43,15 @@ class Settings(BaseSettings):
     # silently drop candidates the threshold should have caught — the same "never enqueued and
     # indistinguishable from a healthy quiet scan" failure the lead-time rule replaced.
     notify_soon_hours: int = Field(default=6, ge=1, le=24)
+    # Optional, like TMDB_API_KEY and for the same recorded reason: a required setting breaks
+    # backend-ci on every subsequent PR. Absent means no transport is registered, the dispatch
+    # job is never scheduled, and tasks queue harmlessly.
+    ntfy_base_url: str | None = None
+    # A CREDENTIAL. Same category as SECRET_KEY: never logged, never echoed in an error body.
+    ntfy_token: str | None = None
+    # The dispatcher is a single indexed query when the queue is empty, which is almost always,
+    # and its latency sits directly on top of the threshold scan's 15-minute granularity.
+    notification_dispatch_minutes: int = Field(default=1, ge=1)
     log_level: str = "INFO"
     environment: str = "local"
 
