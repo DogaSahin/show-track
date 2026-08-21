@@ -28,9 +28,20 @@ from app.media.providers.http import ProviderHTTPClient, RateLimiter
 from app.media.providers.tmdb.client import TMDBProvider
 from tests.fixtures.loader import load_fixture
 
+_TMDB_KNOWN_ID = "71912"
+
 
 def _anilist_handler(request: httpx.Request) -> httpx.Response:
-    query = json.loads(request.content)["query"]
+    body = json.loads(request.content)
+    query = body["query"]
+    # BEFORE the "Page(" branch: MEDIA_BATCH_QUERY contains `Page(page: 1, perPage: $perPage)`,
+    # so matching on "Page(" first would answer a batch request with the search-page fixture and
+    # the known id would be absent from the result.
+    if "MediaBatch" in query:
+        requested = {str(i) for i in body["variables"]["ids"]}
+        detail = load_fixture("anilist", "media_detail")["data"]["Media"]
+        found = [detail] if str(detail["id"]) in requested else []
+        return httpx.Response(200, json={"data": {"Page": {"media": found}}})
     if "Page(" in query:
         return httpx.Response(200, json=load_fixture("anilist", "search_page"))
     if "Media(" in query:
@@ -42,6 +53,10 @@ def _tmdb_handler(request: httpx.Request) -> httpx.Response:
     if request.url.path.endswith("/search/tv"):
         return httpx.Response(200, json=load_fixture("tmdb", "search_page"))
     if request.url.path.startswith("/3/tv/"):
+        # 404 for anything but the known id. Answering every id with the same fixture would make
+        # "an unknown id is omitted" untestable — the looping default would return a key for it.
+        if request.url.path.rsplit("/", 1)[-1] != _TMDB_KNOWN_ID:
+            return httpx.Response(404, json={})
         return httpx.Response(200, json=load_fixture("tmdb", "media_detail"))
     raise AssertionError(f"unexpected request: {request.url}")
 
@@ -57,7 +72,13 @@ class Case:
 
 CASES = [
     Case("anilist", MediaSource.ANILIST, lambda http: AniListProvider(http), _anilist_handler, "21"),
-    Case("tmdb", MediaSource.TMDB, lambda http: TMDBProvider(http, api_key="dummy-key"), _tmdb_handler, "71912"),
+    Case(
+        "tmdb",
+        MediaSource.TMDB,
+        lambda http: TMDBProvider(http, api_key="dummy-key"),
+        _tmdb_handler,
+        _TMDB_KNOWN_ID,
+    ),
 ]
 
 
@@ -275,3 +296,19 @@ def test_get_providers_memoizes_and_reset_providers_clears_it():
         assert get_providers() is not first
     finally:
         reset_providers()
+
+
+async def test_get_many_returns_known_ids_and_omits_unknown(case: Case):
+    """get_many is an ABC method, so every provider owes this behaviour — including TMDB, whose
+    inherited looping implementation is the production path for every TMDB title in the sync job
+    and would otherwise be executed by no test at all.
+    """
+    provider = build(case)
+
+    result = await provider.get_many([case.known_id, "999999999"])
+
+    assert case.known_id in result
+    # ABSENT from the mapping, not present-with-None: callers write `if ref in result`.
+    assert "999999999" not in result
+    assert result[case.known_id].ref.external_id == case.known_id
+    assert result[case.known_id].ref.source == provider.source

@@ -4,7 +4,12 @@ from decimal import Decimal
 import pytest
 
 from app.media.providers.anilist import mapper
-from app.media.providers.anilist.queries import MEDIA_QUERY, SEARCH_QUERY, USER_LIST_QUERY
+from app.media.providers.anilist.queries import (
+    MEDIA_BATCH_QUERY,
+    MEDIA_QUERY,
+    SEARCH_QUERY,
+    USER_LIST_QUERY,
+)
 from app.media.providers.base import ListEntryStatus
 from tests.fixtures.loader import load_fixture
 
@@ -143,11 +148,16 @@ def test_the_fixture_maps_media_through_the_shared_mapper():
     assert frieren.progress == 12
 
 
-@pytest.mark.parametrize("query", [SEARCH_QUERY, MEDIA_QUERY, USER_LIST_QUERY], ids=["search", "media", "user-list"])
+@pytest.mark.parametrize(
+    "query",
+    [SEARCH_QUERY, MEDIA_QUERY, USER_LIST_QUERY, MEDIA_BATCH_QUERY],
+    ids=["search", "media", "user-list", "media-batch"],
+)
 def test_every_query_defines_the_fragments_it_spreads(query):
     """A query spreading an undefined fragment is a GraphQL error at runtime and nothing catches
-    it earlier. This is the guard that lets the three queries share field lists structurally
-    instead of by three hand-written copies agreeing by luck.
+    it earlier. This is the guard that lets every query share field lists structurally instead of
+    by hand-written copies agreeing by luck — so a NEW query must be added to this list, or it
+    escapes the one test whose whole purpose is catching it.
     """
     spread = set(re.findall(r"\.\.\.(\w+)", query))
     defined = set(re.findall(r"fragment (\w+) on ", query))

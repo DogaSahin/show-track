@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -88,6 +89,31 @@ class MediaProvider(ABC):
     @abstractmethod
     async def get_by_id(self, external_id: str) -> ProviderMedia | None:
         """None when the provider has no such title. Raises ProviderError subclasses otherwise."""
+
+    async def get_many(self, external_ids: Sequence[str]) -> Mapping[str, ProviderMedia]:
+        """Fetch many titles at once, keyed by external_id.
+
+        A MISSING KEY means the provider has no such title — the same meaning get_by_id gives to
+        None. Never raises for an unknown id; raises ProviderError subclasses for transport and
+        upstream failures.
+
+        Returns a Mapping, not a list, because a provider may answer in any order: AniList's batch
+        endpoint returns results id-ordered rather than request-ordered (verified against the live
+        API), so positional pairing would silently attach every title's data to the wrong title.
+
+        CONCRETE, not abstract. This default is correct for TMDB, whose REST API has no batch
+        endpoint, so a looping implementation is the honest one rather than a stub. AniList
+        overrides it with a single GraphQL query per batch. Batching is a performance variant of
+        an operation every provider supports, which is why it lives here rather than in a
+        capability Protocol like UserListProvider — that models something only one provider can do
+        at all.
+        """
+        results: dict[str, ProviderMedia] = {}
+        for external_id in external_ids:
+            detail = await self.get_by_id(external_id)
+            if detail is not None:
+                results[external_id] = detail
+        return results
 
 
 class ListEntryStatus(StrEnum):

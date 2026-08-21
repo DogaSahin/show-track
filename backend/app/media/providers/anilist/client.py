@@ -1,10 +1,16 @@
 import logging
+from collections.abc import Mapping, Sequence
 from typing import Any, ClassVar
 
 from app.media.models import MediaSource, MediaType
 from app.media.providers.anilist import mapper
 from app.media.providers.anilist.errors import AniListGraphQLError
-from app.media.providers.anilist.queries import MEDIA_QUERY, SEARCH_QUERY, USER_LIST_QUERY
+from app.media.providers.anilist.queries import (
+    MEDIA_BATCH_QUERY,
+    MEDIA_QUERY,
+    SEARCH_QUERY,
+    USER_LIST_QUERY,
+)
 from app.media.providers.base import (
     MediaProvider,
     ProviderListEntry,
@@ -26,6 +32,9 @@ PER_CHUNK = 500
 # Liveness guard, not a scale limit: an upstream that always answers hasNextChunk: true must not
 # spin forever inside a request. 20 x 500 bounds a synchronous import at 10,000 entries.
 MAX_LIST_CHUNKS = 20
+# AniList's Page cap for a single request. `perPage: 50` was confirmed honoured against the live
+# API. get_many chunks to this internally so callers never need to know it.
+BATCH_SIZE = 50
 
 
 class AniListProvider(MediaProvider):
@@ -72,6 +81,46 @@ class AniListProvider(MediaProvider):
         if not isinstance(raw_media, dict):
             return None
         return mapper.to_media(raw_media)
+
+    async def get_many(self, external_ids: Sequence[str]) -> Mapping[str, ProviderMedia]:
+        """One GraphQL request per BATCH_SIZE ids instead of one per id.
+
+        Chunks internally: callers hand over every id for this source and the provider decides how
+        to split them, because batch size is provider knowledge.
+        """
+        numeric: list[int] = []
+        for external_id in external_ids:
+            try:
+                numeric.append(int(external_id))
+            except ValueError:
+                # id_in is typed [Int]; a non-numeric id cannot exist upstream, so sending it
+                # would waste a request to learn what get_by_id already answers with None.
+                logger.warning("skipping non-numeric AniList id %r", external_id)
+
+        results: dict[str, ProviderMedia] = {}
+        for start in range(0, len(numeric), BATCH_SIZE):
+            chunk = numeric[start : start + BATCH_SIZE]
+            body = await self._post(MEDIA_BATCH_QUERY, {"ids": chunk, "perPage": BATCH_SIZE})
+            if body is None:
+                # A 404 on a batch endpoint has no "no such record" reading — there is no single
+                # record to be missing. The same judgement search() makes.
+                raise ProviderUnavailable("AniList batch endpoint returned 404")
+            raw_page = body["data"].get("Page")
+            if not isinstance(raw_page, dict):
+                raise ProviderUnavailable("AniList batch response carried no Page object")
+            for raw_media in raw_page.get("media") or []:
+                try:
+                    detail = mapper.to_media(raw_media)
+                except (KeyError, TypeError, ValueError):
+                    # Map per ENTRY, not per batch. to_media indexes raw["id"] unguarded, and a
+                    # KeyError is not a ProviderError — so one malformed entry would escape this
+                    # method, escape the sync job's per-source `except ProviderError`, and roll
+                    # back every update already applied for EVERY source. A skipped id simply
+                    # reads as `missing`, which is already a defined outcome.
+                    logger.warning("unmappable AniList entry in batch; skipping it", exc_info=True)
+                    continue
+                results[detail.ref.external_id] = detail
+        return results
 
     async def fetch_user_list(self, username: str) -> ProviderUserList:
         """Read a public AniList anime list. No auth: MediaListCollection is readable
