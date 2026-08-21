@@ -18,6 +18,12 @@ class PrefsUpdate(BaseModel):
 
 
 class TargetCreate(BaseModel):
+    # extra="forbid" enforces "the topic is never client-supplied" (6-L) AT the boundary: without
+    # it, `{"label": "phone", "target": "guessable"}` gets a 201 with the extra field silently
+    # dropped rather than a 422, which relies on the field merely not existing rather than
+    # rejecting the attempt outright.
+    model_config = ConfigDict(extra="forbid")
+
     # Optional and cosmetic — it exists so a person can tell "phone" from "tablet" in the list.
     # Never used in routing.
     label: str | None = Field(default=None, max_length=64)

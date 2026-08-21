@@ -68,3 +68,13 @@ async def test_a_user_cannot_delete_another_users_target(auth_client, db_session
 
 async def test_deleting_a_nonexistent_target_is_404(auth_client):
     assert (await auth_client.delete(f"/v1/notifications/targets/{uuid.uuid4()}")).status_code == 404
+
+
+async def test_deleting_a_target_without_a_token_is_rejected(client):
+    """/v1/notifications/targets/{target_id} contains "{", and test_auth_protection.py skips any
+    path with a param — so 401 is asserted explicitly here or nowhere.
+
+    Takes `client`, NEVER `auth_client`: the authenticated fixture sets an Authorization header
+    that would make this pass regardless.
+    """
+    assert (await client.delete(f"/v1/notifications/targets/{uuid.uuid4()}")).status_code == 401

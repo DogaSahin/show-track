@@ -59,8 +59,10 @@ async def create_target(session: AsyncSession, *, user_id: uuid.UUID, label: str
 
 
 async def list_targets(session: AsyncSession, *, user_id: uuid.UUID) -> list[PushTarget]:
-    """Unpaginated, a deliberate exception to architecture rule 4. That rule exists because
-    unbounded lists silently become slow; this one is bounded by how many devices a person owns.
+    """Unpaginated, a deliberate exception to architecture rule 4. Nothing caps how many targets
+    a user can register — this is not a schema-enforced bound. The exception is taken because
+    ShowTrack is a personal, invite-gated deployment where the per-user device count is expected
+    to stay small by convention, not because anything here prevents it from growing.
     """
     rows = await session.scalars(
         select(PushTarget).where(PushTarget.user_id == user_id).order_by(PushTarget.created_at)
