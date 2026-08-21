@@ -7,11 +7,11 @@ from starlette.responses import PlainTextResponse, Response
 
 from app.db import dispose_engine
 from app.errors import register_exception_handlers
+from app.http import close_http_client
 from app.library import routes as library_routes
 from app.logging import setup_logging
 from app.media import routes as media_routes
 from app.media.providers import get_providers, reset_providers
-from app.media.providers.http import close_http_client
 from app.middleware import REQUEST_ID_HEADER, RequestIDMiddleware
 from app.notifications import routes as notifications_routes
 from app.recommendations import routes as recommendations_routes

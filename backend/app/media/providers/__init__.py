@@ -2,10 +2,11 @@ import logging
 from collections.abc import Mapping
 
 from app.config import Settings, get_settings
+from app.http import get_http_client
 from app.media.models import MediaSource
 from app.media.providers.anilist.client import AniListProvider
 from app.media.providers.base import MediaProvider
-from app.media.providers.http import ProviderHTTPClient, RateLimiter, get_http_client
+from app.media.providers.http import ProviderHTTPClient, RateLimiter
 from app.media.providers.tmdb.client import TMDBProvider
 
 logger = logging.getLogger(__name__)

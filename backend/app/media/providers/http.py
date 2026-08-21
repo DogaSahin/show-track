@@ -6,53 +6,20 @@ from typing import Any
 
 import httpx
 
+from app.http import TOTAL_TIMEOUT_SECONDS
 from app.media.providers.errors import ProviderRateLimited, ProviderTimeout, ProviderUnavailable
 
 logger = logging.getLogger(__name__)
 
-# Module constants, not settings: these are code-level policy, and promoting them to config
-# would add an .env surface to document for something nobody will tune.
-CONNECT_TIMEOUT_SECONDS = 3.0
-READ_TIMEOUT_SECONDS = 5.0
-# Wall-clock ceiling on a single request. httpx's read timeout is per read operation, not a
-# total, and follow_redirects=True can compound it across up to 20 hops — a slow-trickle
-# upstream could otherwise hold a request open indefinitely. Sits above READ_TIMEOUT_SECONDS.
-# On the search path this 8s ceiling is unreachable in practice: Task 3.7's search service
-# wraps each provider call in its own 6s asyncio.timeout, which fires first and surfaces as
-# SourceStatus.TIMEOUT. This constant is what actually bounds background callers with no outer
-# guard of their own, such as Phase 5's sync job.
-TOTAL_TIMEOUT_SECONDS = 8.0
+# On the search path this 8s ceiling (imported from app.http) is unreachable in practice: Task
+# 3.7's search service wraps each provider call in its own 6s asyncio.timeout, which fires first
+# and surfaces as SourceStatus.TIMEOUT. It's what actually bounds background callers with no
+# outer guard of their own, such as Phase 5's sync job.
 # Fallback window used when a rate limiter observes remaining == 0 but cannot trust the
 # provider's reset time (missing, unparseable, out-of-range, or a delta-seconds header
 # misread as an epoch timestamp already in the past). Fail-open stays the direction — we would
 # rather retry too soon than disable a provider forever — but bounded rather than unbounded.
 FALLBACK_RESET_WINDOW_SECONDS = 60.0
-
-_client: httpx.AsyncClient | None = None
-
-
-def get_http_client() -> httpx.AsyncClient:
-    """One client per process, built on first use.
-
-    Not at import time, for the same reason app/db.py builds its engine lazily: the client
-    binds to the running event loop. Not per request either — a fresh client discards
-    connection pooling and TLS session reuse, and search makes two outbound calls every time.
-    """
-    global _client
-    if _client is None:
-        _client = httpx.AsyncClient(
-            timeout=httpx.Timeout(READ_TIMEOUT_SECONDS, connect=CONNECT_TIMEOUT_SECONDS),
-            follow_redirects=True,
-        )
-    return _client
-
-
-async def close_http_client() -> None:
-    """Release the connection pool and clear the memo, so a later get_http_client() rebuilds."""
-    global _client
-    if _client is not None:
-        await _client.aclose()
-    _client = None
 
 
 def _parse_retry_after(response: httpx.Response) -> float | None:
