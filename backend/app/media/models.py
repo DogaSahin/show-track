@@ -58,6 +58,15 @@ class Media(UUIDPrimaryKeyMixin, Base):
     next_episode_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
     next_episode_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[MediaStatus] = mapped_column(enum_column(MediaStatus, "status"), nullable=False)
+    # When the sync job last got an ANSWER from the provider about this title — the input to the
+    # tiered refresh cadence in app/sync/service.py, not an audit field.
+    #
+    # Nullable with no server default, deliberately: NULL means "never fetched" and the due
+    # predicate treats it as always due, so every pre-existing row is picked up on the first run
+    # after this migration. A `server_default=now()` would be tidier DDL and would tell a lie —
+    # it would mark rows fresh that had never been synced at all, idling them for a full tier
+    # interval.
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (UniqueConstraint("source", "external_id"),)
 

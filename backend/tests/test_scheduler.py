@@ -205,6 +205,8 @@ def test_the_defaults_are_sane_and_nothing_is_required():
     settings = _settings()
 
     assert settings.sync_enabled is True
-    assert settings.sync_interval_hours == 6
+    # 1, not 6: the provider sync tiers its cadence per title (SYNC_TIERS) and can only honour
+    # its tightest tier if the job wakes at least that often.
+    assert settings.sync_interval_hours == 1
     assert settings.threshold_scan_minutes == 15
     assert settings.notify_soon_hours == 6

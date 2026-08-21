@@ -32,7 +32,11 @@ class Settings(BaseSettings):
     # ge=1 because IntervalTrigger raises "The time interval must be positive" for zero — inside
     # lifespan, so the app would not boot. "Defaulted" is not the same as "safe when set wrong",
     # and an env typo is the likeliest way this gets set.
-    sync_interval_hours: int = Field(default=6, ge=1)
+    # Default 1, not 6: app/sync/service.py tiers the refresh cadence per title, and the job can
+    # only honour its tightest tier if it runs at least that often. Raising this above the
+    # tightest tier in SYNC_TIERS silently widens every tier to this value — the job cannot
+    # refresh a title it is not awake to look at.
+    sync_interval_hours: int = Field(default=1, ge=1)
     threshold_scan_minutes: int = Field(default=15, ge=1)
     # The lead time for the AIRING_SOON notification threshold. le=24 is not decoration: the
     # threshold scan's SQL prefilter is a hard 24-hour window, so a larger lead time would
