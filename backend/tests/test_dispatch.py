@@ -195,6 +195,26 @@ async def test_an_episode_the_pointer_has_advanced_past_expires(db_session):
     assert state.task.status is NotificationTaskStatus.EXPIRED
 
 
+async def test_a_series_finale_with_a_cleared_pointer_expires(db_session):
+    """The commonest late-task shape there is, and the one the `>` comparison alone got wrong.
+
+    app/sync/service.py writes next_episode_number = None when a show has no next episode, so on a
+    finale the pointer is NULL rather than advanced and `None > 12` never ran. NULL here means
+    EXPIRED, not "unknown": scan_thresholds cannot enqueue a task while the number is NULL, so a
+    NULL observed now is one that was cleared AFTER this task was created — the episode aired and
+    there is nothing after it.
+    """
+    state = await _queued(db_session, airs_at=NOW - timedelta(hours=2), episode=12)
+    state.media.next_episode_number = None
+    await db_session.flush()
+
+    summary = await service.dispatch_once(db_session, FakeTransport(), now=NOW)
+
+    assert (summary.expired, summary.skipped) == (1, 0)
+    await db_session.refresh(state.task)
+    assert state.task.status is NotificationTaskStatus.EXPIRED
+
+
 async def test_an_episode_rescheduled_out_of_a_past_slot_is_skipped_not_expired(db_session):
     """The mirror of the case above, and the other direction the date comparison got wrong.
 

@@ -144,7 +144,20 @@ def _verdict(
     # PAST it — a reschedule keeps the episode number and moves the date, an airing advances the
     # number. Comparing dates cannot tell those apart: both sides are date-truncated, and backoff
     # totals ~30 minutes, so a genuinely late task is almost always same-day.
-    if media is not None and media.next_episode_number is not None and media.next_episode_number > task.episode_number:
+    if media is None:
+        return NotificationTaskStatus.SKIPPED
+    if media.next_episode_number is None:
+        # A cleared pointer means EXPIRED, not "unknown". scan_thresholds cannot enqueue a task
+        # while the number is NULL, so a NULL observed HERE means it was cleared after this task
+        # was created: the episode aired and there is nothing after it. This is the series-finale
+        # shape, and it is the commonest late task there is.
+        return NotificationTaskStatus.EXPIRED
+    # KNOWN INCOMPLETE — season rollover. TMDB's episode_number is WITHIN-season, so a finale to
+    # premiere goes (S1,12) -> (S2,1) and 1 > 12 is False: an aired finale reads as SKIPPED. Fixing
+    # it needs the season in the comparison, and notification_tasks stores no season — a schema
+    # change, a migration, and a dedup-key question. Deferred deliberately; it mis-buckets one
+    # terminal status as another and never causes or suppresses a send.
+    if media.next_episode_number > task.episode_number:
         return NotificationTaskStatus.EXPIRED
     return NotificationTaskStatus.SKIPPED
 
@@ -243,6 +256,12 @@ async def dispatch_once(session: AsyncSession, transport: NotificationTransport,
     # "create_savepoint" turns this into RELEASE SAVEPOINT, so nothing escapes the test's outer
     # transaction (measured: the full suite passes with zero leaked rows). Only the OTHER half of
     # the 4-M deviation — splitting claim/send/finalize across separate sessions — would break it.
+    #
+    # Safe to sit MID-FUNCTION only because the caller's session sets expire_on_commit=False (both
+    # get_sessionmaker and the test fixture do). Under SQLAlchemy's default the commit would expire
+    # every loaded object, and the send loop's `target.target` / `task.attempts` reads below would
+    # become lazy reloads — which raise MissingGreenlet in async code rather than quietly
+    # re-querying. A caller passing an expiring session breaks the loop, not the durability.
     await session.commit()
 
     for task, targets, message in sendable:
