@@ -7,7 +7,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.library.models import UserMedia, UserMediaStatus
 from app.media.models import Episode, Media, MediaSource, MediaStatus, MediaType
-from app.notifications.models import NotificationPrefs, NotificationTask, NotificationThreshold
+from app.notifications.models import (
+    NotificationPrefs,
+    NotificationTask,
+    NotificationThreshold,
+    PushTarget,
+    PushTransport,
+)
 from app.users.models import User
 
 
@@ -51,6 +57,15 @@ def make_user_media(user_id: uuid.UUID, media_id: uuid.UUID, **overrides: object
 def make_notification_prefs(user_id: uuid.UUID, **overrides: object) -> NotificationPrefs:
     defaults: dict[str, object] = {"user_id": user_id}
     return NotificationPrefs(**{**defaults, **overrides})
+
+
+def make_push_target(user_id: uuid.UUID, **overrides: object) -> PushTarget:
+    defaults: dict[str, object] = {
+        "user_id": user_id,
+        "transport": PushTransport.NTFY,
+        "target": "test-topic",
+    }
+    return PushTarget(**{**defaults, **overrides})
 
 
 def make_notification_task(user_id: uuid.UUID, media_id: uuid.UUID, **overrides: object) -> NotificationTask:
