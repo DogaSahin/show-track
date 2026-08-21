@@ -85,12 +85,13 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> Respo
 
 # Protection is a property of where a router is mounted, not of a decorator on each route.
 # A route added in a later phase to one of these routers is protected because it joined a
-# protected router. tests/test_auth_protection.py checks this two ways: an HTTP-level 401
-# without a token, and a direct check that get_current_user is present in the route's
-# mount-level dependency list — the latter is what actually catches this dependencies=[...]
-# argument being dropped, since some handlers also depend on get_current_user for their own data
-# needs and would otherwise mask the loss. Routes with a `{param}` in their path, or with no HTTP
-# methods at all, are covered by neither check.
+# protected router. tests/test_auth_protection.py checks this two ways: a direct check that
+# get_current_user is present in the route's mount-level dependency list — which runs for EVERY
+# route including `{param}` ones, since it is pure route-object inspection and needs no real id
+# — and, for routes with no `{param}`, an HTTP-level 401 without a token. The former is what
+# actually catches this dependencies=[...] argument being dropped, since some handlers also
+# depend on get_current_user for their own data needs and would otherwise mask the loss from an
+# HTTP-only check. Routes with no HTTP methods at all (e.g. a Mount) are covered by neither.
 for router in DOMAIN_ROUTERS:
     app.include_router(router, prefix="/v1", dependencies=[Depends(get_current_user)])
 
