@@ -59,6 +59,18 @@ async def test_an_unknown_topic_is_permanent():
         await _transport(lambda request: httpx.Response(404)).send("t", MESSAGE)
 
 
+async def test_a_redirect_is_retryable():
+    """httpx would otherwise follow a 3xx, turning the POST into a GET and dropping the JSON
+    body — ntfy answers 200 to the empty GET and the push is lost with no error anywhere. With
+    follow_redirects=False on this call the 3xx reaches classification and must retry, not
+    silently succeed.
+    """
+    with pytest.raises(TransportRetryable):
+        await _transport(lambda request: httpx.Response(302, headers={"Location": "https://ntfy.test/"})).send(
+            "t", MESSAGE
+        )
+
+
 async def test_a_connection_failure_is_retryable():
     """Fail open: a bug that loses notifications forever is worse than one that retries a few
     times and gives up. Same direction as _parse_retry_after in the provider stack.
@@ -84,6 +96,10 @@ async def test_the_auth_token_never_appears_in_an_error():
         await transport.send("t", MESSAGE)
 
     assert "tk_supersecret" not in str(caught.value)
+    # `raise ... from exc` chains the original httpx exception onto __cause__, and that is what a
+    # logger.exception() call actually prints — not just str(caught.value). Checked separately so
+    # this test cannot pass by accident while the traceback still leaks the credential.
+    assert "tk_supersecret" not in repr(caught.value.__cause__)
 
 
 async def test_the_topic_never_appears_in_an_error():
@@ -92,3 +108,6 @@ async def test_the_topic_never_appears_in_an_error():
         await _transport(lambda request: httpx.Response(500)).send("very-secret-topic", MESSAGE)
 
     assert "very-secret-topic" not in str(caught.value)
+    # See the auth-token test above: __cause__ is what logger.exception() prints, not just
+    # str(caught.value), so it gets its own assertion rather than riding on the message check.
+    assert "very-secret-topic" not in repr(caught.value.__cause__)

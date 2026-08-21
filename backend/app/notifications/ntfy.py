@@ -14,9 +14,12 @@ from app.notifications.transport import (
 
 logger = logging.getLogger(__name__)
 
-# 429 is the one 4xx that will succeed later; classifying it with the rest would delete a target
-# row over a temporary condition.
-RETRYABLE_STATUSES = frozenset({429})
+# Only a status that is genuinely ABOUT THIS TARGET may prune it. 400/401/403 are sender-side
+# facts — a wrong NTFY_TOKEN, a malformed payload, a bad base URL — and pruning on those would
+# let one misconfiguration wipe every registered device. Everything outside this set retries and
+# is bounded by MAX_ATTEMPTS, so the cost of guessing wrong here is a few retries, not data loss.
+# Narrower than "every 4xx" on purpose: the design doc scopes permanence to 404/410 explicitly.
+PERMANENT_STATUSES = frozenset({404, 410})
 
 
 class NtfyTransport:
@@ -49,7 +52,12 @@ class NtfyTransport:
             "tags": ["tv"],
         }
         try:
-            response = await client.post(self._base_url, json=payload, headers=self._headers())
+            # follow_redirects=False overrides the shared client's default. httpx turns a
+            # redirected POST into a GET and drops the JSON body; ntfy would then answer 200 to
+            # an empty GET, is_success would be True, and the dispatcher would mark the task SENT
+            # with no push ever delivered. Keeping the redirect as a 3xx response here lets it
+            # fall into the retryable branch below instead of a silent, undetectable loss.
+            response = await client.post(self._base_url, json=payload, headers=self._headers(), follow_redirects=False)
         except httpx.HTTPError as exc:
             # Fail open, deliberately: an unclassified failure is treated as retryable, the same
             # direction _parse_retry_after takes. A bug that loses notifications forever is worse
@@ -60,11 +68,15 @@ class NtfyTransport:
 
         if response.is_success:
             return
-        if response.status_code >= 500 or response.status_code in RETRYABLE_STATUSES:
-            raise TransportRetryable(f"ntfy returned {response.status_code}")
-        # Status only. NOT response.text — ntfy echoes the request back on some errors, which
-        # would put the topic into the exception message and from there into a log line.
-        raise TransportPermanent(f"ntfy rejected the message with {response.status_code}")
+        if response.status_code in PERMANENT_STATUSES:
+            # Status only. NOT response.text — ntfy echoes the request back on some errors, which
+            # would put the topic into the exception message and from there into a log line.
+            raise TransportPermanent(f"ntfy rejected the message with {response.status_code}")
+        # Everything else — 3xx, the rest of 4xx, 5xx — retries. Per the design doc, only 404/410
+        # are permanent; a 503 is not, and neither is a 401 from a bad token or a 3xx from a
+        # misconfigured base URL. Bounded by MAX_ATTEMPTS elsewhere, so guessing "retryable" here
+        # costs a few attempts rather than deleting a device's registration.
+        raise TransportRetryable(f"ntfy returned {response.status_code}")
 
 
 def get_transport() -> NotificationTransport | None:
@@ -78,5 +90,13 @@ def get_transport() -> NotificationTransport | None:
     settings = get_settings()
     if not settings.ntfy_base_url:
         logger.info("NTFY_BASE_URL is not set; notifications will queue but never send")
+        return None
+    if not settings.ntfy_base_url.startswith(("http://", "https://")):
+        # A scheme-less NTFY_BASE_URL (e.g. "ntfy.example.com") makes httpx raise
+        # httpx.InvalidURL, which does NOT subclass httpx.HTTPError — send() would let it escape
+        # uncaught, aborting the dispatcher's send loop after some tasks already had `attempts`
+        # incremented. Disabling cleanly here, the same posture as "absent means no transport",
+        # keeps that failure mode out of send() entirely rather than papering over it there.
+        logger.warning("NTFY_BASE_URL is set but missing a scheme (http:// or https://); ntfy is disabled")
         return None
     return NtfyTransport(base_url=settings.ntfy_base_url, token=settings.ntfy_token)
