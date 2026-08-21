@@ -346,13 +346,30 @@ docker compose exec ntfy ntfy access showtrack '*' wo
 docker compose exec ntfy ntfy token add showtrack     # prints tk_... — this is NTFY_TOKEN
 ```
 
-Put both in `.env` and **restart the API** — the dispatch job is registered at startup, so a
-running process will not pick up a newly configured transport:
+**That user and token live in the `ntfy-data` volume, not in your `.env`.** `docker compose down -v`
+destroys the volume and takes them with it, after which the token in `.env` starts coming back `403`
+with nothing in the app naming the cause — it looks exactly like a mistyped token. The fix is to
+re-run all three commands above and put the new token in `.env`. Plain `docker compose down`, without
+`-v`, keeps them.
+
+Now **edit the two lines `.env.example` already gave you** — `NTFY_BASE_URL=` and `NTFY_TOKEN=`, both
+shipped empty — and fill them in **in place**:
 
 ```bash
-NTFY_BASE_URL=http://localhost:8080
-NTFY_TOKEN=tk_...
+NTFY_BASE_URL=http://localhost:8080     # edit the existing line; do not append a second one
+NTFY_TOKEN=tk_...                       # likewise
 ```
+
+Appending a duplicate rather than editing is the one way to break this silently: the settings loader
+is **last-wins**, so a second, empty `NTFY_BASE_URL=` further down the file beats the value you just
+set. `get_transport()` then returns `None`, the dispatch job is never registered, tasks queue as
+`pending` forever, and the only trace is one startup log line — `NTFY_BASE_URL is not set;
+notifications will queue but never send`. Confirm with `grep NTFY .env` that each key appears exactly
+once, with a value.
+
+Then **restart the API** — the dispatch job is registered at startup, so a running process will not
+pick up a newly configured transport. `scheduler started: ... dispatch every 1m` in the log is the
+confirmation; `dispatch disabled (no transport)` means the transport did not resolve.
 
 Push is **off by default** for every user, and a missing preferences row reads as off. Turn it on,
 then register a device:
@@ -404,6 +421,21 @@ ntfy runs on the home server, so **the phone must be able to reach it** — in p
 VPN. Off the VPN, notifications queue on the server and the phone sees nothing until it can
 connect again. This is the accepted, known cost of self-hosting rather than using Firebase, and it
 is the one real regression against FCM.
+
+Once the phone is reaching ntfy over the VPN rather than over `localhost`, set **`NTFY_PUBLIC_URL`**
+(in `backend/.env`, or exported — Compose reads `.env` for interpolation) to the address **the phone**
+uses, e.g. your Tailscale machine name plus `:8080`, and recreate the service:
+
+```bash
+docker compose up -d --force-recreate ntfy
+```
+
+This is ntfy's own idea of its public address, and a different question from `NTFY_BASE_URL`, which is
+where **the backend** reaches ntfy — on one host both are `http://localhost:8080`, but a backend
+running inside compose reaches it at `http://ntfy` while the phone never can. ntfy stamps
+`NTFY_PUBLIC_URL` into click actions and attachment links, so left at the `localhost` default a phone
+following one is sent to *its own* localhost. Nothing today generates such a link, so this affects
+link targets only and **never delivery** — it matters from the Android client onward.
 
 ##### Why not Firebase
 

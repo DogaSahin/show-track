@@ -29,7 +29,14 @@ services:
       # Where the user/token database lives. Named explicitly because deny-all without an
       # auth-file leaves a server nobody, including the backend, can publish to.
       NTFY_AUTH_FILE: /var/lib/ntfy/user.db
-      NTFY_BASE_URL: http://localhost:8080
+      # NTFY'S OWN idea of its public address, which is a different question from where the
+      # BACKEND reaches it: ntfy stamps this into click actions and attachment links, so a phone
+      # following one resolves whatever is written here. Left at localhost, a phone on the VPN is
+      # sent to ITS OWN localhost. Set NTFY_PUBLIC_URL (shell env, or backend/.env — Compose reads
+      # that file for interpolation) to the address the PHONE reaches this server on. Wrong values
+      # break link targets only, never delivery. Deliberately a separate variable from the
+      # backend's NTFY_BASE_URL: the two can legitimately differ.
+      NTFY_BASE_URL: ${NTFY_PUBLIC_URL:-http://localhost:8080}
     volumes:
       - ntfy-data:/var/lib/ntfy
     ports:
