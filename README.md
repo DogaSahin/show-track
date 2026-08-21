@@ -10,14 +10,17 @@ possible: because everyone in a group can see everyone's exact progress, the app
 ahead on a show and how far.
 
 **Status:** early. The backend schema and migrations, auth, the AniList/TMDB provider
-integrations with unified search, the personal library — add, list, update, remove — and AniList
-list import are in place; the Android client is not built yet. See
+integrations with unified search, the personal library — add, list, update, remove — AniList list
+import, and the background sync that keeps airing dates fresh are in place. Notifications are
+**queued but not yet sent** (that is the next phase), and the Android client is not built yet. See
 [Project status](#project-status).
 
 ## What it does
 
 - **Track** anime and TV in one library — status, 1–10 score, episode progress, favourites.
-- **Know when the next episode airs**, with a push notification 24 hours before and again on the day.
+- **Know when the next episode airs.** A background job refreshes airing dates on a schedule and
+  queues a notification 24 hours before an episode airs, and again shortly before. Sending the
+  push is the next phase — today the queue fills but nothing delivers it.
 - **Import** an existing AniList list by username. **The profile must be public** — the import
   sends no credentials, so a private list is not readable and returns a 404. Read-only and
   one-way: ShowTrack never writes back to AniList.
@@ -241,7 +244,37 @@ protection is not enabled.
   earns its place by catching a real regression in behaviour we own, not by raising a number.
 - Every change carries its CI updates, its README updates, and its `.gitignore` updates with it.
 
-### Never commit credentials
+#### Background sync
+
+Two jobs run inside the API process:
+
+| Job | Interval | Cost |
+|---|---|---|
+| Airing refresh | `SYNC_INTERVAL_HOURS` (default 6) | queries AniList/TMDB, rate-limited |
+| Threshold scan | `THRESHOLD_SCAN_MINUTES` (default 15) | database only, no network |
+
+They are split because evaluating "airs within 24 hours" never needed a provider call. The scan
+therefore runs often enough to make notification timing accurate to about a quarter of an hour,
+and it keeps working during a provider outage — dates go stale, but the dates already known still
+notify.
+
+**Running more than one replica.** The scheduler is in-process, so every replica would otherwise
+run both jobs and queue duplicate notifications. Two things prevent that:
+
+- Each job takes a **Postgres advisory lock** before doing anything. A second instance that finds
+  the lock held returns `ran: false` immediately rather than waiting.
+- Set **`SYNC_ENABLED=false`** on the extra replicas. The lock is the safety net; this is the
+  intent.
+
+One deployment caveat, because it is invisible until it bites: these are **session-scoped**
+advisory locks, which are incompatible with **PgBouncer in transaction-pooling mode** — the lock
+would be taken on one backend and the unlock issued on another. That is the default pooler mode on
+several managed Postgres providers, so check it before putting one in front of this.
+
+`POST /v1/debug/sync` runs the airing refresh immediately, taking the same lock, so you can test
+without waiting hours.
+
+## Never commit credentials
 
 Two layers guard this, and they fail in different ways:
 
@@ -265,7 +298,8 @@ and both get worse the longer they wait.
 | 3 | Providers — AniList + TMDB integration, unified search, media persistence | done |
 | 4 | Library CRUD — add, list, update, remove, cursor-paginated | done |
 | 4.5 | AniList import — public profiles, one-way, local wins | done |
-| 5–7 | Sync worker, notifications, recommendations | |
+| 5 | Sync worker — scheduled airing refresh, notification queue | done |
+| 6–7 | Notifications, recommendations | |
 | 7.5 | Groups — membership, feed, reviews, shared watchlist | |
 | 8–9 | Android foundations and feature modules | |
 | 10 | Polish and deployment | |

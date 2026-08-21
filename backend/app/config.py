@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,6 +22,23 @@ class Settings(BaseSettings):
     tmdb_api_key: str | None = None
     access_token_ttl_minutes: int = 30
     refresh_token_ttl_days: int = 30
+    # All defaulted, never required. CLAUDE.md records that Phase 2 added two REQUIRED settings
+    # and broke backend-ci on every subsequent PR.
+    #
+    # sync_enabled is more than an off switch: it is the documented way to run a SECOND REPLICA —
+    # scheduler off, API on — which is precisely the deployment question the advisory lock exists
+    # to answer. The lock protects against the mistake; this setting is how you avoid making it.
+    sync_enabled: bool = True
+    # ge=1 because IntervalTrigger raises "The time interval must be positive" for zero — inside
+    # lifespan, so the app would not boot. "Defaulted" is not the same as "safe when set wrong",
+    # and an env typo is the likeliest way this gets set.
+    sync_interval_hours: int = Field(default=6, ge=1)
+    threshold_scan_minutes: int = Field(default=15, ge=1)
+    # The lead time for the AIRING_SOON notification threshold. le=24 is not decoration: the
+    # threshold scan's SQL prefilter is a hard 24-hour window, so a larger lead time would
+    # silently drop candidates the threshold should have caught — the same "never enqueued and
+    # indistinguishable from a healthy quiet scan" failure the lead-time rule replaced.
+    notify_soon_hours: int = Field(default=6, ge=1, le=24)
     log_level: str = "INFO"
     environment: str = "local"
 

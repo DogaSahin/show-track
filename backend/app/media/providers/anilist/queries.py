@@ -93,3 +93,22 @@ query UserList($name: String, $chunk: Int, $perChunk: Int) {
 """
     + MEDIA_DETAIL_FRAGMENT
 )
+
+# Spreads the same MediaDetailFields fragment as MEDIA_QUERY, so a batched fetch and a single
+# fetch cannot drift apart in what they select — the property decision 4-G made structural rather
+# than tested.
+#
+# `id_in` and `perPage: 50` were both confirmed against the live schema and a live query, as was
+# the fact that results come back id-ordered and unknown ids are silently omitted.
+MEDIA_BATCH_QUERY = (
+    """
+query MediaBatch($ids: [Int], $perPage: Int) {
+  Page(page: 1, perPage: $perPage) {
+    media(id_in: $ids, type: ANIME) {
+      ...MediaDetailFields
+    }
+  }
+}
+"""
+    + MEDIA_DETAIL_FRAGMENT
+)
