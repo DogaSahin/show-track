@@ -140,15 +140,20 @@ def _verdict(
         # The pointer still describes this episode, so its precise air time is trustworthy.
         return None if media.next_episode_date > now else NotificationTaskStatus.EXPIRED
 
-    # The pointer moved on. Either the episode aired and the row advanced (our lateness) or it was
-    # rescheduled (the world changed) — told apart by whether the task's own date is behind us.
-    if task.airs_on < airs_on_for(now):
+    # The pointer moved on. Whether the episode AIRED is knowable from the pointer having advanced
+    # PAST it — a reschedule keeps the episode number and moves the date, an airing advances the
+    # number. Comparing dates cannot tell those apart: both sides are date-truncated, and backoff
+    # totals ~30 minutes, so a genuinely late task is almost always same-day.
+    if media is not None and media.next_episode_number is not None and media.next_episode_number > task.episode_number:
         return NotificationTaskStatus.EXPIRED
     return NotificationTaskStatus.SKIPPED
 
 
 async def dispatch_once(session: AsyncSession, transport: NotificationTransport, *, now: datetime) -> DispatchSummary:
-    """Claim, re-validate, send, finalize. Flushes; the caller commits.
+    """Claim, re-validate, send, finalize.
+
+    Commits ONCE in the middle, to make the attempt durable before the transport is touched (6-G);
+    the caller commits the finalize half.
 
     Split out from run_dispatch so it is callable with a test's savepoint-joined session —
     run_dispatch owns its own sessions and would bypass the fixture entirely, the hazard
@@ -203,7 +208,13 @@ async def dispatch_once(session: AsyncSession, transport: NotificationTransport,
             verdict = NotificationTaskStatus.SKIPPED
         if verdict is not None:
             task.status = verdict
-            setattr(summary, verdict.value, getattr(summary, verdict.value) + 1)
+            # Explicit, not setattr(summary, verdict.value, ...). That coupled the enum's VALUE
+            # strings to the schema's FIELD names invisibly: renaming either broke exactly one
+            # branch, at runtime, with an AttributeError, and turned up in no grep.
+            if verdict is NotificationTaskStatus.EXPIRED:
+                summary.expired += 1
+            else:
+                summary.skipped += 1
             continue
 
         # 6-G: the attempt is recorded and committed BEFORE the transport is touched, so a crash
@@ -224,7 +235,15 @@ async def dispatch_once(session: AsyncSession, transport: NotificationTransport,
                 ),
             )
         )
-    await session.flush()
+    # COMMIT, not just flush, and this is the whole of 6-G rather than a durability nicety. A
+    # flush is undone by the rollback that a crash implies, so a crash-looping process would
+    # re-claim the same task at attempts=0 every minute: MAX_ATTEMPTS unreachable, the `failed`
+    # bucket never written, and up to a full threshold-window of duplicate pushes where the spec
+    # promises five. Safe under the savepoint-joined test fixture — join_transaction_mode
+    # "create_savepoint" turns this into RELEASE SAVEPOINT, so nothing escapes the test's outer
+    # transaction (measured: the full suite passes with zero leaked rows). Only the OTHER half of
+    # the 4-M deviation — splitting claim/send/finalize across separate sessions — would break it.
+    await session.commit()
 
     for task, targets, message in sendable:
         delivered = False

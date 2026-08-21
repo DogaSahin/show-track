@@ -174,6 +174,45 @@ async def test_an_episode_that_already_aired_expires(db_session):
     assert state.task.status is NotificationTaskStatus.EXPIRED
 
 
+async def test_an_episode_the_pointer_has_advanced_past_expires(db_session):
+    """Episode 12 aired at 10:00, it is now 12:00, and the sync job has already advanced the
+    pointer to 13. That is OUR lateness, so EXPIRED.
+
+    The earlier `task.airs_on < airs_on_for(now)` test called this SKIPPED: both sides are
+    date-truncated to the same midnight, so `<` was false. Backoff totals ~30 minutes, so a
+    genuinely late task is almost always same-day — which made that branch's EXPIRED close to
+    dead code and the reported status a race with the sync job.
+    """
+    state = await _queued(db_session, airs_at=NOW - timedelta(hours=2), episode=12)
+    state.media.next_episode_number = 13
+    state.media.next_episode_date = NOW + timedelta(days=7)
+    await db_session.flush()
+
+    summary = await service.dispatch_once(db_session, FakeTransport(), now=NOW)
+
+    assert (summary.expired, summary.skipped) == (1, 0)
+    await db_session.refresh(state.task)
+    assert state.task.status is NotificationTaskStatus.EXPIRED
+
+
+async def test_an_episode_rescheduled_out_of_a_past_slot_is_skipped_not_expired(db_session):
+    """The mirror of the case above, and the other direction the date comparison got wrong.
+
+    The episode was due yesterday and has been pushed to next week. The episode NUMBER is
+    unchanged, so nothing aired — the world changed, which is SKIPPED. The date test said EXPIRED
+    because the task's own truncated date is behind today's.
+    """
+    state = await _queued(db_session, airs_at=NOW - timedelta(days=1), episode=12)
+    state.media.next_episode_date = NOW + timedelta(days=7)
+    await db_session.flush()
+
+    summary = await service.dispatch_once(db_session, FakeTransport(), now=NOW)
+
+    assert (summary.skipped, summary.expired) == (1, 0)
+    await db_session.refresh(state.task)
+    assert state.task.status is NotificationTaskStatus.SKIPPED
+
+
 async def test_a_user_with_no_targets_is_skipped(db_session):
     """Push enabled but no device registered. Not a failure — there is nowhere to send."""
     await _queued(db_session, targets=0)
@@ -207,16 +246,36 @@ async def test_a_retryable_failure_leaves_the_task_pending_with_backoff(db_sessi
     assert state.task.next_attempt_at > NOW
 
 
-async def test_attempts_is_durable_before_the_send(db_session):
-    """6-G, at-least-once. The attempt is committed BEFORE the transport is called, so a crash
-    mid-send retries rather than silently losing the notification. A duplicate "airs in 24 hours"
-    is mildly annoying; a missing one is indistinguishable from "there is no episode", which is
-    the exact information the feature exists to convey.
+async def test_the_attempt_is_committed_before_the_send(db_session, monkeypatch):
+    """6-G, at-least-once — the MECHANISM, not just the resulting state.
+
+    An earlier version of this test asserted `attempts == 1` after the call, which a plain flush
+    satisfies just as well as a commit, so it could not fail for the reason its name claimed. A
+    flush is undone by the rollback a crash implies: the process would re-claim the same task at
+    attempts=0 on every restart, MAX_ATTEMPTS would be unreachable, and the `failed` bucket 6-F
+    exists to provide would never be written. So the property is the ORDERING — a commit strictly
+    precedes the first send — and that is what is asserted.
     """
     state = await _queued(db_session)
+    events: list[str] = []
+    real_commit = db_session.commit
 
-    await service.dispatch_once(db_session, FakeTransport(TransportRetryable("boom")), now=NOW)
+    async def recording_commit() -> None:
+        events.append("commit")
+        await real_commit()
 
+    monkeypatch.setattr(db_session, "commit", recording_commit)
+
+    class RecordingTransport(FakeTransport):
+        async def send(self, target: str, message: PushMessage) -> None:
+            events.append("send")
+            await super().send(target, message)
+
+    await service.dispatch_once(db_session, RecordingTransport(), now=NOW)
+
+    assert "send" in events, "the transport was never called; this test proves nothing"
+    assert "commit" in events, "the attempt was never committed before the transport was touched"
+    assert events.index("commit") < events.index("send"), events
     await db_session.refresh(state.task)
     assert state.task.attempts == 1
 
@@ -256,6 +315,24 @@ async def test_a_task_not_yet_due_is_left_alone(db_session):
     summary = await service.dispatch_once(db_session, FakeTransport(), now=NOW)
 
     assert summary.claimed == 0
+
+
+async def test_a_capped_batch_reports_what_it_left_behind(db_session, monkeypatch):
+    """The "no silent caps" rule: a run that hit DISPATCH_BATCH_SIZE must not read as a
+    completed one.
+
+    The constant is monkeypatched down rather than lowered in the source — 100 is the production
+    value and this test is about the reporting, not the size. Note the count is only taken when
+    the cap was ACTUALLY hit, so the common empty-queue run pays nothing for it.
+    """
+    monkeypatch.setattr(service, "DISPATCH_BATCH_SIZE", 2)
+    for _ in range(5):
+        await _queued(db_session)
+
+    summary = await service.dispatch_once(db_session, FakeTransport(), now=NOW)
+
+    assert (summary.claimed, summary.remaining) == (2, 3)
+    assert summary.sent == 2
 
 
 async def test_a_contended_run_reports_ran_false():
