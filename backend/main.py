@@ -96,6 +96,11 @@ for router in DOMAIN_ROUTERS:
 
 app.include_router(users_routes.auth_router, prefix="/v1")
 
+# Mounted separately from DOMAIN_ROUTERS, so tests/test_health.py's "six domain routers with six
+# domain prefixes" invariant keeps meaning what it says — /debug is not a domain. Explicit
+# dependencies=, because this router does not inherit the mounting loop's auth above.
+app.include_router(sync_routes.debug_router, prefix="/v1", dependencies=[Depends(get_current_user)])
+
 
 @app.get("/health", tags=["infra"])
 async def health() -> dict[str, str]:
