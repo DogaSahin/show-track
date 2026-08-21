@@ -63,6 +63,11 @@ def downgrade() -> None:
     """Downgrade schema."""
     op.add_column('users', sa.Column('fcm_token', sa.String(length=255), nullable=True))
 
+    # THE ONE STATEMENT HERE THAT CAN FAIL ON LIVE DATA. Narrowing the CHECK back to three values
+    # is validated against existing rows, so it aborts with a bare constraint violation if any
+    # task already holds 'skipped' or 'expired'. Correct — silently keeping them would leave rows
+    # the upgraded schema cannot represent — but the remedy is manual: UPDATE those rows to
+    # 'failed' (or DELETE them) first, then re-run the downgrade.
     op.drop_constraint('status', 'notification_tasks', type_='check')
     op.create_check_constraint(
         'status',
