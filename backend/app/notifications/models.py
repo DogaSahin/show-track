@@ -1,11 +1,26 @@
 import enum
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, UniqueConstraint, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base, UUIDPrimaryKeyMixin, enum_column
+
+
+def airs_on_for(airs_at: datetime) -> datetime:
+    """UTC midnight of the air date — the dedup key's time component, and the value the
+    dispatcher compares against to detect a reschedule.
+
+    Truncated, because AniList revises airingAt by seconds for ordinary corrections and a precise
+    key would mint a fresh notification for every nudge. `.astimezone(UTC)` first so the
+    truncation is anchored to UTC rather than to whatever tzinfo the value happens to carry.
+
+    Lives here rather than in app/sync/service.py because both the writer (the threshold scan)
+    and the reader (the dispatcher) need it, and sync already imports this module — putting it
+    the other way round is a circular import.
+    """
+    return airs_at.astimezone(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
 
 
 class NotificationPrefs(UUIDPrimaryKeyMixin, Base):

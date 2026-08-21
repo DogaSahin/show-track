@@ -14,7 +14,7 @@ from app.library.models import UserMedia
 from app.media.models import Media, MediaSource, MediaStatus
 from app.media.providers.base import MediaProvider, ProviderMedia
 from app.media.providers.errors import ProviderError, ProviderRateLimited
-from app.notifications.models import NotificationPrefs, NotificationTask, NotificationThreshold
+from app.notifications.models import NotificationPrefs, NotificationTask, NotificationThreshold, airs_on_for
 from app.sync.locks import SYNC_LOCK_KEY, THRESHOLD_LOCK_KEY, advisory_lock
 from app.sync.schemas import SyncSummary, ThresholdScanSummary
 
@@ -297,16 +297,6 @@ def _crossed(airs_at: datetime, now: datetime, *, soon_hours: int) -> tuple[Noti
     return tuple(thresholds)
 
 
-def _airs_on(airs_at: datetime) -> datetime:
-    """UTC midnight of the air date — the dedup key's time component.
-
-    Truncated, because AniList revises airingAt by seconds for ordinary corrections and a precise
-    key would mint a fresh notification for every nudge. `.astimezone(UTC)` first so the truncation
-    is anchored to UTC rather than to whatever tzinfo the value happens to carry.
-    """
-    return airs_at.astimezone(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
-
-
 async def scan_thresholds(session: AsyncSession, *, now: datetime, soon_hours: int) -> ThresholdScanSummary:
     """Enqueue notifications for approaching episodes. Makes NO provider calls.
 
@@ -348,7 +338,7 @@ async def scan_thresholds(session: AsyncSession, *, now: datetime, soon_hours: i
             "media_id": row.media_id,
             "episode_number": row.next_episode_number,
             "threshold": threshold,
-            "airs_on": _airs_on(row.next_episode_date),
+            "airs_on": airs_on_for(row.next_episode_date),
         }
         for row in rows
         for threshold in _crossed(row.next_episode_date, now, soon_hours=soon_hours)
