@@ -297,6 +297,36 @@ async def test_a_pointer_stuck_in_the_past_is_polled_at_the_tightest_cadence(db_
     assert [external_id for _, _, external_id in worklist] == ["stuck"]
 
 
+async def test_a_title_with_no_air_date_is_polled_at_the_lost_pointer_cadence(db_session):
+    """A NULL next_episode_date on an AIRING title gets its own 6h tier, not the 24h default.
+
+    AniList returns `nextAiringEpisode: null` transiently — a mid-season break, a delay
+    announcement — so a NULL is not proof the season ended. While it is NULL, scan_thresholds
+    cannot enqueue anything, so a title that blips null 23 hours before an airing and is not
+    re-polled for 24 loses BOTH notifications for that episode, and the summary never counts it.
+    """
+    await _tracked_media(
+        db_session,
+        external_id="lost-pointer",
+        status=MediaStatus.AIRING,
+        next_episode_date=None,
+        next_episode_number=None,
+        last_synced_at=NOW - timedelta(hours=7),
+    )
+    await _tracked_media(
+        db_session,
+        external_id="lost-pointer-fresh",
+        status=MediaStatus.AIRING,
+        next_episode_date=None,
+        next_episode_number=None,
+        last_synced_at=NOW - timedelta(hours=2),
+    )
+
+    worklist = await service.collect_worklist(db_session, now=NOW)
+
+    assert [external_id for _, _, external_id in worklist] == ["lost-pointer"]
+
+
 async def test_a_source_level_failure_does_not_start_a_cooldown(db_session):
     """Stamping last_synced_at on a failure would put titles into cooldown BECAUSE the provider
     was down — an outage would then render as "everything looks fresh", which is the one reading

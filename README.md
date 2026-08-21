@@ -273,11 +273,19 @@ refreshed on a cadence set by how close its next episode is (`SYNC_TIERS` in
 |---|---|
 | within 48 hours, **or already in the past** | 1 hour |
 | within 7 days | 6 hours |
-| later, or no known date | 24 hours |
+| **no known date at all** (still airing) | 6 hours |
+| later | 24 hours |
 
 An air date stuck in the past counts as imminent on purpose — it is the strongest signal that the
 stored pointer is stale. A title that has never been synced is always due, so nothing waits a tier
 interval to be picked up the first time.
+
+**No known date is its own tier, not the slow one.** AniList reports no next episode during a
+mid-season break or a delay announcement, not only after a finale, and while the date is missing
+the threshold scan cannot queue anything at all. Leaving those titles on the 24-hour cadence
+means a show that loses its pointer a day before an airing can miss both notifications for that
+episode with nothing in any log to say so. "We lost the pointer on a show that is still airing"
+and "airs in three weeks" are not the same confidence.
 
 Net effect against a flat 6-hourly sweep: **fewer** provider requests overall, because the long
 tail drops from four a day to one, and far more of them aimed at the titles whose dates are about
@@ -313,6 +321,14 @@ push (a unique constraint on the queue does that, not application logic).
 |---|---|---|
 | Threshold scan — queues tasks | `THRESHOLD_SCAN_MINUTES` (default 15) | 5000002 |
 | Dispatcher — sends and finalises | `NOTIFICATION_DISPATCH_MINUTES` (default 1) | 5000003 |
+
+The scan **only queues for a user who has a registered device**, not merely one who has push
+enabled. Queuing is irreversible — the dedup constraint ignores status, so a task the dispatcher
+terminates for having nowhere to send can never be queued again for that episode. Since the setup
+below has you enable push first and register a device second, queuing in that gap would silently
+cost you every notification already in window. Registering a device part-way through a window
+means waiting for the next scan (up to `THRESHOLD_SCAN_MINUTES`), which is a delay rather than a
+loss.
 
 The dispatcher **re-checks every task against the world before sending it**, because a queued task
 is a decision made in the past. If the episode was rescheduled, the title was removed from your
@@ -423,7 +439,8 @@ connect again. This is the accepted, known cost of self-hosting rather than usin
 is the one real regression against FCM.
 
 Once the phone is reaching ntfy over the VPN rather than over `localhost`, set **`NTFY_PUBLIC_URL`**
-(in `backend/.env`, or exported — Compose reads `.env` for interpolation) to the address **the phone**
+(uncomment the placeholder `.env.example` already carries, or export it — Compose reads `.env` for
+interpolation) to the address **the phone**
 uses, e.g. your Tailscale machine name plus `:8080`, and recreate the service:
 
 ```bash

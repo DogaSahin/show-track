@@ -14,7 +14,13 @@ from app.library.models import UserMedia
 from app.media.models import Media, MediaSource, MediaStatus
 from app.media.providers.base import MediaProvider, ProviderMedia
 from app.media.providers.errors import ProviderError, ProviderRateLimited
-from app.notifications.models import NotificationPrefs, NotificationTask, NotificationThreshold, airs_on_for
+from app.notifications.models import (
+    NotificationPrefs,
+    NotificationTask,
+    NotificationThreshold,
+    PushTarget,
+    airs_on_for,
+)
 from app.sync.locks import SYNC_LOCK_KEY, THRESHOLD_LOCK_KEY, advisory_lock
 from app.sync.schemas import SyncSummary, ThresholdScanSummary
 
@@ -41,8 +47,10 @@ SYNC_TIERS: tuple[tuple[timedelta, timedelta], ...] = (
     (timedelta(hours=48), timedelta(hours=1)),
     (timedelta(days=7), timedelta(hours=6)),
 )
-# Further out than the last tier, or no known air date at all.
+# Further out than the last tier.
 DEFAULT_SYNC_INTERVAL = timedelta(hours=24)
+# No known air date at all — its own tier, NOT the default. See _due_cutoff.
+UNKNOWN_DATE_SYNC_INTERVAL = timedelta(hours=6)
 
 Worklist = list[tuple[uuid.UUID, MediaSource, str]]
 
@@ -59,12 +67,30 @@ def _due_cutoff(now: datetime):
 
     Note the tier conditions have no lower bound. A `next_episode_date` already in the past
     therefore lands in the tightest tier — correct, and intentional: a pointer stuck behind the
-    current time is the strongest available signal that this row needs fresh data. A NULL date
-    compares NULL, which is not true, so it falls through to DEFAULT_SYNC_INTERVAL.
+    current time is the strongest available signal that this row needs fresh data.
+
+    A NULL date gets its own tier (UNKNOWN_DATE_SYNC_INTERVAL) rather than falling through to
+    DEFAULT_SYNC_INTERVAL, and that branch is load-bearing. `_apply` writes NULL for both the
+    number and the date whenever the provider reports no next episode, and AniList returns
+    `nextAiringEpisode: null` TRANSIENTLY — a mid-season break, a delay announcement — not only
+    at a finale. `scan_thresholds` cannot enqueue while the date is NULL, so a title that blips
+    null 23 hours before an airing and is not re-polled for 24 loses BOTH notifications for that
+    episode with no trace in any summary: the row was never `considered`, so nothing counts it.
+    Six hours bounds that window to the same width the flat pre-tiering interval had.
+
+    "We lost the pointer on an airing show" and "airs in three weeks" are not the same
+    confidence and must not share a cadence. No status condition is needed in the CASE: the
+    worklist query already filters to SYNCABLE_STATUSES, so a NULL date reaching here is by
+    construction a title we still expect episodes from.
     """
     whens = [
-        (Media.next_episode_date <= now + horizon, literal(now - interval, DateTime(timezone=True)))
-        for horizon, interval in SYNC_TIERS
+        # First, so the intent reads in source order. Ordering is not load-bearing — a NULL
+        # compares NULL, never true, so it could never match a tier condition anyway.
+        (Media.next_episode_date.is_(None), literal(now - UNKNOWN_DATE_SYNC_INTERVAL, DateTime(timezone=True))),
+        *(
+            (Media.next_episode_date <= now + horizon, literal(now - interval, DateTime(timezone=True)))
+            for horizon, interval in SYNC_TIERS
+        ),
     ]
     return case(*whens, else_=literal(now - DEFAULT_SYNC_INTERVAL, DateTime(timezone=True)))
 
@@ -320,6 +346,14 @@ async def scan_thresholds(session: AsyncSession, *, now: datetime, soon_hours: i
         # would send pushes nobody asked for.
         .join(NotificationPrefs, NotificationPrefs.user_id == UserMedia.user_id)
         .where(NotificationPrefs.push_enabled.is_(True))
+        # Same class of fact as the inner join above, and for a harder reason. Enqueuing is
+        # IRREVERSIBLE: the dedup upsert is on_conflict_do_nothing regardless of status, so once
+        # a row exists in any terminal state that (user, media, episode, threshold, airs_on) can
+        # never be enqueued again. A task with nowhere to send is burned to `skipped` by the
+        # next dispatch — within a minute — and a target registered two minutes later gets
+        # nothing for those episodes, permanently. That is the DEFAULT first-run path: the
+        # README has the user enable prefs, then register a device.
+        .where(exists().where(PushTarget.user_id == UserMedia.user_id))
         .where(Media.next_episode_date.is_not(None))
         # NotificationTask.episode_number is NOT NULL, so a date without a number would raise at
         # insert time. Excluding it here is cheaper than a 500 in a background job.
