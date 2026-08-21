@@ -8,12 +8,15 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from app.config import get_settings
 from app.media.providers import get_providers
+from app.notifications import service as notifications_service
+from app.notifications.ntfy import get_transport
 from app.sync import service
 
 logger = logging.getLogger(__name__)
 
 SYNC_JOB_ID = "sync_airing_media"
 THRESHOLD_JOB_ID = "scan_thresholds"
+DISPATCH_JOB_ID = "dispatch_notifications"
 
 # Job wrappers register their running task here so lifespan can wait for cancellation to be
 # DELIVERED before the engine is disposed. See main.py's shutdown comment.
@@ -38,7 +41,7 @@ async def drain_inflight(limit: float = 10.0) -> None:  # not `timeout=`: ruff A
 async def _guarded(name: str, run) -> None:
     """Register in `_inflight`, swallow, log.
 
-    Both jobs go through this. An earlier version registered only the sync job, leaving the
+    Every job goes through this. An earlier version registered only the sync job, leaving the
     THRESHOLD job — which runs 24x more often and is by far the likelier one to be cancelled at
     shutdown — undrained.
 
@@ -71,8 +74,20 @@ async def run_threshold_job() -> None:
     await _guarded("threshold scan", service.run_threshold_scan)
 
 
+async def run_dispatch_job() -> None:
+    """Resolves the transport per RUN, not at registration.
+
+    start_scheduler only decides whether to register the job at all; a transport captured there
+    would outlive a get_settings cache clear. Re-reading is one attribute lookup a minute.
+    """
+    transport = get_transport()
+    if transport is None:
+        return
+    await _guarded("notification dispatch", lambda: notifications_service.run_dispatch(transport))
+
+
 def start_scheduler() -> AsyncIOScheduler | None:
-    """Register both jobs and start. Returns None when sync is disabled.
+    """Register the jobs and start. Returns None when sync is disabled.
 
     Registration lives here and job LOGIC lives in service.py, so the jobs are callable — and
     testable — with no scheduler at all. That separation is also what lets POST /v1/debug/sync
@@ -90,14 +105,28 @@ def start_scheduler() -> AsyncIOScheduler | None:
     scheduler = AsyncIOScheduler(timezone="UTC")
     now = datetime.now(tz=UTC)
 
-    for job, trigger, job_id in (
+    jobs = [
         (run_sync_job, IntervalTrigger(hours=settings.sync_interval_hours, timezone="UTC"), SYNC_JOB_ID),
         (
             run_threshold_job,
             IntervalTrigger(minutes=settings.threshold_scan_minutes, timezone="UTC"),
             THRESHOLD_JOB_ID,
         ),
-    ):
+    ]
+    # Guarded, not registered-and-inert: with ntfy unconfigured (6-K) run_dispatch_job returns
+    # immediately, so registering it anyway would wake the loop every minute forever to do
+    # nothing and log nothing. Tasks still accumulate as `pending` and drain once ntfy is set up.
+    dispatch_enabled = get_transport() is not None
+    if dispatch_enabled:
+        jobs.append(
+            (
+                run_dispatch_job,
+                IntervalTrigger(minutes=settings.notification_dispatch_minutes, timezone="UTC"),
+                DISPATCH_JOB_ID,
+            )
+        )
+
+    for job, trigger, job_id in jobs:
         scheduler.add_job(
             job,
             trigger,
@@ -118,15 +147,16 @@ def start_scheduler() -> AsyncIOScheduler | None:
             # than its interval (crash loop, rolling deploy, `uvicorn --reload`) would never run
             # the 6-hourly sync. But firing BOTH at boot makes every restart a full provider sweep
             # against an API observed degraded to 30/min, and the lock does not help because
-            # restarts are sequential. So the DB-only scan starts immediately — it is free, and
-            # its precision is the whole point — and the provider sync takes a short offset.
-            next_run_time=now if job_id == THRESHOLD_JOB_ID else now + timedelta(minutes=1),
+            # restarts are sequential. So the DB-only jobs start immediately — they are free, and
+            # their precision is the whole point — and the provider sync takes a short offset.
+            next_run_time=now + timedelta(minutes=1) if job_id == SYNC_JOB_ID else now,
         )
 
     scheduler.start()
     logger.info(
-        "scheduler started: sync every %dh, threshold scan every %dm",
+        "scheduler started: sync every %dh, threshold scan every %dm, dispatch %s",
         settings.sync_interval_hours,
         settings.threshold_scan_minutes,
+        f"every {settings.notification_dispatch_minutes}m" if dispatch_enabled else "disabled (no transport)",
     )
     return scheduler

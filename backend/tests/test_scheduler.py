@@ -1,8 +1,10 @@
 import asyncio
 
+import pytest
+
 from app.config import Settings
 from app.sync import scheduler as scheduler_module
-from app.sync.scheduler import SYNC_JOB_ID, THRESHOLD_JOB_ID, start_scheduler
+from app.sync.scheduler import DISPATCH_JOB_ID, SYNC_JOB_ID, THRESHOLD_JOB_ID, start_scheduler
 
 
 def _settings(**overrides) -> Settings:
@@ -23,6 +25,17 @@ def _settings(**overrides) -> Settings:
     return Settings(**{**base, **overrides})
 
 
+@pytest.fixture(autouse=True)
+def no_transport(monkeypatch):
+    """ntfy off by default, so registration assertions do not depend on the developer's .env.
+
+    get_transport reads app.config's get_settings directly, so the `_env_file=None` trick these
+    tests use for everything else does not reach it — a machine with NTFY_BASE_URL set would
+    otherwise register a third job and fail the set-equality assertion below.
+    """
+    monkeypatch.setattr(scheduler_module, "get_transport", lambda: None)
+
+
 def test_the_scheduler_does_not_start_when_sync_is_disabled(monkeypatch):
     """sync_enabled is how a SECOND REPLICA runs safely: scheduler off, API on. The advisory lock
     protects against the mistake; this setting is how you avoid making it.
@@ -32,7 +45,7 @@ def test_the_scheduler_does_not_start_when_sync_is_disabled(monkeypatch):
     assert start_scheduler() is None
 
 
-async def test_both_jobs_are_registered_with_the_configured_intervals(monkeypatch):
+async def test_the_db_only_jobs_are_registered_with_the_configured_intervals(monkeypatch):
     """MUST be async: APScheduler 3.11 changed AsyncIOScheduler.start() from get_event_loop() to
     get_running_loop(), so a plain `def` raises RuntimeError: no running event loop.
 
@@ -53,6 +66,58 @@ async def test_both_jobs_are_registered_with_the_configured_intervals(monkeypatc
         assert scheduler.get_job(THRESHOLD_JOB_ID).trigger.interval.total_seconds() == 5 * 60
     finally:
         scheduler.shutdown(wait=False)
+
+
+async def test_the_dispatch_job_is_not_registered_without_a_transport(monkeypatch):
+    """6-K: ntfy is optional. A job that returns immediately every minute forever is noise, so it
+    is not registered at all rather than registered and inert. Tasks keep queueing as `pending`
+    and drain on the first run once ntfy is configured.
+    """
+    monkeypatch.setattr(scheduler_module, "get_providers", lambda: {})
+    monkeypatch.setattr(scheduler_module, "get_settings", _settings)
+
+    scheduler = start_scheduler()
+    try:
+        assert DISPATCH_JOB_ID not in {job.id for job in scheduler.get_jobs()}
+    finally:
+        scheduler.shutdown(wait=False)
+
+
+async def test_the_dispatch_job_is_registered_when_a_transport_exists(monkeypatch):
+    """And it fires at boot, like the threshold scan: it is a single indexed query when the queue
+    is empty, so there is nothing to stagger it against.
+    """
+    monkeypatch.setattr(scheduler_module, "get_providers", lambda: {})
+    monkeypatch.setattr(scheduler_module, "get_settings", lambda: _settings(notification_dispatch_minutes=3))
+    monkeypatch.setattr(scheduler_module, "get_transport", lambda: object())
+
+    scheduler = start_scheduler()
+    try:
+        job = scheduler.get_job(DISPATCH_JOB_ID)
+        assert job.trigger.interval.total_seconds() == 3 * 60
+        assert str(job.trigger.timezone) == "UTC"
+        assert job.misfire_grace_time is None
+        assert job.next_run_time <= scheduler.get_job(THRESHOLD_JOB_ID).next_run_time
+    finally:
+        scheduler.shutdown(wait=False)
+
+
+async def test_the_dispatch_job_is_a_no_op_when_the_transport_disappears(monkeypatch):
+    """Registration and execution read the transport separately, so a settings-cache clear between
+    them must not push run_dispatch a None transport and blow up inside _guarded.
+    """
+    called = False
+
+    async def never(*args, **kwargs):
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr(scheduler_module.notifications_service, "run_dispatch", never)
+    monkeypatch.setattr(scheduler_module, "get_transport", lambda: None)
+
+    await scheduler_module.run_dispatch_job()
+
+    assert called is False
 
 
 async def test_the_triggers_are_utc_not_the_host_timezone(monkeypatch):
@@ -210,3 +275,4 @@ def test_the_defaults_are_sane_and_nothing_is_required():
     assert settings.sync_interval_hours == 1
     assert settings.threshold_scan_minutes == 15
     assert settings.notify_soon_hours == 6
+    assert settings.notification_dispatch_minutes == 1

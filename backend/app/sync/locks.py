@@ -12,6 +12,9 @@ logger = logging.getLogger(__name__)
 # a clever derivation, and a hash collision between two job names would be invisible.
 SYNC_LOCK_KEY = 5_000_001
 THRESHOLD_LOCK_KEY = 5_000_002
+# A third key, not a shared one: a slow dispatch must never stall the threshold scan. Same
+# reasoning as 5-D, which split the jobs in the first place.
+DISPATCH_LOCK_KEY = 5_000_003
 
 
 @asynccontextmanager

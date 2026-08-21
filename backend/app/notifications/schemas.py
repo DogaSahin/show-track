@@ -49,3 +49,24 @@ class TargetCreated(TargetRead):
     """The creation shape, and the ONLY response anywhere that carries the topic."""
 
     target: str
+
+
+class DispatchSummary(BaseModel):
+    """`ran` is False exactly when the advisory lock was held elsewhere, mirroring SyncSummary.
+
+    The four terminal counts are separate because they are different diagnoses (6-F): `skipped`
+    means the world changed, `expired` means we were too slow, `failed` means the transport gave
+    up. Collapsing them makes the one log line anyone actually reads useless.
+    """
+
+    ran: bool
+    claimed: int = 0
+    sent: int = 0
+    skipped: int = 0
+    expired: int = 0
+    failed: int = 0
+    # Retryable failures still pending. Not a failure — the expected state mid-backoff.
+    retrying: int = 0
+    # Due tasks this run did not claim because of DISPATCH_BATCH_SIZE. Reported rather than
+    # silent: a capped run must not look like a completed one.
+    remaining: int = 0

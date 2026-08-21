@@ -1,11 +1,34 @@
+import logging
 import secrets
 import uuid
+from collections import defaultdict
+from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.notifications.models import NotificationPrefs, PushTarget, PushTransport
+from app.db import get_sessionmaker
+from app.library.models import UserMedia
+from app.media.models import Media
+from app.notifications.models import (
+    NotificationPrefs,
+    NotificationTask,
+    NotificationTaskStatus,
+    PushTarget,
+    PushTransport,
+    airs_on_for,
+)
+from app.notifications.schemas import DispatchSummary
+from app.notifications.transport import (
+    NotificationTransport,
+    PushMessage,
+    TransportPermanent,
+    TransportRetryable,
+)
+from app.sync.locks import DISPATCH_LOCK_KEY, advisory_lock
+
+logger = logging.getLogger(__name__)
 
 # 32 bytes via token_urlsafe -> 43 characters of A-Za-z0-9-_, which is exactly the character set
 # ntfy accepts in a topic. Sized for unguessability rather than tidiness: this string is the ONLY
@@ -80,3 +103,166 @@ async def delete_target(session: AsyncSession, *, user_id: uuid.UUID, target_id:
     result = await session.execute(delete(PushTarget).where(PushTarget.id == target_id, PushTarget.user_id == user_id))
     await session.flush()
     return result.rowcount > 0
+
+
+# Module constants rather than settings, for the same reason as SYNC_TIERS: they interact, and
+# independently-settable env vars could be combined incoherently.
+MAX_ATTEMPTS = 5
+BACKOFF_BASE = timedelta(minutes=2)
+DISPATCH_BATCH_SIZE = 100
+
+
+def _backoff(attempts: int) -> timedelta:
+    """Exponential from the attempt just taken: 2m, 4m, 8m, 16m."""
+    return BACKOFF_BASE * (2 ** max(attempts - 1, 0))
+
+
+def _verdict(
+    task: NotificationTask, media: Media | None, tracked: bool, push_enabled: bool, now: datetime
+) -> NotificationTaskStatus | None:
+    """None means "send it". Otherwise the terminal status to write (6-E).
+
+    Order matters. User intent is checked first: someone who turned push off thirty seconds ago
+    must not receive a queued notification, regardless of what the episode is doing.
+    """
+    if not tracked or not push_enabled:
+        return NotificationTaskStatus.SKIPPED
+
+    still_current = (
+        media is not None
+        and media.next_episode_number == task.episode_number
+        and media.next_episode_date is not None
+        # airs_on_for, NOT a raw timestamp comparison. AniList revises airingAt by seconds for
+        # ordinary corrections; comparing instants would skip nearly everything.
+        and airs_on_for(media.next_episode_date) == task.airs_on
+    )
+    if still_current:
+        # The pointer still describes this episode, so its precise air time is trustworthy.
+        return None if media.next_episode_date > now else NotificationTaskStatus.EXPIRED
+
+    # The pointer moved on. Either the episode aired and the row advanced (our lateness) or it was
+    # rescheduled (the world changed) — told apart by whether the task's own date is behind us.
+    if task.airs_on < airs_on_for(now):
+        return NotificationTaskStatus.EXPIRED
+    return NotificationTaskStatus.SKIPPED
+
+
+async def dispatch_once(session: AsyncSession, transport: NotificationTransport, *, now: datetime) -> DispatchSummary:
+    """Claim, re-validate, send, finalize. Flushes; the caller commits.
+
+    Split out from run_dispatch so it is callable with a test's savepoint-joined session —
+    run_dispatch owns its own sessions and would bypass the fixture entirely, the hazard
+    tests/test_sync_job.py's `_run` helper documents at length.
+    """
+    candidates = (
+        select(NotificationTask, Media, UserMedia.user_id.label("tracked"), NotificationPrefs.push_enabled)
+        .join(Media, NotificationTask.media_id == Media.id)
+        # OUTER joins, deliberately. An inner join would silently EXCLUDE a task whose title was
+        # untracked or whose prefs row vanished, leaving it `pending` forever and invisible in
+        # every summary. We need those rows in order to mark them `skipped` and be done.
+        .outerjoin(
+            UserMedia,
+            (UserMedia.user_id == NotificationTask.user_id) & (UserMedia.media_id == NotificationTask.media_id),
+        )
+        .outerjoin(NotificationPrefs, NotificationPrefs.user_id == NotificationTask.user_id)
+        .where(NotificationTask.status == NotificationTaskStatus.PENDING)
+        .where(NotificationTask.attempts < MAX_ATTEMPTS)
+        .where(or_(NotificationTask.next_attempt_at.is_(None), NotificationTask.next_attempt_at <= now))
+        .order_by(NotificationTask.created_at)
+        .limit(DISPATCH_BATCH_SIZE)
+    )
+    rows = (await session.execute(candidates)).all()
+    summary = DispatchSummary(ran=True, claimed=len(rows))
+    if not rows:
+        return summary
+
+    if len(rows) == DISPATCH_BATCH_SIZE:
+        # The batch was full, so there may be more due work. Count it and report it — a capped
+        # run must not be indistinguishable from a completed one in the log ("no silent caps").
+        # Only counted when the cap was actually hit, so the common case pays nothing.
+        summary.remaining = await session.scalar(
+            select(func.count())
+            .select_from(NotificationTask)
+            .where(NotificationTask.status == NotificationTaskStatus.PENDING)
+            .where(NotificationTask.attempts < MAX_ATTEMPTS)
+            .where(or_(NotificationTask.next_attempt_at.is_(None), NotificationTask.next_attempt_at <= now))
+        ) - len(rows)
+
+    targets_by_user: dict[uuid.UUID, list[PushTarget]] = defaultdict(list)
+    for target in await session.scalars(
+        select(PushTarget).where(PushTarget.user_id.in_({row.NotificationTask.user_id for row in rows}))
+    ):
+        targets_by_user[target.user_id].append(target)
+
+    sendable: list[tuple[NotificationTask, list[PushTarget], PushMessage]] = []
+    for row in rows:
+        task = row.NotificationTask
+        verdict = _verdict(task, row.Media, row.tracked is not None, bool(row.push_enabled), now)
+        if verdict is None and not targets_by_user[task.user_id]:
+            # Push is on but no device is registered. Nowhere to send is not a failure.
+            verdict = NotificationTaskStatus.SKIPPED
+        if verdict is not None:
+            task.status = verdict
+            setattr(summary, verdict.value, getattr(summary, verdict.value) + 1)
+            continue
+
+        # 6-G: the attempt is recorded and committed BEFORE the transport is touched, so a crash
+        # mid-send retries. At-least-once, chosen because a duplicate push is annoying and a
+        # missing one is indistinguishable from "no episode".
+        task.attempts += 1
+        task.next_attempt_at = now + _backoff(task.attempts)
+        sendable.append(
+            (
+                task,
+                targets_by_user[task.user_id],
+                PushMessage(
+                    title=row.Media.title,
+                    body=f"Episode {task.episode_number} airs soon",
+                    media_id=task.media_id,
+                    episode_number=task.episode_number,
+                    threshold=task.threshold,
+                ),
+            )
+        )
+    await session.flush()
+
+    for task, targets, message in sendable:
+        delivered = False
+        for target in targets:
+            try:
+                await transport.send(target.target, message)
+            except TransportPermanent:
+                # Never succeeds. Prune rather than burn the attempt budget of live targets.
+                # No target value in the log line — it is a bearer secret (6-L).
+                logger.info("pruning a dead %s target for user %s", target.transport, task.user_id)
+                await session.delete(target)
+            except TransportRetryable:
+                logger.warning("transport declined a push for task %s; will retry", task.id)
+            else:
+                delivered = True
+                target.last_seen_at = now
+
+        if delivered:
+            task.status = NotificationTaskStatus.SENT
+            task.sent_at = now
+            summary.sent += 1
+        elif task.attempts >= MAX_ATTEMPTS:
+            task.status = NotificationTaskStatus.FAILED
+            summary.failed += 1
+        else:
+            summary.retrying += 1
+
+    await session.flush()
+    return summary
+
+
+async def run_dispatch(transport: NotificationTransport, *, now: datetime | None = None) -> DispatchSummary:
+    """The locked, session-owning entry point, mirroring run_sync and run_threshold_scan."""
+    async with advisory_lock(DISPATCH_LOCK_KEY) as acquired:
+        if not acquired:
+            return DispatchSummary(ran=False)
+        now = now or datetime.now(tz=UTC)
+        async with get_sessionmaker()() as session:
+            summary = await dispatch_once(session, transport, now=now)
+            await session.commit()
+            return summary
