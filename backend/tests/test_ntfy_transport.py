@@ -96,10 +96,11 @@ async def test_the_auth_token_never_appears_in_an_error():
         await transport.send("t", MESSAGE)
 
     assert "tk_supersecret" not in str(caught.value)
-    # `raise ... from exc` chains the original httpx exception onto __cause__, and that is what a
-    # logger.exception() call actually prints — not just str(caught.value). Checked separately so
-    # this test cannot pass by accident while the traceback still leaks the credential.
-    assert "tk_supersecret" not in repr(caught.value.__cause__)
+    # This drives a 500 status response, which raises from the plain status-code branch with no
+    # `from exc` — so __cause__ is None here and this assertion is vacuously true. It pins that
+    # fact rather than testing chaining; test_neither_secret_leaks_through_a_chained_transport_error
+    # below covers the branch that actually chains an exception onto __cause__.
+    assert caught.value.__cause__ is None
 
 
 async def test_the_topic_never_appears_in_an_error():
@@ -108,6 +109,32 @@ async def test_the_topic_never_appears_in_an_error():
         await _transport(lambda request: httpx.Response(500)).send("very-secret-topic", MESSAGE)
 
     assert "very-secret-topic" not in str(caught.value)
-    # See the auth-token test above: __cause__ is what logger.exception() prints, not just
-    # str(caught.value), so it gets its own assertion rather than riding on the message check.
-    assert "very-secret-topic" not in repr(caught.value.__cause__)
+    # Same reasoning as the auth-token test above: a 500 status response raises bare, with no
+    # `from exc`, so __cause__ is None here. Pinned rather than asserted-against for the same
+    # reason — the chained branch is covered separately below.
+    assert caught.value.__cause__ is None
+
+
+async def test_neither_secret_leaks_through_a_chained_transport_error():
+    """The status-code branch raises bare; THIS branch raises `from exc`, so httpx's own
+    exception rides along as __cause__ — and __cause__ is what logger.exception prints.
+
+    Separate from the two status-code tests on purpose: those cannot exercise this, because a
+    plain `raise` leaves __cause__ as None and any assertion about it passes vacuously.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused")
+
+    transport = NtfyTransport(
+        base_url="http://ntfy.test",
+        token="tk_supersecret",
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    with pytest.raises(TransportRetryable) as caught:
+        await transport.send("very-secret-topic", MESSAGE)
+
+    rendered = f"{caught.value}{caught.value.__cause__!r}"
+    assert "tk_supersecret" not in rendered
+    assert "very-secret-topic" not in rendered
