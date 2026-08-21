@@ -16,6 +16,8 @@ from app.middleware import REQUEST_ID_HEADER, RequestIDMiddleware
 from app.notifications import routes as notifications_routes
 from app.recommendations import routes as recommendations_routes
 from app.sync import routes as sync_routes
+from app.sync import scheduler as scheduler_module
+from app.sync.scheduler import start_scheduler
 from app.users import routes as users_routes
 from app.users.dependencies import get_current_user
 
@@ -42,7 +44,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # to AniList-only; emitted lazily it lands in the middle of request traffic hours after boot,
     # where nobody is looking. A warning nobody reads is not a mitigation.
     get_providers()
+    # Started AFTER the provider registry, because the sync job needs it.
+    scheduler = start_scheduler()
     yield
+    if scheduler is not None:
+        # shutdown(wait=False) CANCELS in-flight jobs and returns; APScheduler's AsyncIOExecutor
+        # cannot honour wait=True without being a coroutine. Cancellation lands on the next loop
+        # iteration, so without the drain a cancelled job's `finally` — the advisory unlock, the
+        # session close — would run AFTER dispose_engine() had torn down the pool. Draining is
+        # what makes "shut down before dispose_engine" actually true rather than merely ordered.
+        scheduler.shutdown(wait=False)
+        await scheduler_module.drain_inflight()
     await dispose_engine()
     await close_http_client()
     reset_providers()
