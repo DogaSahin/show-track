@@ -250,13 +250,35 @@ Two jobs run inside the API process:
 
 | Job | Interval | Cost |
 |---|---|---|
-| Airing refresh | `SYNC_INTERVAL_HOURS` (default 6) | queries AniList/TMDB, rate-limited |
+| Airing refresh | `SYNC_INTERVAL_HOURS` (default 1) | queries AniList/TMDB, rate-limited |
 | Threshold scan | `THRESHOLD_SCAN_MINUTES` (default 15) | database only, no network |
 
 They are split because evaluating "airs within 24 hours" never needed a provider call. The scan
 therefore runs often enough to make notification timing accurate to about a quarter of an hour,
 and it keeps working during a provider outage — dates go stale, but the dates already known still
 notify.
+
+**The airing refresh does not poll every title on every run.** Neither provider offers webhooks, so
+polling is the only option available — but a flat interval is the wrong shape for it, spending the
+same budget on a show premiering in four months as on one airing tonight. Each title is instead
+refreshed on a cadence set by how close its next episode is (`SYNC_TIERS` in
+`app/sync/service.py`):
+
+| Next episode airs | Refreshed at most every |
+|---|---|
+| within 48 hours, **or already in the past** | 1 hour |
+| within 7 days | 6 hours |
+| later, or no known date | 24 hours |
+
+An air date stuck in the past counts as imminent on purpose — it is the strongest signal that the
+stored pointer is stale. A title that has never been synced is always due, so nothing waits a tier
+interval to be picked up the first time.
+
+Net effect against a flat 6-hourly sweep: **fewer** provider requests overall, because the long
+tail drops from four a day to one, and far more of them aimed at the titles whose dates are about
+to drive a notification. `SYNC_INTERVAL_HOURS` sets how often the job wakes up to check what is
+due — raising it above the tightest tier silently widens every tier to that value, since the job
+cannot refresh a title it is not awake to look at.
 
 **Running more than one replica.** The scheduler is in-process, so every replica would otherwise
 run both jobs and queue duplicate notifications. Two things prevent that:
@@ -298,7 +320,7 @@ and both get worse the longer they wait.
 | 3 | Providers — AniList + TMDB integration, unified search, media persistence | done |
 | 4 | Library CRUD — add, list, update, remove, cursor-paginated | done |
 | 4.5 | AniList import — public profiles, one-way, local wins | done |
-| 5 | Sync worker — scheduled airing refresh, notification queue | done |
+| 5 | Sync worker — tiered airing refresh, notification queue | done |
 | 6–7 | Notifications, recommendations | |
 | 7.5 | Groups — membership, feed, reviews, shared watchlist | |
 | 8–9 | Android foundations and feature modules | |
