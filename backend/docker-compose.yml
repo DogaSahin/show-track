@@ -17,6 +17,24 @@ services:
       timeout: 3s
       retries: 10
 
+  ntfy:
+    image: binwiederhier/ntfy:latest
+    command: serve
+    environment:
+      # Topics are unguessable secrets generated server-side (6-L), but defence in depth:
+      # deny-all means a leaked topic is still useless without a token. The consequence is that
+      # the BACKEND cannot publish without one either — mint a user and a token before setting
+      # NTFY_TOKEN. The README's Notifications section has the two commands.
+      NTFY_AUTH_DEFAULT_ACCESS: deny-all
+      # Where the user/token database lives. Named explicitly because deny-all without an
+      # auth-file leaves a server nobody, including the backend, can publish to.
+      NTFY_AUTH_FILE: /var/lib/ntfy/user.db
+      NTFY_BASE_URL: http://localhost:8080
+    volumes:
+      - ntfy-data:/var/lib/ntfy
+    ports:
+      - "8080:80"
+
   api:
     build: .
     # Bash does not export UID, and GID is not a bash variable at all, so Compose never
@@ -32,6 +50,13 @@ services:
       SECRET_KEY: change-me-use-openssl-rand-hex-32
       REGISTRATION_CODE: change-me
       TMDB_API_KEY: ${TMDB_API_KEY:-}
+      # Passed through from the host environment, empty by default, exactly like TMDB_API_KEY.
+      # Empty means no transport, so the dispatch job is never registered and tasks queue as
+      # `pending` — the intended posture for anyone who has not set ntfy up. From INSIDE this
+      # network the ntfy service is `http://ntfy`, not `http://localhost:8080`; the latter is
+      # only correct for uvicorn running on the host, which is the documented dev flow.
+      NTFY_BASE_URL: ${NTFY_BASE_URL:-}
+      NTFY_TOKEN: ${NTFY_TOKEN:-}
     ports:
       - "8000:8000"
     volumes:
@@ -42,3 +67,4 @@ services:
 
 volumes:
   showtrack-pgdata:
+  ntfy-data:

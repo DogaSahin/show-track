@@ -149,8 +149,13 @@ def _verdict(
     if media.next_episode_number is None:
         # A cleared pointer means EXPIRED, not "unknown". scan_thresholds cannot enqueue a task
         # while the number is NULL, so a NULL observed HERE means it was cleared after this task
-        # was created: the episode aired and there is nothing after it. This is the series-finale
-        # shape, and it is the commonest late task there is.
+        # was created: the episode aired and there is nothing after it, or the provider
+        # transiently dropped the pointer. Both are possible because app/sync/service.py's _apply
+        # writes `episode.number if episode else None`, so an AniList `nextAiringEpisode: null`
+        # during a mid-season break clears the column exactly like a finale does. The finale shape
+        # is the common one and the one this bucket is named for; the break case mis-buckets
+        # EXPIRED where SKIPPED is right, and — like the rollover below — never causes or
+        # suppresses a send.
         return NotificationTaskStatus.EXPIRED
     # KNOWN INCOMPLETE — season rollover. TMDB's episode_number is WITHIN-season, so a finale to
     # premiere goes (S1,12) -> (S2,1) and 1 > 12 is False: an aired finale reads as SKIPPED. Fixing

@@ -11,16 +11,17 @@ ahead on a show and how far.
 
 **Status:** early. The backend schema and migrations, auth, the AniList/TMDB provider
 integrations with unified search, the personal library — add, list, update, remove — AniList list
-import, and the background sync that keeps airing dates fresh are in place. Notifications are
-**queued but not yet sent** (that is the next phase), and the Android client is not built yet. See
+import, the background sync that keeps airing dates fresh, and self-hosted push notifications are
+in place. Recommendations, groups and the Android client are not built yet. See
 [Project status](#project-status).
 
 ## What it does
 
 - **Track** anime and TV in one library — status, 1–10 score, episode progress, favourites.
 - **Know when the next episode airs.** A background job refreshes airing dates on a schedule and
-  queues a notification 24 hours before an episode airs, and again shortly before. Sending the
-  push is the next phase — today the queue fills but nothing delivers it.
+  queues a notification 24 hours before an episode airs, and again shortly before; a second job
+  drains that queue to your phone. Push is delivered by a **self-hosted [ntfy](https://ntfy.sh)
+  server**, not Firebase — see [Notifications](#notifications).
 - **Import** an existing AniList list by username. **The profile must be public** — the import
   sends no credentials, so a private list is not readable and returns a 404. Read-only and
   one-way: ShowTrack never writes back to AniList.
@@ -73,7 +74,8 @@ convention that erodes.
 
 ```bash
 cd backend
-uv venv
+uv venv --python 3.12      # pinned: CI, the Dockerfile and ruff's target-version all say 3.12,
+                           # and a bare `uv venv` picks whatever newest Python it can find
 uv pip install -r requirements-dev.txt
 
 cp .env.example .env          # fill in TMDB_API_KEY if you have one; every other value has a
@@ -100,6 +102,9 @@ running tests: the suite runs against a real PostgreSQL schema built by the migr
   `.env.example`.
 - `ACCESS_TOKEN_TTL_MINUTES` (default `30`), `REFRESH_TOKEN_TTL_DAYS` (default `30`) — optional, not
   in `.env.example` since the defaults are fine to start with; set them to override.
+- `NTFY_BASE_URL`, `NTFY_TOKEN`, `NOTIFICATION_DISPATCH_MINUTES` — **optional**, and covered in
+  [Notifications](#notifications). An unset `NTFY_BASE_URL` disables push cleanly: the dispatch job
+  is never registered and notification tasks queue as `pending` rather than erroring.
 
 Every route except `/v1/auth/*` and `/health` requires a bearer access token, so the first working
 request is registering and logging in:
@@ -199,8 +204,8 @@ cd android
 ./gradlew build      # or just open the folder in Android Studio
 ```
 
-Local secrets — the TMDB API key, FCM config — go in `local.properties` or a gitignored config file.
-Never in a committed Gradle file.
+Local secrets — the TMDB API key, the ntfy server URL and credentials — go in `local.properties` or
+a gitignored config file. Never in a committed Gradle file.
 
 ### Git hooks
 
@@ -296,6 +301,121 @@ several managed Postgres providers, so check it before putting one in front of t
 `POST /v1/debug/sync` runs the airing refresh immediately, taking the same lock, so you can test
 without waiting hours.
 
+#### Notifications
+
+A third job, on its own advisory lock. The split is the whole design: the **threshold scan** only
+ever *queues* — it writes a `notification_tasks` row and never touches the network — and the
+**dispatcher** only ever *drains*. Nothing is sent from the sync job, which is what makes a
+provider outage unable to produce a wrong push, and a duplicate scan unable to produce a duplicate
+push (a unique constraint on the queue does that, not application logic).
+
+| Job | Interval | Lock key |
+|---|---|---|
+| Threshold scan — queues tasks | `THRESHOLD_SCAN_MINUTES` (default 15) | 5000002 |
+| Dispatcher — sends and finalises | `NOTIFICATION_DISPATCH_MINUTES` (default 1) | 5000003 |
+
+The dispatcher **re-checks every task against the world before sending it**, because a queued task
+is a decision made in the past. If the episode was rescheduled, the title was removed from your
+library, or you turned push off in the meantime, the task terminates as `skipped` instead of
+delivering something untrue. If it is simply too late to be useful, it terminates as `expired`. A
+notification that arrives thirty hours after "airs in 24 hours" is misinformation, not a degraded
+success.
+
+Push is delivered by a **self-hosted [ntfy](https://ntfy.sh) server**, which is in the compose
+file. With `NTFY_BASE_URL` unset there is no transport at all: the dispatch job is never
+registered, tasks queue as `pending`, and nothing errors — so you can run the whole backend and
+the whole test suite without any of this.
+
+##### Setup
+
+```bash
+cd backend
+docker compose up -d ntfy      # ntfy on :8080
+```
+
+The compose service runs with `NTFY_AUTH_DEFAULT_ACCESS: deny-all`, so **nobody can publish or
+subscribe without credentials — including this backend**. Following the rest of this section
+without minting a token gives you a server that rejects its own pushes with `403`. Create a
+publisher and a token for it:
+
+```bash
+# Prompts for a password. Write-only on every topic, deliberately not --role=admin: the backend
+# never needs to READ a notification stream, so a leaked NTFY_TOKEN cannot be used to eavesdrop.
+docker compose exec ntfy ntfy user add showtrack
+docker compose exec ntfy ntfy access showtrack '*' wo
+docker compose exec ntfy ntfy token add showtrack     # prints tk_... — this is NTFY_TOKEN
+```
+
+Put both in `.env` and **restart the API** — the dispatch job is registered at startup, so a
+running process will not pick up a newly configured transport:
+
+```bash
+NTFY_BASE_URL=http://localhost:8080
+NTFY_TOKEN=tk_...
+```
+
+Push is **off by default** for every user, and a missing preferences row reads as off. Turn it on,
+then register a device:
+
+```bash
+curl -s -X PATCH localhost:8000/v1/notifications/prefs \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"push_enabled":true}'
+
+curl -s -X POST localhost:8000/v1/notifications/targets \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"label":"pixel"}'
+# -> {"id":"...","transport":"ntfy","label":"pixel","target":"<43-character topic>", ...}
+```
+
+The topic is minted server-side, never supplied by the client — a client-chosen topic is a
+guessable topic. Grant the phone read access to exactly that one topic, and nothing else:
+
+```bash
+docker compose exec ntfy ntfy user add phone           # prompts for a password
+docker compose exec ntfy ntfy access phone <topic> ro
+```
+
+Then in the ntfy Android app: **Settings → Manage users → Add user** for `http://<server>:8080`
+with those credentials, then subscribe to the topic. Smoke-test the path without waiting for an
+episode:
+
+```bash
+curl -s -X POST localhost:8080 -H "Authorization: Bearer $NTFY_TOKEN" \
+  -d '{"topic":"<topic>","title":"ShowTrack","message":"test","tags":["tv"]}'
+```
+
+##### The topic is a secret
+
+Treat the topic exactly like a password. It is **shown once**, in the response to
+`POST /v1/notifications/targets`, and `GET /v1/notifications/targets` will never show it again —
+that omission is deliberate and there is a test pinning it, because a leaked read-only access
+token must not become a compromised notification stream.
+
+Anyone holding the topic can **read every notification on it and post arbitrary ones to that
+phone**, subject only to what the ntfy server's ACLs allow — which is why the phone user above is
+scoped `ro` to a single topic rather than given blanket access. There is no way to detect that a
+topic has leaked: nothing observes subscribers. **Rotation means deleting the target and
+registering a new one** (`DELETE /v1/notifications/targets/{id}`), then re-subscribing the phone.
+
+##### Push requires the VPN
+
+ntfy runs on the home server, so **the phone must be able to reach it** — in practice, be on the
+VPN. Off the VPN, notifications queue on the server and the phone sees nothing until it can
+connect again. This is the accepted, known cost of self-hosting rather than using Firebase, and it
+is the one real regression against FCM.
+
+##### Why not Firebase
+
+The original design named the Firebase Admin SDK; Phase 6 replaced it (decision 6-A). FCM would
+have delivered to a locked, Doze-mode phone anywhere in the world with no VPN, which ntfy cannot —
+but it does so by routing every notification about what you are watching through Google, requires
+a Google Cloud project and a service-account key to exist at all, and puts a proprietary
+dependency on the delivery path of a project whose premise is that it runs on your own hardware.
+The transport sits behind a `NotificationTransport` protocol with exactly one method, so nothing
+above `send()` knows which one is in use — swapping in FCM or UnifiedPush later is a new file, not
+a rewrite.
+
 ## Never commit credentials
 
 Two layers guard this, and they fail in different ways:
@@ -321,7 +441,8 @@ and both get worse the longer they wait.
 | 4 | Library CRUD — add, list, update, remove, cursor-paginated | done |
 | 4.5 | AniList import — public profiles, one-way, local wins | done |
 | 5 | Sync worker — tiered airing refresh, notification queue | done |
-| 6–7 | Notifications, recommendations | |
+| 6 | Notifications — self-hosted push, dispatcher, preferences | done |
+| 7 | Recommendations — genre overlap weighted by your own scores | |
 | 7.5 | Groups — membership, feed, reviews, shared watchlist | |
 | 8–9 | Android foundations and feature modules | |
 | 10 | Polish and deployment | |

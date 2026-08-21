@@ -31,6 +31,16 @@ async def advisory_lock(key: int) -> AsyncIterator[bool]:
     get_or_create_media (Phase 4, decision 4-A) and that added a rollback() to both provider paths
     (4-M). Holding the lock on a dedicated connection leaves the caller's work session free.
 
+    A SECOND, INDEPENDENT reason the xact form is wrong, and the one that survives even if the
+    open-transaction objection above is ever waved away: it releases at the end of the enclosing
+    transaction, and neither connection gives it one that lasts the job. On this connection there
+    is no enclosing transaction at all — AUTOCOMMIT (see below) makes the acquiring SELECT its own
+    transaction, so the lock would be released the instant it was taken, before the job body runs
+    a single statement. Moving it onto the caller's work session instead does not rescue it:
+    notifications.service.dispatch_once commits MID-FUNCTION to make the attempt durable (6-G),
+    which ends that transaction and drops the lock while the send loop is still running. Either
+    placement lets a second replica acquire it and double-send.
+
     A dying connection releases the lock automatically, which is what makes this safe against a
     crashed replica — where a table-based "is it running" flag would strand a stale `true`. Note
     "dying" means the backend actually going away: returning a connection to the POOL does not
