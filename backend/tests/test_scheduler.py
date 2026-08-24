@@ -4,7 +4,7 @@ import pytest
 
 from app.config import Settings
 from app.sync import scheduler as scheduler_module
-from app.sync.scheduler import DISPATCH_JOB_ID, SYNC_JOB_ID, THRESHOLD_JOB_ID, start_scheduler
+from app.sync.scheduler import DISPATCH_JOB_ID, SEED_JOB_ID, SYNC_JOB_ID, THRESHOLD_JOB_ID, start_scheduler
 
 
 def _settings(**overrides) -> Settings:
@@ -45,7 +45,7 @@ def test_the_scheduler_does_not_start_when_sync_is_disabled(monkeypatch):
     assert start_scheduler() is None
 
 
-async def test_the_db_only_jobs_are_registered_with_the_configured_intervals(monkeypatch):
+async def test_the_always_on_jobs_are_registered_with_the_configured_intervals(monkeypatch):
     """MUST be async: APScheduler 3.11 changed AsyncIOScheduler.start() from get_event_loop() to
     get_running_loop(), so a plain `def` raises RuntimeError: no running event loop.
 
@@ -56,14 +56,17 @@ async def test_the_db_only_jobs_are_registered_with_the_configured_intervals(mon
     """
     monkeypatch.setattr(scheduler_module, "get_providers", lambda: {})
     monkeypatch.setattr(
-        scheduler_module, "get_settings", lambda: _settings(sync_interval_hours=2, threshold_scan_minutes=5)
+        scheduler_module,
+        "get_settings",
+        lambda: _settings(sync_interval_hours=2, threshold_scan_minutes=5, recommendations_seed_hours=8),
     )
 
     scheduler = start_scheduler()
     try:
-        assert {job.id for job in scheduler.get_jobs()} == {SYNC_JOB_ID, THRESHOLD_JOB_ID}
+        assert {job.id for job in scheduler.get_jobs()} == {SYNC_JOB_ID, THRESHOLD_JOB_ID, SEED_JOB_ID}
         assert scheduler.get_job(SYNC_JOB_ID).trigger.interval.total_seconds() == 2 * 3600
         assert scheduler.get_job(THRESHOLD_JOB_ID).trigger.interval.total_seconds() == 5 * 60
+        assert scheduler.get_job(SEED_JOB_ID).trigger.interval.total_seconds() == 8 * 3600
     finally:
         scheduler.shutdown(wait=False)
 
@@ -168,8 +171,10 @@ async def test_the_provider_sync_does_not_fire_at_boot(monkeypatch):
     scheduler = start_scheduler()
     try:
         scan_at = scheduler.get_job(THRESHOLD_JOB_ID).next_run_time
-        sync_at = scheduler.get_job(SYNC_JOB_ID).next_run_time
-        assert sync_at > scan_at
+        # BOTH provider-calling jobs, not just the sync: the seed job sweeps every title anyone
+        # rates highly, so firing it at boot is the same restart-storm risk for the same APIs.
+        for job_id in (SYNC_JOB_ID, SEED_JOB_ID):
+            assert scheduler.get_job(job_id).next_run_time > scan_at
     finally:
         scheduler.shutdown(wait=False)
 
@@ -276,3 +281,5 @@ def test_the_defaults_are_sane_and_nothing_is_required():
     assert settings.threshold_scan_minutes == 15
     assert settings.notify_soon_hours == 6
     assert settings.notification_dispatch_minutes == 1
+    assert settings.recommendations_seed_hours == 12
+    assert settings.recommendations_ttl_hours == 24

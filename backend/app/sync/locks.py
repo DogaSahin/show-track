@@ -15,6 +15,17 @@ THRESHOLD_LOCK_KEY = 5_000_002
 # A third key, not a shared one: a slow dispatch must never stall the threshold scan. Same
 # reasoning as 5-D, which split the jobs in the first place.
 DISPATCH_LOCK_KEY = 5_000_003
+# A fourth key. The seed job makes provider calls and must not stall — or be stalled by — the
+# airing sync, for the same reason 5-D split the jobs in the first place.
+SEED_LOCK_KEY = 5_000_004
+# NOT used with advisory_lock() above. This one is taken as pg_try_advisory_xact_lock on the
+# REQUEST's own session, keyed (RECOMPUTE_LOCK_KEY, <int32 derived from user_id>).
+#
+# The xact form is right here for precisely the reasons it is wrong for the jobs: the recompute is
+# pure SQL and is exactly one transaction, so it never spans an HTTP call and never survives a
+# mid-function commit. It auto-releases on commit or rollback with no `finally` to get wrong. Do
+# not "fix" this to match the session-scoped helper above.
+RECOMPUTE_LOCK_KEY = 5_000_005
 
 
 @asynccontextmanager

@@ -10,6 +10,7 @@ from app.config import get_settings
 from app.media.providers import get_providers
 from app.notifications import service as notifications_service
 from app.notifications.ntfy import get_transport
+from app.recommendations import service as recommendations_service
 from app.sync import service
 
 logger = logging.getLogger(__name__)
@@ -17,6 +18,12 @@ logger = logging.getLogger(__name__)
 SYNC_JOB_ID = "sync_airing_media"
 THRESHOLD_JOB_ID = "scan_thresholds"
 DISPATCH_JOB_ID = "dispatch_notifications"
+SEED_JOB_ID = "seed_recommendations"
+
+# Jobs that call a provider. These take a startup offset so a crash loop or `uvicorn --reload`
+# does not trigger a full provider sweep on every restart; the DB-only jobs start immediately
+# because they are free and their precision is the point.
+PROVIDER_JOB_IDS = frozenset({SYNC_JOB_ID, SEED_JOB_ID})
 
 # Job wrappers register their running task here so lifespan can wait for cancellation to be
 # DELIVERED before the engine is disposed. See main.py's shutdown comment.
@@ -74,6 +81,10 @@ async def run_threshold_job() -> None:
     await _guarded("threshold scan", service.run_threshold_scan)
 
 
+async def run_seed_job() -> None:
+    await _guarded("recommendation seed", lambda: recommendations_service.run_seed(get_providers()))
+
+
 async def run_dispatch_job() -> None:
     """Resolves the transport per RUN, not at registration.
 
@@ -112,6 +123,11 @@ def start_scheduler() -> AsyncIOScheduler | None:
             IntervalTrigger(minutes=settings.threshold_scan_minutes, timezone="UTC"),
             THRESHOLD_JOB_ID,
         ),
+        (
+            run_seed_job,
+            IntervalTrigger(hours=settings.recommendations_seed_hours, timezone="UTC"),
+            SEED_JOB_ID,
+        ),
     ]
     # Guarded, not registered-and-inert: with ntfy unconfigured (6-K) run_dispatch_job returns
     # immediately, so registering it anyway would wake the loop every minute forever to do
@@ -149,14 +165,15 @@ def start_scheduler() -> AsyncIOScheduler | None:
             # against an API observed degraded to 30/min, and the lock does not help because
             # restarts are sequential. So the DB-only jobs start immediately — they are free, and
             # their precision is the whole point — and the provider sync takes a short offset.
-            next_run_time=now + timedelta(minutes=1) if job_id == SYNC_JOB_ID else now,
+            next_run_time=now + timedelta(minutes=1) if job_id in PROVIDER_JOB_IDS else now,
         )
 
     scheduler.start()
     logger.info(
-        "scheduler started: sync every %dh, threshold scan every %dm, dispatch %s",
+        "scheduler started: sync every %dh, threshold scan every %dm, recommendation seed every %dh, dispatch %s",
         settings.sync_interval_hours,
         settings.threshold_scan_minutes,
+        settings.recommendations_seed_hours,
         f"every {settings.notification_dispatch_minutes}m" if dispatch_enabled else "disabled (no transport)",
     )
     return scheduler

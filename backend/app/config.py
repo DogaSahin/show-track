@@ -52,6 +52,14 @@ class Settings(BaseSettings):
     # The dispatcher is a single indexed query when the queue is empty, which is almost always,
     # and its latency sits directly on top of the threshold scan's 15-minute granularity.
     notification_dispatch_minutes: int = Field(default=1, ge=1)
+    # Upstream similar-to lists move on the scale of weeks, so this is generous rather than tight —
+    # contrast sync_interval_hours, where airing times are time-critical.
+    recommendations_seed_hours: int = Field(default=12, ge=1)
+    # A BACKSTOP, not the primary invalidation. The library-change checks in
+    # recommendations.service cover the inputs that matter; this TTL covers only the two that have
+    # no cheap trigger — a sync refresh changing a candidate's genres, and the global genre counts
+    # behind IDF drifting as `media` grows. Both move slowly.
+    recommendations_ttl_hours: int = Field(default=24, ge=1)
     log_level: str = "INFO"
     environment: str = "local"
 
