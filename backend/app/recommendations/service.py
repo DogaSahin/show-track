@@ -116,8 +116,11 @@ async def seed_once(
             failed += 1
 
     media_ids, new_media = await _resolve_candidates(session, providers, refs_by_seed)
-    edges = await _write_edges(session, refs_by_seed, media_ids, now=now)
-    await _invalidate(session, list(refs_by_seed))
+    edges, changed_seeds = await _write_edges(session, refs_by_seed, media_ids, now=now)
+    # Only the seeds whose edges MOVED, never every seed the provider answered for. Invalidating
+    # on every answer deletes every active user's cache header on every sweep, which makes
+    # recommendations_ttl_hours unreachable — a setting that can never fire.
+    await _invalidate(session, sorted(changed_seeds))
     await session.commit()
 
     return SeedSummary(
@@ -201,13 +204,22 @@ async def _write_edges(
     media_ids: Mapping[MediaRef, uuid.UUID],
     *,
     now: datetime,
-) -> int:
+) -> tuple[int, set[uuid.UUID]]:
+    """Upsert the edges. Returns (rows written, seeds whose edges actually CHANGED).
+
+    The second element is what `_invalidate` acts on. Reporting it from here rather than
+    invalidating every answered seed is what keeps `recommendations_ttl_hours` reachable: an
+    unchanged answer must leave the user's cache header alone, or the TTL can never expire
+    anything for anyone whose library holds a due seed.
+    """
     rows = []
     # Deduped because ON CONFLICT DO UPDATE raises cardinality_violation ("cannot affect row a
     # second time") when ONE statement carries the same conflict key twice — DO NOTHING tolerates
     # it, DO UPDATE does not. Measured: a provider repeating a candidate inside one similar-to
-    # list aborted the whole sweep, which is precisely the per-seed isolation this job promises.
-    # persist_media_bulk guards the identical hazard for the same reason. First occurrence wins:
+    # list aborted the whole sweep. Note what that isolation is and is not: every seed's edges
+    # share ONE transaction, so a DB-level failure here still discards the sweep's writes. What is
+    # isolated per seed is a PROVIDER failure, which is the common case and the one the loop above
+    # catches. persist_media_bulk guards the identical hazard for the same reason. First wins:
     # refs arrive most-similar-first, so the later duplicate is the strictly worse position.
     seen: set[tuple[uuid.UUID, uuid.UUID]] = set()
     for seed_id, refs in refs_by_seed.items():
@@ -229,7 +241,34 @@ async def _write_edges(
                 }
             )
     if not rows:
-        return 0
+        return 0, set()
+
+    # Read the current state BEFORE writing over it. One indexed SELECT over the seeds in hand,
+    # and the comparison is plain Python.
+    #
+    # Deliberately NOT expressed as a conditional upsert (`DO UPDATE ... WHERE position IS
+    # DISTINCT FROM excluded.position`), which looks tidier and hides a worse bug: a seed whose
+    # edges are STABLE would then never refresh fetched_at, so collect_seeds would find it due on
+    # every sweep forever. fetched_at must keep advancing unconditionally; only the invalidation
+    # is conditional.
+    seed_ids = sorted({row["source_media_id"] for row in rows})
+    stored: dict[tuple[uuid.UUID, uuid.UUID], int] = {}
+    for chunk in chunked(seed_ids, BULK_INSERT_CHUNK_SIZE):
+        current = await session.execute(
+            select(MediaSimilarity.source_media_id, MediaSimilarity.similar_media_id, MediaSimilarity.position).where(
+                MediaSimilarity.source_media_id.in_(chunk)
+            )
+        )
+        for source_id, similar_id, position in current:
+            stored[(source_id, similar_id)] = position
+
+    # A stored position of None means the edge is new. Edges the upstream list DROPPED are not a
+    # change: nothing in this job deletes edges, so those rows survive and still feed the ranking.
+    changed = {
+        row["source_media_id"]
+        for row in rows
+        if stored.get((row["source_media_id"], row["similar_media_id"])) != row["position"]
+    }
 
     written = 0
     for chunk in chunked(rows, BULK_INSERT_CHUNK_SIZE):
@@ -242,7 +281,7 @@ async def _write_edges(
         )
         await session.execute(statement)
         written += len(chunk)
-    return written
+    return written, changed
 
 
 async def _invalidate(session: AsyncSession, seed_ids: Sequence[uuid.UUID]) -> None:

@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 from typing import ClassVar
 
+import pytest
 from sqlalchemy import select
 
 from app.library.models import UserMedia, UserMediaStatus
@@ -52,11 +53,25 @@ def _provider_media(external_id: str, title: str) -> ProviderMedia:
     )
 
 
-async def _seed_library(session, user_id, *, external_id="1", score="9"):
-    """A media row plus a highly-scored library entry pointing at it."""
+async def _seed_library(
+    session,
+    user_id,
+    *,
+    external_id="1",
+    score="9",
+    source=MediaSource.ANILIST,
+    status=UserMediaStatus.COMPLETED,
+    favorite=False,
+):
+    """A media row plus, by default, a highly-scored completed library entry pointing at it.
+
+    `status`/`score`/`favorite` are parameters rather than constants because they are exactly the
+    three inputs to positive_signal_clause, and a fixture that always satisfies all three cannot
+    tell which of them the worklist is actually reading.
+    """
     media = Media(
         type=MediaType.ANIME,
-        source=MediaSource.ANILIST,
+        source=source,
         external_id=external_id,
         title=f"seed-{external_id}",
         genres=["mecha"],
@@ -68,8 +83,9 @@ async def _seed_library(session, user_id, *, external_id="1", score="9"):
         UserMedia(
             user_id=user_id,
             media_id=media.id,
-            status=UserMediaStatus.COMPLETED,
+            status=status,
             score=score,
+            favorite=favorite,
         )
     )
     await session.flush()
@@ -117,13 +133,46 @@ async def test_seed_does_not_refetch_detail_for_a_candidate_already_in_media(db_
 
 
 async def test_a_failing_provider_does_not_abort_the_sweep(db_session, auth_user):
+    """THREE seeds, because the guarantee is about the seeds that did NOT fail.
+
+    With a single seed this test passes against an implementation that wraps the whole loop in one
+    try/except and returns early — which is precisely the behaviour it exists to forbid. The
+    surviving seed's edge is asserted in the table, not just in the summary counters.
+
+    The third seed is TMDB with no TMDB provider registered: that takes the `provider is None`
+    branch, which counts `failed` down a different path from ProviderError and would otherwise be
+    covered by nothing.
+    """
     await _seed_library(db_session, auth_user.id, external_id="1")
-    provider = SimilarProvider(error=ProviderUnavailable("down"))
+    survivor = await _seed_library(db_session, auth_user.id, external_id="2")
+    await _seed_library(db_session, auth_user.id, external_id="3", source=MediaSource.TMDB)
+
+    class Flaky(SimilarProvider):
+        """A bad minute, not a bad day: one id raises, the rest answer normally."""
+
+        async def fetch_similar(self, external_id):
+            self.similar_calls += 1
+            if external_id == "1":
+                raise ProviderUnavailable("down")
+            return self._similar.get(external_id, ())
+
+    provider = Flaky(
+        similar={"2": (MediaRef(source=MediaSource.ANILIST, external_id="99"),)},
+        details={"99": _provider_media("99", "candidate")},
+    )
 
     summary = await service.seed_once(db_session, {MediaSource.ANILIST: provider}, now=datetime.now(tz=UTC))
 
-    assert summary.failed == 1
-    assert summary.edges == 0
+    assert summary.seeds == 3
+    # One raised, one had no provider at all.
+    assert summary.failed == 2
+    assert summary.fetched == 1
+    assert summary.edges == 1
+
+    edges = (await db_session.scalars(select(MediaSimilarity))).all()
+    assert [edge.source_media_id for edge in edges] == [survivor.id], (
+        "a provider erroring on one seed must not discard the edges another seed just earned"
+    )
 
 
 async def test_re_seeding_is_idempotent(db_session, auth_user):
@@ -235,3 +284,56 @@ async def test_no_transaction_is_held_open_across_any_provider_call(db_session, 
 
     assert summary.edges == 1, "the sweep must still do its job while holding no transaction"
     assert seen == {"fetch_similar": False, "get_many": False}
+
+
+async def test_an_unchanged_answer_leaves_the_cache_header_alone(db_session, auth_user):
+    """The assertion that makes recommendations_ttl_hours a real setting.
+
+    Invalidating on every ANSWER rather than every CHANGE deletes every active user's
+    recommendation_run on every sweep, so the 24h TTL can never expire anything for a user whose
+    library holds a due seed — a shipped setting that is inert. force=True, so the sweep genuinely
+    re-asks and re-writes rather than being skipped by the cadence filter; the answer is byte
+    identical, so nothing about the stored edges moves.
+    """
+    await _seed_library(db_session, auth_user.id, external_id="1")
+    provider = SimilarProvider(
+        similar={"1": (MediaRef(source=MediaSource.ANILIST, external_id="99"),)},
+        details={"99": _provider_media("99", "candidate")},
+    )
+    now = datetime.now(tz=UTC)
+    await service.seed_once(db_session, {MediaSource.ANILIST: provider}, now=now)
+
+    db_session.add(RecommendationRun(user_id=auth_user.id, computed_at=now, source_entry_count=1))
+    await db_session.flush()
+
+    await service.seed_once(db_session, {MediaSource.ANILIST: provider}, now=now, force=True)
+
+    remaining = (await db_session.scalars(select(RecommendationRun))).all()
+    assert len(remaining) == 1, "an unchanged answer must not drop the cache header"
+
+
+@pytest.mark.parametrize(
+    ("status", "score", "favorite", "expected_seeds"),
+    [
+        (UserMediaStatus.COMPLETED, None, False, 1),
+        (UserMediaStatus.WATCHING, "9", False, 1),
+        (UserMediaStatus.WATCHING, None, True, 1),
+        (UserMediaStatus.WATCHING, "4", False, 0),
+    ],
+    ids=["completed", "scored-at-or-above-threshold", "favourited", "none-of-the-three"],
+)
+async def test_only_a_positive_signal_becomes_a_seed(db_session, auth_user, status, score, favorite, expected_seeds):
+    """One case per disjunct of positive_signal_clause, plus the case that satisfies none.
+
+    Every other fixture in this file sets COMPLETED *and* a score of 9, so deleting any single
+    disjunct leaves them all green. These four fail individually instead — which matters because
+    this clause is the only thing keeping the seed worklist and the taste profile from drifting
+    apart. If they drift, the job spends provider calls on titles that then score zero.
+    """
+    await _seed_library(db_session, auth_user.id, external_id="1", status=status, score=score, favorite=favorite)
+    provider = SimilarProvider(similar={"1": (MediaRef(source=MediaSource.ANILIST, external_id="99"),)})
+
+    summary = await service.seed_once(db_session, {MediaSource.ANILIST: provider}, now=datetime.now(tz=UTC))
+
+    assert summary.seeds == expected_seeds
+    assert provider.similar_calls == expected_seeds
