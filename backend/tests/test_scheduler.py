@@ -1,10 +1,18 @@
 import asyncio
+from datetime import timedelta
 
 import pytest
 
 from app.config import Settings
 from app.sync import scheduler as scheduler_module
-from app.sync.scheduler import DISPATCH_JOB_ID, SEED_JOB_ID, SYNC_JOB_ID, THRESHOLD_JOB_ID, start_scheduler
+from app.sync.scheduler import (
+    DISPATCH_JOB_ID,
+    PROVIDER_JOB_START_OFFSETS,
+    SEED_JOB_ID,
+    SYNC_JOB_ID,
+    THRESHOLD_JOB_ID,
+    start_scheduler,
+)
 
 
 def _settings(**overrides) -> Settings:
@@ -50,9 +58,11 @@ async def test_the_always_on_jobs_are_registered_with_the_configured_intervals(m
     get_running_loop(), so a plain `def` raises RuntimeError: no running event loop.
 
     get_providers is patched even though this test never awaits between start() and shutdown():
-    both jobs are due almost immediately with misfire_grace_time=None, so a single added `await`
-    would dispatch them, build the real AniListProvider and issue LIVE requests — violating a
-    project rule by accident rather than by intent.
+    the threshold scan is due immediately and the sync job a minute later, both with
+    misfire_grace_time=None, so a single added `await` would dispatch the scan, and a slow one
+    could reach the sync job — building the real AniListProvider and issuing LIVE requests,
+    violating a project rule by accident rather than by intent. (The seed job is the one
+    provider-calling job NOT in that window; it takes a five-minute offset.)
     """
     monkeypatch.setattr(scheduler_module, "get_providers", lambda: {})
     monkeypatch.setattr(
@@ -158,12 +168,18 @@ async def test_a_missed_run_is_not_silently_discarded(monkeypatch):
         scheduler.shutdown(wait=False)
 
 
-async def test_the_provider_sync_does_not_fire_at_boot(monkeypatch):
+async def test_each_provider_job_takes_its_own_boot_offset(monkeypatch):
     """IntervalTrigger schedules its first run at now + interval, so a process restarting more
-    often than its interval would never sync at all — but firing BOTH jobs at boot makes every
+    often than its interval would never sync at all — but firing every job at boot makes each
     `uvicorn --reload` a full provider sweep against an API observed degraded to 30/min, and the
     lock does not help because restarts are sequential. The DB-only scan starts immediately (free,
-    and its precision is the point); the provider sync takes a short offset.
+    and its precision is the point); each provider-calling job takes an offset.
+
+    The offsets are pinned per job, not asserted as one shared value, and that is the point of
+    this test. Both provider jobs share one memoised AniList RateLimiter, so a single shared
+    offset co-located them at boot — and with the default 1h/12h intervals, 12 being a multiple of
+    1, every later seed run landed on a sync tick too. Collapsing these two back to one constant
+    restores that collision, so this test must fail if anyone does.
     """
     monkeypatch.setattr(scheduler_module, "get_providers", lambda: {})
     monkeypatch.setattr(scheduler_module, "get_settings", _settings)
@@ -171,10 +187,15 @@ async def test_the_provider_sync_does_not_fire_at_boot(monkeypatch):
     scheduler = start_scheduler()
     try:
         scan_at = scheduler.get_job(THRESHOLD_JOB_ID).next_run_time
-        # BOTH provider-calling jobs, not just the sync: the seed job sweeps every title anyone
-        # rates highly, so firing it at boot is the same restart-storm risk for the same APIs.
-        for job_id in (SYNC_JOB_ID, SEED_JOB_ID):
-            assert scheduler.get_job(job_id).next_run_time > scan_at
+        sync_at = scheduler.get_job(SYNC_JOB_ID).next_run_time
+        seed_at = scheduler.get_job(SEED_JOB_ID).next_run_time
+
+        # The DB-only scan is the boot baseline; both provider jobs are strictly after it...
+        assert scan_at < sync_at < seed_at
+        # ...and they are separated by the difference the module declares, not merely ordered.
+        assert seed_at - sync_at == PROVIDER_JOB_START_OFFSETS[SEED_JOB_ID] - PROVIDER_JOB_START_OFFSETS[SYNC_JOB_ID]
+        assert PROVIDER_JOB_START_OFFSETS[SYNC_JOB_ID] == timedelta(minutes=1)
+        assert PROVIDER_JOB_START_OFFSETS[SEED_JOB_ID] == timedelta(minutes=5)
     finally:
         scheduler.shutdown(wait=False)
 

@@ -201,13 +201,16 @@ A cold library — nothing rated highly, favourited or finished yet — gets bac
 "next_cursor":null}` rather than an error, and so does a qualifying one the seed job has not
 reached yet: candidates come only from that job, never from this request. **Its schedule works
 against a reader following this walkthrough in order.** A freshly started server's first seed run
-lands about a minute after startup — comfortably before you finish registering, searching and
-rating something above — so it runs once against a library with nothing to seed from, and then not
-again for `RECOMMENDATIONS_SEED_HOURS` (default 12; `ge=1` means it cannot be pushed below an
-hour). Unlike sync, there is **no** `POST /v1/debug/*` to force it early, so **rate something
-first, then restart the backend** — a fresh process re-arms the same one-minute offset — and wait
-that minute; the alternative is waiting out the full interval without restarting. The job also
-only exists at all when `SYNC_ENABLED` is `true`, the same gate that sync, the threshold scan and
+lands about five minutes after startup — quite possibly before you finish registering, searching
+and rating something above — so it can run once against a library with nothing to seed from, and
+then not again for `RECOMMENDATIONS_SEED_HOURS` (default 12; `ge=1` means it cannot be pushed
+below an hour). Unlike sync, there is **no** `POST /v1/debug/*` to force it early, so **rate
+something first, then restart the backend** — a fresh process re-arms the same five-minute offset
+— and wait those five minutes. (Why five, when the airing sync waits one: both jobs share a single
+memoised AniList rate limiter, so they are staggered rather than co-located; see
+[Recommendations](#recommendations).) The alternative is waiting out the full interval without
+restarting. The job also only exists at all when `SYNC_ENABLED` is `true`, the gate that sync, the
+threshold scan and
 dispatch share — set it `false` anywhere and recommendations stay empty forever, not just delayed.
 See [Recommendations](#recommendations) for how a candidate is chosen, why `reason` names only one
 title, and why there is no score field to sort by yourself.
@@ -530,9 +533,16 @@ four things a little" is not something you can act on or disagree with. There is
 number whose scale was never promised, turning a later retune of the ranking weights into a
 visible, unexplainable change. The ordering *is* the score.
 
-| Job | Interval | Lock key |
-|---|---|---|
-| Seed | `RECOMMENDATIONS_SEED_HOURS` (default 12) | 5000004 |
+| Job | Interval | First run after boot | Lock key |
+|---|---|---|---|
+| Seed | `RECOMMENDATIONS_SEED_HOURS` (default 12) | +5 min | 5000004 |
+
+That boot offset is five minutes where the airing sync's is one, deliberately. Both jobs call
+providers through the same memoised client and the same AniList rate limiter, so a shared offset
+would not merely co-locate them at boot: with the default 1h and 12h intervals, every later seed
+run would land on a sync tick too, forever. The contention is asymmetric — a rate limit costs the
+seed job one seed and costs the sync job a whole source for the cycle — so the non-urgent job is
+the one that gets moved.
 
 It runs inside the same in-process scheduler and shares the same `SYNC_ENABLED` gate and
 multi-replica story as the jobs in [Background sync](#background-sync) above — the advisory lock
