@@ -28,10 +28,11 @@ content-based recommendations are in place. Groups and the Android client are no
 - **Share with a group** — a feed of what members watched and rated, a shared "we should watch this"
   watchlist, side-by-side progress on titles you're both watching, and reviews.
 - **Get recommendations**, seeded from what AniList/TMDB report as similar to titles you rated
-  highly, favourited or finished, and ranked by how well each candidate's genres match your own
-  weighted taste profile. **Content-based, not collaborative filtering** — nothing about what
-  anyone else watched feeds a suggestion. Anything already in your library is excluded, and every
-  item says which title of yours it's because of — see [Recommendations](#recommendations).
+  highly (score 7 or higher), favourited or finished, and ranked by how well each candidate's
+  genres match your own weighted taste profile. **Content-based, not collaborative filtering** —
+  nothing about what anyone else watched feeds a suggestion. Anything already in your library is
+  excluded, and every item says which title of yours it's because of — see
+  [Recommendations](#recommendations).
 
 Data comes from **AniList** (anime, GraphQL) and **TMDB** (TV, REST), normalised behind a single
 provider interface so nothing downstream knows which one a title came from. `GET /v1/media/search`
@@ -178,7 +179,7 @@ alongside AniList results — the degradation contract (§8 of the design doc) w
 # its genres match your own weighted taste profile; anything already in your library is excluded
 curl -s -H "Authorization: Bearer $TOKEN" 'localhost:8000/v1/recommendations?limit=2'
 # -> {"items":[{"media":{"title":"...", ...},
-#               "reason":{"seed_media_id":"...","seed_title":"Attack on Titan","matched_genres":["action","drama"]}},
+#               "reason":{"seed_media_id":"...","seed_title":"Frieren: Beyond Journey's End","matched_genres":["fantasy","drama"]}},
 #              ...],
 #     "next_cursor":"eyJrIjoicmFuayIsInYiOiI0MiIsImkiOiIuLi4ifQ=="}
 
@@ -190,12 +191,19 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 ```
 
 A cold library — nothing rated highly, favourited or finished yet — gets back `{"items":[],
-"next_cursor":null}` rather than an error, and so does a library that qualifies but has not been
-**seeded** yet: candidates come from the seed job, not from this request, and — unlike sync —
-there is no `POST /v1/debug/*` to force it early. On a freshly started server it first runs about
-a minute after startup, then every `RECOMMENDATIONS_SEED_HOURS`; give it that minute before
-expecting a populated response. See [Recommendations](#recommendations) for how a candidate is
-chosen, why `reason` names only one title, and why there is no score field to sort by yourself.
+"next_cursor":null}` rather than an error, and so does a qualifying one the seed job has not
+reached yet: candidates come only from that job, never from this request. **Its schedule works
+against a reader following this walkthrough in order.** A freshly started server's first seed run
+lands about a minute after startup — comfortably before you finish registering, searching and
+rating something above — so it runs once against a library with nothing to seed from, and then not
+again for `RECOMMENDATIONS_SEED_HOURS` (default 12; `ge=1` means it cannot be pushed below an
+hour). Unlike sync, there is **no** `POST /v1/debug/*` to force it early, so **rate something
+first, then restart the backend** — a fresh process re-arms the same one-minute offset — and wait
+that minute; the alternative is waiting out the full interval without restarting. The job also
+only exists at all when `SYNC_ENABLED` is `true`, the same gate that sync, the threshold scan and
+dispatch share — set it `false` anywhere and recommendations stay empty forever, not just delayed.
+See [Recommendations](#recommendations) for how a candidate is chosen, why `reason` names only one
+title, and why there is no score field to sort by yourself.
 
 New migrations:
 
@@ -515,9 +523,18 @@ four things a little" is not something you can act on or disagree with. There is
 number whose scale was never promised, turning a later retune of the ranking weights into a
 visible, unexplainable change. The ordering *is* the score.
 
-| Job | Interval | Cost |
+| Job | Interval | Lock key |
 |---|---|---|
-| Seed | `RECOMMENDATIONS_SEED_HOURS` (default 12) | one similar-to lookup per due seed title, AniList/TMDB |
+| Seed | `RECOMMENDATIONS_SEED_HOURS` (default 12) | 5000004 |
+
+It runs inside the same in-process scheduler and shares the same `SYNC_ENABLED` gate and
+multi-replica story as the jobs in [Background sync](#background-sync) above — the advisory lock
+is what stops two replicas double-fetching, and `SYNC_ENABLED=false` on an extra replica is the
+intent, not just the safety net. Each due run issues one similar-to lookup per seed title; on the
+very first sweep it also fetches full details for every candidate that has no `media` row yet,
+and TMDB has no batch endpoint for that, so that part is a sequential per-title loop. On a mature
+install almost every candidate already has a row, so the cost collapses to near zero after that
+first sweep.
 
 Generous by design: unlike the airing dates the sync job tracks, upstream similar-to lists move on
 the scale of weeks, not hours. `RECOMMENDATIONS_TTL_HOURS` (default 24) is a backstop, not the
@@ -529,7 +546,10 @@ grows.
 The ranking is rebuilt **only on a cursor-less read** — the same request that returns page one.
 That is what keeps a pagination cursor stable: a client walking a page it already has cannot
 trigger a rebuild underneath itself. Otherwise it pages exactly like `/v1/library` — follow
-`next_cursor` until it is `null`.
+`next_cursor` until it is `null`. The rebuild takes its own lock too, a per-user
+`pg_try_advisory_xact_lock` (5000005) scoped to that one request's transaction rather than the
+session-scoped lock the background jobs use — a losing concurrent request just serves the ranking
+as it stands rather than duplicating the rebuild.
 
 The feed is deliberately type-agnostic: there is no `?type=` filter and no anime/TV quota, so pool
 composition emerges from library composition — AniList seeds return anime, TMDB seeds return TV.
