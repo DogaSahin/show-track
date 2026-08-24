@@ -9,7 +9,7 @@ from app.media.models import Media, MediaSource, MediaStatus, MediaType
 from app.media.providers.base import MediaProvider, MediaRef, ProviderMedia
 from app.media.providers.errors import ProviderUnavailable
 from app.recommendations import service
-from app.recommendations.models import MediaSimilarity, RecommendationRun
+from app.recommendations.models import MediaSimilarity, Recommendation, RecommendationRun
 
 
 class SimilarProvider(MediaProvider):
@@ -337,3 +337,112 @@ async def test_only_a_positive_signal_becomes_a_seed(db_session, auth_user, stat
 
     assert summary.seeds == expected_seeds
     assert provider.similar_calls == expected_seeds
+
+
+async def test_recompute_excludes_titles_already_in_the_library(db_session, auth_user):
+    seed = await _seed_library(db_session, auth_user.id, external_id="1")
+    owned = await _seed_library(db_session, auth_user.id, external_id="2", score="8")
+    db_session.add(
+        MediaSimilarity(
+            source_media_id=seed.id,
+            similar_media_id=owned.id,
+            position=0,
+            fetched_at=datetime.now(tz=UTC),
+        )
+    )
+    await db_session.flush()
+
+    await service.recompute(db_session, user_id=auth_user.id, now=datetime.now(tz=UTC))
+
+    rows = (await db_session.scalars(select(Recommendation))).all()
+    assert rows == [], "a title you already track is not a recommendation"
+
+
+async def test_recompute_writes_a_run_row_even_when_there_is_nothing_to_recommend(db_session, auth_user):
+    """Without this the cold-start user recomputes on every single request, forever."""
+    await service.recompute(db_session, user_id=auth_user.id, now=datetime.now(tz=UTC))
+
+    run = await db_session.get(RecommendationRun, auth_user.id)
+    assert run is not None
+    assert run.source_entry_count == 0
+
+
+async def test_a_deleted_library_entry_makes_the_cache_stale(db_session, auth_user):
+    """max(updated_at) cannot see a removal — this is the source_entry_count path specifically."""
+    seed = await _seed_library(db_session, auth_user.id, external_id="1")
+    now = datetime.now(tz=UTC)
+    await service.recompute(db_session, user_id=auth_user.id, now=now)
+    assert not await service.is_stale(db_session, user_id=auth_user.id, now=now)
+
+    entry = await db_session.scalar(select(UserMedia).where(UserMedia.media_id == seed.id))
+    await db_session.delete(entry)
+    await db_session.flush()
+
+    assert await service.is_stale(db_session, user_id=auth_user.id, now=now)
+
+
+async def test_rating_a_title_makes_the_cache_stale(db_session, auth_user):
+    """The max(updated_at) path, with the not-stale control that isolates it.
+
+    `updated_at` is dated explicitly rather than left to onupdate=func.now(), which renders
+    Postgres `now()` — transaction_timestamp(), frozen for the life of a transaction. In
+    production the PATCH that rates a title and the later read are two transactions, so it lands
+    strictly later; inside this fixture's single external transaction it cannot move (measured:
+    the value before the flush, after it, and `SELECT now()` were all identical). Setting it here
+    reproduces what production writes, and the score change is kept so the row genuinely changes.
+    """
+    seed = await _seed_library(db_session, auth_user.id, external_id="1", score=None)
+    now = datetime.now(tz=UTC)
+    await service.recompute(db_session, user_id=auth_user.id, now=now)
+    # The control: without it an is_stale that simply returned True would pass this test.
+    assert not await service.is_stale(db_session, user_id=auth_user.id, now=now)
+
+    entry = await db_session.scalar(select(UserMedia).where(UserMedia.media_id == seed.id))
+    entry.score = 9
+    entry.updated_at = now + timedelta(minutes=1)
+    await db_session.flush()
+
+    assert await service.is_stale(db_session, user_id=auth_user.id, now=now)
+
+
+async def test_ensure_fresh_recomputes_once_and_then_leaves_the_cache_alone(db_session, auth_user):
+    """Rebuild when stale, no-op when not — the read path's whole cost model (decision 7-C).
+
+    Also the only exercise of the pg_try_advisory_xact_lock statement: a typo inside that text()
+    is invisible until it actually runs.
+    """
+    seed = await _seed_library(db_session, auth_user.id, external_id="1")
+    candidate = Media(
+        type=MediaType.ANIME,
+        source=MediaSource.ANILIST,
+        external_id="99",
+        title="candidate",
+        genres=["mecha"],
+        status=MediaStatus.FINISHED,
+    )
+    db_session.add(candidate)
+    await db_session.flush()
+    db_session.add(
+        MediaSimilarity(
+            source_media_id=seed.id,
+            similar_media_id=candidate.id,
+            position=0,
+            fetched_at=datetime.now(tz=UTC),
+        )
+    )
+    await db_session.flush()
+
+    now = datetime.now(tz=UTC)
+    await service.ensure_fresh(db_session, user_id=auth_user.id, now=now)
+
+    rows = (await db_session.scalars(select(Recommendation))).all()
+    assert [(row.rank, row.media_id, row.seed_media_id) for row in rows] == [(0, candidate.id, seed.id)]
+    run = await db_session.get(RecommendationRun, auth_user.id)
+    assert run is not None
+    assert run.computed_at == now
+
+    # Nothing has changed, so the second call must not rebuild. Asserted on computed_at rather
+    # than on the rows, because a recompute is idempotent and would leave the rows identical.
+    await service.ensure_fresh(db_session, user_id=auth_user.id, now=now + timedelta(minutes=5))
+    await db_session.refresh(run)
+    assert run.computed_at == now

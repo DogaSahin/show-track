@@ -4,7 +4,7 @@ from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, insert, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,10 +15,11 @@ from app.media.models import Media, MediaSource
 from app.media.providers.base import MediaProvider, MediaRef
 from app.media.providers.errors import ProviderError
 from app.media.service import persist_media_bulk
-from app.recommendations.models import MediaSimilarity, RecommendationRun
+from app.recommendations import scoring
+from app.recommendations.models import MediaSimilarity, Recommendation, RecommendationRun
 from app.recommendations.schemas import SeedSummary
 from app.recommendations.scoring import SCORE_THRESHOLD
-from app.sync.locks import SEED_LOCK_KEY, advisory_lock
+from app.sync.locks import RECOMPUTE_LOCK_KEY, SEED_LOCK_KEY, advisory_lock
 
 logger = logging.getLogger(__name__)
 
@@ -307,3 +308,195 @@ async def run_seed(providers: Mapping[MediaSource, MediaProvider], *, now: datet
             return SeedSummary(ran=False)
         async with get_sessionmaker()() as session:
             return await seed_once(session, providers, now=now or datetime.now(tz=UTC))
+
+
+async def is_stale(session: AsyncSession, *, user_id: uuid.UUID, now: datetime) -> bool:
+    """Whether this user's ranking needs rebuilding, cheapest check first.
+
+    There is no dirty-flag column: UserMedia.updated_at already carries onupdate=func.now(), so a
+    rating, a favourite or a status change moves it for free. What it cannot see is a DELETION —
+    removing an entry moves no surviving row's timestamp — which is what source_entry_count is for.
+    The TTL is the backstop for the two inputs neither of those can see: new edges from the seed
+    job, and a retune of the scoring constants.
+    """
+    run = await session.get(RecommendationRun, user_id)
+    if run is None:
+        return True
+
+    ttl = timedelta(hours=get_settings().recommendations_ttl_hours)
+    if run.computed_at < now - ttl:
+        return True
+
+    latest, count = (
+        await session.execute(select(func.max(UserMedia.updated_at), func.count()).where(UserMedia.user_id == user_id))
+    ).one()
+    if count != run.source_entry_count:
+        return True
+    return latest is not None and latest > run.computed_at
+
+
+async def _taste_profile(session: AsyncSession, user_id: uuid.UUID) -> tuple[list[scoring.TasteEntry], int]:
+    """Every library entry, reduced to the scoring dataclass, plus the total entry count.
+
+    ALL entries are loaded, not only the positive ones: signal_weight returns 0.0 for the rest, and
+    the count is what is_stale compares against source_entry_count.
+    """
+    rows = (
+        await session.execute(
+            select(UserMedia.media_id, Media.genres, UserMedia.score, UserMedia.favorite, UserMedia.status)
+            .join(Media, Media.id == UserMedia.media_id)
+            .where(UserMedia.user_id == user_id)
+        )
+    ).all()
+    entries = [
+        scoring.TasteEntry(
+            media_id=media_id,
+            genres=tuple(genres or ()),
+            score=score,
+            favorite=favorite,
+            completed=status == UserMediaStatus.COMPLETED,
+        )
+        for media_id, genres, score, favorite, status in rows
+    ]
+    return entries, len(rows)
+
+
+async def _genre_counts(session: AsyncSession) -> dict[str, int]:
+    """How many titles carry each canonical genre — the IDF denominator.
+
+    One aggregate over `media`, not one query per genre. There are 27 canonical genres and the
+    whole result is a small dict.
+    """
+    genre = func.unnest(Media.genres).label("genre")
+    rows = await session.execute(select(genre, func.count()).group_by(genre))
+    return {name: count for name, count in rows}
+
+
+async def _candidates(
+    session: AsyncSession, *, user_id: uuid.UUID, seed_ids: Sequence[uuid.UUID]
+) -> list[scoring.Candidate]:
+    """Fan-out edges from this user's seeds, minus anything already in their library.
+
+    Membership is this join and nothing else. There is deliberately NO genre predicate here: the
+    alpha floor in scoring.py exists so a candidate with zero genre overlap can still be carried by
+    provider signal, and a `genres && :profile` filter would delete exactly those rows before the
+    floor could rescue them (decision 7-J).
+    """
+    if not seed_ids:
+        return []
+
+    owned = select(UserMedia.media_id).where(UserMedia.user_id == user_id)
+    rows = (
+        await session.execute(
+            select(
+                MediaSimilarity.similar_media_id,
+                MediaSimilarity.source_media_id,
+                MediaSimilarity.position,
+                Media.genres,
+            )
+            .join(Media, Media.id == MediaSimilarity.similar_media_id)
+            .where(MediaSimilarity.source_media_id.in_(seed_ids))
+            .where(MediaSimilarity.similar_media_id.not_in(owned))
+        )
+    ).all()
+
+    edges: dict[uuid.UUID, list[scoring.Edge]] = defaultdict(list)
+    genres: dict[uuid.UUID, tuple[str, ...]] = {}
+    for media_id, seed_id, position, media_genres in rows:
+        edges[media_id].append(scoring.Edge(seed_media_id=seed_id, position=position))
+        genres[media_id] = tuple(media_genres or ())
+
+    return [
+        scoring.Candidate(media_id=media_id, genres=genres[media_id], edges=tuple(media_edges))
+        for media_id, media_edges in edges.items()
+    ]
+
+
+async def recompute(session: AsyncSession, *, user_id: uuid.UUID, now: datetime) -> int:
+    """Rebuild this user's ranking. Returns how many rows were written.
+
+    Pure SQL and pure Python — no provider call, which is what lets this run on a read without
+    breaking the DB-only read-path guarantee.
+    """
+    entries, entry_count = await _taste_profile(session, user_id)
+    # Seeds are the POSITIVE entries only, and that filter is load-bearing rather than an
+    # optimisation: _candidates attributes every candidate to one of these ids, so widening it
+    # would let "because you liked X" name a title the user gave no positive signal for.
+    seed_ids = [entry.media_id for entry in entries if scoring.signal_weight(entry) > 0]
+    candidates = await _candidates(session, user_id=user_id, seed_ids=seed_ids)
+    ranked = scoring.rank_candidates(candidates, entries, await _genre_counts(session))
+
+    # DELETE then INSERT, in one transaction. Simpler than diffing, and correct because the whole
+    # ranking is derived — there is no state in these rows worth preserving. It is also the only
+    # shape that works: uq_recommendation_user_id_rank is NOT deferrable, so an in-place rewrite
+    # (UPDATE ... SET rank = rank + 1) would violate it mid-statement.
+    await session.execute(delete(Recommendation).where(Recommendation.user_id == user_id))
+    for chunk in chunked(list(enumerate(ranked)), BULK_INSERT_CHUNK_SIZE):
+        await session.execute(
+            insert(Recommendation),
+            [
+                {
+                    "user_id": user_id,
+                    "media_id": scored.media_id,
+                    "rank": rank,
+                    "score": scored.score,
+                    "seed_media_id": scored.seed_media_id,
+                    "matched_genres": list(scored.matched_genres),
+                }
+                for rank, scored in chunk
+            ],
+        )
+
+    # The header row is written even when `ranked` is empty. That is the whole reason this table
+    # exists: without it, "computed, correctly empty" is indistinguishable from "never computed"
+    # and the cold-start user recomputes on every request forever.
+    statement = pg_insert(RecommendationRun).values(user_id=user_id, computed_at=now, source_entry_count=entry_count)
+    await session.execute(
+        statement.on_conflict_do_update(
+            index_elements=["user_id"],
+            set_={"computed_at": now, "source_entry_count": entry_count},
+        )
+    )
+    return len(ranked)
+
+
+def _user_lock_key(user_id: uuid.UUID) -> int:
+    """A stable signed int32 for pg_try_advisory_xact_lock's second argument.
+
+    Derived here rather than with Postgres's hashtext(): that function is internal, undocumented
+    and carries no stability guarantee, so a change to it across a major version would silently
+    re-map every user to a different lock key. This derivation is ours, deterministic, and
+    testable with no database.
+    """
+    return int.from_bytes(user_id.bytes[:4], "big", signed=True)
+
+
+async def ensure_fresh(session: AsyncSession, *, user_id: uuid.UUID, now: datetime) -> None:
+    """Recompute if stale. Called ONLY on a cursor-less read — that is the whole cursor-stability
+    guarantee (decision 7-C): a request carrying a cursor cannot reach this function, so the
+    ranking it is paginating cannot move underneath it.
+
+    pg_try_advisory_xact_lock, NOT the session-scoped advisory_lock() helper in app/sync/locks.py,
+    and this is not an oversight. The xact form is correct here for exactly the reasons that
+    module records it is wrong for the jobs: the recompute is pure SQL and is exactly one
+    transaction, so it never spans an HTTP call and never survives a mid-function commit. It
+    auto-releases on commit or on rollback, with no `finally` to get wrong. Do not "fix" this to
+    match locks.py.
+    """
+    if not await is_stale(session, user_id=user_id, now=now):
+        return
+
+    acquired = await session.scalar(
+        text("SELECT pg_try_advisory_xact_lock(:key, :user_key)"),
+        {"key": RECOMPUTE_LOCK_KEY, "user_key": _user_lock_key(user_id)},
+    )
+    if not acquired:
+        # Another request is already rebuilding this user's ranking. Serve what is there rather
+        # than duplicating the work; the next request picks up the fresh rows. On a genuinely cold
+        # cache that means one of two simultaneous first requests sees an empty list, which
+        # self-heals.
+        logger.info("recompute already in progress for user %s; serving the existing cache", user_id)
+        return
+
+    await recompute(session, user_id=user_id, now=now)
+    await session.commit()
