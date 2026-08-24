@@ -20,7 +20,7 @@ from app.media.providers.base import (
     ProviderSearchPage,
 )
 from app.media.providers.errors import ProviderError, ProviderRateLimited, ProviderTimeout
-from app.media.schemas import MediaDetail, MediaSearchResponse, MediaSummary, SourceStatus
+from app.media.schemas import MediaDetail, MediaSearchResponse, MediaSummary, PersistedMedia, SourceStatus
 
 logger = logging.getLogger(__name__)
 
@@ -277,11 +277,15 @@ async def get_or_create_media(
     return await persist_media(session, detail)
 
 
-def to_detail(media: Media, now: datetime) -> MediaDetail:
-    """Public because `library` embeds MediaDetail in every entry; one owner of the
-    Media -> schema mapping means the two cannot drift.
+def to_persisted(media: Media) -> PersistedMedia:
+    """The stale-proof half of the Media -> schema mapping.
+
+    Takes no clock, deliberately: nothing it returns is time-dependent, which is exactly why
+    `recommendations` embeds this. A recommendation candidate is by construction NOT in anyone's
+    library, so the sync job never refreshes it and any airing field on it would be frozen at the
+    moment the seed job created the row.
     """
-    return MediaDetail(
+    return PersistedMedia(
         id=media.id,
         source=media.source,
         external_id=media.external_id,
@@ -290,6 +294,15 @@ def to_detail(media: Media, now: datetime) -> MediaDetail:
         year=media.year,
         genres=list(media.genres),
         cover_image_url=media.cover_image_url,
+    )
+
+
+def to_detail(media: Media, now: datetime) -> MediaDetail:
+    """Public because `library` embeds MediaDetail in every entry; one owner of the
+    Media -> schema mapping means the two cannot drift.
+    """
+    return MediaDetail(
+        **to_persisted(media).model_dump(),
         status=media.status,
         next_episode_season=media.next_episode_season,
         next_episode_number=media.next_episode_number,

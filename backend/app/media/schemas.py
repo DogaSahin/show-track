@@ -33,10 +33,26 @@ class MediaSummary(BaseModel):
     cover_image_url: str | None
 
 
-class MediaDetail(MediaSummary):
-    """A persisted title. Unlike MediaSummary it has an internal id, because a row exists."""
+class PersistedMedia(MediaSummary):
+    """A title that has a row. Unlike MediaSummary it carries an internal id, because a row
+    exists — and a client needs that id to act on the title (add it to the library, open it).
+
+    Everything a title always knows about itself, and nothing that goes stale. Served wherever a
+    row is referenced but its airing state is NOT kept fresh, which is why recommendations embed
+    this rather than MediaDetail.
+    """
 
     id: uuid.UUID
+
+
+class MediaDetail(PersistedMedia):
+    """A persisted title plus its airing state.
+
+    Only correct where something refreshes that state. The sync job's worklist is scoped to titles
+    that are in at least one user's library, so those fields are current for a library entry and
+    for a title the user went looking for — and would be frozen at seed time anywhere else.
+    """
+
     status: MediaStatus
     next_episode_season: int | None
     next_episode_number: int | None

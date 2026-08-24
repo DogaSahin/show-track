@@ -71,6 +71,27 @@ async def test_each_item_explains_itself(auth_client, auth_user, db_session):
     assert reason["matched_genres"] == ["mecha"]
 
 
+async def test_the_embedded_media_carries_no_field_that_cannot_be_kept_fresh(auth_client, auth_user, db_session):
+    """The item embeds PersistedMedia, NOT MediaDetail, and restoring the difference is a bug.
+
+    `status` and the next-episode block are refreshed by the sync job alone, whose worklist is
+    scoped to titles that are in at least one user's library (`app/sync/service.py`). A
+    recommendation candidate is by construction NOT in the reader's library, so those fields
+    would be frozen at the moment the seed job created the row — and because
+    `days_until_next_episode` clamps at 0, a stale one renders as "airs today" forever.
+
+    `id` IS present and must stay: unlike a search result, a recommendation points at a persisted
+    row, and the client needs the id to add it to the library.
+    """
+    await _seeded_user(db_session, auth_user.id, candidates=1)
+
+    media = (await auth_client.get("/v1/recommendations")).json()["items"][0]["media"]
+
+    assert media["id"]
+    assert not {"status", "next_episode_season", "next_episode_number", "next_episode_date"} & media.keys()
+    assert "days_until_next_episode" not in media
+
+
 async def test_the_internal_score_is_never_serialised(auth_client, auth_user, db_session):
     await _seeded_user(db_session, auth_user.id, candidates=1)
 

@@ -178,10 +178,17 @@ alongside AniList results — the degradation contract (§8 of the design doc) w
 # provider calls similar to a title you rated highly, favourited or finished, ranked by how well
 # its genres match your own weighted taste profile; anything already in your library is excluded
 curl -s -H "Authorization: Bearer $TOKEN" 'localhost:8000/v1/recommendations?limit=2'
-# -> {"items":[{"media":{"title":"...", ...},
+# -> {"items":[{"media":{"id":"...","source":"anilist","external_id":"140960","type":"anime",
+#                        "title":"...","year":2023,"genres":["fantasy","drama"],"cover_image_url":"..."},
 #               "reason":{"seed_media_id":"...","seed_title":"Frieren: Beyond Journey's End","matched_genres":["fantasy","drama"]}},
 #              ...],
 #     "next_cursor":"eyJrIjoicmFuayIsInYiOiI0MiIsImkiOiIuLi4ifQ=="}
+#
+# `media` here is narrower than the one inside a /v1/library entry: no `status`, no next-episode
+# block. Those are refreshed by the sync job, whose worklist covers only titles that are in
+# somebody's library — which a recommendation candidate, by definition, is not. Rather than serve
+# a frozen air date that renders as "airs today" forever, the fields are simply not there.
+# `id` is, so you can POST the candidate straight to /v1/library.
 
 # page 2 — pass next_cursor straight back; it is opaque, not something to construct by hand
 CURSOR=$(curl -s -H "Authorization: Bearer $TOKEN" 'localhost:8000/v1/recommendations?limit=2' \

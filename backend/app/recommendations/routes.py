@@ -52,5 +52,5 @@ async def list_recommendations(
             # straight back.
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid cursor") from exc
 
-    items, next_cursor = await service.list_page(session, user_id=current_user.id, limit=limit, cursor=decoded, now=now)
+    items, next_cursor = await service.list_page(session, user_id=current_user.id, limit=limit, cursor=decoded)
     return RecommendationPage(items=items, next_cursor=next_cursor)

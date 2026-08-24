@@ -15,7 +15,7 @@ from app.library.models import UserMedia, UserMediaStatus
 from app.media.models import Media, MediaSource
 from app.media.providers.base import MediaProvider, MediaRef
 from app.media.providers.errors import ProviderError
-from app.media.service import persist_media_bulk, to_detail
+from app.media.service import persist_media_bulk, to_persisted
 from app.pagination import Cursor, encode_cursor
 from app.recommendations import scoring
 from app.recommendations.models import MediaSimilarity, Recommendation, RecommendationRun
@@ -548,7 +548,7 @@ def parse_rank(raw: str) -> int:
 
 
 async def list_page(
-    session: AsyncSession, *, user_id: uuid.UUID, limit: int, cursor: Cursor | None, now: datetime
+    session: AsyncSession, *, user_id: uuid.UUID, limit: int, cursor: Cursor | None
 ) -> tuple[list[RecommendationItem], str | None]:
     """Keyset pagination over (rank, media_id).
 
@@ -577,7 +577,7 @@ async def list_page(
 
     items = [
         RecommendationItem(
-            media=to_detail(media, now),
+            media=to_persisted(media),
             reason=RecommendationReason(
                 seed_media_id=recommendation.seed_media_id,
                 seed_title=seed_title,

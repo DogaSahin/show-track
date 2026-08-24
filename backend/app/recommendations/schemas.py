@@ -2,7 +2,7 @@ import uuid
 
 from pydantic import BaseModel
 
-from app.media.schemas import MediaDetail
+from app.media.schemas import PersistedMedia
 
 
 class SeedSummary(BaseModel):
@@ -40,16 +40,25 @@ class RecommendationReason(BaseModel):
 
 
 class RecommendationItem(BaseModel):
-    """MediaDetail is embedded rather than referenced, exactly as LibraryEntry does it: a list
+    """The media is embedded rather than referenced, exactly as LibraryEntry does it: a list
     screen needs titles and cover art, and an id-only response makes rendering one page N+1
     requests.
+
+    PersistedMedia, NOT MediaDetail, and that is the load-bearing part. MediaDetail adds `status`
+    and the next-episode block, which only the sync job keeps fresh — and its worklist is scoped
+    to titles that are in at least one user's library (`app/sync/service.py`), deliberately, so
+    provider budget is not spent on titles nobody watches. A recommendation candidate is by
+    construction NOT in the reader's library, so those fields would be frozen at the moment the
+    seed job created the row and would go on claiming a months-old episode "airs today" forever.
+    Shipping fewer fields beats shipping wrong ones, and the asymmetry settles it: adding a field
+    later is additive, removing one after a client ships is a coordinated change on both sides.
 
     There is deliberately NO score field. Publishing the blended float would let clients render a
     number whose scale was never defined, making every retune of the weights a visible,
     unexplainable change (decision 7-K). The ordering IS the score.
     """
 
-    media: MediaDetail
+    media: PersistedMedia
     reason: RecommendationReason
 
 
