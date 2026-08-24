@@ -390,6 +390,11 @@ async def test_rating_a_title_makes_the_cache_stale(db_session, auth_user):
     strictly later; inside this fixture's single external transaction it cannot move (measured:
     the value before the flush, after it, and `SELECT now()` were all identical). Setting it here
     reproduces what production writes, and the score change is kept so the row genuinely changes.
+
+    The three timestamps are ordered the way production orders them — computed_at < updated_at <
+    the read's `now` — so the assertion pins `latest > computed_at` specifically. Reading at
+    `computed_at` instead would leave `latest > computed_at` and `latest > now` indistinguishable.
+    Five minutes is far inside recommendations_ttl_hours (24), so the TTL branch stays inert.
     """
     seed = await _seed_library(db_session, auth_user.id, external_id="1", score=None)
     now = datetime.now(tz=UTC)
@@ -402,7 +407,7 @@ async def test_rating_a_title_makes_the_cache_stale(db_session, auth_user):
     entry.updated_at = now + timedelta(minutes=1)
     await db_session.flush()
 
-    assert await service.is_stale(db_session, user_id=auth_user.id, now=now)
+    assert await service.is_stale(db_session, user_id=auth_user.id, now=now + timedelta(minutes=5))
 
 
 async def test_ensure_fresh_recomputes_once_and_then_leaves_the_cache_alone(db_session, auth_user):
@@ -446,3 +451,27 @@ async def test_ensure_fresh_recomputes_once_and_then_leaves_the_cache_alone(db_s
     await service.ensure_fresh(db_session, user_id=auth_user.id, now=now + timedelta(minutes=5))
     await db_session.refresh(run)
     assert run.computed_at == now
+
+
+async def test_is_stale_reads_the_run_row_from_the_table_not_the_identity_map(db_session, auth_user):
+    """recompute upserts the header with a Core statement the ORM cannot see.
+
+    Read as an entity, `session.get` would hand back the instance already in the identity map —
+    still carrying the PREVIOUS computed_at, since expire_on_commit=False means no commit refreshes
+    it either. Every later read would then see a ranking that is permanently stale and rebuild it on
+    every request, which is the exact cost the cache exists to avoid.
+    """
+    await _seed_library(db_session, auth_user.id, external_id="1")
+    first = datetime.now(tz=UTC) - timedelta(hours=1)
+    await service.recompute(db_session, user_id=auth_user.id, now=first)
+
+    # Pull the entity in, the way any caller reading the header does.
+    run = await db_session.get(RecommendationRun, auth_user.id)
+    assert run is not None
+    assert run.computed_at == first
+
+    now = datetime.now(tz=UTC)
+    await service.recompute(db_session, user_id=auth_user.id, now=now)
+    assert run.computed_at == first, "precondition: the Core upsert leaves the mapped instance stale"
+
+    assert not await service.is_stale(db_session, user_id=auth_user.id, now=now)

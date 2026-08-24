@@ -316,23 +316,37 @@ async def is_stale(session: AsyncSession, *, user_id: uuid.UUID, now: datetime) 
     There is no dirty-flag column: UserMedia.updated_at already carries onupdate=func.now(), so a
     rating, a favourite or a status change moves it for free. What it cannot see is a DELETION —
     removing an entry moves no surviving row's timestamp — which is what source_entry_count is for.
-    The TTL is the backstop for the two inputs neither of those can see: new edges from the seed
-    job, and a retune of the scoring constants.
+    New edges need neither: _invalidate drops the run row of every user holding a changed seed. The
+    TTL backstops what nothing above can see — a shift in the global genre-IDF denominator, since
+    _genre_counts is unfiltered and ANY new media row moves every user's affinity, and a retune of
+    the scoring constants.
+
+    Columns, not the entity, and deliberately so: session.get() would return an identity-mapped
+    RecommendationRun without querying, and recompute() overwrites that row with a Core pg_insert
+    the ORM cannot see — under expire_on_commit=False the commit does not refresh it either. A Row
+    holds no identity, so this always reads what is actually in the table.
     """
-    run = await session.get(RecommendationRun, user_id)
-    if run is None:
+    row = (
+        await session.execute(
+            select(RecommendationRun.computed_at, RecommendationRun.source_entry_count).where(
+                RecommendationRun.user_id == user_id
+            )
+        )
+    ).one_or_none()
+    if row is None:
         return True
+    computed_at, source_entry_count = row
 
     ttl = timedelta(hours=get_settings().recommendations_ttl_hours)
-    if run.computed_at < now - ttl:
+    if computed_at < now - ttl:
         return True
 
     latest, count = (
         await session.execute(select(func.max(UserMedia.updated_at), func.count()).where(UserMedia.user_id == user_id))
     ).one()
-    if count != run.source_entry_count:
+    if count != source_entry_count:
         return True
-    return latest is not None and latest > run.computed_at
+    return latest is not None and latest > computed_at
 
 
 async def _taste_profile(session: AsyncSession, user_id: uuid.UUID) -> tuple[list[scoring.TasteEntry], int]:
@@ -366,6 +380,11 @@ async def _genre_counts(session: AsyncSession) -> dict[str, int]:
 
     One aggregate over `media`, not one query per genre. There are 27 canonical genres and the
     whole result is a small dict.
+
+    Note the cost scales with the whole `media` table and NOT with the user's library, and no index
+    helps a set-returning function in the SELECT list — this is a full scan on every recompute. Fine
+    at MVP size; the thing to reach for once `media` is large is a materialised counts table
+    refreshed by the seed job.
     """
     genre = func.unnest(Media.genres).label("genre")
     rows = await session.execute(select(genre, func.count()).group_by(genre))
@@ -482,6 +501,11 @@ async def ensure_fresh(session: AsyncSession, *, user_id: uuid.UUID, now: dateti
     transaction, so it never spans an HTTP call and never survives a mid-function commit. It
     auto-releases on commit or on rollback, with no `finally` to get wrong. Do not "fix" this to
     match locks.py.
+
+    COMMITS the caller's session when it rebuilds — that is what makes the new ranking durable and
+    what releases the xact lock. Not reachable on the GET this is built for, which has nothing else
+    pending, but it is a real contract: do not call this with uncommitted work you are not ready to
+    make permanent.
     """
     if not await is_stale(session, user_id=user_id, now=now):
         return
