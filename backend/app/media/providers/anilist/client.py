@@ -8,11 +8,14 @@ from app.media.providers.anilist.errors import AniListGraphQLError
 from app.media.providers.anilist.queries import (
     MEDIA_BATCH_QUERY,
     MEDIA_QUERY,
+    MEDIA_RECOMMENDATIONS_QUERY,
     SEARCH_QUERY,
     USER_LIST_QUERY,
 )
 from app.media.providers.base import (
+    SIMILAR_LIMIT,
     MediaProvider,
+    MediaRef,
     ProviderListEntry,
     ProviderMedia,
     ProviderSearchPage,
@@ -81,6 +84,32 @@ class AniListProvider(MediaProvider):
         if not isinstance(raw_media, dict):
             return None
         return mapper.to_media(raw_media)
+
+    async def fetch_similar(self, external_id: str) -> Sequence[MediaRef]:
+        try:
+            media_id = int(external_id)
+        except ValueError:
+            # Same judgement as get_by_id: an AniList id is an integer, so a non-numeric one
+            # cannot exist upstream and spending a request to learn that is waste.
+            return ()
+
+        body = await self._post(MEDIA_RECOMMENDATIONS_QUERY, {"id": media_id, "perPage": SIMILAR_LIMIT})
+        if body is None:
+            return ()
+        raw_media = body["data"].get("Media")
+        if not isinstance(raw_media, dict):
+            return ()
+
+        nodes = (raw_media.get("recommendations") or {}).get("nodes") or []
+        refs: list[MediaRef] = []
+        for node in nodes:
+            target = node.get("mediaRecommendation") if isinstance(node, dict) else None
+            if not isinstance(target, dict) or target.get("id") is None:
+                # A recommendation whose target was deleted upstream. AniList keeps the node and
+                # nulls the media — an ordinary answer, not a malformed body.
+                continue
+            refs.append(MediaRef(source=MediaSource.ANILIST, external_id=str(target["id"])))
+        return tuple(refs[:SIMILAR_LIMIT])
 
     async def get_many(self, external_ids: Sequence[str]) -> Mapping[str, ProviderMedia]:
         """One GraphQL request per BATCH_SIZE ids instead of one per id.

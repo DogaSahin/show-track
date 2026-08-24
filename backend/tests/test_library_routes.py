@@ -46,6 +46,9 @@ class StubProvider(MediaProvider):
             raise self._error
         return self._result
 
+    async def fetch_similar(self, external_id: str):
+        raise AssertionError("not used in these tests")
+
 
 def _add_body(external_id: str = "154587") -> dict[str, str]:
     return {"source": "anilist", "external_id": external_id}
