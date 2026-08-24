@@ -112,3 +112,21 @@ query MediaBatch($ids: [Int], $perPage: Int) {
 """
     + MEDIA_DETAIL_FRAGMENT
 )
+
+# Selects ids ONLY, not the MediaDetailFields fragment the other queries spread. fetch_similar
+# returns refs (decision 7-G), and the seed job resolves them through get_many — which batches 50
+# ids into one request. Spreading the fragment here would fetch detail for candidates that are
+# already in `media` and will be discarded before persistence.
+MEDIA_RECOMMENDATIONS_QUERY = """
+query MediaRecommendations($id: Int, $perPage: Int) {
+  Media(id: $id, type: ANIME) {
+    recommendations(sort: RATING_DESC, perPage: $perPage) {
+      nodes {
+        mediaRecommendation {
+          id
+        }
+      }
+    }
+  }
+}
+"""

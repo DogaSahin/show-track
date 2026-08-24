@@ -66,6 +66,12 @@ class ProviderSearchPage:
     has_more: bool
 
 
+# One page from each provider: AniList's Page caps at 25 and TMDB's /recommendations returns 20.
+# Deep pagination is not worth it — a title's 40th-most-similar neighbour is noise, and the cap is
+# what bounds the seed job's cost at one request per seed.
+SIMILAR_LIMIT = 20
+
+
 class MediaProvider(ABC):
     """One external source of titles, normalized.
 
@@ -89,6 +95,27 @@ class MediaProvider(ABC):
     @abstractmethod
     async def get_by_id(self, external_id: str) -> ProviderMedia | None:
         """None when the provider has no such title. Raises ProviderError subclasses otherwise."""
+
+    @abstractmethod
+    async def fetch_similar(self, external_id: str) -> Sequence[MediaRef]:
+        """Titles this provider considers similar to `external_id`, most similar first.
+
+        ORDERED, never scored. AniList reports net upvote counts and TMDB reports nothing
+        comparable, so position is the only signal both express identically — the caller fuses
+        ranks, not scores (decision 7-E). At most SIMILAR_LIMIT refs.
+
+        Returns refs rather than records (decision 7-G): TMDB's recommendations payload carries no
+        `status`, and Media.status is NOT NULL, so building ProviderMedia here would mean either a
+        detail call per candidate or an invented status. The caller resolves refs through
+        get_many() instead, which AniList already batches.
+
+        Empty when the provider knows the title but suggests nothing, and when the title itself is
+        unknown. Raises ProviderError subclasses for transport and upstream failures.
+
+        ABSTRACT, not a defaulted no-op: both providers support this, so the ABC is the right home
+        (the same rule get_many's docstring states). A concrete `return ()` would let a provider
+        silently contribute nothing to the candidate pool.
+        """
 
     async def get_many(self, external_ids: Sequence[str]) -> Mapping[str, ProviderMedia]:
         """Fetch many titles at once, keyed by external_id.

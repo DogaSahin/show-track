@@ -49,6 +49,9 @@ class LoopingProvider(MediaProvider):
             next_episode=None,
         )
 
+    async def fetch_similar(self, external_id: str):
+        raise AssertionError("not used in these tests")
+
 
 async def test_the_default_loops_get_by_id():
     """Correct for TMDB, whose REST API has no batch endpoint. A concrete default rather than an

@@ -11,8 +11,8 @@ ahead on a show and how far.
 
 **Status:** early. The backend schema and migrations, auth, the AniList/TMDB provider
 integrations with unified search, the personal library — add, list, update, remove — AniList list
-import, the background sync that keeps airing dates fresh, and self-hosted push notifications are
-in place. Recommendations, groups and the Android client are not built yet. See
+import, the background sync that keeps airing dates fresh, self-hosted push notifications, and
+content-based recommendations are in place. Groups and the Android client are not built yet. See
 [Project status](#project-status).
 
 ## What it does
@@ -27,7 +27,12 @@ in place. Recommendations, groups and the Android client are not built yet. See
   one-way: ShowTrack never writes back to AniList.
 - **Share with a group** — a feed of what members watched and rated, a shared "we should watch this"
   watchlist, side-by-side progress on titles you're both watching, and reviews.
-- **Get recommendations** from genre overlap weighted by your own scores.
+- **Get recommendations**, seeded from what AniList/TMDB report as similar to titles you rated
+  highly (score 7 or higher), favourited or finished, and ranked by how well each candidate's
+  genres match your own weighted taste profile. **Content-based, not collaborative filtering** —
+  nothing about what anyone else watched feeds a suggestion. Anything already in your library is
+  excluded, and every item says which title of yours it's because of — see
+  [Recommendations](#recommendations).
 
 Data comes from **AniList** (anime, GraphQL) and **TMDB** (TV, REST), normalised behind a single
 provider interface so nothing downstream knows which one a title came from. `GET /v1/media/search`
@@ -105,6 +110,9 @@ running tests: the suite runs against a real PostgreSQL schema built by the migr
 - `NTFY_BASE_URL`, `NTFY_TOKEN`, `NOTIFICATION_DISPATCH_MINUTES` — **optional**, and covered in
   [Notifications](#notifications). An unset `NTFY_BASE_URL` disables push cleanly: the dispatch job
   is never registered and notification tasks queue as `pending` rather than erroring.
+- `RECOMMENDATIONS_SEED_HOURS` (default `12`), `RECOMMENDATIONS_TTL_HOURS` (default `24`) —
+  **optional**, both already set in `.env.example`, and covered in
+  [Recommendations](#recommendations).
 
 Every route except `/v1/auth/*` and `/health` requires a bearer access token, so the first working
 request is registering and logging in:
@@ -164,6 +172,55 @@ and answers 400 otherwise).
 Without a `TMDB_API_KEY`, that last response carries `"sources":{"anilist":"ok","tmdb":"not_configured"}`
 alongside AniList results — the degradation contract (§8 of the design doc) working, not just documented.
 `/docs` (Swagger UI) is the interactive alternative to curl for exploring the rest of the API.
+
+```bash
+# recommendations — content-based, not collaborative filtering: each candidate is something a
+# provider calls similar to a title you rated highly, favourited or finished, ranked by how well
+# its genres match your own weighted taste profile; anything already in your library is excluded
+curl -s -H "Authorization: Bearer $TOKEN" 'localhost:8000/v1/recommendations?limit=2'
+# -> {"items":[{"media":{"id":"...","source":"anilist","external_id":"140960","type":"anime",
+#                        "title":"...","year":2023,"genres":["fantasy","drama"],"cover_image_url":"..."},
+#               "reason":{"seed_media_id":"...","seed_title":"Frieren: Beyond Journey's End","matched_genres":["fantasy","drama"]}},
+#              ...],
+#     "next_cursor":"eyJrIjoicmFuayIsInYiOiI0MiIsImkiOiIuLi4ifQ=="}
+#
+# `media` here is narrower than the one inside a /v1/library entry: no `status`, no next-episode
+# block. Those are refreshed by the sync job, whose worklist covers only titles that are in
+# somebody's library — which a recommendation candidate, by definition, is not. Rather than serve
+# a frozen air date that renders as "airs today" forever, the fields are simply not there.
+# `id` is, so you can POST the candidate straight to /v1/library.
+
+# page 2 — pass next_cursor straight back; it is opaque, not something to construct by hand
+CURSOR=$(curl -s -H "Authorization: Bearer $TOKEN" 'localhost:8000/v1/recommendations?limit=2' \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["next_cursor"])')
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "localhost:8000/v1/recommendations?limit=2&cursor=$CURSOR"
+```
+
+A cold library — nothing rated highly, favourited or finished yet — gets back `{"items":[],
+"next_cursor":null}` rather than an error, and so does a qualifying one the seed job has not
+reached yet: candidates come only from that job, never from this request. **Its schedule works
+against a reader following this walkthrough in order.** A freshly started server's first seed run
+lands about five minutes after startup — quite possibly before you finish registering, searching
+and rating something above — so it can run once against a library with nothing to seed from, and
+then not again for `RECOMMENDATIONS_SEED_HOURS` (default 12; `ge=1` means it cannot be pushed
+below an hour). Unlike sync, there is **no** `POST /v1/debug/*` to force it early, so **rate
+something first, then restart the backend** — a fresh process re-arms the same five-minute offset
+— and wait those five minutes. (Why five, when the airing sync waits one: both jobs share a single
+memoised AniList rate limiter, so they are staggered rather than co-located; see
+[Recommendations](#recommendations).) The alternative is waiting out the full interval without
+restarting — but `$TOKEN` above is an **access** token, whose default TTL is 30 minutes, so on that
+path **log in again first** or every curl comes back `401` and the feature looks broken when only
+the token was.
+
+The job also only exists at all when `SYNC_ENABLED` is `true`, the gate that sync, the threshold
+scan and dispatch share. On **the single node you are following this walkthrough with**, leaving it
+`false` means recommendations stay empty forever rather than merely arriving late. That is scoped
+deliberately: on an *extra replica* `SYNC_ENABLED=false` is the documented, intended setting — see
+[Background sync](#background-sync).
+
+See [Recommendations](#recommendations) for how a candidate is chosen, why `reason` names only one
+title, and why there is no score field to sort by yourself.
 
 New migrations:
 
@@ -465,6 +522,65 @@ The transport sits behind a `NotificationTransport` protocol with exactly one me
 above `send()` knows which one is in use — swapping in FCM or UnifiedPush later is a new file, not
 a rewrite.
 
+#### Recommendations
+
+`GET /v1/recommendations` is **content-based, not collaborative filtering**. Nothing about what
+anyone else watched or rated feeds a suggestion — a household of one gets recommendations exactly
+as good as a household of ten, which is not true of a collaborative recommender.
+
+How a suggestion is produced, in one breath: the **seed job** asks AniList/TMDB what they consider
+similar to titles you rated highly, favourited or finished; your own genre profile — weighted by
+those same signals — ranks the results it gets back against your taste; anything already in your
+library is excluded.
+
+Each item's `reason` names the **single strongest-contributing seed title** and the genres it
+shares with the candidate — not every seed that played a part, because "because you liked these
+four things a little" is not something you can act on or disagree with. There is deliberately
+**no score field**: publishing the blended internal score would let a client sort or display a
+number whose scale was never promised, turning a later retune of the ranking weights into a
+visible, unexplainable change. The ordering *is* the score.
+
+| Job | Interval | First run after boot | Lock key |
+|---|---|---|---|
+| Seed | `RECOMMENDATIONS_SEED_HOURS` (default 12) | +5 min | 5000004 |
+
+That boot offset is five minutes where the airing sync's is one, deliberately. Both jobs call
+providers through the same memoised client and the same AniList rate limiter, so a shared offset
+would not merely co-locate them at boot: with the default 1h and 12h intervals, every later seed
+run would land on a sync tick too, forever. The contention is asymmetric — a rate limit costs the
+seed job one seed and costs the sync job a whole source for the cycle — so the non-urgent job is
+the one that gets moved.
+
+It runs inside the same in-process scheduler and shares the same `SYNC_ENABLED` gate and
+multi-replica story as the jobs in [Background sync](#background-sync) above — the advisory lock
+is what stops two replicas double-fetching, and `SYNC_ENABLED=false` on an extra replica is the
+intent, not just the safety net. Each due run issues one similar-to lookup per seed title; on the
+very first sweep it also fetches full details for every candidate that has no `media` row yet,
+and TMDB has no batch endpoint for that, so that part is a sequential per-title loop. On a mature
+install almost every candidate already has a row, so the cost collapses to near zero after that
+first sweep.
+
+Generous by design: unlike the airing dates the sync job tracks, upstream similar-to lists move on
+the scale of weeks, not hours. `RECOMMENDATIONS_TTL_HOURS` (default 24) is a backstop, not the
+primary invalidation — rating, favouriting, finishing or removing a title invalidates your ranking
+immediately, and the TTL exists only for the slow-moving inputs that have no cheap trigger: a
+candidate's genres changing on a later sync, or the corpus-wide genre counts drifting as `media`
+grows.
+
+The ranking is rebuilt **only on a cursor-less read** — the same request that returns page one.
+That is what keeps a pagination cursor stable: a client walking a page it already has cannot
+trigger a rebuild underneath itself. Otherwise it pages exactly like `/v1/library` — follow
+`next_cursor` until it is `null`. The rebuild takes its own lock too, a per-user
+`pg_try_advisory_xact_lock` (5000005) scoped to that one request's transaction rather than the
+session-scoped lock the background jobs use — a losing concurrent request just serves the ranking
+as it stands rather than duplicating the rebuild.
+
+The feed is deliberately type-agnostic: there is no `?type=` filter and no anime/TV quota, so pool
+composition emerges from library composition — AniList seeds return anime, TMDB seeds return TV.
+An anime-heavy library will rarely surface a TV recommendation as a result; that is an accepted
+cost rather than a bug, and a type filter is purely additive to the contract if it turns out to be
+wanted later.
+
 ## Never commit credentials
 
 Two layers guard this, and they fail in different ways:
@@ -491,7 +607,7 @@ and both get worse the longer they wait.
 | 4.5 | AniList import — public profiles, one-way, local wins | done |
 | 5 | Sync worker — tiered airing refresh, notification queue | done |
 | 6 | Notifications — self-hosted push, dispatcher, preferences | done |
-| 7 | Recommendations — genre overlap weighted by your own scores | |
+| 7 | Recommendations — content-based over provider similarity, ranked by your genre profile | done |
 | 7.5 | Groups — membership, feed, reviews, shared watchlist | |
 | 8–9 | Android foundations and feature modules | |
 | 10 | Polish and deployment | |
