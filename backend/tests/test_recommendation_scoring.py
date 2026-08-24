@@ -15,6 +15,13 @@ def _id():
     return uuid.uuid4()
 
 
+# rank_candidates sorts on (-score, media_id.bytes), so the LOWER id wins an exact tie. Tests that
+# would be decided by that tiebreak if the formula regressed give the WRONG candidate the winner,
+# which turns a coin flip into a deterministic failure.
+_TIEBREAK_WINNER = uuid.UUID("00000000-0000-4000-8000-000000000001")
+_TIEBREAK_LOSER = uuid.UUID("ffffffff-ffff-4fff-bfff-ffffffffffff")
+
+
 def entry(*, genres=("action",), score=None, favorite=False, completed=False, media_id=None):
     return TasteEntry(
         media_id=media_id or _id(),
@@ -58,13 +65,21 @@ def test_an_empty_profile_produces_no_affinity_rather_than_dividing_by_zero():
 
 
 def test_genre_stuffing_does_not_win_on_surface_area():
-    """sqrt length normalisation: a title tagged with everything overlaps everything."""
+    """sqrt length normalisation: a title tagged with everything overlaps everything.
+
+    The ids are PINNED, not uuid4, and their order is the assertion's teeth. Only `mecha` is in
+    the profile, so both candidates match the same single genre — delete the sqrt divisor in
+    _genre_match and the two scores become exactly EQUAL, decided by the media_id tiebreak. With
+    random ids that regression would surface about half the time. `stuffed` sorts first on a tie
+    (ties break on media_id.bytes ascending), so the wrong answer loses the tiebreak and this test
+    fails every time rather than sometimes.
+    """
     entries = [entry(genres=("mecha",), score="10")]
     counts = {"mecha": 10, "comedy": 10, "drama": 10, "horror": 10, "romance": 10}
     seed = entries[0].media_id
-    focused = Candidate(media_id=_id(), genres=("mecha",), edges=(Edge(seed, 0),))
+    focused = Candidate(media_id=_TIEBREAK_LOSER, genres=("mecha",), edges=(Edge(seed, 0),))
     stuffed = Candidate(
-        media_id=_id(),
+        media_id=_TIEBREAK_WINNER,
         genres=("mecha", "comedy", "drama", "horror", "romance"),
         edges=(Edge(seed, 0),),
     )
@@ -88,10 +103,17 @@ def test_a_candidate_with_no_genre_overlap_still_survives():
 
 
 def test_corroboration_from_several_seeds_beats_a_single_one():
-    a, b = entry(genres=("mecha",), score="10"), entry(genres=("mecha",), score="10")
-    single = Candidate(media_id=_id(), genres=("mecha",), edges=(Edge(a.media_id, 0),))
+    """provider_signal SUMS over every seed pointing at the candidate.
+
+    Pinned ids for the reason the stuffing test above spells out: swap the sum for a max and both
+    candidates score exactly the same, so only the tiebreak separates them. `single` is given the
+    lower id, so it wins that tiebreak and the wrong answer fails deterministically.
+    """
+    a = entry(genres=("mecha",), score="10")
+    b = entry(genres=("mecha",), score="10")
+    single = Candidate(media_id=_TIEBREAK_WINNER, genres=("mecha",), edges=(Edge(a.media_id, 0),))
     both = Candidate(
-        media_id=_id(),
+        media_id=_TIEBREAK_LOSER,
         genres=("mecha",),
         edges=(Edge(a.media_id, 0), Edge(b.media_id, 0)),
     )
