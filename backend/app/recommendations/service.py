@@ -88,13 +88,15 @@ async def seed_once(
     # and nothing has been written, so ending it here is free and is what keeps a transaction from
     # spanning the HTTP below.
     #
-    # COMMIT, not rollback, and the difference only shows up in a caller that shares its session.
-    # Rollback here is ROLLBACK TO SAVEPOINT under the test fixture's joined transaction, which
-    # discards rows the CALLER wrote before calling in — measured: the seeded media row vanished
-    # and the edge insert failed on fk_media_similarity_source_media_id_media. That is the same
-    # trap apply_refresh's docstring records. Committing an already-read-only transaction ends it
-    # just as completely, leaves the connection idle rather than idle-in-transaction, and cannot
-    # destroy work this function did not do.
+    # COMMIT, not rollback, and do NOT "fix" this back to rollback to match run_sync — the two
+    # are not in the same position. run_sync always owns a fresh session, so its rollback can only
+    # ever discard its own read; seed_once also runs against a session the CALLER already wrote
+    # through, where rollback is ROLLBACK TO SAVEPOINT and takes those writes with it. Measured
+    # with the brief's original rollback: the seeded media row vanished and the edge insert failed
+    # on fk_media_similarity_source_media_id_media. That is the trap apply_refresh's docstring
+    # records. Committing an already-read-only transaction ends it just as completely, leaves the
+    # connection idle rather than idle-in-transaction, and cannot destroy work this function did
+    # not do.
     await session.commit()
 
     refs_by_seed: dict[uuid.UUID, tuple[MediaRef, ...]] = {}
@@ -157,6 +159,20 @@ async def _resolve_candidates(
     missing = [ref for ref in wanted if ref not in known]
     if not missing:
         return known, 0
+
+    # Decision 4-M again, and the second half of it is the easy one to miss. The lookup above
+    # autobegan a transaction, and get_many below is provider HTTP — for TMDB, whose REST API has
+    # no batch endpoint, that is the ABC's loop issuing up to SIMILAR_LIMIT sequential requests at
+    # 8s apiece. Ending the transaction here is the same move seed_once makes after collect_seeds,
+    # for the same reason: app/sync/locks.py records that a managed Postgres with
+    # idle_in_transaction_session_timeout kills a connection left in that state, which here would
+    # be mid-sweep, after the provider budget has already been spent.
+    #
+    # COMMIT rather than rollback for the reason seed_once documents: under a caller that shares
+    # its session, rollback is ROLLBACK TO SAVEPOINT and would discard that caller's rows.
+    # `known` is plain (id, source, external_id) values, never ORM objects, so nothing here is
+    # expired by ending the transaction.
+    await session.commit()
 
     by_source: dict[MediaSource, list[str]] = defaultdict(list)
     for ref in missing:

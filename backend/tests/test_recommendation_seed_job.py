@@ -200,3 +200,38 @@ async def test_a_provider_repeating_a_candidate_does_not_abort_the_sweep(db_sess
     summary = await service.seed_once(db_session, {MediaSource.ANILIST: provider}, now=datetime.now(tz=UTC))
 
     assert summary.edges == 1
+
+
+async def test_no_transaction_is_held_open_across_any_provider_call(db_session, auth_user):
+    """Decision 4-M, asserted rather than assumed — for BOTH provider hops, not just the first.
+
+    A connection left `idle in transaction` across provider HTTP is the objection that rejected an
+    advisory lock in get_or_create_media (4-A) and that put a rollback in front of fetch_all. It is
+    not tidiness: app/sync/locks.py records that a managed Postgres with
+    idle_in_transaction_session_timeout kills such a connection, which here would be mid-sweep,
+    after the provider budget has already been spent.
+
+    get_many is the easy one to miss: the known-candidate lookup before it autobegins a
+    transaction, and TMDB's get_many is up to 20 sequential requests through the ABC's loop.
+    """
+    await _seed_library(db_session, auth_user.id, external_id="1")
+    seen: dict[str, bool] = {}
+
+    class Watchful(SimilarProvider):
+        async def fetch_similar(self, external_id):
+            seen["fetch_similar"] = db_session.in_transaction()
+            return await super().fetch_similar(external_id)
+
+        async def get_many(self, external_ids):
+            seen["get_many"] = db_session.in_transaction()
+            return await super().get_many(external_ids)
+
+    provider = Watchful(
+        similar={"1": (MediaRef(source=MediaSource.ANILIST, external_id="99"),)},
+        details={"99": _provider_media("99", "candidate")},
+    )
+
+    summary = await service.seed_once(db_session, {MediaSource.ANILIST: provider}, now=datetime.now(tz=UTC))
+
+    assert summary.edges == 1, "the sweep must still do its job while holding no transaction"
+    assert seen == {"fetch_similar": False, "get_many": False}
