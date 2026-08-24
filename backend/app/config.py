@@ -52,6 +52,11 @@ class Settings(BaseSettings):
     # The dispatcher is a single indexed query when the queue is empty, which is almost always,
     # and its latency sits directly on top of the threshold scan's 15-minute granularity.
     notification_dispatch_minutes: int = Field(default=1, ge=1)
+    # How long a group's invite code stays usable. Defaulted, never required — CLAUDE.md records
+    # that Phase 2 added two REQUIRED settings and broke backend-ci on every subsequent PR.
+    # 168 = seven days: a household joins within days, and since the code can create an account
+    # (decision G-B) one that outlives that window is risk with no compensating use.
+    group_invite_ttl_hours: int = Field(default=168, ge=1)
     # Upstream similar-to lists move on the scale of weeks, so this is generous rather than tight —
     # contrast sync_interval_hours, where airing times are time-critical.
     recommendations_seed_hours: int = Field(default=12, ge=1)
