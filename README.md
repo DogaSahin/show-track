@@ -209,9 +209,16 @@ something first, then restart the backend** — a fresh process re-arms the same
 — and wait those five minutes. (Why five, when the airing sync waits one: both jobs share a single
 memoised AniList rate limiter, so they are staggered rather than co-located; see
 [Recommendations](#recommendations).) The alternative is waiting out the full interval without
-restarting. The job also only exists at all when `SYNC_ENABLED` is `true`, the gate that sync, the
-threshold scan and
-dispatch share — set it `false` anywhere and recommendations stay empty forever, not just delayed.
+restarting — but `$TOKEN` above is an **access** token, whose default TTL is 30 minutes, so on that
+path **log in again first** or every curl comes back `401` and the feature looks broken when only
+the token was.
+
+The job also only exists at all when `SYNC_ENABLED` is `true`, the gate that sync, the threshold
+scan and dispatch share. On **the single node you are following this walkthrough with**, leaving it
+`false` means recommendations stay empty forever rather than merely arriving late. That is scoped
+deliberately: on an *extra replica* `SYNC_ENABLED=false` is the documented, intended setting — see
+[Background sync](#background-sync).
+
 See [Recommendations](#recommendations) for how a candidate is chosen, why `reason` names only one
 title, and why there is no score field to sort by yourself.
 

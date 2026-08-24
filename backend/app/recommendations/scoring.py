@@ -26,8 +26,14 @@ COMPLETED_WEIGHT = 0.15
 # Reciprocal-rank decay over the provider's ordering: 1st -> 1.0, 2nd -> 0.5, 3rd -> 0.33.
 RR_NUMERATOR = 1.0
 # How much of a candidate's score survives with zero genre overlap. Genre is coarse and blind to
-# tone, pacing and writing, so provider signal alone must be able to carry a title; genre boosts it
-# by up to 1/ALPHA. This floor is precisely why there is no genre predicate on membership (7-J).
+# tone, pacing and writing, so provider signal alone must be able to carry a title. This floor is
+# precisely why there is no genre predicate on membership (7-J).
+#
+# The boost above the floor is UNBOUNDED, not capped at 1/ALPHA: the multiplier is
+# ALPHA + (1 - ALPHA) * genre_match, and genre_match has no ceiling because the IDF term is
+# unnormalised — a genre carried by a single title contributes 1/log(2) = 1.44 on its own. Do NOT
+# clamp genre_match to "fix" that: it would change the ranking these constants were tuned against
+# and is its own decision, not a comment correction.
 ALPHA = 0.4
 
 
