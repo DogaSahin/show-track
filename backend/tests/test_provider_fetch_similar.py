@@ -1,6 +1,9 @@
+import pytest
+
 from app.media.models import MediaSource
 from app.media.providers.anilist.client import AniListProvider
 from app.media.providers.base import SIMILAR_LIMIT
+from app.media.providers.errors import ProviderUnavailable
 from app.media.providers.tmdb.client import TMDBProvider
 
 
@@ -82,3 +85,27 @@ async def test_tmdb_fetch_similar_returns_empty_on_404():
     provider = TMDBProvider(NotFoundClient(), "key")
 
     assert await provider.fetch_similar("42") == ()
+
+
+async def test_tmdb_fetch_similar_rejects_a_non_list_results_container():
+    """`results` is only assumed to be a list; _get checks the TOP level and nothing deeper.
+
+    Slicing a dict raises TypeError, which is NOT a ProviderError — and seed_once catches only
+    ProviderError per seed, so one malformed body would escape the loop and discard the whole
+    sweep, every other seed's edges included. It must degrade to one failed seed instead.
+    """
+    provider = TMDBProvider(RecordingClient({"results": {"1": {"id": 1}}}), "key")
+
+    with pytest.raises(ProviderUnavailable):
+        await provider.fetch_similar("42")
+
+
+async def test_anilist_fetch_similar_rejects_a_non_list_node_container():
+    """Symmetric with TMDB, and raising rather than degrading is the point: iterating a dict
+    yields its keys, every isinstance check rejects them, and the method would answer "no
+    neighbours" — an unreadable body wearing the costume of ordinary data.
+    """
+    client = RecordingClient({"data": {"Media": {"recommendations": {"nodes": {"0": {}}}}}})
+
+    with pytest.raises(ProviderUnavailable):
+        await AniListProvider(client).fetch_similar("1")

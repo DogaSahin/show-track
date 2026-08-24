@@ -1,0 +1,10 @@
+{
+  "page": 1,
+  "results": [
+    { "id": 1396, "name": "Breaking Bad", "first_air_date": "2008-01-20" },
+    { "id": 60059, "name": "Better Call Saul", "first_air_date": "2015-02-08" },
+    { "id": 1668, "name": "Friends", "first_air_date": "1994-09-22" }
+  ],
+  "total_pages": 1,
+  "total_results": 3
+}

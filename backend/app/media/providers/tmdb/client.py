@@ -46,8 +46,16 @@ class TMDBProvider(MediaProvider):
             # specific show. An unknown show simply has no neighbours.
             return ()
 
+        results = raw.get("results") or []
+        if not isinstance(results, list):
+            # An annotation is not a check, and _get only guarantees the TOP level is an object.
+            # Slicing a dict raises TypeError — not a ProviderError — and the seed job catches
+            # only ProviderError per seed, so that one bad body would abort the whole sweep and
+            # discard the edges every other seed had already earned.
+            raise ProviderUnavailable("TMDB recommendations response carried a non-list `results`")
+
         refs: list[MediaRef] = []
-        for entry in (raw.get("results") or [])[:SIMILAR_LIMIT]:
+        for entry in results[:SIMILAR_LIMIT]:
             if not isinstance(entry, dict) or entry.get("id") is None:
                 continue
             refs.append(MediaRef(source=MediaSource.TMDB, external_id=str(entry["id"])))

@@ -100,7 +100,16 @@ class AniListProvider(MediaProvider):
         if not isinstance(raw_media, dict):
             return ()
 
-        nodes = (raw_media.get("recommendations") or {}).get("nodes") or []
+        recommendations = raw_media.get("recommendations") or {}
+        nodes = recommendations.get("nodes") or [] if isinstance(recommendations, dict) else None
+        if not isinstance(nodes, list):
+            # Symmetric with TMDB's guard, and raising rather than degrading is the point. Left
+            # alone, a non-list container iterates its keys, every isinstance check below rejects
+            # them, and the method answers "this title has no neighbours" — indistinguishable in
+            # the seed summary from a genuine empty answer, so an unreadable body would look like
+            # ordinary data. Same reading as search()'s missing Page object.
+            raise ProviderUnavailable("AniList recommendations response carried no node list")
+
         refs: list[MediaRef] = []
         for node in nodes:
             target = node.get("mediaRecommendation") if isinstance(node, dict) else None
