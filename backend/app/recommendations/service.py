@@ -494,8 +494,13 @@ def _user_lock_key(user_id: uuid.UUID) -> int:
 
 async def ensure_fresh(session: AsyncSession, *, user_id: uuid.UUID, now: datetime) -> None:
     """Recompute if stale. Called ONLY on a cursor-less read — that is the whole cursor-stability
-    guarantee (decision 7-C): a request carrying a cursor cannot reach this function, so the
-    ranking it is paginating cannot move underneath it.
+    guarantee (decision 7-C): a request carrying a cursor cannot reach this function, so it cannot
+    move the ranking it is paginating.
+
+    What that does NOT promise is that the ranking is immutable for the life of a paging session.
+    A concurrent cursor-less read from the same user still reaches this function, and the rebuild
+    below is DELETE-then-INSERT over the whole ranking. Accepted residual risk, not a gap to close
+    here.
 
     pg_try_advisory_xact_lock, NOT the session-scoped advisory_lock() helper in app/sync/locks.py,
     and this is not an oversight. The xact form is correct here for exactly the reasons that

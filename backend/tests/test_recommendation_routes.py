@@ -1,12 +1,15 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from sqlalchemy import select
 
 from app.library.models import UserMedia, UserMediaStatus
 from app.media.models import Media, MediaSource, MediaStatus, MediaType
 from app.pagination import encode_cursor
+from app.recommendations import service
 from app.recommendations.models import MediaSimilarity
+from tests.factories import make_user
 
 
 async def _media(session, external_id, title, genres=("mecha",)):
@@ -154,3 +157,75 @@ async def test_a_malformed_cursor_is_a_400_not_a_500(auth_client, auth_user):
 
     assert response.status_code == 400
     assert "pwned-sort" not in response.text, "do not echo client input back"
+
+
+async def test_the_feed_shows_only_the_callers_rows(auth_client, auth_user, db_session):
+    """`recommendation` is a multi-user table. The user_id filter in list_page is the only thing
+    scoping it, and deleting that one line leaks every account's feed to every caller — with no
+    other test noticing. Mirrors test_the_library_shows_only_the_callers_rows.
+    """
+    other = make_user(username="someone-else", email="else@example.com")
+    db_session.add(other)
+    await db_session.flush()
+    await _seeded_user(db_session, auth_user.id, candidates=1)
+
+    # The second account's ranking is built with the real recompute rather than hand-written rows,
+    # so the fixture cannot drift from the shape the endpoint actually reads.
+    other_seed = await _media(db_session, "2", "not yours seed")
+    db_session.add(UserMedia(user_id=other.id, media_id=other_seed.id, status=UserMediaStatus.COMPLETED, score=10))
+    other_candidate = await _media(db_session, "200", "not yours")
+    db_session.add(
+        MediaSimilarity(
+            source_media_id=other_seed.id,
+            similar_media_id=other_candidate.id,
+            position=0,
+            fetched_at=datetime.now(tz=UTC),
+        )
+    )
+    await db_session.flush()
+    await service.recompute(db_session, user_id=other.id, now=datetime.now(tz=UTC))
+
+    body = (await auth_client.get("/v1/recommendations")).json()
+
+    assert [item["media"]["title"] for item in body["items"]] == ["candidate 0"]
+
+
+@pytest.mark.parametrize("total", [2, 3], ids=["exactly-limit", "limit-plus-one"])
+async def test_the_page_boundary_is_exact(auth_client, auth_user, db_session, total):
+    """`limit + 1` is the has-more probe, so the off-by-one lives exactly here. With
+    `total == limit` there must be NO next_cursor: a full final page that still hands back a
+    cursor walks a paginating client into an endless loop of empty pages. Mirrors
+    test_the_page_boundary_is_exact in tests/test_library_listing.py.
+    """
+    await _seeded_user(db_session, auth_user.id, candidates=total)
+
+    first = (await auth_client.get("/v1/recommendations?limit=2")).json()
+
+    assert len(first["items"]) == 2
+    if total == 2:
+        assert first["next_cursor"] is None
+    else:
+        assert first["next_cursor"] is not None
+        second = (await auth_client.get(f"/v1/recommendations?limit=2&cursor={first['next_cursor']}")).json()
+        assert len(second["items"]) == 1
+        assert second["next_cursor"] is None
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["2147483648", "-1", "not-a-number"],
+    ids=["above-int4", "negative", "non-numeric"],
+)
+async def test_an_out_of_domain_rank_cursor_is_a_400(auth_client, auth_user, db_session, value):
+    """Two hazards, one guard, and parse_rank is where both are caught. Above int4: the bind
+    inherits Integer from the rank column, so the value never reaches a comparison — it is a
+    driver-level overflow, an unhandled 500 from wholly client-supplied input. Negative: a
+    perfectly valid int4 that matches every row, so the caller silently re-reads page one forever.
+    Mirrors test_an_out_of_domain_score_cursor_is_a_400.
+    """
+    await _seeded_user(db_session, auth_user.id, candidates=1)
+    cursor = encode_cursor(service.SORT_KEY, value, uuid.uuid4())
+
+    response = await auth_client.get(f"/v1/recommendations?cursor={cursor}")
+
+    assert response.status_code == 400

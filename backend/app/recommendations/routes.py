@@ -30,8 +30,14 @@ async def list_recommendations(
     """The ranking is rebuilt here, and ONLY when no cursor was supplied.
 
     That single condition is the whole of the cursor-stability guarantee: a paginating client
-    cannot reach the recompute branch, so the ranking it is walking cannot move underneath it. No
+    cannot reach the recompute branch, so THIS request cannot move the ranking it is walking. No
     generation column, no cleanup job, no expiring cursors.
+
+    It is not immutability, and the difference matters. A concurrent cursor-less read from the
+    same user — a second device, a pull-to-refresh in another tab — does reach the recompute
+    branch, and recompute is DELETE-then-INSERT over that user's whole ranking, so a cursor issued
+    before it can still land mid-rebuild. That residual race is accepted rather than closed: doing
+    better needs a generation column and cursors that expire with it.
     """
     now = datetime.now(tz=UTC)
     decoded = None
