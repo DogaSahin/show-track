@@ -4,9 +4,10 @@ from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import delete, func, insert, select, text
+from sqlalchemy import delete, func, insert, select, text, tuple_
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.config import get_settings
 from app.db import BULK_INSERT_CHUNK_SIZE, chunked, get_sessionmaker
@@ -14,10 +15,11 @@ from app.library.models import UserMedia, UserMediaStatus
 from app.media.models import Media, MediaSource
 from app.media.providers.base import MediaProvider, MediaRef
 from app.media.providers.errors import ProviderError
-from app.media.service import persist_media_bulk
+from app.media.service import persist_media_bulk, to_detail
+from app.pagination import Cursor, encode_cursor
 from app.recommendations import scoring
 from app.recommendations.models import MediaSimilarity, Recommendation, RecommendationRun
-from app.recommendations.schemas import SeedSummary
+from app.recommendations.schemas import RecommendationItem, RecommendationReason, SeedSummary
 from app.recommendations.scoring import SCORE_THRESHOLD
 from app.sync.locks import RECOMPUTE_LOCK_KEY, SEED_LOCK_KEY, advisory_lock
 
@@ -524,3 +526,60 @@ async def ensure_fresh(session: AsyncSession, *, user_id: uuid.UUID, now: dateti
 
     await recompute(session, user_id=user_id, now=now)
     await session.commit()
+
+
+SORT_KEY = "rank"
+
+
+def parse_rank(raw: str) -> int:
+    """Total into the rank column's domain. Every failure here is client-supplied cursor content,
+    so it must raise ValueError for decode_cursor to turn into InvalidCursor rather than escaping
+    as a 500.
+    """
+    value = int(raw)
+    if not (0 <= value < 2**31):
+        raise ValueError("rank cursor value is outside the column's range")
+    return value
+
+
+async def list_page(
+    session: AsyncSession, *, user_id: uuid.UUID, limit: int, cursor: Cursor | None, now: datetime
+) -> tuple[list[RecommendationItem], str | None]:
+    """Keyset pagination over (rank, media_id).
+
+    `rank` is already unique per user, so the id half of the composite is redundant here — kept
+    anyway because it costs nothing and matches the shared primitive every other paginated
+    endpoint uses.
+
+    `limit + 1` is the has-more probe, the same trick list_entries uses: a COUNT(*) would be a
+    second scan to answer a question the extra row already answered.
+    """
+    seed = aliased(Media)
+    statement = (
+        select(Recommendation, Media, seed.title)
+        .join(Media, Media.id == Recommendation.media_id)
+        .join(seed, seed.id == Recommendation.seed_media_id)
+        .where(Recommendation.user_id == user_id)
+        .order_by(Recommendation.rank.asc(), Recommendation.media_id.asc())
+        .limit(limit + 1)
+    )
+    if cursor is not None:
+        statement = statement.where(tuple_(Recommendation.rank, Recommendation.media_id) > (cursor.value, cursor.id))
+
+    rows = (await session.execute(statement)).all()
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+
+    items = [
+        RecommendationItem(
+            media=to_detail(media, now),
+            reason=RecommendationReason(
+                seed_media_id=recommendation.seed_media_id,
+                seed_title=seed_title,
+                matched_genres=list(recommendation.matched_genres),
+            ),
+        )
+        for recommendation, media, seed_title in rows
+    ]
+    next_cursor = encode_cursor(SORT_KEY, rows[-1][0].rank, rows[-1][0].media_id) if has_more and rows else None
+    return items, next_cursor
