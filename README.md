@@ -190,9 +190,12 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 ```
 
 A cold library — nothing rated highly, favourited or finished yet — gets back `{"items":[],
-"next_cursor":null}` rather than an error. See [Recommendations](#recommendations) for how a
-candidate is chosen, why `reason` names only one title, and why there is no score field to sort
-by yourself.
+"next_cursor":null}` rather than an error, and so does a library that qualifies but has not been
+**seeded** yet: candidates come from the seed job, not from this request, and — unlike sync —
+there is no `POST /v1/debug/*` to force it early. On a freshly started server it first runs about
+a minute after startup, then every `RECOMMENDATIONS_SEED_HOURS`; give it that minute before
+expecting a populated response. See [Recommendations](#recommendations) for how a candidate is
+chosen, why `reason` names only one title, and why there is no score field to sort by yourself.
 
 New migrations:
 
