@@ -1,12 +1,14 @@
 import contextlib
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 from fastapi.routing import iter_route_contexts
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 
+from app.config import get_settings
 from app.groups import service
 from app.groups.dependencies import require_membership, require_ownership
 from app.groups.models import Group, GroupMember, GroupRole
@@ -462,3 +464,35 @@ async def test_rotating_a_group_deleted_mid_request_is_a_404(auth_client, auth_u
 
     assert response.status_code == 404
     assert response.json()["detail"] == "no such group"
+
+
+async def test_the_invite_expiry_is_the_configured_ttl_in_hours(db_session, auth_user, monkeypatch):
+    """Nothing else reads `invite_code_expires_at` back: the two expiry tests hard-set the year
+    2000, so they pass whatever `_expiry` computes. Changing `hours=` to `days=` kept the whole
+    suite green while turning a one-week window into a 24-week one.
+
+    The injected TTL is deliberately neither the default nor a value where the units coincide, so
+    the assertion fails for a wrong unit AND for a hardcoded 168 — comparing against the live
+    setting alone cannot tell those apart while the setting IS 168. Same monkeypatch shape as
+    tests/test_scheduler.py; `_expiry` is the only reader, and it wants one attribute.
+
+    Decision G-B makes this window a security control — an invite code creates an account and
+    lives forever in someone's chat history — so the deployed magnitude is bounded too. That
+    bound is loose on purpose: it is not asserting today's value, it is asserting the setting
+    cannot drift into "effectively never expires" unnoticed.
+
+    Rotation is asserted because it issues a fresh expiry through the same `_expiry`, and it is
+    the revocation mechanism: a rotation that did not move the window forward would leave the new
+    code expiring on the old code's schedule.
+    """
+    assert timedelta(hours=get_settings().group_invite_ttl_hours) <= timedelta(days=30)
+
+    monkeypatch.setattr(service, "get_settings", lambda: SimpleNamespace(group_invite_ttl_hours=5))
+    created_at = datetime(2026, 1, 1, tzinfo=UTC)
+    rotated_at = datetime(2026, 3, 1, tzinfo=UTC)
+
+    group = await service.create_group(db_session, name="Household", owner=auth_user, now=created_at)
+    assert group.invite_code_expires_at == created_at + timedelta(hours=5)
+
+    await service.rotate_invite_code(db_session, group=group, now=rotated_at)
+    assert group.invite_code_expires_at == rotated_at + timedelta(hours=5)

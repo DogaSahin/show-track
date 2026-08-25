@@ -131,8 +131,8 @@ request is registering and logging in.
 nothing else — or **any group's invite code**, which creates the account *and* joins you to that
 group in the same request. That is the whole difference between a server nobody else can join and
 one your household can: you do not have to hand out the server secret to add a housemate, you hand
-out a code that is scoped to one group and expires. A wrong, unknown or expired code all answer the
-same `400 invalid invite code`, on purpose — an expired code that said so would confirm the group
+out a code that is scoped to one group and expires. A wrong, unknown or expired code — or one whose group was
+deleted while you were joining — all answer the same `400 invalid invite code`, on purpose — an expired code that said so would confirm the group
 exists and that you were merely too late.
 
 The first account has to use `REGISTRATION_CODE`, because there is no group yet to be invited to:
@@ -295,9 +295,11 @@ curl -s -o /dev/null -w '%{http_code}\n' -X DELETE -H "Authorization: Bearer $MA
 ```
 
 Codes are 12 characters of Crockford base32 — no `I`, `L`, `O` or `U`, and `O`/`I`/`L` typed by
-mistake are folded onto `0`/`1`/`1`, so a code read off a screen and typed on a phone works. Case
-and hyphens are ignored: `h7k2-qm9x-tb43` is the same code. See [Groups](#groups) for expiry,
-rotation and what happens when the owner leaves.
+mistake are folded onto `0`/`1`/`1`, so a code read off a screen and typed on a phone works. Case,
+spaces, hyphens, underscores, line breaks and the non-breaking space a chat client substitutes are
+all ignored: `h7k2-qm9x-tb43` is the same code, and so is one pasted straight out of a message with
+the newline still attached. See [Groups](#groups) for expiry, rotation and what happens when the
+owner leaves.
 
 New migrations:
 
