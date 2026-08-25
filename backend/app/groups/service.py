@@ -1,13 +1,18 @@
 import uuid
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import select, tuple_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.groups import invites
 from app.groups.models import Group, GroupMember, GroupRole
+from app.groups.schemas import FeedActor, FeedItem
+from app.library.models import Activity
+from app.media.models import Media
+from app.media.service import to_detail
+from app.pagination import Cursor, encode_cursor
 from app.users.models import User
 
 # Bounded, not optimistic: at 60 bits a collision is not a probability worth reasoning about,
@@ -213,3 +218,69 @@ async def remove_member(
 
     await session.delete(target)
     await session.flush()
+
+
+FEED_SORT_KEY = "created_at"
+
+
+def parse_created_at(raw: str) -> datetime:
+    """Total into timestamptz's domain. Every failure here is client-supplied cursor content, so
+    it must raise ValueError for decode_cursor to turn into InvalidCursor rather than a 500.
+
+    A naive datetime is silently reinterpreted in the SERVER's timezone against a timestamptz
+    column, so pagination quietly walks the wrong window. Bounded at both ends for the reason
+    library/service.py documents: datetime.min encodes as `-infinity`, which sorts below
+    everything and makes a descending comparison match every row — the same failure mode as a
+    NaN score cursor.
+    """
+    value = datetime.fromisoformat(raw)
+    if value.tzinfo is None:
+        raise ValueError("cursor value must be timezone-aware")
+    if not (datetime(1, 1, 2, tzinfo=UTC) <= value <= datetime(9999, 1, 1, tzinfo=UTC)):
+        raise ValueError("cursor value is outside the column's range")
+    return value
+
+
+async def list_feed(
+    session: AsyncSession, *, group_id: uuid.UUID, limit: int, cursor: Cursor | None, now: datetime
+) -> tuple[list[FeedItem], str | None]:
+    """Read-fanout: "activity by members of this group", resolved at query time.
+
+    No per-group rows exist (design doc §5.3), so joining a group shows history instantly and
+    leaving revokes instantly, with no denormalised state to repair.
+
+    LEFT OUTER JOIN on media, and it is load-bearing (S-H): `imported` rows carry media_id = NULL,
+    and an inner join would silently drop every import summary — the one row type S-A exists to
+    create.
+    """
+    members = select(GroupMember.user_id).where(GroupMember.group_id == group_id)
+    statement = (
+        select(Activity, Media, User.username)
+        .outerjoin(Media, Media.id == Activity.media_id)
+        .join(User, User.id == Activity.user_id)
+        .where(Activity.user_id.in_(members))
+        .order_by(Activity.created_at.desc(), Activity.id.desc())
+        .limit(limit + 1)
+    )
+    if cursor is not None:
+        statement = statement.where(tuple_(Activity.created_at, Activity.id) < (cursor.value, cursor.id))
+
+    rows = (await session.execute(statement)).all()
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+
+    items = [
+        FeedItem(
+            id=row.Activity.id,
+            actor=FeedActor(id=row.Activity.user_id, username=row.username),
+            kind=row.Activity.kind,
+            media=to_detail(row.Media, now) if row.Media is not None else None,
+            payload=row.Activity.payload,
+            created_at=row.Activity.created_at,
+        )
+        for row in rows
+    ]
+    next_cursor = (
+        encode_cursor(FEED_SORT_KEY, rows[-1].Activity.created_at, rows[-1].Activity.id) if has_more and rows else None
+    )
+    return items, next_cursor

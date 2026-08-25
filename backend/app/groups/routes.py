@@ -2,7 +2,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
@@ -11,11 +11,13 @@ from app.groups.dependencies import GroupMemberDep, GroupOwnerDep
 from app.groups.models import Group
 from app.groups.schemas import (
     CreateGroupRequest,
+    FeedPage,
     GroupRead,
     GroupWithInvite,
     JoinGroupRequest,
     MemberRead,
 )
+from app.pagination import InvalidCursor, decode_cursor
 from app.users.dependencies import get_current_user
 from app.users.models import User
 
@@ -101,3 +103,29 @@ async def remove_member(
 
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/{group_id}/feed", response_model=FeedPage, responses={400: {"description": "unusable cursor"}})
+async def group_feed(
+    group_id: uuid.UUID,
+    session: SessionDep,
+    member: GroupMemberDep,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    cursor: Annotated[str | None, Query(max_length=2048)] = None,
+) -> FeedPage:
+    """`member` is unused in the body and that is the point: taking GroupMemberDep is what
+    authorizes this route, and 7.5a's route-table walk asserts it is present on every path under
+    /v1/groups/{group_id}.
+    """
+    decoded = None
+    if cursor is not None:
+        try:
+            decoded = decode_cursor(cursor, service.FEED_SORT_KEY, service.parse_created_at)
+        except InvalidCursor as exc:
+            # A fixed detail, not str(exc): the message would echo client-supplied cursor content.
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid cursor") from exc
+
+    items, next_cursor = await service.list_feed(
+        session, group_id=group_id, limit=limit, cursor=decoded, now=datetime.now(tz=UTC)
+    )
+    return FeedPage(items=items, next_cursor=next_cursor)

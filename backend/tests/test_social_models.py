@@ -106,3 +106,7 @@ async def test_activity_feed_index_is_descending_on_created_at_and_id(db_session
 
     assert "created_at DESC" in row.indexdef
     assert "id DESC" in row.indexdef
+    # Column ORDER, not just direction: the group feed's WHERE is the membership subquery, so
+    # reordering user_id out of the lead position destroys that predicate's selectivity while
+    # every other assertion here still holds.
+    assert "(user_id, created_at DESC, id DESC)" in row.indexdef

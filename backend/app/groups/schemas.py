@@ -1,9 +1,12 @@
 import uuid
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, Field
 
 from app.groups.models import GroupRole
+from app.library.models import ActivityKind
+from app.media.schemas import MediaDetail
 
 
 class CreateGroupRequest(BaseModel):
@@ -37,3 +40,25 @@ class MemberRead(BaseModel):
     username: str
     role: GroupRole
     joined_at: datetime
+
+
+class FeedActor(BaseModel):
+    id: uuid.UUID
+    username: str
+
+
+class FeedItem(BaseModel):
+    """`media` is optional because an `imported` row is about N titles (S-A/S-D). A client must
+    handle null rather than assuming every item has a title attached."""
+
+    id: uuid.UUID
+    actor: FeedActor
+    kind: ActivityKind
+    media: MediaDetail | None
+    payload: dict[str, Any]
+    created_at: datetime
+
+
+class FeedPage(BaseModel):
+    items: list[FeedItem]
+    next_cursor: str | None
