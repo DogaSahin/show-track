@@ -11,7 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
 
 from app.db import BULK_INSERT_CHUNK_SIZE, chunked
-from app.library.models import UserMedia, UserMediaStatus
+from app.library import activity
+from app.library.models import Activity, ActivityKind, UserMedia, UserMediaStatus
 from app.library.schemas import LibraryEntry, LibrarySort
 from app.media import service as media_service
 from app.media.models import Media
@@ -28,6 +29,25 @@ def to_entry(entry: UserMedia, media: Media, now: datetime) -> LibraryEntry:
         updated_at=entry.updated_at,
         media=media_service.to_detail(media, now),
     )
+
+
+async def _emit(
+    session: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+    media_id: uuid.UUID | None,
+    kind: ActivityKind,
+    payload: dict[str, Any] | None = None,
+) -> None:
+    """Write one activity row IN THE CALLER'S TRANSACTION (decision S-E).
+
+    Flushes, never commits — the route owns the transaction boundary, which is what makes an
+    activity row and the user_media change it describes inseparable by construction rather than
+    by discipline. 7.5.3's acceptance criterion — a failed library mutation writes none — then
+    has something real to test.
+    """
+    session.add(Activity(user_id=user_id, media_id=media_id, kind=kind, payload=payload or {}))
+    await session.flush()
 
 
 async def add_entry(session: AsyncSession, *, user_id: uuid.UUID, media_id: uuid.UUID) -> tuple[UserMedia, bool]:
@@ -62,7 +82,11 @@ async def add_entry(session: AsyncSession, *, user_id: uuid.UUID, media_id: uuid
     entry_id = await session.scalar(statement)
     # progress, favorite and updated_at come from their server defaults, so the row is read back
     # rather than assembled here.
-    return await session.get(UserMedia, entry_id), True
+    entry = await session.get(UserMedia, entry_id)
+    # Only on creation: the early return above already covered the already-tracked case, so
+    # re-adding a title stays a no-op the feed never hears about.
+    await _emit(session, user_id=user_id, media_id=media_id, kind=ActivityKind.ADDED)
+    return entry, True
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,6 +221,16 @@ async def update_entry(session: AsyncSession, entry: UserMedia, changes: dict[st
         setattr(entry, field, value)
     await session.flush()
     await session.refresh(entry)
+
+    kind = activity.kind_for(changes)
+    if kind is not None:
+        await _emit(
+            session,
+            user_id=entry.user_id,
+            media_id=entry.media_id,
+            kind=kind,
+            payload=activity.payload_for(changes),
+        )
     return entry
 
 
@@ -294,4 +328,15 @@ async def bulk_add_entries(session: AsyncSession, *, user_id: uuid.UUID, rows: S
             .returning(UserMedia.id)
         )
         inserted += len((await session.execute(statement)).all())
+
+    if inserted:
+        # media_id is None: an import is about N titles, not one (S-A/S-D). Guarded on the count
+        # because re-importing is idempotent by design, and "imported 0 titles" is not an event.
+        await _emit(
+            session,
+            user_id=user_id,
+            media_id=None,
+            kind=ActivityKind.IMPORTED,
+            payload={"count": inserted},
+        )
     return inserted
