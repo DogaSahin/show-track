@@ -1,8 +1,9 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 
+from app.groups import service
 from app.groups.models import Group, GroupMember, GroupRole
 from tests.factories import make_group, make_group_member, make_user
 
@@ -112,3 +113,29 @@ async def test_removing_someone_who_is_not_a_member_is_a_404(auth_client, auth_u
     response = await auth_client.delete(f"/v1/groups/{group.id}/members/{outsider.id}")
 
     assert response.status_code == 404
+
+
+async def test_the_lifecycle_rules_read_the_role_the_lock_just_revealed(auth_client, auth_user, db_session):
+    """`populate_existing` on the target lookup, asserted through behaviour rather than SQL.
+
+    The actor's own membership row reaches `remove_member` already in the session's identity
+    map — `require_membership` loads it BEFORE the FOR UPDATE on the group row is taken, which
+    is the whole point of taking that lock. Without `populate_existing`, the target SELECT is
+    answered from the identity map with the role loaded then, so the service decides on a value
+    the lock was acquired specifically to invalidate and the lock buys nothing.
+
+    Reproduced by moving the row underneath the ORM: raw SQL promotes the sole member to owner
+    while the mapped instance still says MEMBER. The service must see OWNER, find no successor,
+    and delete the group (G-E). Reading the stale role instead skips the whole owner branch and
+    leaves a memberless, un-joinable group — the exact state G-E forbids.
+    """
+    group, _ = await _group_with(db_session, auth_user, my_role=GroupRole.MEMBER, others=[])
+    actor = await db_session.scalar(
+        select(GroupMember).where(GroupMember.group_id == group.id, GroupMember.user_id == auth_user.id)
+    )
+    assert actor.role == GroupRole.MEMBER
+    await db_session.execute(text("UPDATE group_members SET role = 'owner' WHERE id = :id"), {"id": actor.id})
+
+    await service.remove_member(db_session, group_id=group.id, actor=actor, target_user_id=auth_user.id)
+
+    assert await db_session.scalar(select(Group.id).where(Group.id == group.id)) is None
