@@ -1,9 +1,12 @@
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
+from app.groups import service as groups_service
+from app.groups.models import GroupRole
 from app.users import service
 from app.users.dependencies import get_current_user
 from app.users.models import User
@@ -30,14 +33,34 @@ async def read_current_user(current_user: CurrentUserDep) -> UserOut:
 
 @auth_router.post("/register", response_model=UserOut, status_code=status.HTTP_201_CREATED)
 async def register(payload: RegisterRequest, session: SessionDep) -> UserOut:
+    """One code, two meanings: the server's REGISTRATION_CODE, or any group's invite code —
+    which also joins you to that group.
+
+    Orchestrated HERE rather than inside register_user, so the auth domain never imports the
+    social one for a feature auth does not own. library/routes.py::add_to_library already sets
+    this precedent, calling media_service and then library service for the same reason. Both
+    writes share one transaction, so a failed join cannot leave an orphaned account that
+    consumed an invite.
+    """
+    now = datetime.now(tz=UTC)
+    group = await groups_service.resolve_invite_code(session, payload.invite_code, now=now)
+
     try:
-        user = await service.register_user(
-            session,
-            username=payload.username,
-            email=payload.email,
-            password=payload.password,
-            invite_code=payload.invite_code,
-        )
+        if group is None:
+            user = await service.register_user(
+                session,
+                username=payload.username,
+                email=payload.email,
+                password=payload.password,
+                invite_code=payload.invite_code,
+            )
+        else:
+            user = await service.create_account(
+                session, username=payload.username, email=payload.email, password=payload.password
+            )
+            # MEMBER, always. Only create_group and G-E's transfer produce an owner — a code
+            # that could mint one would hand a leaker administrative control of the group.
+            await groups_service.add_member(session, group_id=group.id, user_id=user.id, role=GroupRole.MEMBER)
     except service.RegistrationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 

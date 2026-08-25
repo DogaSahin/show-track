@@ -12,7 +12,9 @@ ahead on a show and how far.
 **Status:** early. The backend schema and migrations, auth, the AniList/TMDB provider
 integrations with unified search, the personal library — add, list, update, remove — AniList list
 import, the background sync that keeps airing dates fresh, self-hosted push notifications, and
-content-based recommendations are in place. Groups and the Android client are not built yet. See
+content-based recommendations, and **closed groups** — create, invite, join, leave, with ownership
+that survives the owner walking out — are in place. What a group is ultimately *for* (the shared
+feed, the shared watchlist, reviews) and the Android client are not built yet. See
 [Project status](#project-status).
 
 ## What it does
@@ -26,7 +28,9 @@ content-based recommendations are in place. Groups and the Android client are no
   sends no credentials, so a private list is not readable and returns a 404. Read-only and
   one-way: ShowTrack never writes back to AniList.
 - **Share with a group** — a feed of what members watched and rated, a shared "we should watch this"
-  watchlist, side-by-side progress on titles you're both watching, and reviews.
+  watchlist, side-by-side progress on titles you're both watching, and reviews. You get in by an
+  **invite code**, which is also all a new housemate needs to create their account — see
+  [Groups](#groups).
 - **Get recommendations**, seeded from what AniList/TMDB report as similar to titles you rated
   highly (score 7 or higher), favourited or finished, and ranked by how well each candidate's
   genres match your own weighted taste profile. **Content-based, not collaborative filtering** —
@@ -99,7 +103,9 @@ running tests: the suite runs against a real PostgreSQL schema built by the migr
 **Settings** (`.env`, copied from `.env.example`):
 
 - `DATABASE_URL`, `SECRET_KEY`, `REGISTRATION_CODE` — required, no default; the app fails loudly at
-  startup rather than falling back to something plausible-looking but wrong.
+  startup rather than falling back to something plausible-looking but wrong. `REGISTRATION_CODE` is
+  the **bootstrap** account path, not the only one — a group's invite code registers an account too;
+  see [Groups](#groups).
 - `TMDB_API_KEY` — **optional**. Without it, `/v1/media/search` returns AniList (anime) results only
   and reports `not_configured` for TMDB. AniList itself needs no key at all — that half works with
   zero signup.
@@ -110,12 +116,26 @@ running tests: the suite runs against a real PostgreSQL schema built by the migr
 - `NTFY_BASE_URL`, `NTFY_TOKEN`, `NOTIFICATION_DISPATCH_MINUTES` — **optional**, and covered in
   [Notifications](#notifications). An unset `NTFY_BASE_URL` disables push cleanly: the dispatch job
   is never registered and notification tasks queue as `pending` rather than erroring.
+- `GROUP_INVITE_TTL_HOURS` (default `168`, i.e. seven days) — **optional**, already set in
+  `.env.example`. How long a group's invite code stays usable. Because that code also registers an
+  account, this is the window in which your server accepts a new signup on the strength of it.
 - `RECOMMENDATIONS_SEED_HOURS` (default `12`), `RECOMMENDATIONS_TTL_HOURS` (default `24`) —
   **optional**, both already set in `.env.example`, and covered in
   [Recommendations](#recommendations).
 
 Every route except `/v1/auth/*` and `/health` requires a bearer access token, so the first working
-request is registering and logging in:
+request is registering and logging in.
+
+**`invite_code` has two meanings, and either one registers you.** It is either the
+`REGISTRATION_CODE` from your `.env` — the server-wide bootstrap code, which creates an account and
+nothing else — or **any group's invite code**, which creates the account *and* joins you to that
+group in the same request. That is the whole difference between a server nobody else can join and
+one your household can: you do not have to hand out the server secret to add a housemate, you hand
+out a code that is scoped to one group and expires. A wrong, unknown or expired code all answer the
+same `400 invalid invite code`, on purpose — an expired code that said so would confirm the group
+exists and that you were merely too late.
+
+The first account has to use `REGISTRATION_CODE`, because there is no group yet to be invited to:
 
 ```bash
 # invite_code is the REGISTRATION_CODE from your .env.
@@ -221,6 +241,63 @@ deliberately: on an *extra replica* `SYNC_ENABLED=false` is the documented, inte
 
 See [Recommendations](#recommendations) for how a candidate is chosen, why `reason` names only one
 title, and why there is no score field to sort by yourself.
+
+Now the second account. `$TOKEN` below is still account one's, from the first block:
+
+```bash
+# 1. account one creates a group. The creator is the owner — that and an owner leaving are the
+#    only two ways to become one, so no code can ever mint an owner.
+CODE=$(curl -s -X POST localhost:8000/v1/groups \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"name":"Household"}' \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["invite_code"])')
+echo "$CODE"   # -> e.g. H7K2QM9XTB43 — 12 characters, and a credential: share it like one
+
+# 2. account two registers WITH THAT CODE. No REGISTRATION_CODE, no prior account, one request.
+curl -s -X POST localhost:8000/v1/auth/register \
+  -H 'Content-Type: application/json' \
+  -d "{\"username\":\"housemate\",\"email\":\"housemate@example.com\",\"password\":\"another-password\",\"invite_code\":\"$CODE\"}"
+
+# 3. it is already a member — no join step. Log in as account two and list its groups.
+MATE=$(curl -s -X POST localhost:8000/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"housemate@example.com","password":"another-password"}' \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')
+curl -s -H "Authorization: Bearer $MATE" localhost:8000/v1/groups
+# -> [{"id":"...","name":"Household","created_at":"..."}]   note: no invite_code in this shape
+
+# 4. account one sees both members and their roles
+GROUP=$(curl -s -H "Authorization: Bearer $TOKEN" localhost:8000/v1/groups \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["id"])')
+curl -s -H "Authorization: Bearer $TOKEN" "localhost:8000/v1/groups/$GROUP/members"
+# -> [{"user_id":"...","username":"me","role":"owner","joined_at":"..."},
+#     {"user_id":"...","username":"housemate","role":"member","joined_at":"..."}]
+
+# 5. the other door: an account that already exists joins with a code. Idempotent — account two
+#    is already a member, so re-pasting the code answers 200 with the group, not an error.
+curl -s -o /dev/null -w '%{http_code}\n' -X POST localhost:8000/v1/groups/join \
+  -H "Authorization: Bearer $MATE" -H 'Content-Type: application/json' \
+  -d "{\"invite_code\":\"$CODE\"}"   # -> 200
+
+# 6. someone forwarded the code to a group chat? Rotate it. The old code is dead immediately, for
+#    everyone, and the new one gets a fresh GROUP_INVITE_TTL_HOURS window. Owner only.
+curl -s -X POST -H "Authorization: Bearer $TOKEN" "localhost:8000/v1/groups/$GROUP/invite/rotate" \
+  | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["invite_code"], d["invite_code_expires_at"])'
+# $CODE is now worthless — reusing it answers 400, the same body a code that never existed gets
+
+# 7. leaving. Anyone may remove themselves; only the owner may remove anybody else — and if the
+#    OWNER leaves, ownership transfers to the longest-standing remaining member rather than the
+#    group being left ownerless.
+ME=$(curl -s -H "Authorization: Bearer $MATE" localhost:8000/v1/users/me \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+curl -s -o /dev/null -w '%{http_code}\n' -X DELETE -H "Authorization: Bearer $MATE" \
+  "localhost:8000/v1/groups/$GROUP/members/$ME"   # -> 204
+```
+
+Codes are 12 characters of Crockford base32 — no `I`, `L`, `O` or `U`, and `O`/`I`/`L` typed by
+mistake are folded onto `0`/`1`/`1`, so a code read off a screen and typed on a phone works. Case
+and hyphens are ignored: `h7k2-qm9x-tb43` is the same code. See [Groups](#groups) for expiry,
+rotation and what happens when the owner leaves.
 
 New migrations:
 
@@ -581,6 +658,50 @@ An anime-heavy library will rarely surface a TV recommendation as a result; that
 cost rather than a bug, and a type filter is purely additive to the contract if it turns out to be
 wanted later.
 
+#### Groups
+
+A group is a closed set of people who can see each other's library. There is no follow graph and no
+discovery: **membership is the only relationship the system models.**
+
+**An invite code is a credential.** It is 12 characters of Crockford base32 — 60 bits, chosen so
+that guessing it is not a strategy, because this server has no rate limiting anywhere and the code
+is what stands between an anonymous caller and a working account. It is returned **only to a
+member**, on create, join and rotate; `GET /v1/groups` deliberately answers without it, so the
+ordinary "what am I in" call never puts a live credential on screen.
+
+| Endpoint | Who | What |
+|---|---|---|
+| `POST /v1/groups` | any authenticated user | create a group; **the creator is the owner** |
+| `GET /v1/groups` | member | the groups you are in — no invite codes in this shape |
+| `POST /v1/groups/join` | any authenticated user | join by code; **idempotent** — a code you already used answers 200 |
+| `GET /v1/groups/{id}/members` | member | who is in it, with roles and join dates |
+| `POST /v1/groups/{id}/invite/rotate` | **owner only** | issue a new code and a new expiry |
+| `DELETE /v1/groups/{id}/members/{user_id}` | yourself, or **owner** for anyone else | leave, or remove |
+
+**Codes expire, and rotation is the revocation mechanism.** `GROUP_INVITE_TTL_HOURS` (default 168 —
+seven days) bounds how long a code works. There is deliberately **no per-invite tracking**: one code
+per group, not one per person invited, so rotating it kills the old code for *everyone* who has it,
+including people you meant to keep. That is the trade — per-invite tokens would let you revoke one
+person's link, at the cost of an invite-management surface that a household of six does not want.
+For the same reason there is **no member cap and no use counter**: expiry plus rotation already
+bound what a cap would have protected, and a cap is a setting nobody tunes and a limit nobody
+reaches.
+
+**Two roles, `owner` and `member`, and a code only ever produces a `member`.** The only ways to
+become an owner are creating the group and inheriting it. A code that could mint an owner would hand
+whoever leaked it administrative control of the group rather than merely access to it.
+
+**When the owner leaves, ownership transfers** to the longest-standing remaining member — no
+handover step, no ownerless group, and no group that can never be rotated again. If the owner is the
+*last* member, the group is deleted instead of being left empty. Both rules live in one place in
+`groups/service.py`, so the "I'm leaving" path and the "you're removed" path cannot drift apart.
+
+**A non-member gets `404`, not `403`,** for a group they are not in — including one that does not
+exist. `403` would confirm the group is real, which is an existence oracle for anyone willing to
+walk UUIDs. The same reasoning is why a wrong code, an unknown code and an expired code all answer
+the identical `400 invalid invite code`. A *member* who is not the owner gets `403` on an owner-only
+action instead — by then they have already proven the group exists, so there is nothing left to hide.
+
 ## Never commit credentials
 
 Two layers guard this, and they fail in different ways:
@@ -608,7 +729,8 @@ and both get worse the longer they wait.
 | 5 | Sync worker — tiered airing refresh, notification queue | done |
 | 6 | Notifications — self-hosted push, dispatcher, preferences | done |
 | 7 | Recommendations — content-based over provider similarity, ranked by your genre profile | done |
-| 7.5 | Groups — membership, feed, reviews, shared watchlist | |
+| 7.5a | Groups — create, invite, join, leave, roles, ownership transfer | done |
+| 7.5b | Groups — shared feed, reviews, shared watchlist | |
 | 8–9 | Android foundations and feature modules | |
 | 10 | Polish and deployment | |
 
