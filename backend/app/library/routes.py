@@ -218,8 +218,8 @@ async def create_review(payload: CreateReviewRequest, session: SessionDep, curre
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="you have already reviewed this title"
         ) from exc
-    except service.MediaMissing as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no such title") from exc
+    # MediaMissing is NOT caught here: app/errors.py owns the mapping, the same way it owns
+    # MediaNotFound. The `responses=` block above still documents the 404 for OpenAPI.
     await session.commit()
     # current_user IS the author on every own-review route, so the nested author costs no query.
     return service.to_review_read(review, current_user)

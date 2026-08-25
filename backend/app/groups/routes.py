@@ -22,7 +22,6 @@ from app.groups.schemas import (
     WatchlistPage,
 )
 from app.library.schemas import ReviewRead
-from app.library.service import MediaMissing
 from app.media.models import Media
 from app.media.service import to_detail
 from app.pagination import InvalidCursor, decode_cursor
@@ -189,12 +188,9 @@ async def propose_to_watchlist(
     """200, not 201, because it is idempotent (S-I) — the same call as decision 4-D's
     POST /v1/library, which returns 200 for a title already tracked.
     """
-    try:
-        entry = await service.propose_title(
-            session, group_id=group_id, media_id=payload.media_id, user_id=member.user_id
-        )
-    except MediaMissing as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no such title") from exc
+    # MediaMissing is NOT caught here: app/errors.py owns the mapping, the same way it owns
+    # MediaNotFound. The `responses=` block above still documents the 404 for OpenAPI.
+    entry = await service.propose_title(session, group_id=group_id, media_id=payload.media_id, user_id=member.user_id)
     await session.commit()
     # An awaited get, not a lazy `entry.media`: explicit IO works from a cold session, whereas a
     # many-to-one on the target's primary key silently resolves from the identity map when the
