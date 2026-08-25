@@ -1,9 +1,9 @@
+import sys
 import uuid
 from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import func, select
-from sqlalchemy.exc import IntegrityError
 
 from app.groups import service
 from app.groups.models import GroupRole, GroupWatchlist
@@ -116,39 +116,32 @@ async def test_a_lost_race_returns_the_winner_and_spares_the_callers_pending_wor
     db_session.add(pending)
     await db_session.flush()
 
-    seen = {"lookups": 0}
     real_find = service._find_entry
 
     async def blind_the_dedupe(session, *, group_id, media_id):
         """Stand in for a row another transaction commits between the dedupe SELECT and the
-        flush: invisible to the first lookup, found by the second.
+        flush: invisible to the dedupe lookup, found by the recovery one.
 
-        Keyed on the ORDINAL, and it has to be. Nothing else separates the two call sites — same
-        arguments, same session state, same rows in the table at both — so any predicate over
-        what they can observe blinds the recovery lookup too and turns the race into a re-raise.
-        The cost is that a change to HOW MANY times propose_title looks the pair up breaks this
-        patch rather than the behaviour under test, which is why the call count is asserted
-        first and an escaping IntegrityError is re-labelled below. Without that, dropping the
-        dedupe SELECT — a change with no effect on any answer this API gives — fails this test
-        with "the recovery lookup returned None", which points at the wrong thing entirely.
+        The two call sites are identical in every session-state dimension — same arguments, same
+        `in_nested_transaction()`, same `session.new` and `session.dirty`, same identity map, same
+        row in the table — with ONE exception: the recovery lookup runs inside the
+        `except IntegrityError` block. `sys.exc_info()` is therefore not a proxy for the recovery
+        path, it is that path's defining property, and blinding on it says exactly what this test
+        means: the row was invisible until we collided with it.
+
+        Deliberately not keyed on the call ORDINAL, which would work today and mislead tomorrow.
+        Dropping the dedupe SELECT changes no answer this API gives, but it makes the first call
+        the recovery one — an ordinal patch then fails this test over a behaviourally neutral
+        change, pointing at the savepoint and the 23505 branch, neither of which moved.
         """
-        seen["lookups"] += 1
-        if seen["lookups"] == 1:
+        if sys.exc_info()[0] is None:
             return None
         return await real_find(session, group_id=group_id, media_id=media_id)
 
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(service, "_find_entry", blind_the_dedupe)
-        try:
-            entry = await service.propose_title(db_session, group_id=group.id, media_id=media.id, user_id=auth_user.id)
-        except IntegrityError as exc:
-            raise AssertionError(
-                f"propose_title made {seen['lookups']} _find_entry call(s), not 2. This test "
-                "blinds the FIRST because that is the dedupe lookup; a change to the call count "
-                "breaks the patch, not the savepoint or the 23505 recovery under test."
-            ) from exc
+        entry = await service.propose_title(db_session, group_id=group.id, media_id=media.id, user_id=auth_user.id)
 
-    assert seen["lookups"] == 2, "the blinded dedupe lookup, then the recovery lookup"
     assert entry.id == winner.id, "the loser of the race gets the winner's row, not an error"
     # The session is still usable at all. A real statement, NOT flush(): nothing is dirty at this
     # point, so a flush short-circuits without touching the connection and would pass even on a
