@@ -67,11 +67,16 @@ async def list_members(group_id: uuid.UUID, session: SessionDep, member: GroupMe
 
 @router.post("/{group_id}/invite/rotate", response_model=GroupWithInvite)
 async def rotate_invite(group_id: uuid.UUID, session: SessionDep, owner: GroupOwnerDep) -> GroupWithInvite:
-    """require_ownership has already proven the group exists and that the caller owns it, so
-    there is no membership check here and no 404 branch — the dependency owns both, and the
-    membership row's FK to `groups` is what makes the load below unconditionally non-None.
+    """require_ownership proves the group existed and that the caller owned it when the
+    dependency ran — not that it still exists now. The last member leaving deletes the group
+    outright (G-E), so between the dependency's SELECT and this one the row can be gone, and an
+    unchecked load would 500 with an AttributeError inside rotate_invite_code. Same 404, same
+    body as the dependency's: a group that no longer exists is indistinguishable from one the
+    caller was never in, which is the answer G-D wants anyway.
     """
     group = await session.get(Group, group_id)
+    if group is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no such group")
     await service.rotate_invite_code(session, group=group, now=datetime.now(tz=UTC))
     await session.commit()
     return GroupWithInvite.model_validate(group, from_attributes=True)

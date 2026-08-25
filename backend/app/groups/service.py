@@ -96,10 +96,24 @@ async def join_by_code(session: AsyncSession, *, code: str, user: User, now: dat
         async with session.begin_nested():
             await add_member(session, group_id=group.id, user_id=user.id, role=GroupRole.MEMBER)
     except IntegrityError:
-        # Two concurrent joins with the same code. The constraint is the arbiter; the loser
-        # simply reports "already a member", which is the same answer it would have got a
+        # TWO constraints can fail here and they mean opposite things, so ask the database which
+        # one it was rather than assuming.
+        #
+        # A lost race on the (group_id, user_id) unique constraint means "already a member" —
+        # the constraint is the arbiter, and the loser gets the same answer it would have got a
         # millisecond earlier.
-        return group, False
+        #
+        # A foreign-key violation means the group was deleted underneath us: remove_member takes
+        # FOR UPDATE on the `groups` row and drops the group when its last member leaves, while
+        # this INSERT needs FOR KEY SHARE on that same row. A join that resolved the code just
+        # before a departure commits therefore blocks for the whole leave transaction and then
+        # fails the FK deterministically. Reporting `(group, False)` there would answer 200 with
+        # GroupWithInvite — handing the caller a group AND its invite code that no longer exist
+        # (expire_on_commit=False lets the stale object serialise without a murmur).
+        already = await session.scalar(
+            select(GroupMember.id).where(GroupMember.group_id == group.id, GroupMember.user_id == user.id)
+        )
+        return (group, False) if already is not None else (None, False)
     return group, True
 
 

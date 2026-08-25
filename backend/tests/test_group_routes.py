@@ -1,9 +1,11 @@
+import contextlib
 import uuid
 from datetime import UTC, datetime
 
 import pytest
 from fastapi.routing import iter_route_contexts
-from sqlalchemy import select
+from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 
 from app.groups import service
 from app.groups.dependencies import require_membership, require_ownership
@@ -221,26 +223,40 @@ async def test_a_code_that_normalises_to_nothing_matches_no_group(auth_client, d
     assert response.json()["detail"] == "invalid invite code"
 
 
-async def test_a_lost_join_race_keeps_the_callers_transaction(auth_client, auth_user, db_session, monkeypatch):
+async def test_a_lost_join_race_still_reports_success(auth_client, auth_user, db_session, monkeypatch):
     """The concurrent-join branch: two people paste the same code, the unique constraint picks a
-    winner, and the loser is told "you are in" — which is true a millisecond later anyway.
+    winner, and the loser is told "you are in" — true a millisecond later anyway (decision G-I).
 
-    `add_member` is patched to insert the row twice so the second insert raises a REAL
-    IntegrityError from Postgres, aborting the transaction exactly as the race would. The
-    assertion that matters is the last one: the stranger seeded before the request must still be
-    there. `session.rollback()` in this branch would unwind the caller's whole transaction and
-    take that row with it — the failure mode Task 6 would hit, where a user created earlier in
-    the same request vanishes and the endpoint still answers 200.
+    Two patches, because the state this asserts spans two transactions and the fixture owns one
+    connection. `add_member` stands in for the losing insert: it leaves the row the WINNER would
+    have committed and raises the IntegrityError Postgres would have raised. `begin_nested` is
+    neutralised so that row survives the way a committed one from another transaction does —
+    without that, the savepoint unwinds the stand-in along with the failure and there is no
+    winner left for `join_by_code` to find. The error is constructed rather than provoked for the
+    same reason: a REAL constraint violation aborts the transaction, and the row would be gone.
+
+    What it pins is the branch, not the plumbing: given a membership row that exists once the
+    failed insert has unwound, the caller gets 200 and not the generic 400. The FK twin below
+    provokes the real error and covers the savepoint itself.
+
+    The stranger seeded before the request must still be there: `session.rollback()` in this
+    branch would unwind the caller's whole transaction and take that row with it — the failure
+    mode Task 6 would hit, where a user created earlier in the same request vanishes and the
+    endpoint still answers 200.
     """
     group = await _other_users_group(db_session)
 
-    async def _duplicate(session_, *, group_id, user_id, role):
+    @contextlib.asynccontextmanager
+    async def _no_savepoint():
+        yield
+
+    async def _winner_got_there_first(session_, *, group_id, user_id, role):
         session_.add(GroupMember(group_id=group_id, user_id=user_id, role=role))
         await session_.flush()
-        session_.add(GroupMember(group_id=group_id, user_id=user_id, role=role))
-        await session_.flush()  # violates the (group_id, user_id) unique constraint
+        raise IntegrityError("INSERT INTO group_members", {}, Exception("duplicate key value"))
 
-    monkeypatch.setattr(service, "add_member", _duplicate)
+    monkeypatch.setattr(db_session, "begin_nested", _no_savepoint)
+    monkeypatch.setattr(service, "add_member", _winner_got_there_first)
 
     response = await auth_client.post("/v1/groups/join", json={"invite_code": group.invite_code})
 
@@ -384,3 +400,65 @@ async def test_listing_groups_shows_only_your_own(auth_client, auth_user, db_ses
     listed = (await auth_client.get("/v1/groups")).json()
 
     assert [row["name"] for row in listed] == ["Household"]
+
+
+async def test_a_group_deleted_mid_join_is_a_400_not_a_200(auth_client, auth_user, db_session, monkeypatch):
+    """The other half of the `except IntegrityError` branch above, and the one that used to lie.
+
+    `add_member` is patched to delete the group and THEN insert the membership, so Postgres
+    raises a real foreign-key violation — the same error the production race produces when the
+    last member's departure commits while this join is blocked on the `groups` row. The old
+    blanket handler could not tell that apart from a lost unique-constraint race, so it returned
+    the group and the route answered 200 with GroupWithInvite: a group id and a live invite code
+    for a group that no longer exists.
+
+    Generic 400, and no membership row: the join did not happen. That the re-select can run at
+    all is the savepoint doing its job — a real IntegrityError aborts the whole Postgres
+    transaction, so without `begin_nested` the next statement would fail too and the route would
+    500 rather than answer.
+    """
+    group = await _other_users_group(db_session)
+
+    async def _group_vanishes(session_, *, group_id, user_id, role):
+        await session_.execute(delete(Group).where(Group.id == group_id))
+        session_.add(GroupMember(group_id=group_id, user_id=user_id, role=role))
+        await session_.flush()  # violates group_members.group_id -> groups.id
+
+    monkeypatch.setattr(service, "add_member", _group_vanishes)
+
+    response = await auth_client.post("/v1/groups/join", json={"invite_code": group.invite_code})
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "invalid invite code"
+    assert await db_session.scalar(select(User).where(User.username == "stranger")) is not None
+    assert (
+        await db_session.scalar(
+            select(GroupMember.id).where(GroupMember.group_id == group.id, GroupMember.user_id == auth_user.id)
+        )
+        is None
+    )
+
+
+async def test_rotating_a_group_deleted_mid_request_is_a_404(auth_client, auth_user, db_session, monkeypatch):
+    """require_ownership resolves against a group that is deleted before the handler loads it.
+
+    Patched rather than raced because the test fixture runs the request on the same single
+    connection as the test body, so there is no second transaction to commit the deletion from.
+    The patch is narrow — only `Group` vanishes, so `get_current_user`'s own `session.get(User)`
+    still resolves — and it reproduces exactly what the handler sees: a SELECT that returns no
+    row. Unchecked, the next line is `group.invite_code = ...` on None: a 500.
+    """
+    created = (await auth_client.post("/v1/groups", json={"name": "Household"})).json()
+    real_get = db_session.get
+
+    async def _group_vanished(entity, ident, *args, **kwargs):
+        if entity is Group:
+            return None
+        return await real_get(entity, ident, *args, **kwargs)
+
+    monkeypatch.setattr(db_session, "get", _group_vanished)
+
+    response = await auth_client.post(f"/v1/groups/{created['id']}/invite/rotate")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "no such group"
