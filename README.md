@@ -672,7 +672,7 @@ ordinary "what am I in" call never puts a live credential on screen.
 | Endpoint | Who | What |
 |---|---|---|
 | `POST /v1/groups` | any authenticated user | create a group; **the creator is the owner** |
-| `GET /v1/groups` | member | the groups you are in — no invite codes in this shape |
+| `GET /v1/groups` | any authenticated user | the groups you are in — `[]` if none, and no invite codes in this shape |
 | `POST /v1/groups/join` | any authenticated user | join by code; **idempotent** — a code you already used answers 200 |
 | `GET /v1/groups/{id}/members` | member | who is in it, with roles and join dates |
 | `POST /v1/groups/{id}/invite/rotate` | **owner only** | issue a new code and a new expiry |

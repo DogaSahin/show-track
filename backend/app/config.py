@@ -12,7 +12,13 @@ class Settings(BaseSettings):
     # issued token forgeable by anyone who can read the source — a failure mode that,
     # unlike a wrong database URL, never announces itself.
     secret_key: str
-    registration_code: str
+    # Bounded for the same reason SECRET_KEY has no default: a required setting should fail loudly
+    # at startup rather than plausibly-but-wrongly. RegisterRequest.invite_code caps the field at
+    # 64, so a longer code here would brick the only bootstrap path with a 422 blaming the client's
+    # invite_code. The documented `openssl rand -hex 32` produces EXACTLY 64 characters — the
+    # recommended value sits on the boundary with zero slack, which is what makes this worth a
+    # constraint rather than a comment.
+    registration_code: str = Field(min_length=1, max_length=64)
     # Optional, unlike SECRET_KEY. Absent means the TMDB provider is never registered and
     # /v1/media/search returns AniList results only, reporting `not_configured` for TMDB in its
     # `sources` map. Required would mean CI and docker-compose both need a value or every
