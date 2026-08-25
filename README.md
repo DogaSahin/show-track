@@ -13,9 +13,9 @@ ahead on a show and how far.
 integrations with unified search, the personal library — add, list, update, remove — AniList list
 import, the background sync that keeps airing dates fresh, self-hosted push notifications, and
 content-based recommendations, and **closed groups** — create, invite, join, leave, with ownership
-that survives the owner walking out — are in place. What a group is ultimately *for* (the shared
-feed, the shared watchlist, reviews) and the Android client are not built yet. See
-[Project status](#project-status).
+that survives the owner walking out — are in place, and so is what a group is ultimately *for*: a
+shared activity feed, reviews, a shared "we should watch this" watchlist, and side-by-side progress
+on a title. The Android client is not built yet. See [Project status](#project-status).
 
 ## What it does
 
@@ -285,7 +285,91 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" "localhost:8000/v1/groups/$GRO
   | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["invite_code"], d["invite_code_expires_at"])'
 # $CODE is now worthless — reusing it answers 400, the same body a code that never existed gets
 
-# 7. leaving. Anyone may remove themselves; only the owner may remove anybody else — and if the
+# 7. give the next four steps something to show: the housemate tracks the same title, and gets
+#    four episodes in.
+MATE_ENTRY=$(curl -s -X POST localhost:8000/v1/library \
+  -H "Authorization: Bearer $MATE" -H 'Content-Type: application/json' \
+  -d '{"source":"anilist","external_id":"154587"}' \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+curl -s -X PATCH "localhost:8000/v1/library/$MATE_ENTRY" \
+  -H "Authorization: Bearer $MATE" -H 'Content-Type: application/json' \
+  -d '{"progress":4,"status":"watching"}'
+
+# 8. the feed — what members did, newest first. There are no per-group activity rows: membership
+#    is resolved at read time, so joining shows the history at once and leaving revokes it at once.
+curl -s -H "Authorization: Bearer $TOKEN" "localhost:8000/v1/groups/$GROUP/feed?limit=3"
+# -> {"items":[{"id":"...","actor":{"id":"...","username":"housemate"},"kind":"progressed",
+#               "media":{...},"payload":{"status":"watching","progress":4},"created_at":"..."},
+#              {"id":"...","actor":{"id":"...","username":"housemate"},"kind":"added",
+#               "media":{...},"payload":{},"created_at":"..."},
+#              {"id":"...","actor":{"id":"...","username":"me"},"kind":"imported",
+#               "media":null,"payload":{"count":412},"created_at":"..."}],
+#     "next_cursor":"eyJrIjoiY3JlYXRlZF9hdCIsInYiOiIyMDI2LTA4..."}
+#
+# `media` is null on that last item and a client has to handle it: an import is ONE line about N
+# titles, not N lines. That line is there only if you ran the AniList import above; skip it and the
+# third row is your own "rated" instead. `kind` is one of added, imported, progressed, rated,
+# completed, dropped.
+
+# page 2 — the same opaque-cursor contract as /v1/library and /v1/recommendations
+CURSOR=$(curl -s -H "Authorization: Bearer $TOKEN" "localhost:8000/v1/groups/$GROUP/feed?limit=3" \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["next_cursor"])')
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "localhost:8000/v1/groups/$GROUP/feed?limit=3&cursor=$CURSOR"
+# -> the two older rows, both yours: kind "rated", carrying the whole change set that PATCH sent
+#    ({"score":"8.5","status":"watching","progress":12}) — one row per request, named for the most
+#    significant field in it — and then kind "added". next_cursor is null: that was the last page.
+
+# 9. reviews. One per person per title, edited rather than appended: a second POST for a title you
+#    have already reviewed is a 409, and PATCH is how you change your mind. `media_id` is a MEDIA
+#    id — the `id` inside a library entry's `media`, not the entry's own id. Adding a title you
+#    already track is idempotent and hands the entry back, which is the shortest way to get one.
+MEDIA=$(curl -s -X POST localhost:8000/v1/library \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"source":"anilist","external_id":"154587"}' \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["media"]["id"])')
+REVIEW=$(curl -s -X POST localhost:8000/v1/reviews \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d "{\"media_id\":\"$MEDIA\",\"body\":\"The best thing I have watched all year.\"}" \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+curl -s -X PATCH "localhost:8000/v1/reviews/$REVIEW" \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"contains_spoilers":true}'
+# -> {"id":"...","author":{"id":"...","username":"me"},"media_id":"...",
+#     "body":"The best thing I have watched all year.","contains_spoilers":true,
+#     "created_at":"...","updated_at":"..."}
+
+# the group's reviews of that one title, oldest first — everyone's, including your own
+curl -s -H "Authorization: Bearer $MATE" \
+  "localhost:8000/v1/groups/$GROUP/media/$MEDIA/reviews"
+
+# 10. the shared watchlist. Proposing is IDEMPOTENT and answers 200, not 201: two housemates
+#     proposing the same show is agreement, not a conflict.
+curl -s -o /dev/null -w '%{http_code}\n' -X POST "localhost:8000/v1/groups/$GROUP/watchlist" \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d "{\"media_id\":\"$MEDIA\"}"   # -> 200
+curl -s -o /dev/null -w '%{http_code}\n' -X POST "localhost:8000/v1/groups/$GROUP/watchlist" \
+  -H "Authorization: Bearer $MATE" -H 'Content-Type: application/json' \
+  -d "{\"media_id\":\"$MEDIA\"}"   # -> 200, and the list still has exactly one entry
+curl -s -H "Authorization: Bearer $MATE" "localhost:8000/v1/groups/$GROUP/watchlist?limit=20"
+# -> {"items":[{"id":"...","media":{...},"proposed_by":"...","created_at":"..."}],
+#     "next_cursor":null}
+
+# any member may remove any entry: it is one shared list, not a pile of personal ones
+ITEM=$(curl -s -H "Authorization: Bearer $MATE" "localhost:8000/v1/groups/$GROUP/watchlist" \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["items"][0]["id"])')
+curl -s -o /dev/null -w '%{http_code}\n' -X DELETE -H "Authorization: Bearer $MATE" \
+  "localhost:8000/v1/groups/$GROUP/watchlist/$ITEM"   # -> 204
+
+# 11. who is ahead on one title. A plain list, not a cursor page — it is bounded by membership.
+#     Progress descending, ties broken by username, and the numbers are RAW: nothing is clamped to
+#     an episode count, because ShowTrack does not reliably know one.
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "localhost:8000/v1/groups/$GROUP/media/$MEDIA/progress"
+# -> [{"member":{"id":"...","username":"me"},"status":"watching","progress":12},
+#     {"member":{"id":"...","username":"housemate"},"status":"watching","progress":4}]
+
+# 12. leaving. Anyone may remove themselves; only the owner may remove anybody else — and if the
 #    OWNER leaves, ownership transfers to the longest-standing remaining member rather than the
 #    group being left ownerless.
 ME=$(curl -s -H "Authorization: Bearer $MATE" localhost:8000/v1/users/me \
@@ -300,6 +384,12 @@ spaces, hyphens, underscores, line breaks and the non-breaking space a chat clie
 all ignored: `h7k2-qm9x-tb43` is the same code, and so is one pasted straight out of a message with
 the newline still attached. See [Groups](#groups) for expiry, rotation and what happens when the
 owner leaves.
+
+**Accepting an invite code shows the other members your whole library** — every title in it, your
+progress, your scores and your reviews — and there is no per-title opt-out. Leaving the group is the
+only way to take it back. That is the single most consequential thing to understand before pasting a
+code, and the reasoning behind it, along with what the feed deliberately leaves out, is in
+[Groups](#groups).
 
 New migrations:
 
@@ -679,6 +769,17 @@ ordinary "what am I in" call never puts a live credential on screen.
 | `GET /v1/groups/{id}/members` | member | who is in it, with roles and join dates |
 | `POST /v1/groups/{id}/invite/rotate` | **owner only** | issue a new code and a new expiry |
 | `DELETE /v1/groups/{id}/members/{user_id}` | yourself, or **owner** for anyone else | leave, or remove |
+| `GET /v1/groups/{id}/feed` | member | what members did, newest first — cursor-paginated |
+| `GET /v1/groups/{id}/watchlist` | member | the shared list, newest first — cursor-paginated |
+| `POST /v1/groups/{id}/watchlist` | member | propose a title; **idempotent** — an already-listed one answers 200 |
+| `DELETE /v1/groups/{id}/watchlist/{entry_id}` | member | remove an entry — **any** member may remove **any** entry |
+| `GET /v1/groups/{id}/media/{media_id}/reviews` | member | the group's reviews of one title, oldest first |
+| `GET /v1/groups/{id}/media/{media_id}/progress` | member | who is ahead on one title |
+
+Every one of those is gated on membership of the group in the path, and a non-member gets the same
+`404` whether the group exists or not. Your **own** review is the exception that is not group-scoped
+— `POST /v1/reviews`, `PATCH /v1/reviews/{id}` and `DELETE /v1/reviews/{id}` are about a title, not a
+group, and the review you write once is visible in every group you are in.
 
 **Codes expire, and rotation is the revocation mechanism.** `GROUP_INVITE_TTL_HOURS` (default 168 —
 seven days) bounds how long a code works. There is deliberately **no per-invite tracking**: one code
@@ -703,6 +804,52 @@ exist. `403` would confirm the group is real, which is an existence oracle for a
 walk UUIDs. The same reasoning is why a wrong code, an unknown code and an expired code all answer
 the identical `400 invalid invite code`. A *member* who is not the owner gets `403` on an owner-only
 action instead — by then they have already proven the group exists, so there is nothing left to hide.
+
+**Joining a group exposes your whole library, and there is no per-title opt-out.** Every title you
+track, your progress on it, your score and your reviews are readable by every member for as long as
+you are one. Leaving is the only revocation — there is no "hide this title", no private entry and no
+per-group visibility setting. That is the deliberate consequence of the model at the top of this
+file: membership *is* the relationship, and a per-title privacy surface would turn a household list
+into an access-control system nobody in a household wants to administer. The cost is real, and it is
+why an invite code should be handed out with the same care as any other credential.
+
+**The feed is read-fanout, not write-fanout.** No per-group activity rows exist: a read resolves
+"activity by members of this group" by joining membership at query time. So joining a group shows
+that member's whole history at once, leaving revokes it at once, and neither needs a backfill or a
+purge. The cost is paid on every read instead of on every write — the right trade when a group has
+six people, and the wrong one if it ever had six thousand.
+
+**What the feed does not contain** matters as much as what it does. Six kinds appear — `added`,
+`imported`, `progressed`, `rated`, `completed`, `dropped` — and one PATCH produces exactly one row,
+named for the most significant field it changed, with the whole change set in `payload`. Beyond that:
+
+- **An import is one line, not one per title.** An `imported` row has `media_id` **null** and a
+  `{"count": N}` payload, so a client must handle a null `media`. The alternative — a row per title —
+  would let one 10,000-entry AniList import bury every other member's activity for as far back as
+  anyone can scroll, and read-fanout means there is no per-group copy to prune.
+- **Removing a title from your library is not an event.** The feed is a log of what happened, not a
+  view of current state, so an item can name a title its author no longer tracks. Both title-scoped
+  reads answer that case with `200 []` rather than `404` — "nobody in this group tracks it" and "no
+  such title" are the same answer to the question being asked, and separating them would hand a
+  caller an existence oracle over the whole `media` table. (`POST .../watchlist` *does* `404` on an
+  unknown title, because it inserts a client-supplied foreign key and would otherwise surface a
+  constraint violation as a 500.)
+- **Favouriting and "started watching" do not appear at all.** Both are recorded as deliberate
+  omissions rather than gaps, so adding either is a design change to raise, not a hole to fill.
+
+**Progress comparison is raw, and spoilers have exactly one control.** `GET
+/v1/groups/{id}/media/{media_id}/progress` reports the episode number each member is on, ordered by
+progress descending with a username tiebreak, and clamps nothing — ShowTrack does not reliably know a
+title's episode count, and inventing a ceiling would be worse than reporting the number as stored.
+The only spoiler affordance anywhere is a review's `contains_spoilers` flag, which the client hides
+behind a tap; "episode 24 of a show you are four into" is not hidden from anybody, because knowing
+who is ahead is the feature.
+
+**The shared watchlist dies with the group, without a confirmation step.** `group_watchlist.group_id`
+is `ON DELETE CASCADE`, and the last member leaving deletes the group — so the last person out takes
+the list with them, silently, in the same request that removes their membership. Nothing warns them
+first and nothing can be recovered afterwards. A confirmation prompt belongs in the client rather
+than the API, but until one exists this is the sharp edge of the leave path.
 
 ## Never commit credentials
 
@@ -732,7 +879,7 @@ and both get worse the longer they wait.
 | 6 | Notifications — self-hosted push, dispatcher, preferences | done |
 | 7 | Recommendations — content-based over provider similarity, ranked by your genre profile | done |
 | 7.5a | Groups — create, invite, join, leave, roles, ownership transfer | done |
-| 7.5b | Groups — shared feed, reviews, shared watchlist | |
+| 7.5b | Groups — shared feed, reviews, shared watchlist, progress comparison | done |
 | 8–9 | Android foundations and feature modules | |
 | 10 | Polish and deployment | |
 
