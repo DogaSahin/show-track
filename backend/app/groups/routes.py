@@ -17,6 +17,7 @@ from app.groups.schemas import (
     JoinGroupRequest,
     MemberRead,
 )
+from app.library.schemas import ReviewRead
 from app.pagination import InvalidCursor, decode_cursor
 from app.users.dependencies import get_current_user
 from app.users.models import User
@@ -129,3 +130,15 @@ async def group_feed(
         session, group_id=group_id, limit=limit, cursor=decoded, now=datetime.now(tz=UTC)
     )
     return FeedPage(items=items, next_cursor=next_cursor)
+
+
+@router.get("/{group_id}/media/{media_id}/reviews", response_model=list[ReviewRead])
+async def group_reviews(
+    group_id: uuid.UUID, media_id: uuid.UUID, session: SessionDep, member: GroupMemberDep
+) -> list[ReviewRead]:
+    """`member` is unused in the body for the same reason it is on group_feed above: taking
+    GroupMemberDep is what authorizes this route, and 7.5a's walk asserts it is present on every
+    path under /v1/groups/{group_id}.
+    """
+    reviews = await service.list_group_reviews(session, group_id=group_id, media_id=media_id)
+    return [ReviewRead.model_validate(r, from_attributes=True) for r in reviews]

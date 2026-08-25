@@ -124,3 +124,54 @@ class ImportSummary(BaseModel):
     # Decision 4-L. Without this, a list truncated at the chunk cap returns a body byte-identical
     # to a complete import and the caller cannot tell it got a prefix.
     truncated: bool = False
+
+
+# 4000 characters is a review, not an essay. Capped here rather than in the database (S-N):
+# nothing writes a review except this endpoint, unlike UserMedia.score, whose CHECK exists
+# because the AniList importer bypasses the API schema entirely.
+ReviewBody = Annotated[str, Field(min_length=1, max_length=4000)]
+
+
+class CreateReviewRequest(BaseModel):
+    # extra="forbid" throughout, matching AddLibraryEntryRequest/UpdateLibraryEntryRequest above:
+    # update_review setattr()s whatever survives validation, and on a partial update the ABSENCE
+    # of a field is meaningful, so a typo'd key must 422 rather than return 200 having done
+    # nothing.
+    model_config = ConfigDict(extra="forbid")
+
+    media_id: uuid.UUID
+    body: ReviewBody
+    contains_spoilers: bool = False
+
+
+class UpdateReviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    body: ReviewBody | None = None
+    contains_spoilers: bool | None = None
+
+    @model_validator(mode="after")
+    def _reject_explicit_nulls(self) -> "UpdateReviewRequest":
+        """Both columns are NOT NULL in `reviews`, and unlike UserMedia.score neither has a
+        "clear it" meaning — so an explicit null has nothing to express and would otherwise
+        reach the flush as an uncaught IntegrityError 500 (measured: `PATCH {"body": null}` ->
+        NotNullViolationError). Same shape as UpdateLibraryEntryRequest's validator above.
+        """
+        nulled = [
+            field
+            for field in ("body", "contains_spoilers")
+            if field in self.model_fields_set and getattr(self, field) is None
+        ]
+        if nulled:
+            raise ValueError(f"{', '.join(nulled)} cannot be null")
+        return self
+
+
+class ReviewRead(BaseModel):
+    id: uuid.UUID
+    user_id: uuid.UUID
+    media_id: uuid.UUID
+    body: str
+    contains_spoilers: bool
+    created_at: datetime
+    updated_at: datetime

@@ -11,12 +11,15 @@ from app.library import import_service, service
 from app.library.models import UserMediaStatus
 from app.library.schemas import (
     AddLibraryEntryRequest,
+    CreateReviewRequest,
     ImportRequest,
     ImportSummary,
     LibraryEntry,
     LibraryPage,
     LibrarySort,
+    ReviewRead,
     UpdateLibraryEntryRequest,
+    UpdateReviewRequest,
 )
 from app.media import service as media_service
 from app.media.models import MediaSource
@@ -187,3 +190,61 @@ async def remove_from_library(entry_id: uuid.UUID, session: SessionDep, current_
 
     await service.delete_entry(session, found[0])
     await session.commit()
+
+
+# A router of its own, mounted alongside the library one: a review is about a title, not about
+# your library entry for it — you can review something you never tracked.
+reviews_router = APIRouter(prefix="/reviews", tags=["reviews"])
+
+_REVIEW_NOT_FOUND = "no such review"
+
+
+@reviews_router.post("", response_model=ReviewRead, status_code=status.HTTP_201_CREATED)
+async def create_review(payload: CreateReviewRequest, session: SessionDep, current_user: CurrentUserDep) -> ReviewRead:
+    try:
+        review = await service.create_review(
+            session,
+            user_id=current_user.id,
+            media_id=payload.media_id,
+            body=payload.body,
+            contains_spoilers=payload.contains_spoilers,
+        )
+    except service.ReviewExists as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="you have already reviewed this title"
+        ) from exc
+    await session.commit()
+    return ReviewRead.model_validate(review, from_attributes=True)
+
+
+# Ownership failures answer 404 rather than 403, for the same reason the library routes above do:
+# a 403 on someone else's review id confirms that review exists.
+@reviews_router.patch("/{review_id}", response_model=ReviewRead, responses={404: {"description": _REVIEW_NOT_FOUND}})
+async def update_review(
+    review_id: uuid.UUID,
+    payload: UpdateReviewRequest,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+) -> ReviewRead:
+    review = await service.get_own_review(session, review_id=review_id, user_id=current_user.id)
+    if review is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_REVIEW_NOT_FOUND)
+
+    await service.update_review(session, review, payload.model_dump(exclude_unset=True))
+    await session.commit()
+    return ReviewRead.model_validate(review, from_attributes=True)
+
+
+@reviews_router.delete(
+    "/{review_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses={404: {"description": _REVIEW_NOT_FOUND}},
+)
+async def delete_review(review_id: uuid.UUID, session: SessionDep, current_user: CurrentUserDep) -> Response:
+    review = await service.get_own_review(session, review_id=review_id, user_id=current_user.id)
+    if review is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_REVIEW_NOT_FOUND)
+
+    await service.delete_review(session, review)
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

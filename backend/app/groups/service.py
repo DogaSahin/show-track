@@ -9,7 +9,7 @@ from app.config import get_settings
 from app.groups import invites
 from app.groups.models import Group, GroupMember, GroupRole
 from app.groups.schemas import FeedActor, FeedItem
-from app.library.models import Activity
+from app.library.models import Activity, Review
 from app.media.models import Media
 from app.media.service import to_detail
 from app.pagination import Cursor, encode_cursor
@@ -284,3 +284,15 @@ async def list_feed(
         encode_cursor(FEED_SORT_KEY, rows[-1].Activity.created_at, rows[-1].Activity.id) if has_more and rows else None
     )
     return items, next_cursor
+
+
+async def list_group_reviews(session: AsyncSession, *, group_id: uuid.UUID, media_id: uuid.UUID) -> list[Review]:
+    """Reviews of one title by this group's members. Bounded by membership, so the route returns
+    a plain list rather than a cursor page (S-J)."""
+    members = select(GroupMember.user_id).where(GroupMember.group_id == group_id)
+    statement = (
+        select(Review)
+        .where(Review.media_id == media_id, Review.user_id.in_(members))
+        .order_by(Review.created_at.asc(), Review.id.asc())
+    )
+    return list(await session.scalars(statement))

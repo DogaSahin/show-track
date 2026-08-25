@@ -7,12 +7,13 @@ from typing import Any
 
 from sqlalchemy import ColumnElement, func, select, tuple_
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
 
 from app.db import BULK_INSERT_CHUNK_SIZE, chunked
 from app.library import activity
-from app.library.models import Activity, ActivityKind, UserMedia, UserMediaStatus
+from app.library.models import Activity, ActivityKind, Review, UserMedia, UserMediaStatus
 from app.library.schemas import LibraryEntry, LibrarySort
 from app.media import service as media_service
 from app.media.models import Media
@@ -340,3 +341,47 @@ async def bulk_add_entries(session: AsyncSession, *, user_id: uuid.UUID, rows: S
             payload={"count": inserted},
         )
     return inserted
+
+
+class ReviewExists(Exception):
+    """One review per person per title. The route turns this into a 409 (decision S-K)."""
+
+
+async def create_review(
+    session: AsyncSession, *, user_id: uuid.UUID, media_id: uuid.UUID, body: str, contains_spoilers: bool
+) -> Review:
+    review = Review(user_id=user_id, media_id=media_id, body=body, contains_spoilers=contains_spoilers)
+    session.add(review)
+    try:
+        # Scoped to a SAVEPOINT so a duplicate does not unwind the caller's transaction — the
+        # discipline 7.5a established after session.rollback() was found to discard a caller's
+        # pending work.
+        async with session.begin_nested():
+            await session.flush()
+    except IntegrityError as exc:
+        raise ReviewExists from exc
+    return review
+
+
+async def get_own_review(session: AsyncSession, *, review_id: uuid.UUID, user_id: uuid.UUID) -> Review | None:
+    """Scoped to the caller. A review you do not own is indistinguishable from one that does not
+    exist, so the endpoint never confirms which ids are real."""
+    return await session.scalar(select(Review).where(Review.id == review_id, Review.user_id == user_id))
+
+
+async def update_review(session: AsyncSession, review: Review, changes: dict[str, Any]) -> Review:
+    if not changes:
+        return review
+    for field, value in changes.items():
+        setattr(review, field, value)
+    await session.flush()
+    # updated_at carries onupdate=func.now(), a SQL-expression default that SQLAlchemy EXPIRES
+    # after the flush. Serialising it without this refresh is a MissingGreenlet 500 — the exact
+    # trap update_entry documents.
+    await session.refresh(review)
+    return review
+
+
+async def delete_review(session: AsyncSession, review: Review) -> None:
+    await session.delete(review)
+    await session.flush()
