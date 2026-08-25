@@ -1,5 +1,6 @@
 import pytest
 
+from app.groups import invites
 from app.groups.invites import ALPHABET, CODE_LENGTH, generate_code, normalise_code
 
 
@@ -18,9 +19,35 @@ def test_the_alphabet_excludes_every_confusable_letter():
 
 
 def test_generated_codes_differ():
-    """Weak by design — it catches a constant or seeded generator, which is the failure that
-    would silently make every group share one code."""
+    """Weak by design, and weaker than it looks: it catches a CONSTANT generator — the failure
+    that would make every group share one code — and nothing beyond that. A seeded
+    `random.Random(42).choice` substituted for `secrets.choice` passes this and every other
+    test in this module, because distinctness is not unpredictability. The test below is what
+    covers the credential property."""
     assert len({generate_code() for _ in range(200)}) == 200
+
+
+def test_the_code_is_drawn_from_secrets_not_random(monkeypatch):
+    """An invite code creates an account (Phase 7.5a) with no rate limiting anywhere in front of
+    it, so the draw being unpredictable is a security property, not an implementation detail.
+
+    Unpredictability cannot be asserted from outputs — any PRNG produces distinct, uniform,
+    correctly-shaped codes — so this asserts the SOURCE instead: every character comes through
+    `secrets.choice`. A spy rather than a stub, so the generator's real output is still returned
+    and the module's other guarantees are unaffected."""
+    drawn: list[str] = []
+    real_choice = invites.secrets.choice
+
+    def spy(sequence):
+        drawn.append(sequence)
+        return real_choice(sequence)
+
+    monkeypatch.setattr(invites.secrets, "choice", spy)
+
+    code = generate_code()
+
+    assert drawn == [ALPHABET] * CODE_LENGTH
+    assert len(code) == CODE_LENGTH
 
 
 @pytest.mark.parametrize(
