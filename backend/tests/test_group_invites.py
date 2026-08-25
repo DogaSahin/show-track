@@ -52,7 +52,18 @@ def test_the_code_is_drawn_from_secrets_not_random(monkeypatch):
 
 @pytest.mark.parametrize(
     "typed",
-    ["abcdefgh2345", "ABCD-EFGH-2345", " ABCDEFGH2345 ", "abcd efgh 2345", "ABCD_EFGH_2345"],
+    [
+        "abcdefgh2345",
+        "ABCD-EFGH-2345",
+        " ABCDEFGH2345 ",
+        "abcd efgh 2345",
+        "ABCD_EFGH_2345",
+        # Pasted out of a chat message, which is what the README tells people to do: a trailing
+        # newline from a copied line, and the non-breaking space chat clients substitute.
+        "ABCDEFGH2345\n",
+        "\r\nABCDEFGH2345\r\n",
+        "ABCD\xa0EFGH\xa02345",
+    ],
 )
 def test_normalisation_accepts_how_a_human_retypes_a_code(typed):
     assert normalise_code(typed) == "ABCDEFGH2345"

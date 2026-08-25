@@ -22,7 +22,13 @@ CODE_LENGTH = 12
 # Each confusable maps to the character it can only have meant. Safe precisely because
 # ALPHABET excludes all three, so there is no code containing a real O to be ambiguous with.
 _CONFUSABLES = {"O": "0", "I": "1", "L": "1"}
-_SEPARATORS = " -_\t"
+# Everything a code can pick up on its way from a chat message into a text field. The README
+# tells people to paste, so \n and \r (a copied line, a wrapped message) and \xa0 (the
+# non-breaking space chat clients render runs of spaces as) are the common cases, not exotic
+# ones. Stripping too much is safe in one direction only: ALPHABET contains none of these, so a
+# character removed here can never have been part of a real code. The failure this prevents is a
+# valid code that will not resolve — never a wrong code that does.
+_SEPARATORS = frozenset(" -_\t\n\r\v\f\xa0")
 
 
 def generate_code() -> str:
