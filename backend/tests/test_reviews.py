@@ -1,7 +1,10 @@
-from sqlalchemy import select
+import pytest
+from sqlalchemy import func, select
 
 from app.groups.models import GroupRole
+from app.library import service
 from app.library.models import Review
+from app.media.models import Media
 from tests.factories import make_group, make_group_member, make_media, make_review, make_user
 
 
@@ -186,3 +189,49 @@ async def test_patching_a_field_to_null_is_a_422_not_a_500(auth_client, auth_use
     for field in ("body", "contains_spoilers"):
         response = await auth_client.patch(f"/v1/reviews/{created['id']}", json={field: None})
         assert response.status_code == 422, f"{field}: null answered {response.status_code}"
+
+
+async def test_a_duplicate_does_not_unwind_the_callers_pending_work(auth_user, db_session):
+    """The savepoint in `create_review` is a discipline, and a discipline with no test is a
+    comment.
+
+    Deliberately a SERVICE-level test, because a route-level one is structurally incapable of
+    seeing this. `test_a_second_review_of_the_same_title_is_a_409` makes two independent HTTP
+    requests and never queries afterwards, so a poisoned transaction has nothing left to damage
+    and the 409 comes out identically either way — measured: replacing the `begin_nested()`
+    block with a bare `await session.flush()` leaves the whole suite green.
+
+    What the savepoint actually buys is that an IntegrityError is contained to the failed INSERT
+    instead of unwinding everything the caller had pending. Without it, SQLAlchemy's failed
+    flush rolls the SessionTransaction back and the caller's uncommitted work vanishes — the
+    exact incident 7.5a hit, where `join_by_code`'s `session.rollback()` discarded a caller's
+    pending transaction.
+
+    Asserted through a Core `select(func.count())` rather than `session.get()`, per architecture
+    rule 8: a rollback is not this session's own ORM write, so the identity map is no guide to
+    what actually survived in the database.
+    """
+    media = make_media()
+    db_session.add(media)
+    await db_session.flush()
+    await service.create_review(
+        db_session, user_id=auth_user.id, media_id=media.id, body="First.", contains_spoilers=False
+    )
+
+    # The caller's unrelated, pending, uncommitted work. This is what must survive.
+    pending = make_media(external_id="1535", title="Death Note")
+    db_session.add(pending)
+    await db_session.flush()
+    pending_id = pending.id
+
+    with pytest.raises(service.ReviewExists):
+        await service.create_review(
+            db_session, user_id=auth_user.id, media_id=media.id, body="Second.", contains_spoilers=False
+        )
+
+    # The session is still usable at all...
+    await db_session.flush()
+    # ...and neither the caller's pending row nor the first review was rolled back with the
+    # failed INSERT.
+    assert await db_session.scalar(select(func.count()).select_from(Media).where(Media.id == pending_id)) == 1
+    assert await db_session.scalar(select(func.count()).select_from(Review).where(Review.media_id == media.id)) == 1

@@ -351,12 +351,22 @@ async def create_review(
     session: AsyncSession, *, user_id: uuid.UUID, media_id: uuid.UUID, body: str, contains_spoilers: bool
 ) -> Review:
     review = Review(user_id=user_id, media_id=media_id, body=body, contains_spoilers=contains_spoilers)
-    session.add(review)
     try:
         # Scoped to a SAVEPOINT so a duplicate does not unwind the caller's transaction — the
         # discipline 7.5a established after session.rollback() was found to discard a caller's
         # pending work.
+        #
+        # The `session.add` belongs INSIDE the savepoint, exactly as join_by_code/add_member do
+        # it. Adding first and only wrapping the flush does NOT work: the pending Review is then
+        # part of the snapshot the nested transaction was opened on, so rolling that savepoint
+        # back does not expunge it, and the session is left with a _rollback_exception — the
+        # caller's very next statement raises PendingRollbackError instead of proceeding.
+        # Measured: with the add outside, the follow-up query in
+        # test_a_duplicate_does_not_unwind_the_callers_pending_work raised
+        # "This Session's transaction has been rolled back due to a previous exception during
+        # flush", which is the precise failure the savepoint exists to prevent.
         async with session.begin_nested():
+            session.add(review)
             await session.flush()
     except IntegrityError as exc:
         raise ReviewExists from exc
