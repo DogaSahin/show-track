@@ -1,3 +1,5 @@
+import uuid
+
 from app.groups.models import GroupRole
 from app.library.models import UserMediaStatus
 from tests.factories import make_group, make_group_member, make_media, make_user, make_user_media
@@ -42,6 +44,20 @@ async def test_it_returns_one_entry_per_member_who_tracks_the_title(auth_client,
     )
     await db_session.flush()
 
+    # Empty the identity map so the route cannot resolve a username without touching the
+    # database. There is no relationship on UserMedia today, so this changes nothing for the
+    # explicit join — it is here so that a future rewrite to a lazy `UserMedia.user` fails HERE
+    # rather than in production: a many-to-one on the target's primary key takes SQLAlchemy's
+    # `load_on_pk_identity` shortcut and quietly passes while the row is still in the map.
+    # Verified by adding that relationship and switching the service to it: MissingGreenlet, 500.
+    # This test is its home because it is the one that names the attribution — it asserts both
+    # halves of `member` — and a guard parked in a test about ordering gets deleted by the next
+    # person who rewrites the ordering.
+    # ada must stay non-authenticated for it to hold: get_current_user re-SELECTs the bearer
+    # token's user mid-request and puts it back in the map, so an assertion about `fixture-user`
+    # would prove nothing here.
+    db_session.expunge_all()
+
     body = (await auth_client.get(f"/v1/groups/{group.id}/media/{media.id}/progress")).json()
 
     assert _names(body) == ["ada"], "a member who does not track it is omitted"
@@ -53,7 +69,17 @@ async def test_it_returns_one_entry_per_member_who_tracks_the_title(auth_client,
 async def test_progress_is_returned_raw_with_no_clamping(auth_client, auth_user, db_session):
     """Design doc §5.3: server-side clamping was rejected — it puts real logic on a hot path,
     destroys the ranking that makes "who's ahead" useful, and would have to extend to the feed to
-    be coherent, since "Alex completed X" already tells you X ends."""
+    be coherent, since "Alex completed X" already tells you X ends.
+
+    HONEST SCOPE: the no-clamping property this test is named for is currently UNFALSIFIABLE.
+    Media carries no episode-count column — `next_episode_*` is a pointer to the next airing, not
+    a total — so there is nothing server-side to clamp progress AGAINST, and no implementation of
+    `compare_progress` could clamp 24 down to anything even if it tried. Do not add a column to
+    make this assertable; the name records the decision, and the assertion earns its place today
+    on its ordered-list form instead, which is what kills `desc` flipped to `asc`. When an
+    episode-count column lands, this becomes a real assertion and should get a title whose count
+    is below 24.
+    """
     group, media = await _group_media(db_session, auth_user)
     ahead = make_user(username="ada", email="ada@example.com")
     db_session.add(ahead)
@@ -102,16 +128,6 @@ async def test_the_comparison_is_ranked_by_progress_descending(auth_client, auth
         ]
     )
     await db_session.flush()
-
-    # Empty the identity map so the route cannot resolve a username without touching the
-    # database. There is no relationship on UserMedia today, so this changes nothing for the
-    # explicit join — it is here so that a future rewrite to a lazy `UserMedia.user` fails HERE
-    # rather than in production: a many-to-one on the target's primary key takes SQLAlchemy's
-    # `load_on_pk_identity` shortcut and quietly passes while the row is still in the map.
-    # Verified by adding that relationship and switching the service to it: MissingGreenlet, 500.
-    # ada and zoe must stay non-authenticated for that to hold — get_current_user re-SELECTs the
-    # bearer token's user mid-request and puts it back in the map.
-    db_session.expunge_all()
 
     body = (await auth_client.get(f"/v1/groups/{group.id}/media/{media.id}/progress")).json()
 
@@ -194,3 +210,26 @@ async def test_a_member_who_leaves_disappears_from_the_comparison(auth_client, a
     await db_session.flush()
 
     assert (await auth_client.get(f"/v1/groups/{group.id}/media/{media.id}/progress")).json() == []
+
+
+async def test_an_untracked_title_is_an_empty_comparison_not_a_404(auth_client, auth_user, db_session):
+    """200 with [], for a media_id that matches no row at all.
+
+    Consistent with the sibling GET .../reviews, which answers the same way. The watchlist POST
+    404s on an unknown media_id for a reason that does not apply to a read: it INSERTS a
+    client-supplied foreign key and would otherwise surface a constraint violation as a 500.
+    A read has no such failure — "nobody in this group tracks that" and "that title does not
+    exist" are the same answer to the question being asked, and distinguishing them would hand a
+    caller an existence oracle over the whole media table.
+
+    Asserted because nothing else in the suite does: bolting `except MediaMissing -> 404` onto
+    this route for symmetry with the watchlist POST leaves every other test green while the client
+    starts getting 404s for a title nobody in the group happens to track.
+    """
+    group, _ = await _group_media(db_session, auth_user)
+    unknown = uuid.uuid4()
+
+    response = await auth_client.get(f"/v1/groups/{group.id}/media/{unknown}/progress")
+
+    assert response.status_code == 200
+    assert response.json() == []
