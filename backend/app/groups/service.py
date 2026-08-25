@@ -9,8 +9,8 @@ from app.config import get_settings
 from app.db import FOREIGN_KEY_VIOLATION, UNIQUE_VIOLATION
 from app.groups import invites
 from app.groups.models import Group, GroupMember, GroupRole, GroupWatchlist
-from app.groups.schemas import FeedActor, FeedItem, WatchlistItem
-from app.library.models import Activity, Review
+from app.groups.schemas import FeedActor, FeedItem, ProgressEntry, WatchlistItem
+from app.library.models import Activity, Review, UserMedia
 from app.library.schemas import ReviewRead
 from app.library.service import MediaMissing, to_review_read
 from app.media.models import Media
@@ -454,3 +454,40 @@ async def remove_watchlist_entry(session: AsyncSession, *, group_id: uuid.UUID, 
     await session.delete(entry)
     await session.flush()
     return True
+
+
+async def compare_progress(session: AsyncSession, *, group_id: uuid.UUID, media_id: uuid.UUID) -> list[ProgressEntry]:
+    """Who is ahead. No new table — this reads user_media.
+
+    Raw episode numbers, no clamping (design doc §5.3). Ordered by progress descending because
+    "who's ahead" is the question the endpoint answers; the username tiebreak keeps the list
+    stable when several members sit on the same episode, which is the ordinary case in a group
+    watching together.
+
+    Scoped by `UserMedia.user_id.in_(members)`, and that clause is the authorization boundary
+    rather than a filter: without it the endpoint reports every user on the instance who tracks
+    the title to anybody in any group. Pinned by
+    test_another_groups_tracker_is_never_in_this_groups_comparison.
+
+    `User` is JOINED explicitly, the same shape as `list_feed` and `list_group_reviews`. There is
+    no relationship on UserMedia to lazy-load today, and this is why one is not added: a
+    many-to-one on the target's PRIMARY KEY takes SQLAlchemy's `load_on_pk_identity` identity-map
+    shortcut, so it emits no statement when the row happens to be loaded and raises
+    MissingGreenlet from the cold session a real request always has.
+    """
+    members = select(GroupMember.user_id).where(GroupMember.group_id == group_id)
+    statement = (
+        select(UserMedia, User.id.label("member_id"), User.username)
+        .join(User, User.id == UserMedia.user_id)
+        .where(UserMedia.media_id == media_id, UserMedia.user_id.in_(members))
+        .order_by(UserMedia.progress.desc(), User.username.asc())
+    )
+    rows = (await session.execute(statement)).all()
+    return [
+        ProgressEntry(
+            member=FeedActor(id=row.member_id, username=row.username),
+            status=row.UserMedia.status,
+            progress=row.UserMedia.progress,
+        )
+        for row in rows
+    ]

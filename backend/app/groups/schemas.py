@@ -5,7 +5,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from app.groups.models import GroupRole
-from app.library.models import ActivityKind
+from app.library.models import ActivityKind, UserMediaStatus
 from app.media.schemas import MediaDetail
 
 
@@ -79,3 +79,18 @@ class WatchlistItem(BaseModel):
 class WatchlistPage(BaseModel):
     items: list[WatchlistItem]
     next_cursor: str | None
+
+
+class ProgressEntry(BaseModel):
+    """One member's position on one title. `member` NESTS FeedActor rather than carrying flat
+    `user_id`/`username`, so all three group-scoped reads — feed, reviews and this — attribute a
+    row the same way and the client needs one shape, not three.
+
+    Reuses FeedActor rather than minting a structurally identical third DTO: there is no import
+    cycle to dodge inside the groups domain, which is the only reason library.ReviewAuthor is a
+    separate class at all.
+    """
+
+    member: FeedActor
+    status: UserMediaStatus
+    progress: int

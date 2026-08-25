@@ -16,6 +16,7 @@ from app.groups.schemas import (
     GroupWithInvite,
     JoinGroupRequest,
     MemberRead,
+    ProgressEntry,
     ProposeTitleRequest,
     WatchlistItem,
     WatchlistPage,
@@ -218,3 +219,16 @@ async def remove_from_watchlist(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no such watchlist entry")
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/{group_id}/media/{media_id}/progress", response_model=list[ProgressEntry])
+async def compare_group_progress(
+    group_id: uuid.UUID, media_id: uuid.UUID, session: SessionDep, member: GroupMemberDep
+) -> list[ProgressEntry]:
+    """A plain list, not a cursor page: the result is bounded by group membership (S-J), the same
+    reasoning as group_reviews above.
+
+    `member` is unused in the body and that is the point: taking GroupMemberDep is what authorizes
+    this route, and 7.5a's walk asserts it is present on every path under /v1/groups/{group_id}.
+    """
+    return await service.compare_progress(session, group_id=group_id, media_id=media_id)
