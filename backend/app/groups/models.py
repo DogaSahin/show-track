@@ -44,8 +44,12 @@ class GroupMember(UUIDPrimaryKeyMixin, Base):
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     role: Mapped[GroupRole] = mapped_column(enum_column(GroupRole, "role"), nullable=False)
     # NOT an audit column: this is the tiebreak that decides who inherits ownership when the
-    # owner leaves (decision G-E). The transfer orders by (joined_at ASC, id ASC) so the outcome
-    # is deterministic even when two people join inside one transaction.
+    # owner leaves (decision G-E). The transfer orders by (joined_at ASC, id ASC); the id makes
+    # that ordering TOTAL, not correct. `now()` is transaction-start time in Postgres, so two
+    # people inserted inside ONE transaction share a joined_at and the winner falls through to a
+    # random uuid4 — arbitrary, not the earliest joiner. In production every join is its own
+    # request and its own transaction, so joined_at really does separate them; only tests hit
+    # the degenerate case, which is why they set joined_at explicitly.
     joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     __table_args__ = (UniqueConstraint("group_id", "user_id"),)

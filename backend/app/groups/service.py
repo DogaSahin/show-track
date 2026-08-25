@@ -131,3 +131,56 @@ async def rotate_invite_code(session: AsyncSession, *, group: Group, now: dateti
     group.invite_code_expires_at = _expiry(now)
     await session.flush()
     return group
+
+
+class NotAMember(Exception):
+    """The target is not in this group. Route turns it into the same 404 the dependency uses."""
+
+
+class NotPermitted(Exception):
+    """A member tried to remove somebody other than themselves."""
+
+
+async def remove_member(
+    session: AsyncSession, *, group_id: uuid.UUID, actor: GroupMember, target_user_id: uuid.UUID
+) -> None:
+    """Remove `target_user_id` from the group, applying G-E's two lifecycle rules.
+
+    BOTH rules live here rather than in the route, so the self-removal path and the
+    owner-removal path cannot drift apart — they are the same code.
+
+    Deleting the group cascades `group_members` by foreign key. In Phase 7.5b it will also
+    cascade `group_watchlist`, so an emptied group takes the shared list with it. That is
+    written down now rather than discovered then.
+    """
+    is_self = target_user_id == actor.user_id
+    if not is_self and actor.role != GroupRole.OWNER:
+        raise NotPermitted
+
+    target = await session.scalar(
+        select(GroupMember).where(GroupMember.group_id == group_id, GroupMember.user_id == target_user_id)
+    )
+    if target is None:
+        raise NotAMember
+
+    if target.role == GroupRole.OWNER:
+        successor = await session.scalar(
+            select(GroupMember)
+            .where(GroupMember.group_id == group_id, GroupMember.user_id != target_user_id)
+            # (joined_at, id): joined_at alone is not unique — two people joining inside one
+            # transaction share `now()` — so the id keeps the ordering TOTAL. It does not make
+            # the winner the earliest joiner in that case; ids are random uuid4s. In production
+            # each join is its own transaction, so joined_at genuinely separates them.
+            .order_by(GroupMember.joined_at.asc(), GroupMember.id.asc())
+            .limit(1)
+        )
+        if successor is None:
+            # Nobody left to own it. Delete the group; the membership cascades.
+            group = await session.get(Group, group_id)
+            await session.delete(group)
+            await session.flush()
+            return
+        successor.role = GroupRole.OWNER
+
+    await session.delete(target)
+    await session.flush()

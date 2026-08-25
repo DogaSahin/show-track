@@ -2,7 +2,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
@@ -75,3 +75,24 @@ async def rotate_invite(group_id: uuid.UUID, session: SessionDep, owner: GroupOw
     await service.rotate_invite_code(session, group=group, now=datetime.now(tz=UTC))
     await session.commit()
     return GroupWithInvite.model_validate(group, from_attributes=True)
+
+
+@router.delete("/{group_id}/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_member(
+    group_id: uuid.UUID, user_id: uuid.UUID, session: SessionDep, member: GroupMemberDep
+) -> Response:
+    """Any member may remove themselves; only the owner may remove anybody else.
+
+    Takes GroupMemberDep, not GroupOwnerDep — the role check is conditional on WHO is being
+    removed, so it belongs in the service beside the lifecycle rules rather than in a
+    dependency that cannot see the target.
+    """
+    try:
+        await service.remove_member(session, group_id=group_id, actor=member, target_user_id=user_id)
+    except service.NotPermitted as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="only the group owner may do that") from exc
+    except service.NotAMember as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no such group") from exc
+
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
