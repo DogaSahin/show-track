@@ -62,3 +62,20 @@ class FeedItem(BaseModel):
 class FeedPage(BaseModel):
     items: list[FeedItem]
     next_cursor: str | None
+
+
+class ProposeTitleRequest(BaseModel):
+    media_id: uuid.UUID
+
+
+class WatchlistItem(BaseModel):
+    id: uuid.UUID
+    media: MediaDetail
+    # Nullable per design doc §5.3: deleting your account leaves the entry standing.
+    proposed_by: uuid.UUID | None
+    created_at: datetime
+
+
+class WatchlistPage(BaseModel):
+    items: list[WatchlistItem]
+    next_cursor: str | None
