@@ -86,20 +86,20 @@ async def join_by_code(session: AsyncSession, *, code: str, user: User, now: dat
         return group, False
 
     try:
-        await add_member(session, group_id=group.id, user_id=user.id, role=GroupRole.MEMBER)
+        # A SAVEPOINT, not a bare insert: Postgres aborts the whole transaction on a constraint
+        # violation, so SOMETHING has to unwind before the next statement. `session.rollback()`
+        # would unwind the CALLER's transaction — this service leaves commit and rollback to the
+        # route everywhere else, and Task 6 creates a user and joins a group in one request, so a
+        # lost race there would silently discard the new user and still answer 200. begin_nested
+        # scopes the unwind to the failed insert, leaving the enclosing transaction and the
+        # already-loaded `group` intact.
+        async with session.begin_nested():
+            await add_member(session, group_id=group.id, user_id=user.id, role=GroupRole.MEMBER)
     except IntegrityError:
         # Two concurrent joins with the same code. The constraint is the arbiter; the loser
         # simply reports "already a member", which is the same answer it would have got a
         # millisecond earlier.
-        #
-        # The re-read is not decoration: Postgres aborts a transaction on a constraint
-        # violation, so the rollback is mandatory before any further statement — and rollback
-        # EXPIRES every instance in the session. Returning the pre-rollback `group` would make
-        # the route's `model_validate` touch an expired attribute, which in async code is a
-        # lazy refresh with no greenlet to run in (MissingGreenlet), turning this 200 into a
-        # 500 on exactly the race it exists to absorb.
-        await session.rollback()
-        return await resolve_invite_code(session, code, now=now), False
+        return group, False
     return group, True
 
 

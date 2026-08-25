@@ -5,8 +5,10 @@ import pytest
 from fastapi.routing import iter_route_contexts
 from sqlalchemy import select
 
+from app.groups import service
 from app.groups.dependencies import require_membership, require_ownership
 from app.groups.models import Group, GroupMember, GroupRole
+from app.users.models import User
 from main import app
 from tests.factories import make_group, make_group_member, make_user
 
@@ -179,6 +181,72 @@ async def test_a_lowercase_hyphenated_code_still_joins(auth_client, db_session):
     response = await auth_client.post("/v1/groups/join", json={"invite_code": typed})
 
     assert response.status_code == 200
+
+
+async def test_joining_by_code_never_mints_an_owner(auth_client, auth_user, db_session):
+    """The join path proper — a group the caller did NOT create, so `add_member` actually runs
+    instead of the already-a-member early return every other join test takes.
+
+    The role assertion is the spec invariant, not a detail: create_group's docstring says
+    ownership can only come from creating the group or from G-E's transfer, "or a leaked code
+    would hand over administrative control of the group rather than merely access to it".
+    Nothing else in the suite fails if MEMBER becomes OWNER here.
+    """
+    group = await _other_users_group(db_session)
+
+    response = await auth_client.post("/v1/groups/join", json={"invite_code": group.invite_code})
+
+    assert response.status_code == 200
+    member = await db_session.scalar(
+        select(GroupMember).where(GroupMember.group_id == group.id, GroupMember.user_id == auth_user.id)
+    )
+    assert member is not None
+    assert member.role == GroupRole.MEMBER
+
+
+async def test_a_code_that_normalises_to_nothing_matches_no_group(auth_client, db_session):
+    """normalise_code("---") — and ("") and ("   ") — returns the empty string. The lookup is an
+    EQUALITY on that value, which no stored 12-character code can equal.
+
+    A prefix or LIKE match would instead match EVERY group, hand `session.scalar` the first one,
+    and return it to a stranger together with its invite code in GroupWithInvite. That is the
+    whole reason the equality is a decision rather than a preference, and this is the only test
+    that fails if it is loosened.
+    """
+    await _other_users_group(db_session)
+
+    response = await auth_client.post("/v1/groups/join", json={"invite_code": "---"})
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "invalid invite code"
+
+
+async def test_a_lost_join_race_keeps_the_callers_transaction(auth_client, auth_user, db_session, monkeypatch):
+    """The concurrent-join branch: two people paste the same code, the unique constraint picks a
+    winner, and the loser is told "you are in" — which is true a millisecond later anyway.
+
+    `add_member` is patched to insert the row twice so the second insert raises a REAL
+    IntegrityError from Postgres, aborting the transaction exactly as the race would. The
+    assertion that matters is the last one: the stranger seeded before the request must still be
+    there. `session.rollback()` in this branch would unwind the caller's whole transaction and
+    take that row with it — the failure mode Task 6 would hit, where a user created earlier in
+    the same request vanishes and the endpoint still answers 200.
+    """
+    group = await _other_users_group(db_session)
+
+    async def _duplicate(session_, *, group_id, user_id, role):
+        session_.add(GroupMember(group_id=group_id, user_id=user_id, role=role))
+        await session_.flush()
+        session_.add(GroupMember(group_id=group_id, user_id=user_id, role=role))
+        await session_.flush()  # violates the (group_id, user_id) unique constraint
+
+    monkeypatch.setattr(service, "add_member", _duplicate)
+
+    response = await auth_client.post("/v1/groups/join", json={"invite_code": group.invite_code})
+
+    assert response.status_code == 200
+    assert response.json()["name"] == group.name
+    assert await db_session.scalar(select(User).where(User.username == "stranger")) is not None
 
 
 async def test_an_unknown_code_is_a_generic_400(auth_client):
