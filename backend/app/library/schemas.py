@@ -129,7 +129,11 @@ class ImportSummary(BaseModel):
 # 4000 characters is a review, not an essay. Capped here rather than in the database (S-N):
 # nothing writes a review except this endpoint, unlike UserMedia.score, whose CHECK exists
 # because the AniList importer bypasses the API schema entirely.
-ReviewBody = Annotated[str, Field(min_length=1, max_length=4000)]
+# strip_whitespace INSIDE the constraint, so min_length applies to the stripped value — the same
+# trap ImportRequest.username documents below. Without it `{"body": "   "}` is a 201, and that
+# blank row then occupies the (user_id, media_id) slot, so the user's next real review of the
+# title is a 409 they can only escape via PATCH.
+ReviewBody = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=4000)]
 
 
 class CreateReviewRequest(BaseModel):
@@ -167,9 +171,24 @@ class UpdateReviewRequest(BaseModel):
         return self
 
 
+class ReviewAuthor(BaseModel):
+    """Structurally identical to groups.schemas.FeedActor, and duplicated on purpose.
+
+    app/groups/routes.py already imports from this module, so importing FeedActor back the other
+    way would close an import cycle. Two two-field DTOs pointing in opposite directions is the
+    cheaper problem — but they are one concept, so a change to either should be made to both.
+    """
+
+    id: uuid.UUID
+    username: str
+
+
 class ReviewRead(BaseModel):
     id: uuid.UUID
-    user_id: uuid.UUID
+    # Nested author rather than a bare user_id, matching FeedItem.actor: both are group-scoped
+    # reads, and a client rendering "reviews from your group" should not have to cross-reference
+    # GET /v1/groups/{id}/members to show a name. author.id carries what user_id used to.
+    author: ReviewAuthor
     media_id: uuid.UUID
     body: str
     contains_spoilers: bool

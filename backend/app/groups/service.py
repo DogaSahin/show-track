@@ -10,6 +10,8 @@ from app.groups import invites
 from app.groups.models import Group, GroupMember, GroupRole
 from app.groups.schemas import FeedActor, FeedItem
 from app.library.models import Activity, Review
+from app.library.schemas import ReviewRead
+from app.library.service import to_review_read
 from app.media.models import Media
 from app.media.service import to_detail
 from app.pagination import Cursor, encode_cursor
@@ -286,13 +288,31 @@ async def list_feed(
     return items, next_cursor
 
 
-async def list_group_reviews(session: AsyncSession, *, group_id: uuid.UUID, media_id: uuid.UUID) -> list[Review]:
+async def list_group_reviews(session: AsyncSession, *, group_id: uuid.UUID, media_id: uuid.UUID) -> list[ReviewRead]:
     """Reviews of one title by this group's members. Bounded by membership, so the route returns
-    a plain list rather than a cursor page (S-J)."""
+    a plain list rather than a cursor page (S-J).
+
+    The author is JOINED, not lazy-loaded, and no test in this suite can prove that matters —
+    which is the reason it is written down here instead.
+
+    Measured with a `Review.user` relationship in place: `review.user` resolves SILENTLY from the
+    session's identity map when that User was already loaded in the same session, and raises
+    MissingGreenlet only when it was not. Every test seeds its users through the same session it
+    then reads from, so the lazy version passes the whole suite; a production request gets a fresh
+    session that never loaded those authors, so the same code is a guaranteed 500. A green suite
+    is not evidence here, in either direction.
+
+    That asymmetry is also why this is a join rather than a relationship plus a remembered
+    `selectinload`: the eagerness stays at the only call site instead of being an attribute a
+    future caller can touch from a session where it happens to be unloaded. Same shape as
+    `list_feed` above, which solves the identical problem for FeedActor.
+    """
     members = select(GroupMember.user_id).where(GroupMember.group_id == group_id)
     statement = (
-        select(Review)
+        select(Review, User)
+        .join(User, User.id == Review.user_id)
         .where(Review.media_id == media_id, Review.user_id.in_(members))
         .order_by(Review.created_at.asc(), Review.id.asc())
     )
-    return list(await session.scalars(statement))
+    rows = (await session.execute(statement)).all()
+    return [to_review_read(row.Review, row.User) for row in rows]

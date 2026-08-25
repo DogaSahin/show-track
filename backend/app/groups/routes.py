@@ -140,5 +140,4 @@ async def group_reviews(
     GroupMemberDep is what authorizes this route, and 7.5a's walk asserts it is present on every
     path under /v1/groups/{group_id}.
     """
-    reviews = await service.list_group_reviews(session, group_id=group_id, media_id=media_id)
-    return [ReviewRead.model_validate(r, from_attributes=True) for r in reviews]
+    return await service.list_group_reviews(session, group_id=group_id, media_id=media_id)

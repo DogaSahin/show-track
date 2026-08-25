@@ -199,7 +199,12 @@ reviews_router = APIRouter(prefix="/reviews", tags=["reviews"])
 _REVIEW_NOT_FOUND = "no such review"
 
 
-@reviews_router.post("", response_model=ReviewRead, status_code=status.HTTP_201_CREATED)
+@reviews_router.post(
+    "",
+    response_model=ReviewRead,
+    status_code=status.HTTP_201_CREATED,
+    responses={404: {"description": "no such title"}, 409: {"description": "you have already reviewed this title"}},
+)
 async def create_review(payload: CreateReviewRequest, session: SessionDep, current_user: CurrentUserDep) -> ReviewRead:
     try:
         review = await service.create_review(
@@ -213,8 +218,11 @@ async def create_review(payload: CreateReviewRequest, session: SessionDep, curre
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="you have already reviewed this title"
         ) from exc
+    except service.MediaMissing as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no such title") from exc
     await session.commit()
-    return ReviewRead.model_validate(review, from_attributes=True)
+    # current_user IS the author on every own-review route, so the nested author costs no query.
+    return service.to_review_read(review, current_user)
 
 
 # Ownership failures answer 404 rather than 403, for the same reason the library routes above do:
@@ -232,7 +240,8 @@ async def update_review(
 
     await service.update_review(session, review, payload.model_dump(exclude_unset=True))
     await session.commit()
-    return ReviewRead.model_validate(review, from_attributes=True)
+    # current_user IS the author on every own-review route, so the nested author costs no query.
+    return service.to_review_read(review, current_user)
 
 
 @reviews_router.delete(

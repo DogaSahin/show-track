@@ -1,3 +1,5 @@
+import uuid
+
 import pytest
 from sqlalchemy import func, select
 
@@ -229,9 +231,129 @@ async def test_a_duplicate_does_not_unwind_the_callers_pending_work(auth_user, d
             db_session, user_id=auth_user.id, media_id=media.id, body="Second.", contains_spoilers=False
         )
 
-    # The session is still usable at all...
-    await db_session.flush()
+    # The session is still usable at all. A real statement, NOT `flush()`: nothing is dirty,
+    # new or deleted at this point, so a flush short-circuits without touching the connection and
+    # would pass even on a poisoned transaction.
+    assert await db_session.scalar(select(1)) == 1
     # ...and neither the caller's pending row nor the first review was rolled back with the
     # failed INSERT.
     assert await db_session.scalar(select(func.count()).select_from(Media).where(Media.id == pending_id)) == 1
     assert await db_session.scalar(select(func.count()).select_from(Review).where(Review.media_id == media.id)) == 1
+
+
+async def test_reviewing_a_title_that_does_not_exist_is_a_404_not_a_409(auth_client, auth_user, db_session):
+    """`reviews.media_id` is an FK, so an unknown media_id raises IntegrityError from the same
+    flush a duplicate does. Collapsing both into ReviewExists tells the client it has already
+    written a review that does not exist — and the obvious recovery, PATCH it or read the group
+    list, then answers 404/empty. A dead end, and a 409 is not even the right shape: nothing
+    conflicts.
+
+    This is the first endpoint that takes a client-supplied internal media_id, which is why no
+    earlier route had to discriminate here.
+    """
+    response = await auth_client.post(
+        "/v1/reviews",
+        json={"media_id": str(uuid.uuid4()), "body": "Ghost.", "contains_spoilers": False},
+    )
+
+    assert response.status_code == 404, "an unknown media_id must not be reported as a duplicate"
+    assert response.json()["detail"] == "no such title"
+
+
+async def test_a_genuine_duplicate_is_still_a_409(auth_client, auth_user, db_session):
+    """The other branch of the same discrimination. Paired with the 404 test above so that
+    collapsing the two cases back together cannot leave both green."""
+    media = await _media(db_session)
+    body = {"media_id": str(media.id), "body": "First.", "contains_spoilers": False}
+    assert (await auth_client.post("/v1/reviews", json=body)).status_code == 201
+
+    second = await auth_client.post("/v1/reviews", json=body)
+
+    assert second.status_code == 409
+    assert second.json()["detail"] == "you have already reviewed this title"
+
+
+async def test_a_whitespace_only_body_is_rejected(auth_client, auth_user, db_session):
+    """min_length alone does not strip, so "   " is length 3 and passes. It would then occupy the
+    (user_id, media_id) slot, making the user's next real review of that title a 409 they can
+    only escape via PATCH — a blank review is worse than no review.
+    """
+    media = await _media(db_session)
+
+    response = await auth_client.post(
+        "/v1/reviews", json={"media_id": str(media.id), "body": "   ", "contains_spoilers": False}
+    )
+
+    assert response.status_code == 422
+    assert await db_session.scalar(select(func.count()).select_from(Review).where(Review.media_id == media.id)) == 0
+
+
+async def test_a_body_is_stored_stripped(auth_client, auth_user, db_session):
+    """The other half of strip_whitespace: it does not merely gate, it normalises what is stored,
+    so the value read back is not the value sent."""
+    media = await _media(db_session)
+
+    created = (
+        await auth_client.post(
+            "/v1/reviews", json={"media_id": str(media.id), "body": "  Superb.  ", "contains_spoilers": False}
+        )
+    ).json()
+
+    assert created["body"] == "Superb."
+
+
+async def test_the_group_read_attributes_each_review_to_its_own_author(auth_client, auth_user, db_session):
+    """TWO reviews by two different members, because a single-row test cannot tell "loaded the
+    right author" from "loaded the only author there was".
+
+    Note what this test does NOT cover: it cannot pin the join itself. Measured — swapping the
+    join for a lazy `Review.user` relationship keeps all 16 tests green, because the test seeds
+    ada and bob through the same session it reads from, so the lazy load resolves from the
+    identity map without IO. It raises MissingGreenlet only from a session that never loaded
+    them, which is every real request and no test. See list_group_reviews' docstring.
+    """
+    group = await _my_group(db_session, auth_user)
+    media = await _media(db_session)
+    ada = make_user(username="ada", email="ada@example.com")
+    bob = make_user(username="bob", email="bob@example.com")
+    db_session.add_all([ada, bob])
+    await db_session.flush()
+    db_session.add_all(
+        [
+            make_group_member(group.id, ada.id, role=GroupRole.MEMBER),
+            make_group_member(group.id, bob.id, role=GroupRole.MEMBER),
+        ]
+    )
+    db_session.add_all(
+        [
+            make_review(ada.id, media.id, body="Ada's take."),
+            make_review(bob.id, media.id, body="Bob's take."),
+        ]
+    )
+    await db_session.flush()
+
+    response = await auth_client.get(f"/v1/groups/{group.id}/media/{media.id}/reviews")
+
+    assert response.status_code == 200
+    # Keyed by body, so the assertion does not depend on row order — each name must land on the
+    # RIGHT review, not merely appear somewhere in the payload.
+    by_body = {r["body"]: r["author"] for r in response.json()}
+    assert by_body["Ada's take."]["username"] == "ada"
+    assert by_body["Bob's take."]["username"] == "bob"
+    assert by_body["Ada's take."]["id"] == str(ada.id)
+    assert by_body["Bob's take."]["id"] == str(bob.id)
+
+
+async def test_your_own_review_comes_back_with_you_as_the_author(auth_client, auth_user, db_session):
+    """The own-review routes build the author from `current_user` rather than re-querying, so
+    they are a separate path from the group read above and need their own assertion."""
+    media = await _media(db_session)
+
+    created = (
+        await auth_client.post(
+            "/v1/reviews", json={"media_id": str(media.id), "body": "Mine.", "contains_spoilers": False}
+        )
+    ).json()
+
+    assert created["author"] == {"id": str(auth_user.id), "username": auth_user.username}
+    assert "user_id" not in created, "author.id replaces it; a redundant wire field would drift"
