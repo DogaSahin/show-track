@@ -62,9 +62,14 @@ async def add_entry(session: AsyncSession, *, user_id: uuid.UUID, media_id: uuid
     always returns a row.
 
     Accepted imprecision: `created` is decided by the SELECT, so in a genuine race both callers
-    report 201 while one of them actually resolved the other's row. That is a cosmetically wrong
-    status code on a rare race with no data consequence. Deciding it correctly means
+    report 201 while one of them actually resolved the other's row. Deciding it correctly means
     RETURNING (xmax = 0), a system-column trick with edge cases this project cannot verify.
+
+    That race is no longer free of data consequence, only of harm. Phase 7.5b made this function
+    emit an ADDED activity on the DO UPDATE path as well, so both racers write one and the group
+    feed shows the title added twice by the same user. The `user_media` row itself stays single —
+    the unique constraint guarantees that — so the duplicate is a cosmetic feed artefact, not
+    divergent library state. Suppressing it would need the same xmax trick.
     """
     existing = await session.scalar(
         select(UserMedia).where(UserMedia.user_id == user_id, UserMedia.media_id == media_id)

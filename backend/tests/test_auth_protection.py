@@ -108,10 +108,13 @@ async def test_every_non_auth_route_requires_a_token(
     The second assertion is skipped for `{param}` routes because it genuinely does need a real
     id: `client.request(method, path)` against a literal `/v1/library/{id}` 404s on routing before
     auth is even checked, which would make the assertion pass or fail for reasons unrelated to
-    authentication. Path-param routes still get an equivalent HTTP-level check, just a
-    hand-written one per route (e.g. `test_deleting_requires_authentication` in
-    `test_library_routes.py`, `test_deleting_a_target_without_a_token_is_rejected` here) — those
-    exist precisely because this generic assertion cannot reach them.
+    authentication. SOME path-param routes additionally carry a hand-written HTTP-level check
+    (e.g. `test_deleting_requires_authentication` in `test_library_routes.py`,
+    `test_deleting_a_target_without_a_token_is_rejected` here), but that is opportunistic rather
+    than a rule — `PATCH` and `DELETE /v1/reviews/{review_id}`, for instance, have none. The
+    mount-level assertion above is what actually covers every path-param route, which is why it
+    must not be skipped for them; do not read the examples as a promise that each one has a
+    hand-written twin.
 
     Not covered by either: any route with no HTTP methods at all (e.g. a `Mount`) —
     `_protected_cases()` skips those before either check runs.
