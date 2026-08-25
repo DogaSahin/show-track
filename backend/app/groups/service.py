@@ -157,8 +157,24 @@ async def remove_member(
     if not is_self and actor.role != GroupRole.OWNER:
         raise NotPermitted
 
+    # SELECT ... FOR UPDATE on the GROUP row, taken before anything else is read: it makes the
+    # whole leave path serial per group. Without it, under READ COMMITTED, an owner and a member
+    # leaving at the same moment both succeed and the group survives with zero members and no
+    # owner — the exact state G-E exists to prevent, and permanently un-joinable once the invite
+    # code expires. (tx2 read the member's row as MEMBER before tx1's promotion committed, so it
+    # skipped the transfer branch and simply deleted the row tx1 had just made owner.) The group
+    # row is the natural lock: it is the one row every participant in the race touches, so no
+    # ordering between two locks exists to deadlock on.
+    group = await session.scalar(select(Group).where(Group.id == group_id).with_for_update())
+
     target = await session.scalar(
-        select(GroupMember).where(GroupMember.group_id == group_id, GroupMember.user_id == target_user_id)
+        select(GroupMember)
+        .where(GroupMember.group_id == group_id, GroupMember.user_id == target_user_id)
+        # populate_existing, or the lock above buys nothing on the self-removal path: the actor's
+        # own membership row is already in this session's identity map, loaded by
+        # require_membership BEFORE the lock was acquired, and the ORM hands back an identity-map
+        # hit with its stale `role` rather than the columns this statement just read.
+        .execution_options(populate_existing=True)
     )
     if target is None:
         raise NotAMember
@@ -176,7 +192,6 @@ async def remove_member(
         )
         if successor is None:
             # Nobody left to own it. Delete the group; the membership cascades.
-            group = await session.get(Group, group_id)
             await session.delete(group)
             await session.flush()
             return

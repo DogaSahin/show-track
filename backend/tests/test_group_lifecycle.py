@@ -1,3 +1,4 @@
+import uuid
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
@@ -7,19 +8,42 @@ from tests.factories import make_group, make_group_member, make_user
 
 
 async def _group_with(db_session, auth_user, *, my_role, others):
-    """A group containing the fixture user plus `others` = [(username, joined_offset_minutes)]."""
+    """A group containing the fixture user plus `others` = [(username, joined_offset_minutes)],
+    listed in ascending join order.
+
+    Two things are pinned here rather than left to the defaults, and both defend the same
+    assertion — that ownership goes to the LONGEST-STANDING member.
+
+    `joined_at`, because `server_default=func.now()` renders `transaction_timestamp()`, which is
+    frozen for the life of a transaction, and conftest runs each test inside one. Every row would
+    otherwise share a `joined_at` and the ordering would resolve on the `id` tiebreak instead.
+
+    `id`, in REVERSE `joined_at` order — the earliest joiner gets the LARGEST id. `id`'s
+    `uuid.uuid4` default is client-side, so an explicit value wins. This makes the two orderings
+    disagree on purpose: the real `(joined_at, id)` promotes the earliest joiner, while a
+    regression that dropped `joined_at` and ordered on the unique `id` alone promotes the NEWEST
+    and fails every time. With random uuid4s that regression passes on roughly half of runs.
+    """
     group = make_group(created_by=auth_user.id)
     db_session.add(group)
     await db_session.flush()
     base = datetime(2026, 1, 1, tzinfo=UTC)
-    db_session.add(make_group_member(group.id, auth_user.id, role=my_role, joined_at=base))
+    # Rank 0 is the fixture user (earliest); it takes the largest id, each later row a smaller one.
+    ids = [uuid.UUID(int=len(others) + 1 - rank) for rank in range(len(others) + 1)]
+    db_session.add(make_group_member(group.id, auth_user.id, id=ids[0], role=my_role, joined_at=base))
     made = []
-    for name, offset in others:
+    for rank, (name, offset) in enumerate(others, start=1):
         user = make_user(username=name, email=f"{name}@example.com")
         db_session.add(user)
         await db_session.flush()
         db_session.add(
-            make_group_member(group.id, user.id, role=GroupRole.MEMBER, joined_at=base + timedelta(minutes=offset))
+            make_group_member(
+                group.id,
+                user.id,
+                id=ids[rank],
+                role=GroupRole.MEMBER,
+                joined_at=base + timedelta(minutes=offset),
+            )
         )
         made.append(user)
     await db_session.flush()
