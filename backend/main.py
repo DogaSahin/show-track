@@ -7,6 +7,7 @@ from starlette.responses import PlainTextResponse, Response
 
 from app.db import dispose_engine
 from app.errors import register_exception_handlers
+from app.groups import routes as groups_routes
 from app.http import close_http_client
 from app.library import routes as library_routes
 from app.logging import setup_logging
@@ -28,6 +29,7 @@ DOMAIN_ROUTERS = (
     sync_routes.router,
     notifications_routes.router,
     recommendations_routes.router,
+    groups_routes.router,
 )
 
 setup_logging()
@@ -97,8 +99,8 @@ for router in DOMAIN_ROUTERS:
 
 app.include_router(users_routes.auth_router, prefix="/v1")
 
-# Mounted separately from DOMAIN_ROUTERS, so tests/test_health.py's "six domain routers with six
-# domain prefixes" invariant keeps meaning what it says — /debug is not a domain. Explicit
+# Mounted separately from DOMAIN_ROUTERS, so tests/test_health.py's "seven domain routers with
+# seven domain prefixes" invariant keeps meaning what it says — /debug is not a domain. Explicit
 # dependencies=, because this router does not inherit the mounting loop's auth above.
 app.include_router(sync_routes.debug_router, prefix="/v1", dependencies=[Depends(get_current_user)])
 

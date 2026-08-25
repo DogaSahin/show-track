@@ -32,11 +32,19 @@ class RegistrationError(Exception):
         super().__init__(detail)
 
 
-async def register_user(session: AsyncSession, *, username: str, email: str, password: str, invite_code: str) -> User:
-    if invite_code != get_settings().registration_code:
-        # Deliberately generic: never state whether the code was wrong or merely absent.
-        raise RegistrationError(400, "invalid invite code")
+async def create_account(session: AsyncSession, *, username: str, email: str, password: str) -> User:
+    """Hash, insert, and translate a duplicate into a RegistrationError.
 
+    Extracted from register_user so the group-invite path can create an account WITHOUT
+    re-checking a server code it was never presented with. Flushes rather than commits — the
+    caller owns the transaction boundary, which is what lets the register route compose the
+    account and the membership into one atomic unit.
+
+    The rollback below unwinds the CALLER's transaction, which is only safe because this is
+    the FIRST write on both register paths: nothing else is pending yet, and discarding the
+    failed insert is exactly the atomicity the route promises. Call it after a write you want
+    to keep and that write is gone.
+    """
     try:
         return await create_user(
             session, username=username, email=email, hashed_password=security.hash_password(password)
@@ -44,6 +52,14 @@ async def register_user(session: AsyncSession, *, username: str, email: str, pas
     except IntegrityError as exc:
         await session.rollback()
         raise RegistrationError(409, "username or email already registered") from exc
+
+
+async def register_user(session: AsyncSession, *, username: str, email: str, password: str, invite_code: str) -> User:
+    """The server-code path, unchanged in behaviour."""
+    if invite_code != get_settings().registration_code:
+        # Deliberately generic: never state whether the code was wrong or merely absent.
+        raise RegistrationError(400, "invalid invite code")
+    return await create_account(session, username=username, email=email, password=password)
 
 
 async def authenticate(session: AsyncSession, *, email: str, password: str) -> User | None:

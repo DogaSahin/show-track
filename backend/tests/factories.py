@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.groups.models import Group, GroupMember, GroupRole
 from app.library.models import UserMedia, UserMediaStatus
 from app.media.models import Episode, Media, MediaSource, MediaStatus, MediaType
 from app.notifications.models import (
@@ -81,6 +82,25 @@ def make_notification_task(user_id: uuid.UUID, media_id: uuid.UUID, **overrides:
         "airs_on": datetime(2026, 9, 25, tzinfo=UTC),
     }
     return NotificationTask(**{**defaults, **overrides})
+
+
+def make_group(**overrides: object) -> Group:
+    defaults: dict[str, object] = {
+        "name": "Household",
+        "invite_code": "ABCDEFGH2345",
+        # Far enough out that a test never trips the expiry unless it means to.
+        "invite_code_expires_at": datetime(2099, 1, 1, tzinfo=UTC),
+    }
+    return Group(**{**defaults, **overrides})
+
+
+def make_group_member(group_id: uuid.UUID, user_id: uuid.UUID, **overrides: object) -> GroupMember:
+    defaults: dict[str, object] = {
+        "group_id": group_id,
+        "user_id": user_id,
+        "role": GroupRole.MEMBER,
+    }
+    return GroupMember(**{**defaults, **overrides})
 
 
 async def make_parents(db_session: AsyncSession) -> tuple[User, Media]:

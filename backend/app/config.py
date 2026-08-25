@@ -12,7 +12,13 @@ class Settings(BaseSettings):
     # issued token forgeable by anyone who can read the source — a failure mode that,
     # unlike a wrong database URL, never announces itself.
     secret_key: str
-    registration_code: str
+    # Bounded for the same reason SECRET_KEY has no default: a required setting should fail loudly
+    # at startup rather than plausibly-but-wrongly. RegisterRequest.invite_code caps the field at
+    # 64, so a longer code here would brick the only bootstrap path with a 422 blaming the client's
+    # invite_code. The documented `openssl rand -hex 32` produces EXACTLY 64 characters — the
+    # recommended value sits on the boundary with zero slack, which is what makes this worth a
+    # constraint rather than a comment.
+    registration_code: str = Field(min_length=1, max_length=64)
     # Optional, unlike SECRET_KEY. Absent means the TMDB provider is never registered and
     # /v1/media/search returns AniList results only, reporting `not_configured` for TMDB in its
     # `sources` map. Required would mean CI and docker-compose both need a value or every
@@ -52,6 +58,11 @@ class Settings(BaseSettings):
     # The dispatcher is a single indexed query when the queue is empty, which is almost always,
     # and its latency sits directly on top of the threshold scan's 15-minute granularity.
     notification_dispatch_minutes: int = Field(default=1, ge=1)
+    # How long a group's invite code stays usable. Defaulted, never required — CLAUDE.md records
+    # that Phase 2 added two REQUIRED settings and broke backend-ci on every subsequent PR.
+    # 168 = seven days: a household joins within days, and since the code can create an account
+    # (decision G-B) one that outlives that window is risk with no compensating use.
+    group_invite_ttl_hours: int = Field(default=168, ge=1)
     # Upstream similar-to lists move on the scale of weeks, so this is generous rather than tight —
     # contrast sync_interval_hours, where airing times are time-critical.
     recommendations_seed_hours: int = Field(default=12, ge=1)
