@@ -53,3 +53,24 @@ class GroupMember(UUIDPrimaryKeyMixin, Base):
     joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     __table_args__ = (UniqueConstraint("group_id", "user_id"),)
+
+
+class GroupWatchlist(UUIDPrimaryKeyMixin, Base):
+    """Titles a group has proposed to watch together.
+
+    CASCADES when its group is deleted — which remove_member does when the last member leaves.
+    That consequence was written into remove_member's docstring in 7.5a specifically so it would
+    not be a surprise here: the shared list dies with the last person to walk out, and there is no
+    confirmation step.
+    """
+
+    __tablename__ = "group_watchlist"
+
+    group_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("groups.id", ondelete="CASCADE"), nullable=False)
+    media_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("media.id", ondelete="CASCADE"), nullable=False)
+    # Nullable + SET NULL per design doc §5.3: deleting your account must not erase the list the
+    # group built.
+    proposed_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (UniqueConstraint("group_id", "media_id"),)

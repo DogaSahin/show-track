@@ -5,8 +5,8 @@ from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.groups.models import Group, GroupMember, GroupRole
-from app.library.models import UserMedia, UserMediaStatus
+from app.groups.models import Group, GroupMember, GroupRole, GroupWatchlist
+from app.library.models import Activity, ActivityKind, Review, UserMedia, UserMediaStatus
 from app.media.models import Episode, Media, MediaSource, MediaStatus, MediaType
 from app.notifications.models import (
     NotificationPrefs,
@@ -101,6 +101,31 @@ def make_group_member(group_id: uuid.UUID, user_id: uuid.UUID, **overrides: obje
         "role": GroupRole.MEMBER,
     }
     return GroupMember(**{**defaults, **overrides})
+
+
+def make_activity(user_id: uuid.UUID, **overrides: object) -> Activity:
+    defaults: dict[str, object] = {
+        "user_id": user_id,
+        "media_id": None,
+        "kind": ActivityKind.ADDED,
+        "payload": {},
+    }
+    return Activity(**{**defaults, **overrides})
+
+
+def make_review(user_id: uuid.UUID, media_id: uuid.UUID, **overrides: object) -> Review:
+    defaults: dict[str, object] = {
+        "user_id": user_id,
+        "media_id": media_id,
+        "body": "Genuinely excellent.",
+        "contains_spoilers": False,
+    }
+    return Review(**{**defaults, **overrides})
+
+
+def make_watchlist_entry(group_id: uuid.UUID, media_id: uuid.UUID, **overrides: object) -> GroupWatchlist:
+    defaults: dict[str, object] = {"group_id": group_id, "media_id": media_id}
+    return GroupWatchlist(**{**defaults, **overrides})
 
 
 async def make_parents(db_session: AsyncSession) -> tuple[User, Media]:
