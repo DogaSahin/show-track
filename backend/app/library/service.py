@@ -406,6 +406,10 @@ async def create_review(
         if sqlstate == _UNIQUE_VIOLATION:
             raise ReviewExists from exc
         if sqlstate == _FOREIGN_KEY_VIOLATION:
+            # Reads the 23503 as a bad media_id, and reviews.user_id is ALSO an FK. Unreachable
+            # today because user_id comes from current_user, which is always a live row — but a
+            # future route taking a client-supplied user_id would inherit exactly the
+            # misclassification this branch exists to fix. Narrow it to the constraint name then.
             raise MediaMissing from exc
         # Deliberately re-raised rather than folded into either branch: an integrity error we did
         # not anticipate is not evidence for whichever answer happens to be listed last, and

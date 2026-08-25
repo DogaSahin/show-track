@@ -292,20 +292,20 @@ async def list_group_reviews(session: AsyncSession, *, group_id: uuid.UUID, medi
     """Reviews of one title by this group's members. Bounded by membership, so the route returns
     a plain list rather than a cursor page (S-J).
 
-    The author is JOINED, not lazy-loaded, and no test in this suite can prove that matters —
-    which is the reason it is written down here instead.
-
-    Measured with a `Review.user` relationship in place: `review.user` resolves SILENTLY from the
-    session's identity map when that User was already loaded in the same session, and raises
-    MissingGreenlet only when it was not. Every test seeds its users through the same session it
-    then reads from, so the lazy version passes the whole suite; a production request gets a fresh
-    session that never loaded those authors, so the same code is a guaranteed 500. A green suite
-    is not evidence here, in either direction.
+    The author is JOINED, not lazy-loaded, and that is load-bearing rather than an optimisation.
+    A lazy `Review.user` would be a many-to-one on the target's PRIMARY KEY, which takes
+    SQLAlchemy's `load_on_pk_identity` identity-map shortcut: it returns the User with no
+    statement emitted whenever that row is already in the session, and raises MissingGreenlet the
+    moment it is not. A real request's session is always the second case.
 
     That asymmetry is also why this is a join rather than a relationship plus a remembered
     `selectinload`: the eagerness stays at the only call site instead of being an attribute a
     future caller can touch from a session where it happens to be unloaded. Same shape as
     `list_feed` above, which solves the identical problem for FeedActor.
+
+    Pinned by test_the_group_read_attributes_each_review_to_its_own_author, which expunges the
+    identity map before the request so the shortcut cannot fire. It took a mutation to find that
+    the obvious version of that test proved nothing.
     """
     members = select(GroupMember.user_id).where(GroupMember.group_id == group_id)
     statement = (

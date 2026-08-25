@@ -306,11 +306,13 @@ async def test_the_group_read_attributes_each_review_to_its_own_author(auth_clie
     """TWO reviews by two different members, because a single-row test cannot tell "loaded the
     right author" from "loaded the only author there was".
 
-    Note what this test does NOT cover: it cannot pin the join itself. Measured — swapping the
-    join for a lazy `Review.user` relationship keeps all 16 tests green, because the test seeds
-    ada and bob through the same session it reads from, so the lazy load resolves from the
-    identity map without IO. It raises MissingGreenlet only from a session that never loaded
-    them, which is every real request and no test. See list_group_reviews' docstring.
+    The `expunge_all()` below is what makes this pin the JOIN and not merely the attribution.
+    Without it a lazy `Review.user` relationship passes: a many-to-one on the target's primary key
+    takes SQLAlchemy's `load_on_pk_identity` identity-map shortcut and never reaches the
+    connection, so seeding ada and bob through this same session hides the load entirely.
+    Emptying the map first makes the route's session as cold as a real request's, and the lazy
+    version then raises MissingGreenlet inside `list_group_reviews` — the production 500 itself,
+    not a proxy for it.
     """
     group = await _my_group(db_session, auth_user)
     media = await _media(db_session)
@@ -332,9 +334,16 @@ async def test_the_group_read_attributes_each_review_to_its_own_author(auth_clie
     )
     await db_session.flush()
 
+    # Empty the identity map so the route cannot resolve an author without touching the database.
+    # FRAGILE IN A NON-OBVIOUS WAY: this works only because ada and bob are NOT the authenticated
+    # user. get_current_user re-SELECTs the bearer token's user and puts it back in the map
+    # mid-request, so if a rewrite ever makes one of these authors the caller, that row silently
+    # stops proving anything and this test goes green over a lazy load.
+    db_session.expunge_all()
+
     response = await auth_client.get(f"/v1/groups/{group.id}/media/{media.id}/reviews")
 
-    assert response.status_code == 200
+    assert response.status_code == 200, "a lazy author load raises MissingGreenlet from a cold session"
     # Keyed by body, so the assertion does not depend on row order — each name must land on the
     # RIGHT review, not merely appear somewhere in the payload.
     by_body = {r["body"]: r["author"] for r in response.json()}
