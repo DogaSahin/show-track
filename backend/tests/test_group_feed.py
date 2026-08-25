@@ -42,6 +42,17 @@ async def test_the_feed_shows_activity_by_every_member(auth_client, auth_user, d
     )
     await db_session.flush()
 
+    # A cold session, the same pin test_reviews.py's
+    # test_the_group_read_attributes_each_review_to_its_own_author carries. `list_feed`'s explicit
+    # joins on User and Media are load-bearing: a lazy many-to-one on the target's PRIMARY KEY takes
+    # SQLAlchemy's `load_on_pk_identity` shortcut, resolves with zero IO while the row happens to be
+    # in the map, and raises MissingGreenlet — a production 500 — the moment it is not. Measured: a
+    # relationship-based list_feed passes every OTHER test in this file, because the seeding session
+    # is the route's. Drift protection, not a live bug.
+    # FRAGILE IN A NON-OBVIOUS WAY: works only because ada is NOT the authenticated user —
+    # get_current_user re-SELECTs the bearer token's user back into the map mid-request.
+    db_session.expunge_all()
+
     body = (await auth_client.get(f"/v1/groups/{group.id}/feed")).json()
 
     assert [i["actor"]["username"] for i in body["items"]] == ["ada", "fixture-user"]
@@ -101,6 +112,44 @@ async def test_a_member_who_joins_today_sees_older_activity(auth_client, auth_us
     body = (await auth_client.get(f"/v1/groups/{group.id}/feed")).json()
 
     assert len(body["items"]) == 1
+
+
+async def test_another_groups_activity_is_never_in_this_groups_feed(auth_client, auth_user, db_session):
+    """The membership subquery, pinned directly — mirroring
+    test_another_groups_tracker_is_never_in_this_groups_comparison in test_group_progress.py.
+
+    Every other scoping test in this file is structurally blind to the leak this one catches:
+    they either put everyone in the SAME group, or (the leaver test) delete the membership row so
+    the user then belongs to NO group. `Activity.user_id.in_(members)` with the
+    `GroupMember.group_id == group_id` clause deleted still excludes a user in no group at all,
+    so all of them stay green. A user who is a member of a DIFFERENT group is the one case that
+    separates "activity by members of this group" from "activity by anybody who is in some
+    group", and measured: without this test the whole suite passes with the scope removed, while
+    zed's activity is served into every group's feed on the instance.
+    """
+    group = await _group_with_me(db_session, auth_user)
+    zed = make_user(username="zed", email="zed@example.com")
+    db_session.add(zed)
+    await db_session.flush()
+    elsewhere = make_group(name="Elsewhere", invite_code="ZZZZZZZZ9876", created_by=zed.id)
+    db_session.add(elsewhere)
+    await db_session.flush()
+    db_session.add(make_group_member(elsewhere.id, zed.id, role=GroupRole.OWNER))
+    media = make_media()
+    db_session.add(media)
+    await db_session.flush()
+    base = datetime(2026, 1, 1, tzinfo=UTC)
+    db_session.add_all(
+        [
+            make_activity(zed.id, media_id=media.id, created_at=base + timedelta(minutes=1)),
+            make_activity(auth_user.id, media_id=media.id, created_at=base),
+        ]
+    )
+    await db_session.flush()
+
+    body = (await auth_client.get(f"/v1/groups/{group.id}/feed")).json()
+
+    assert [i["actor"]["username"] for i in body["items"]] == ["fixture-user"]
 
 
 async def test_a_member_who_leaves_disappears_from_the_feed(auth_client, auth_user, db_session):

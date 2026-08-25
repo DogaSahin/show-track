@@ -26,9 +26,10 @@ async def _media(db_session):
     return media
 
 
-async def test_writing_a_review(auth_client, auth_user, db_session):
+async def test_writing_a_review(auth_client, auth_user, db_session, commits):
     media = await _media(db_session)
 
+    marker = len(commits)
     response = await auth_client.post(
         "/v1/reviews",
         json={"media_id": str(media.id), "body": "Superb.", "contains_spoilers": False},
@@ -36,6 +37,9 @@ async def test_writing_a_review(auth_client, auth_user, db_session):
 
     assert response.status_code == 201
     assert response.json()["body"] == "Superb."
+    # Counted from a marker, not `assert commits` — the auth fixture and any earlier request in
+    # the same test commit too. See the `commits` fixture for why nothing else can see this.
+    assert len(commits) > marker, "POST /v1/reviews did not commit"
 
 
 async def test_a_second_review_of_the_same_title_is_a_409(auth_client, auth_user, db_session):
@@ -52,7 +56,7 @@ async def test_a_second_review_of_the_same_title_is_a_409(auth_client, auth_user
     assert second.status_code == 409
 
 
-async def test_patching_updates_in_place_and_returns_200_not_500(auth_client, auth_user, db_session):
+async def test_patching_updates_in_place_and_returns_200_not_500(auth_client, auth_user, db_session, commits):
     """PATCH edits the row rather than appending one — and the STATUS is what guards the
     `session.refresh` in `update_review`, not a timestamp comparison.
 
@@ -74,12 +78,16 @@ async def test_patching_updates_in_place_and_returns_200_not_500(auth_client, au
         )
     ).json()
 
+    marker = len(commits)
     response = await auth_client.patch(f"/v1/reviews/{created['id']}", json={"body": "Revised."})
     patched = response.json()
 
     assert response.status_code == 200, "a dropped session.refresh 500s here, after the commit"
     assert patched["id"] == created["id"], "PATCH must edit, not append"
     assert patched["body"] == "Revised."
+    # Counted from a marker, not `assert commits` — the auth fixture and any earlier request in
+    # the same test commit too. See the `commits` fixture for why nothing else can see this.
+    assert len(commits) > marker, "PATCH /v1/reviews/{id} did not commit"
 
 
 async def test_a_user_cannot_modify_another_users_review(auth_client, auth_user, db_session):
@@ -116,7 +124,7 @@ async def test_deleting_another_users_review_is_also_a_404(auth_client, auth_use
     assert await db_session.scalar(select(Review).where(Review.id == theirs.id)) is not None
 
 
-async def test_deleting_your_own_review_removes_it(auth_client, auth_user, db_session):
+async def test_deleting_your_own_review_removes_it(auth_client, auth_user, db_session, commits):
     media = await _media(db_session)
     created = (
         await auth_client.post(
@@ -124,10 +132,14 @@ async def test_deleting_your_own_review_removes_it(auth_client, auth_user, db_se
         )
     ).json()
 
+    marker = len(commits)
     response = await auth_client.delete(f"/v1/reviews/{created['id']}")
 
     assert response.status_code == 204
     assert await db_session.scalar(select(Review).where(Review.id == created["id"])) is None
+    # Counted from a marker, not `assert commits` — the auth fixture and any earlier request in
+    # the same test commit too. See the `commits` fixture for why nothing else can see this.
+    assert len(commits) > marker, "DELETE /v1/reviews/{id} did not commit"
 
 
 async def test_the_group_read_returns_reviews_by_members_only(auth_client, auth_user, db_session):
@@ -155,6 +167,38 @@ async def test_the_group_read_returns_reviews_by_members_only(auth_client, auth_
     assert isinstance(body, list), "bounded by membership, so a plain list (S-J)"
 
 
+async def test_another_groups_review_is_never_in_this_groups_read(auth_client, auth_user, db_session):
+    """The membership subquery, pinned directly — mirroring
+    test_another_groups_tracker_is_never_in_this_groups_comparison in test_group_progress.py.
+
+    test_the_group_read_returns_reviews_by_members_only above cannot see this: its "outsider"
+    belongs to NO group, and `Review.user_id.in_(members)` with the
+    `GroupMember.group_id == group_id` clause deleted still excludes them. Measured: the whole
+    suite stays green with that clause removed, while zed's review — written inside a group this
+    caller has no relationship with — is served into this group's read.
+    """
+    group = await _my_group(db_session, auth_user)
+    media = await _media(db_session)
+    zed = make_user(username="zed", email="zed@example.com")
+    db_session.add(zed)
+    await db_session.flush()
+    elsewhere = make_group(name="Elsewhere", invite_code="ZZZZZZZZ9876", created_by=zed.id)
+    db_session.add(elsewhere)
+    await db_session.flush()
+    db_session.add(make_group_member(elsewhere.id, zed.id, role=GroupRole.OWNER))
+    db_session.add_all(
+        [
+            make_review(zed.id, media.id, body="From another group."),
+            make_review(auth_user.id, media.id, body="From this group."),
+        ]
+    )
+    await db_session.flush()
+
+    body = (await auth_client.get(f"/v1/groups/{group.id}/media/{media.id}/reviews")).json()
+
+    assert [r["body"] for r in body] == ["From this group."]
+
+
 async def test_the_group_read_is_scoped_to_the_requested_title(auth_client, auth_user, db_session):
     """`media_id` is a filter, not decoration: without it the endpoint leaks every review a
     member ever wrote onto whichever title was asked for."""
@@ -174,6 +218,29 @@ async def test_the_group_read_is_scoped_to_the_requested_title(auth_client, auth
     body = (await auth_client.get(f"/v1/groups/{group.id}/media/{media.id}/reviews")).json()
 
     assert [r["body"] for r in body] == ["About this title."]
+
+
+async def test_an_unreviewed_title_is_an_empty_list_not_a_404(auth_client, auth_user, db_session):
+    """200 with [], for a media_id that matches no row at all.
+
+    test_group_progress.py's sibling test justifies ITS contract by pointing here — "Consistent
+    with the sibling GET .../reviews, which answers the same way" — while nothing here asserted
+    it. The watchlist POST 404s on an unknown media_id for a reason that does not apply to a
+    read: it INSERTS a client-supplied foreign key and would otherwise surface a constraint
+    violation as a 500. A read has no such failure, and "nobody in this group reviewed that" and
+    "that title does not exist" are the same answer to the question being asked.
+
+    Asserted because bolting `except MediaMissing -> 404` onto `group_reviews` for symmetry with
+    the watchlist POST leaves every other test green while clients start getting 404s for titles
+    nobody in the group happens to have reviewed.
+    """
+    group = await _my_group(db_session, auth_user)
+    unknown = uuid.uuid4()
+
+    response = await auth_client.get(f"/v1/groups/{group.id}/media/{unknown}/reviews")
+
+    assert response.status_code == 200
+    assert response.json() == []
 
 
 async def test_patching_a_field_to_null_is_a_422_not_a_500(auth_client, auth_user, db_session):

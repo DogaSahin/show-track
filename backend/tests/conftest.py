@@ -121,3 +121,32 @@ async def auth_user(auth_client: AsyncClient, db_session: AsyncSession) -> User:
     user = await db_session.scalar(select(User).where(User.email == "fixture@example.com"))
     assert user is not None, "auth_client did not register its fixture user"
     return user
+
+
+@pytest.fixture
+def commits(db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Records every `session.commit()` the route under test makes.
+
+    A route that forgets `await session.commit()` discards its write in production and NO
+    existing test can tell: `client` hands the route the SAME session the test asserts through,
+    so a flushed-but-uncommitted row is visible to every assertion in the file. Measured
+    project-wide — stripping all 20 `await session.commit()` calls from every routes.py leaves
+    663/672 green, and the 9 failures are incidental collateral from `get_or_create_media`'s
+    rollback, not commit assertions.
+
+    A spy rather than the structural fix (a request-scoped savepoint in the `client` fixture),
+    which was prototyped and breaks 10 tests: `get_or_create_media` calls `session.rollback()`,
+    which unwinds that savepoint. Reconciling the two is separate work.
+
+    Patched on the INSTANCE, not the class, so it dies with the fixture and cannot leak into a
+    test that did not ask for it.
+    """
+    calls: list[int] = []
+    real = db_session.commit
+
+    async def _spy() -> None:
+        calls.append(1)
+        await real()
+
+    monkeypatch.setattr(db_session, "commit", _spy)
+    return calls

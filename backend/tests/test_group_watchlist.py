@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import func, select
 
 from app.groups import service
-from app.groups.models import GroupRole, GroupWatchlist
+from app.groups.models import Group, GroupRole, GroupWatchlist
 from app.media.models import Media
 from app.pagination import encode_cursor
 from tests.factories import (
@@ -45,17 +45,21 @@ async def _count(db_session, entry_id):
     return await db_session.scalar(statement)
 
 
-async def test_proposing_a_title(auth_client, auth_user, db_session):
+async def test_proposing_a_title(auth_client, auth_user, db_session, commits):
     group = await _my_group(db_session, auth_user)
     media = make_media()
     db_session.add(media)
     await db_session.flush()
 
+    marker = len(commits)
     response = await auth_client.post(f"/v1/groups/{group.id}/watchlist", json={"media_id": str(media.id)})
 
     assert response.status_code == 200
     assert response.json()["proposed_by"] == str(auth_user.id)
     assert response.json()["media"]["id"] == str(media.id)
+    # Counted from a marker, not `assert commits` — the auth fixture and any earlier request in
+    # the same test commit too. See the `commits` fixture for why nothing else can see this.
+    assert len(commits) > marker, "POST /v1/groups/{id}/watchlist did not commit"
 
 
 async def test_proposing_the_same_title_twice_is_idempotent(auth_client, auth_user, db_session):
@@ -151,7 +155,7 @@ async def test_a_lost_race_returns_the_winner_and_spares_the_callers_pending_wor
     assert await _count(db_session, winner.id) == 1
 
 
-async def test_any_member_may_remove_any_entry(auth_client, auth_user, db_session):
+async def test_any_member_may_remove_any_entry(auth_client, auth_user, db_session, commits):
     """Decision S-L: it is a shared list, and §5.3's whole moderation model is removing members."""
     group = await _my_group(db_session, auth_user)
     proposer = make_user(username="ada", email="ada@example.com")
@@ -163,10 +167,14 @@ async def test_any_member_may_remove_any_entry(auth_client, auth_user, db_sessio
     db_session.add(entry)
     await db_session.flush()
 
+    marker = len(commits)
     response = await auth_client.delete(f"/v1/groups/{group.id}/watchlist/{entry.id}")
 
     assert response.status_code == 204
     assert await _count(db_session, entry.id) == 0
+    # Counted from a marker, not `assert commits` — the auth fixture and any earlier request in
+    # the same test commit too. See the `commits` fixture for why nothing else can see this.
+    assert len(commits) > marker, "DELETE /v1/groups/{id}/watchlist/{entry_id} did not commit"
 
 
 async def test_removing_an_entry_from_another_group_is_a_404(auth_client, auth_user, db_session):
@@ -223,6 +231,15 @@ async def test_both_read_paths_are_scoped_to_the_group_in_the_path(auth_client, 
     await db_session.flush()
 
     proposed = await auth_client.post(f"/v1/groups/{mine.id}/watchlist", json={"media_id": str(shared.id)})
+    # A cold session for the LIST path, the same pin the feed carries. `list_watchlist`'s explicit
+    # join on Media is load-bearing: a lazy many-to-one on the target's PRIMARY KEY takes
+    # SQLAlchemy's `load_on_pk_identity` shortcut and raises MissingGreenlet — a production 500 —
+    # the moment the row is not already in the map, which the POST above has just put it back into.
+    # Measured: a relationship-based list_watchlist passes every OTHER test in this file. Drift
+    # protection, not a live bug. It works only because the join loads `media` rows; get_current_user
+    # re-SELECTs the bearer token's USER back into the map mid-request, so a join on that row would
+    # silently stop proving anything.
+    db_session.expunge_all()
     listed = (await auth_client.get(f"/v1/groups/{mine.id}/watchlist")).json()
 
     assert proposed.status_code == 200
@@ -233,6 +250,40 @@ async def test_both_read_paths_are_scoped_to_the_group_in_the_path(auth_client, 
     assert [item["media"]["id"] for item in listed["items"]] == [str(shared.id)]
     assert listed["items"][0]["id"] == proposed.json()["id"]
     assert listed["items"][0]["proposed_by"] == str(auth_user.id)
+
+
+async def test_the_shared_watchlist_dies_with_the_group(auth_client, auth_user, db_session):
+    """The README's most prominent lifecycle claim, and its only destructive one: "The shared
+    watchlist dies with the group, without a confirmation step."
+
+    `remove_member` is 7.5a code that this phase silently made destructive — G-E deletes the group
+    outright when the last member walks out, and `group_watchlist.group_id` carries
+    ON DELETE CASCADE. Nothing in the suite deleted a group holding watchlist rows, so the claim
+    was documentation only.
+
+    ARCHITECTURE RULE 8. Asserted through a Core `select(func.count())`, never `session.get()`:
+    a DB-side cascade is not this session's own ORM write, so it does NOT evict the cascaded row
+    from the identity map. Measured for this project — `session.delete` + flush and an ORM-enabled
+    Core `delete()` both evict and are safe; `synchronize_session=False`, a raw connection DELETE,
+    and a DB-side cascade all leave a stale object that `session.get` hands straight back with no
+    query at all. The identity-map instrument is a guaranteed false green here.
+    """
+    group = await _my_group(db_session, auth_user)
+    media = make_media()
+    db_session.add(media)
+    await db_session.flush()
+    entry = make_watchlist_entry(group.id, media.id, proposed_by=auth_user.id)
+    db_session.add(entry)
+    await db_session.flush()
+    entry_id = entry.id
+
+    # The only member removes themselves, so there is no successor to promote.
+    response = await auth_client.delete(f"/v1/groups/{group.id}/members/{auth_user.id}")
+
+    assert response.status_code == 204
+    groups_left = select(func.count()).select_from(Group).where(Group.id == group.id)
+    assert await db_session.scalar(groups_left) == 0, "the last member leaving must delete the group (G-E)"
+    assert await _count(db_session, entry_id) == 0, "the cascade did not take the shared list with it"
 
 
 async def test_paging_the_watchlist_yields_every_row_exactly_once(auth_client, auth_user, db_session):
