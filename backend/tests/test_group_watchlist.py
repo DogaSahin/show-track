@@ -239,6 +239,12 @@ async def test_both_read_paths_are_scoped_to_the_group_in_the_path(auth_client, 
     # protection, not a live bug. It works only because the join loads `media` rows; get_current_user
     # re-SELECTs the bearer token's USER back into the map mid-request, so a join on that row would
     # silently stop proving anything.
+    # `mine.id`, `shared.id` and `auth_user.id` are all read AFTER this, from now-detached objects.
+    # That works only because they are UNEXPIRED — the column values are still in `__dict__`, kept
+    # there across the POST's commit by conftest's `expire_on_commit=False`. Expire them first
+    # (flip that flag, or call `expire_all()`) and the read is a DetachedInstanceError, not a lazy
+    # load: there is no session left to refresh from. Measured, so nobody assumes it degrades to
+    # MissingGreenlet.
     db_session.expunge_all()
     listed = (await auth_client.get(f"/v1/groups/{mine.id}/watchlist")).json()
 

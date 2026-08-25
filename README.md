@@ -851,6 +851,13 @@ the list with them, silently, in the same request that removes their membership.
 first and nothing can be recovered afterwards. A confirmation prompt belongs in the client rather
 than the API, but until one exists this is the sharp edge of the leave path.
 
+**Leaving does not take your name off the titles you proposed.** `group_watchlist.proposed_by` is
+`ON DELETE SET NULL` against `users`, not against `group_members`, so it is *account deletion* that
+clears it — leaving the group does not, and the remaining members keep seeing that id on every title
+that person added. What they see is the bare uuid: the list read serves `proposed_by` without
+joining `users`, so a leaver's username is not exposed alongside it, and a client that wants to
+render a name has to have learned it while they were still a member.
+
 ## Never commit credentials
 
 Two layers guard this, and they fail in different ways:

@@ -51,6 +51,11 @@ async def test_the_feed_shows_activity_by_every_member(auth_client, auth_user, d
     # is the route's. Drift protection, not a live bug.
     # FRAGILE IN A NON-OBVIOUS WAY: works only because ada is NOT the authenticated user —
     # get_current_user re-SELECTs the bearer token's user back into the map mid-request.
+    # `group.id` is read AFTER this, from a now-detached object. That works only because it is
+    # UNEXPIRED — the column values are still in `__dict__`, kept there across the route's commit
+    # by conftest's `expire_on_commit=False`. Expire them first (flip that flag, or call
+    # `expire_all()`) and the read is a DetachedInstanceError, not a lazy load: there is no
+    # session left to refresh from. Measured, so nobody assumes it degrades to MissingGreenlet.
     db_session.expunge_all()
 
     body = (await auth_client.get(f"/v1/groups/{group.id}/feed")).json()

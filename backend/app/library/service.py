@@ -90,8 +90,9 @@ async def add_entry(session: AsyncSession, *, user_id: uuid.UUID, media_id: uuid
     # progress, favorite and updated_at come from their server defaults, so the row is read back
     # rather than assembled here.
     entry = await session.get(UserMedia, entry_id)
-    # Only on creation: the early return above already covered the already-tracked case, so
-    # re-adding a title stays a no-op the feed never hears about.
+    # Reached only when the SELECT above missed, so re-adding a title you already track stays a
+    # no-op the feed never hears about. NOT the same as "exactly once per title": the DO UPDATE
+    # path lands here too, so two callers racing the SELECT both emit, per the docstring above.
     await _emit(session, user_id=user_id, media_id=media_id, kind=ActivityKind.ADDED)
     return entry, True
 
