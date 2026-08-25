@@ -99,16 +99,31 @@ class Activity(UUIDPrimaryKeyMixin, Base):
     # titles, not one. The task breakdown specified this column without nullability because it
     # assumed one row per title. A sentinel media row or a second table would both be worse than
     # a nullable column that exactly one kind uses.
-    media_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("media.id", ondelete="CASCADE"), nullable=True)
+    #
+    # Explicitly indexed: it is not the leading column of ix_activity_user_id_created_at_id
+    # (that leads with user_id), so a DELETE FROM media would otherwise seq-scan this table —
+    # the one table in this phase designed to accumulate without bound.
+    media_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("media.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     kind: Mapped[ActivityKind] = mapped_column(enum_column(ActivityKind, "kind"), nullable=False)
     # The project's first JSONB column. Contents are a per-kind contract (decision S-M), enforced
-    # by the emitting code rather than by the schema — JSONB accepts anything.
+    # by the emitting code rather than by the schema — JSONB accepts anything. Not wrapped in
+    # `MutableDict.as_mutable(JSONB)`: an in-place mutation (`activity.payload["k"] = v`) will not
+    # mark the instance dirty and will not persist. Correct as designed — activity is an
+    # append-only log, never edited after the row is written — but it is the standard JSONB
+    # pitfall, so it's flagged here rather than left for a later task to discover by losing a write.
     payload: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     __table_args__ = (
         # Leads with user_id because the feed's WHERE is always the read-fanout membership
-        # subquery; the rest is the composite the feed cursor pages over.
+        # subquery. For a personal feed (WHERE user_id = ?) the rest is the composite the cursor
+        # pages over with one ordered index walk and no sort; for the group feed, whose WHERE is
+        # the multi-user membership subquery, a user_id-leading btree cannot produce one
+        # globally-ordered stream across N members, so Postgres scans per user and then sorts —
+        # the index is still what makes the membership predicate selective, it just doesn't give
+        # the group feed's ORDER BY for free the way it does the personal one.
         Index("ix_activity_user_id_created_at_id", "user_id", text("created_at DESC"), text("id DESC")),
     )
 

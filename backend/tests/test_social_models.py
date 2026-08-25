@@ -1,4 +1,5 @@
 import pytest
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from app.library.models import ActivityKind
@@ -70,3 +71,38 @@ async def test_deleting_the_proposer_leaves_the_entry_standing(db_session):
     await db_session.refresh(entry)
 
     assert entry.proposed_by is None
+
+
+async def test_activity_payload_column_is_genuinely_jsonb(db_session):
+    """A generic JSON column has no indexing or containment operators, and nothing downstream
+    would notice the regression until it mattered. `alembic check` diffs Python types against
+    reflected DDL and would catch a model-level regression, but not a hand-edited migration that
+    silently substitutes `sa.JSON` for `postgresql.JSONB` while the model still says JSONB — so
+    this asserts what actually landed in the catalog, not what the model claims."""
+    row = (
+        await db_session.execute(
+            text(
+                "SELECT data_type, udt_name FROM information_schema.columns "
+                "WHERE table_name = 'activity' AND column_name = 'payload'"
+            )
+        )
+    ).one()
+
+    assert row.data_type == "jsonb"
+    assert row.udt_name == "jsonb"
+
+
+async def test_activity_feed_index_is_descending_on_created_at_and_id(db_session):
+    """`ix_activity_user_id_created_at_id` is an expression index (DESC on two columns), and
+    Alembic's Postgres reflection skips expression indexes when diffing autogenerate — `alembic
+    check` is silent about this index entirely, so a future edit to its columns or direction
+    would pass the gate unnoticed. This reads the index definition straight out of the catalog,
+    the way the feed's cursor query depends on it actually being ordered."""
+    row = (
+        await db_session.execute(
+            text("SELECT indexdef FROM pg_indexes WHERE indexname = 'ix_activity_user_id_created_at_id'")
+        )
+    ).one()
+
+    assert "created_at DESC" in row.indexdef
+    assert "id DESC" in row.indexdef
