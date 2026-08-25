@@ -1,12 +1,21 @@
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 
 from app.groups import service
 from app.groups.models import GroupRole, GroupWatchlist
 from app.media.models import Media
-from tests.factories import make_group, make_group_member, make_media, make_user
+from app.pagination import encode_cursor
+from tests.factories import (
+    make_group,
+    make_group_member,
+    make_media,
+    make_user,
+    make_watchlist_entry,
+)
 
 
 async def _my_group(db_session, auth_user):
@@ -26,9 +35,11 @@ async def _count(db_session, entry_id):
     MEASURED here, so the next reader does not over-read the rule — the identity-map form
     discriminates too, because BOTH the ORM `session.delete` this service uses and an
     ORM-enabled Core `delete()` synchronize the map. It is right for a reason that is not the
-    reason it is written down, and it stops being right the moment the delete leaves the ORM
-    session (a DB-side cascade, a statement run on the connection). A count has no such
-    dependency and costs nothing.
+    reason it is written down, and it stops being right the moment the delete stops synchronizing
+    the map. `synchronize_session=False` on that same Core `delete()` is the trap in its next
+    disguise — measured: it leaves the object in the map, so `session.get` hands back a row the
+    table no longer holds, while this count correctly reads 0. A DB-side cascade and a statement
+    run on the raw connection do the same. A count has no such dependency and costs nothing.
     """
     statement = select(func.count()).select_from(GroupWatchlist).where(GroupWatchlist.id == entry_id)
     return await db_session.scalar(statement)
@@ -108,16 +119,36 @@ async def test_a_lost_race_returns_the_winner_and_spares_the_callers_pending_wor
     seen = {"lookups": 0}
     real_find = service._find_entry
 
-    async def blind_once(session, *, group_id, media_id):
+    async def blind_the_dedupe(session, *, group_id, media_id):
+        """Stand in for a row another transaction commits between the dedupe SELECT and the
+        flush: invisible to the first lookup, found by the second.
+
+        Keyed on the ORDINAL, and it has to be. Nothing else separates the two call sites — same
+        arguments, same session state, same rows in the table at both — so any predicate over
+        what they can observe blinds the recovery lookup too and turns the race into a re-raise.
+        The cost is that a change to HOW MANY times propose_title looks the pair up breaks this
+        patch rather than the behaviour under test, which is why the call count is asserted
+        first and an escaping IntegrityError is re-labelled below. Without that, dropping the
+        dedupe SELECT — a change with no effect on any answer this API gives — fails this test
+        with "the recovery lookup returned None", which points at the wrong thing entirely.
+        """
         seen["lookups"] += 1
         if seen["lookups"] == 1:
             return None
         return await real_find(session, group_id=group_id, media_id=media_id)
 
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(service, "_find_entry", blind_once)
-        entry = await service.propose_title(db_session, group_id=group.id, media_id=media.id, user_id=auth_user.id)
+        patch.setattr(service, "_find_entry", blind_the_dedupe)
+        try:
+            entry = await service.propose_title(db_session, group_id=group.id, media_id=media.id, user_id=auth_user.id)
+        except IntegrityError as exc:
+            raise AssertionError(
+                f"propose_title made {seen['lookups']} _find_entry call(s), not 2. This test "
+                "blinds the FIRST because that is the dedupe lookup; a change to the call count "
+                "breaks the patch, not the savepoint or the 23505 recovery under test."
+            ) from exc
 
+    assert seen["lookups"] == 2, "the blinded dedupe lookup, then the recovery lookup"
     assert entry.id == winner.id, "the loser of the race gets the winner's row, not an error"
     # The session is still usable at all. A real statement, NOT flush(): nothing is dirty at this
     # point, so a flush short-circuits without touching the connection and would pass even on a
@@ -166,6 +197,51 @@ async def test_removing_an_entry_from_another_group_is_a_404(auth_client, auth_u
     assert await _count(db_session, entry.id) == 1
 
 
+async def test_both_read_paths_are_scoped_to_the_group_in_the_path(auth_client, auth_user, db_session):
+    """GroupMemberDep proves membership of the group in the PATH and says nothing about which
+    group's ROWS come back. Two separate `WHERE group_id` clauses carry that, and neither was
+    pinned — the DELETE path got its own scoping test and the two read paths did not.
+
+    Drop it from `list_watchlist` and GET /v1/groups/{mine}/watchlist serves another group's
+    titles and another group's proposer ids to somebody with no relationship to it. Drop it from
+    `_find_entry` and proposing a title the other group already lists answers 200 carrying THEIR
+    entry id and THEIR proposer, while this group's list never gains the row — a silent no-op on
+    top of the leak.
+
+    The body assertions are load-bearing, not decoration: `media.id` and `proposed_by` are
+    otherwise unasserted anywhere in this file, so a `proposed_by=row.GroupWatchlist.id` mix-up
+    would serialise as a perfectly valid UUID and sail through.
+    """
+    mine = await _my_group(db_session, auth_user)
+    stranger = make_user(username="stranger", email="stranger@example.com")
+    db_session.add(stranger)
+    await db_session.flush()
+    theirs = make_group(created_by=stranger.id, invite_code="ZZZZZZZZ9999")
+    shared = make_media(external_id="20", title="Naruto")
+    only_theirs = make_media(external_id="21", title="Bleach")
+    db_session.add_all([theirs, shared, only_theirs])
+    await db_session.flush()
+    db_session.add_all(
+        [
+            make_watchlist_entry(theirs.id, shared.id, proposed_by=stranger.id),
+            make_watchlist_entry(theirs.id, only_theirs.id, proposed_by=stranger.id),
+        ]
+    )
+    await db_session.flush()
+
+    proposed = await auth_client.post(f"/v1/groups/{mine.id}/watchlist", json={"media_id": str(shared.id)})
+    listed = (await auth_client.get(f"/v1/groups/{mine.id}/watchlist")).json()
+
+    assert proposed.status_code == 200
+    assert proposed.json()["proposed_by"] == str(auth_user.id), "answered with the other group's entry"
+    # A NEW row for THIS group, not a 200 over the other group's.
+    mine_rows = select(func.count()).select_from(GroupWatchlist).where(GroupWatchlist.group_id == mine.id)
+    assert await db_session.scalar(mine_rows) == 1
+    assert [item["media"]["id"] for item in listed["items"]] == [str(shared.id)]
+    assert listed["items"][0]["id"] == proposed.json()["id"]
+    assert listed["items"][0]["proposed_by"] == str(auth_user.id)
+
+
 async def test_paging_the_watchlist_yields_every_row_exactly_once(auth_client, auth_user, db_session):
     """All five rows share a created_at — Postgres `now()` is transaction-start time and the test
     fixture runs the whole request sequence inside one transaction — so this is precisely the case
@@ -186,6 +262,23 @@ async def test_paging_the_watchlist_yields_every_row_exactly_once(auth_client, a
     ids = [i["id"] for i in first["items"] + second["items"] + third["items"]]
     assert len(ids) == 5 and len(set(ids)) == 5
     assert third["next_cursor"] is None
+
+
+async def test_a_feed_cursor_is_rejected_by_the_watchlist(auth_client, auth_user, db_session):
+    """The sort key rides INSIDE the cursor so that replaying one under a different sort is
+    detectable — and that guard is only as strong as the two keys being distinct. Both endpoints
+    order by `created_at`, so while the watchlist's key was spelled `"created_at"` a feed cursor
+    decoded cleanly here and repositioned the caller in a window that means nothing. Nothing
+    leaked (a cursor is unsigned and opaque by design, and both endpoints are gated on the same
+    group), but the guard read stronger than it was.
+    """
+    group = await _my_group(db_session, auth_user)
+    borrowed = encode_cursor(service.FEED_SORT_KEY, datetime.now(tz=UTC), uuid.uuid4())
+
+    response = await auth_client.get(f"/v1/groups/{group.id}/watchlist?cursor={borrowed}")
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "invalid cursor"
 
 
 async def test_an_unusable_cursor_is_a_400(auth_client, auth_user, db_session):

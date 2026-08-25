@@ -319,7 +319,13 @@ async def list_group_reviews(session: AsyncSession, *, group_id: uuid.UUID, medi
     return [to_review_read(row.Review, row.User) for row in rows]
 
 
-WATCHLIST_SORT_KEY = "created_at"
+# Deliberately NOT "created_at", which is what FEED_SORT_KEY is. decode_cursor's sort guard
+# compares this string, so two endpoints sharing one value means a feed cursor decodes cleanly
+# against the watchlist and repositions the caller in a window that means nothing. Harmless
+# today — both endpoints are gated on the same group, and a cursor is unsigned and opaque by
+# design — but the guard reads stronger than it is. Renaming ONE side resolves the collision;
+# Task 3's contract stays untouched.
+WATCHLIST_SORT_KEY = "watchlist_created_at"
 
 
 async def _find_entry(session: AsyncSession, *, group_id: uuid.UUID, media_id: uuid.UUID) -> GroupWatchlist | None:
