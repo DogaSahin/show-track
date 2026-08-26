@@ -73,7 +73,7 @@ fun MediaCard(
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(space = 8.dp)) {
                     status?.let { StatusBadge(status = it) }
-                    ScoreChip(score = score)
+                    score?.let { ScoreChip(score = it) }
                 }
             }
         }

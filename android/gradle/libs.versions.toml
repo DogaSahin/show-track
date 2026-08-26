@@ -71,6 +71,12 @@ kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-
 # --- Images ---
 # Compose-native image loading. coil-network-okhttp rather than coil-network-ktor3: this project
 # already brings OkHttp in for Retrofit (Task 4), so the network engine is shared, not duplicated.
+# VERSION SKEW, recorded deliberately: coil-network-okhttp 3.2.0 pulls OkHttp 4.12.0, currently
+# the only OkHttp resolved in the app. Task 4 adds okhttp (see the `okhttp` version above) at
+# 5.1.0; Gradle then unifies the whole build onto 5.1.0 and Coil's networking, compiled against
+# 4.12.0, runs on it. Expected to be binary-compatible (4.x -> 5.x OkHttp is meant to be a source-
+# and binary-compatible upgrade), but unverified here — smoke-test image loading once Task 4 lands
+# OkHttp 5.1.0, rather than assuming the unification is silent.
 coil-compose = { group = "io.coil-kt.coil3", name = "coil-compose", version.ref = "coil" }
 coil-network-okhttp = { group = "io.coil-kt.coil3", name = "coil-network-okhttp", version.ref = "coil" }
 
