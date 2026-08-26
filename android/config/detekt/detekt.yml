@@ -1,0 +1,13 @@
+# Overrides on top of detekt's defaults (buildUponDefaultConfig = true). Kept deliberately small:
+# every entry here is a rule that is wrong for this codebase, not a rule we found inconvenient.
+naming:
+  FunctionNaming:
+    # @Composable functions are PascalCase by Compose convention, which detekt's default
+    # lowerCamelCase pattern rejects.
+    ignoreAnnotated: ['Composable']
+
+style:
+  MagicNumber:
+    # Named top-level constants (theme colours, dimensions) are the fix MagicNumber asks for;
+    # flagging the constant's own literal has nowhere left to go.
+    ignorePropertyDeclaration: true

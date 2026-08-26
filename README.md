@@ -52,6 +52,7 @@ A monorepo with two independently-pipelined projects.
 show-track/
 ├── backend/     FastAPI · SQLAlchemy 2.0 (async) · Alembic · PostgreSQL · httpx
 ├── android/     Kotlin · Jetpack Compose · Hilt · Retrofit · Room
+│   └── build-logic/  convention plugins, and the module rules they enforce
 ├── .github/     backend-ci · android-ci · gitleaks
 └── .githooks/   commit-msg · pre-commit
 ```
@@ -65,11 +66,24 @@ with a version-skew problem.
 `groups`. All routes mount under `/v1`; `/health` stays unversioned, because it is an infrastructure
 probe rather than client contract.
 
-**Android module pattern.** Feature-first and multi-module: `:core:*` plus one `:feature:*` per
-screen. Feature modules never depend on each other, and never on `:core:network` or `:core:database`
-— all data access goes through `:core:data`, which is the only module that knows Retrofit and Room
-exist. That is what keeps "Room is a cache, never the source of truth" structural rather than a
-convention that erodes.
+**Android module pattern.** Feature-first and multi-module: `:app`, six `:core:*` (`model`,
+`designsystem`, `navigation`, `network`, `database`, `data`) and one `:feature:*` per screen
+(`auth`, `library`, `detail`, `discover`, `favorites`, `profile`, `search`, `groups`, `feed`).
+Feature modules never depend on each other, and never on `:core:network` or `:core:database` — all
+data access goes through `:core:data`, which is the only module that knows Retrofit and Room exist.
+That is what keeps "Room is a cache, never the source of truth" structural rather than a convention
+that erodes.
+
+Both rules are **enforced by the build**, not by review: `showtrack.android.feature` inspects its own
+project's project-dependencies and fails configuration on a violation, naming the two modules and the
+reason. The rule itself is a pure function (`build-logic/.../ModuleRules.kt`) with unit tests, and a
+Gradle TestKit test drives a real build into each violation to prove the guard is actually reached —
+a guard nobody has watched fail is indistinguishable from one that is never invoked.
+
+Shared build configuration lives in the `build-logic` **included build** rather than `buildSrc`,
+which would invalidate every build script on any change to it. It publishes four plugin ids:
+`showtrack.android.application`, `.library`, `.compose` and `.feature`. Test dependencies are
+declared there, once, instead of per module.
 
 ## Getting started
 
@@ -430,6 +444,10 @@ cd android
 ./gradlew build      # or just open the folder in Android Studio
 ```
 
+The Android SDK location comes from `local.properties` (`sdk.dir=...`) or from `ANDROID_HOME` /
+`ANDROID_SDK_ROOT`, which is what CI sets. The `build-logic` TestKit tests need it too, because they
+configure a real Android build in a temp directory.
+
 Local secrets — the TMDB API key, the ntfy server URL and credentials — go in `local.properties` or
 a gitignored config file. Never in a committed Gradle file.
 
@@ -462,8 +480,8 @@ protection is not enabled.
 **Android**, from `android/`:
 
 ```bash
-./gradlew ktlintCheck detekt     # not registered until the module split lands
-./gradlew testDebugUnitTest
+./gradlew ktlintCheck detekt
+./gradlew testDebugUnitTest       # also runs the build-logic convention-plugin tests
 ./gradlew assembleDebug
 ```
 
