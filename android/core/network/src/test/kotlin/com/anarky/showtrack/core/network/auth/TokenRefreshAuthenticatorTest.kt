@@ -18,8 +18,11 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.Timeout
 import retrofit2.HttpException
+import java.io.IOException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.time.Duration.Companion.seconds
@@ -41,6 +44,20 @@ class TokenRefreshAuthenticatorTest {
     private lateinit var component: TestNetworkComponent
     private lateinit var events: AuthEventBus
     private lateinit var api: ShowTrackApi
+
+    /**
+     * Every failure this class defends against is a DEADLOCK, and a deadlock's natural expression
+     * is a hang: a shared OkHttp dispatcher exhausts its five-per-host slots and no thread is left
+     * to run the refresh, so nothing times out because no call ever starts. This class runs first
+     * in the module, so without this rule an unfiltered `testDebugUnitTest` writes no result XML
+     * at all and CI burns to its job limit — which reads as infrastructure flakiness, the one
+     * failure people retry instead of investigate.
+     *
+     * 30s against a normal worst case of ~1s. JUnit runs each method on its own thread and fails
+     * it on expiry, so the stuck OkHttp threads are left behind but the run continues.
+     */
+    @get:Rule
+    val timeout: Timeout = Timeout.seconds(30)
 
     private val refreshRequests = AtomicInteger()
     private val libraryRequests = AtomicInteger()
@@ -115,6 +132,34 @@ class TokenRefreshAuthenticatorTest {
         assertEquals("the refresh must not be attempted again for the replayed request", 1, refreshRequests.get())
         // The original plus exactly one replay. A third would mean the retry bound is gone.
         assertEquals(2, libraryRequests.get())
+    }
+
+    /**
+     * The token read is a DISK read, and it happens on an OkHttp dispatcher thread. OkHttp's
+     * `AsyncCall.run` rethrows a `Throwable` from the chain after `onFailure`, and on Android an
+     * uncaught throwable on that executor kills the process — so a corrupt token file must log the
+     * user out, not take the app down. Move `tokens.tokens()` back outside the `try` and this is
+     * the test that notices.
+     */
+    @Test
+    fun `a token store that fails to read logs the user out rather than escaping`() {
+        buildApi()
+        server.dispatcher = backend()
+        // The interceptor's read succeeds and the request goes out authenticated; the
+        // authenticator's read — the one inside the try — is the one that fails.
+        store.failReadsAfter(1)
+
+        runBlocking {
+            events.events.test(timeout = 10.seconds) {
+                // HttpException, not IOException: the failure was handled and the ORIGINAL 401 is
+                // what surfaces. An IOException here would mean the throwable escaped.
+                val failure = assertThrows(HttpException::class.java) { runBlocking { api.library(null, 20) } }
+                assertEquals(401, failure.code())
+                assertEquals(AuthEvent.LoggedOut, awaitItem())
+            }
+        }
+
+        assertEquals("an unreadable store has nothing to refresh with", 0, refreshRequests.get())
     }
 
     /**
@@ -246,7 +291,27 @@ private class FakeTokenStore(
     @Volatile
     private var pair: TokenPair? = initial
 
-    override suspend fun tokens(): TokenPair? = pair
+    @Volatile
+    private var readsBeforeFailure: Int = Int.MAX_VALUE
+    private val reads = AtomicInteger()
+
+    /**
+     * Reads succeed [count] times and throw after that.
+     *
+     * Counted rather than a simple on/off switch so a failure can be aimed at the AUTHENTICATOR's
+     * read specifically. [AuthInterceptor] reads first, on its own thread and outside any
+     * try/catch of ours; failing that read would test a different path and never reach the one
+     * under test.
+     */
+    fun failReadsAfter(count: Int) {
+        readsBeforeFailure = count
+    }
+
+    override suspend fun tokens(): TokenPair? {
+        // IOException because that is what an unreadable DataStore file raises.
+        if (reads.incrementAndGet() > readsBeforeFailure) throw IOException("token store unreadable")
+        return pair
+    }
 
     override suspend fun save(
         access: String,

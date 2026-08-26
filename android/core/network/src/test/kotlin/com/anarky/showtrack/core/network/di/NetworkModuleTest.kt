@@ -171,6 +171,40 @@ class NetworkModuleTest {
         )
     }
 
+    /**
+     * The other half of the same guard, and the half that was defended by a comment.
+     *
+     * The interceptor declining to attach a token off-host is not enough on its own: the request
+     * still goes out, still 401s, and the AUTHENTICATOR then sees `stale == null`, reads a
+     * perfectly good stored token, concludes "someone else already refreshed" and attaches it to
+     * the replay. The credential the interceptor withheld would leave on the retry instead. So the
+     * authenticator needs its own host check, and this is what proves it is there.
+     */
+    @Test
+    fun `a 401 from a host that is not ours is never retried with our token`() {
+        // Two responses queued although only one should be used. A regression retries, and must be
+        // caught by the assertion below rather than by hanging on an empty queue.
+        repeat(2) { server.enqueue(MockResponse.Builder().code(401).build()) }
+        val foreign =
+            server
+                .url("/v1/library")
+                .newBuilder()
+                .host("127.0.0.1")
+                .build()
+
+        component
+            .authenticatedClient()
+            .newCall(Request.Builder().url(foreign).build())
+            .execute()
+            .close()
+
+        assertEquals("a foreign 401 must not be retried at all", 1, server.requestCount)
+        assertNull(
+            "the access token must not be attached on the retry either",
+            server.takeRequest().headers["Authorization"],
+        )
+    }
+
     private object StoredTokens : TokenStore {
         val pair = TokenPair(access = "access-1", refresh = "refresh-1")
 

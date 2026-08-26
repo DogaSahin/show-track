@@ -19,7 +19,7 @@ import javax.inject.Singleton
 class ApiHost
     @Inject
     constructor(
-        @param:BaseUrl baseUrl: String,
+        @BaseUrl baseUrl: String,
     ) {
         private val host = baseUrl.toHttpUrl().host
 
