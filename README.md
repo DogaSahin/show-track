@@ -74,6 +74,16 @@ data access goes through `:core:data`, which is the only module that knows Retro
 That is what keeps "Room is a cache, never the source of truth" structural rather than a convention
 that erodes.
 
+`:core:network` owns the HTTP stack: Retrofit over OkHttp with kotlinx.serialization, DTOs that match
+the wire and are mapped to domain models further out, and the token lifecycle. Two clients share one
+connection pool but not a dispatcher — the token endpoints are served by a client carrying neither the
+auth interceptor nor the authenticator, because a refresh issued on the authenticated client would
+re-enter the authenticator and deadlock behind its own lock. That authenticator refreshes once per
+expiry no matter how many requests 401 together (the backend rotates refresh tokens, so parallel
+refreshes would invalidate each other and log the user out mid-session) and gives up after one replay
+rather than retrying forever. Tokens live in DataStore under AES-GCM with a key from the Android
+Keystore; a terminal refresh failure clears them and emits `AuthEvent.LoggedOut`.
+
 Both rules are **enforced by the build**, not by review. Both checks live in one of two "library"
 convention plugins — `showtrack.android.library` for Android modules, or the pure-Kotlin/JVM
 `showtrack.jvm.library` for a module like `:core:model` that must stay importable without pulling in
@@ -94,10 +104,19 @@ Gradle TestKit tests drive a real build into each violation to prove the guards 
 — a guard nobody has watched fail is indistinguishable from one that is never invoked.
 
 Shared build configuration lives in the `build-logic` **included build** rather than `buildSrc`,
-which would invalidate every build script on any change to it. It publishes five plugin ids:
-`showtrack.android.application`, `.library`, `.compose`, `.feature`, and `showtrack.jvm.library`.
-Test dependencies are declared there, once, instead of per module — `showtrack.jvm.library` ships its
-own JVM-appropriate junit/coroutines-test/turbine set for the same reason.
+which would invalidate every build script on any change to it. It publishes six plugin ids:
+`showtrack.android.application`, `.library`, `.compose`, `.feature`, `.hilt`, and
+`showtrack.jvm.library`. Test dependencies are declared there, once, instead of per module —
+`showtrack.jvm.library` ships its own JVM-appropriate junit/coroutines-test/turbine set for the same
+reason.
+
+`showtrack.android.hilt` carries the whole annotation-processing setup — KSP, the Hilt Gradle plugin,
+`hilt-android` and the Hilt compiler — for the modules that need a dependency graph. Two constraints
+on this toolchain are worth knowing before adding a seventh module to it. KSP needs
+**`android.disallowKotlinSourceSets=false`** in `android/gradle.properties`: AGP 9 owns Kotlin and
+otherwise rejects the `kotlin.sourceSets` DSL that KSP registers its generated sources through
+(there is no AGP built-in KSP to use instead). And the Hilt Gradle plugin must be **2.60 or newer** —
+2.57 looks up AGP's `BaseExtension`, which AGP 9 removed, and fails to apply at all.
 
 One sharp edge lives there too, and it is Android-only. AGP 9 provides Kotlin itself and refuses to
 run alongside the Kotlin Android Gradle plugin, and `ktlint-gradle` registers its source-set tasks
@@ -482,6 +501,18 @@ configure a real Android build in a temp directory.
 
 Local secrets — the TMDB API key, the ntfy server URL and credentials — go in `local.properties` or
 a gitignored config file. Never in a committed Gradle file.
+
+The app talks to the backend at `http://10.0.2.2:8000/` by default — the emulator's alias for the host
+loopback, which is where `docker compose up` in `backend/` puts it. Point it elsewhere with a Gradle
+property, either on the command line or in `android/gradle.properties`:
+
+```bash
+./gradlew assembleDebug -Pshowtrack.apiBaseUrl=http://192.168.1.10:8000/
+```
+
+Cleartext HTTP has been blocked by default since API 28, so `:core:network` ships a network-security
+config permitting it for `10.0.2.2`, `localhost` and `127.0.0.1` — in its **debug** source set only,
+where it cannot reach a release build.
 
 ### Git hooks
 
