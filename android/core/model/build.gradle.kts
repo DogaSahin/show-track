@@ -1,1 +1,1 @@
-plugins { alias(libs.plugins.kotlin.jvm) }
+plugins { id("showtrack.jvm.library") }
