@@ -74,27 +74,45 @@ data access goes through `:core:data`, which is the only module that knows Retro
 That is what keeps "Room is a cache, never the source of truth" structural rather than a convention
 that erodes.
 
-Both rules are **enforced by the build**, not by review. `showtrack.android.library` — applied by
-every module, so applying `library` + `compose` by hand cannot opt out — inspects its own project's
-project-dependencies and fails configuration on a violation, naming the two modules and the reason.
-A third check closes the same rule from the export side: a `:core:*` module may not put
+Both rules are **enforced by the build**, not by review. Every module applies one of two "library"
+convention plugins — `showtrack.android.library` for Android modules, or the pure-Kotlin/JVM
+`showtrack.jvm.library` for a module like `:core:model` that must stay importable without pulling in
+Retrofit or Room — and both carry the identical two checks, so applying `library`/`jvm.library` (plus
+`compose`, for the Android modules that use it) by hand cannot opt out. Each inspects its own
+project's project-dependencies and fails configuration on a violation, naming the two modules and the
+reason. A third check closes the same rule from the export side: a `:core:*` module may not put
 `:core:network` or `:core:database` on its `api` configuration, since one `api` edge would re-export
-Retrofit or Room to every feature while every declared dependency in the build stayed legal.
+Retrofit or Room to every feature while every declared dependency in the build stayed legal. (For
+`:core:model`, only the export-side check can ever fire — it can never be a `:feature:*` consumer, so
+the first check is unreachable there by construction, not disabled.)
 
 The rules themselves are pure functions (`build-logic/.../ModuleRules.kt`) with unit tests, and
 Gradle TestKit tests drive a real build into each violation to prove the guards are actually reached
 — a guard nobody has watched fail is indistinguishable from one that is never invoked.
 
 Shared build configuration lives in the `build-logic` **included build** rather than `buildSrc`,
-which would invalidate every build script on any change to it. It publishes four plugin ids:
-`showtrack.android.application`, `.library`, `.compose` and `.feature`. Test dependencies are
-declared there, once, instead of per module.
+which would invalidate every build script on any change to it. It publishes five plugin ids:
+`showtrack.android.application`, `.library`, `.compose`, `.feature`, and `showtrack.jvm.library`.
+Test dependencies are declared there, once, instead of per module — `showtrack.jvm.library` ships its
+own JVM-appropriate junit/coroutines-test/turbine set for the same reason.
 
-One sharp edge lives there too. AGP 9 provides Kotlin itself and refuses to run alongside the Kotlin
-Android Gradle plugin, and `ktlint-gradle` registers its source-set tasks only when *that* plugin is
-applied — so out of the box `ktlintCheck` lints build scripts and not one line of Kotlin. The
-convention plugins widen the tasks it does register to cover `src/**/*.kt`, and a TestKit test drives
-a malformed Kotlin file through a real build so the check cannot go quietly inert again.
+One sharp edge lives there too, and it is Android-only. AGP 9 provides Kotlin itself and refuses to
+run alongside the Kotlin Android Gradle plugin, and `ktlint-gradle` registers its source-set tasks
+only when *that* plugin is applied — so out of the box `ktlintCheck` lints build scripts and not one
+line of Kotlin. `showtrack.android.library`/`.application` widen the tasks it does register to cover
+`src/**/*.kt`, and a TestKit test drives a malformed Kotlin file through a real build so the check
+cannot go quietly inert again. `showtrack.jvm.library` needs none of this: a pure-Kotlin/JVM module
+applies the Kotlin Gradle Plugin directly, which is the exact plugin id `ktlint-gradle` listens for,
+so it registers its source-set tasks natively — carrying the widening there anyway would be a
+workaround copied into a module that was never broken. A second TestKit test proves that natively-
+registered task actually catches a malformed file, and a third proves the export-side architecture
+check is live for a `:core:*` module that applies `showtrack.jvm.library`, not just the Android one.
+
+A Kotlin JVM module also needs one more line that an Android module gets for free: Gradle names a
+plain `kotlin.jvm` module's test task `test`, not `testDebugUnitTest`, so the root
+`testDebugUnitTest` lifecycle task's name-matching would silently skip it without an explicit
+`testDebugUnitTest { dependsOn(test) }` alias — added in `showtrack.jvm.library`, and it is the
+reason `:core:model`'s tests run in the same gate command as every other module's.
 
 ## Getting started
 

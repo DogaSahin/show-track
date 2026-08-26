@@ -12,10 +12,19 @@ import kotlin.test.assertTrue
  * indistinguishable from one that is never invoked — comment out both `error(it)` calls in
  * showtrack.android.library and the four rule tests here must go red while all 13 unit tests stay
  * green. The fifth test guards a different silent failure: ktlint linting no Kotlin source at all.
+ * The last two cover showtrack.jvm.library's own copies of both guards: apiLeakOf is live for a
+ * pure-Kotlin/JVM module (it brings java-library's `api` configuration with it), and ktlint
+ * registers its source-set tasks natively there with no widening — these tests are what keeps that
+ * true instead of merely believed.
  */
 class DependencyRuleTestKitTest {
 
     private val modules = listOf(":feature:a", ":feature:b", ":core:network", ":core:data")
+
+    // A pure-Kotlin/JVM scaffold, kept separate from `scaffold` rather than folded into it: it
+    // needs no Android SDK (no `local.properties`, no `google()` requirement beyond resolving the
+    // version catalog's own coordinates), which is exactly the point of showtrack.jvm.library.
+    private val jvmModules = listOf(":core:model", ":core:network")
 
     private fun scaffold(projectDir: File) {
         val catalog = TestFixtures.versionCatalog.invariantSeparatorsPath
@@ -33,6 +42,23 @@ class DependencyRuleTestKitTest {
         )
         TestFixtures.writeLocalProperties(projectDir)
         modules.forEach { path -> module(projectDir, path).resolve("build.gradle.kts").writeText("") }
+    }
+
+    private fun scaffoldJvm(projectDir: File) {
+        val catalog = TestFixtures.versionCatalog.invariantSeparatorsPath
+        projectDir.resolve("settings.gradle.kts").writeText(
+            """
+            dependencyResolutionManagement {
+                repositories { google(); mavenCentral() }
+                versionCatalogs {
+                    create("libs") { from(files("$catalog")) }
+                }
+            }
+            rootProject.name = "jvmruletest"
+            include(${jvmModules.joinToString { "\"$it\"" }})
+            """.trimIndent(),
+        )
+        jvmModules.forEach { path -> module(projectDir, path).resolve("build.gradle.kts").writeText("") }
     }
 
     private fun module(projectDir: File, path: String): File =
@@ -118,5 +144,36 @@ class DependencyRuleTestKitTest {
             "package a\n\nfun  bad( x : Int ){\n        println(x)\n}",
         )
         assertTrue(buildAndFail(projectDir, ":feature:a:ktlintCheck").contains("Malformed.kt"))
+    }
+
+    @Test
+    fun `a jvm-library module re-exporting core network on api fails the build`(@TempDir projectDir: File) {
+        scaffoldJvm(projectDir)
+        module(projectDir, ":core:model").resolve("build.gradle.kts").writeText(
+            """
+            plugins { id("showtrack.jvm.library") }
+            dependencies { api(project(":core:network")) }
+            """.trimIndent(),
+        )
+        val output = buildAndFail(projectDir, ":core:model:help")
+        assertTrue(output.contains(":core:model"), "message must name the re-exporting module")
+        assertTrue(output.contains(":core:network"), "message must name the leaked module")
+    }
+
+    @Test
+    fun `ktlintCheck fails on a malformed Kotlin source file in a jvm-library module`(@TempDir projectDir: File) {
+        scaffoldJvm(projectDir)
+        val model = module(projectDir, ":core:model")
+        model.resolve("build.gradle.kts").writeText("""plugins { id("showtrack.jvm.library") }""")
+        // Unlike the Android case above, showtrack.jvm.library does not widen ktlint's task
+        // sources — org.jetbrains.kotlin.jvm is the exact plugin id ktlint-gradle listens for, so
+        // it registers ktlintMainSourceSetCheck natively. This is the regression test that keeps
+        // that claim honest: it would go red if ktlint-gradle's registration hook ever stopped
+        // firing, or if the plugin regressed back toward a bare kotlin.jvm alias with no ktlint
+        // applied at all.
+        model.resolve("src/main/kotlin").apply { mkdirs() }.resolve("Malformed.kt").writeText(
+            "package a\n\nfun  bad( x : Int ){\n        println(x)\n}",
+        )
+        assertTrue(buildAndFail(projectDir, ":core:model:ktlintCheck").contains("Malformed.kt"))
     }
 }

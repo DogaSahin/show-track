@@ -1,4 +1,5 @@
 import io.gitlab.arturbosch.detekt.Detekt
+import org.gradle.api.artifacts.VersionCatalogsExtension
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import showtrack.buildlogic.ModuleRules
 
@@ -12,6 +13,27 @@ plugins {
 // for modules like :core:model that must stay importable without pulling in Retrofit or Room.
 kotlin {
     jvmToolchain(21)
+}
+
+val libs = extensions.getByType<VersionCatalogsExtension>().named("libs")
+
+// The Kotlin JVM plugin's own test task is named `test`, not `testDebugUnitTest` — Gradle's
+// task-name matching means the root `testDebugUnitTest` lifecycle task (see the root
+// build.gradle.kts, which wires it to build-logic's own tests for the same reason) never reaches
+// this module without an explicit alias. Verified with `./gradlew testDebugUnitTest --dry-run`:
+// zero :core:model tasks before this line existed, exactly one (`:core:model:test`, run via this
+// alias) after.
+tasks.register("testDebugUnitTest") {
+    dependsOn(tasks.named("test"))
+}
+
+// showtrack.android.library ships junit/turbine/coroutines-test to every module it applies "so
+// none of them can quietly diverge from it". The Kotlin JVM plugin ships no test harness at all,
+// so the JVM-appropriate equivalents are declared here for the same reason.
+dependencies {
+    add("testImplementation", libs.findLibrary("junit").get())
+    add("testImplementation", libs.findLibrary("kotlinx-coroutines-test").get())
+    add("testImplementation", libs.findLibrary("turbine").get())
 }
 
 detekt {
@@ -34,10 +56,13 @@ tasks.withType<Detekt>().configureEach {
 // the malformed-file probe in task-2-report.md. Carrying the workaround here anyway would be
 // folklore: a fix copied into a module that was never broken.
 
-// Same two architecture rules as showtrack.android.library, for symmetry and for any future
-// :core:* module that applies this plugin instead. Currently a no-op for :core:model itself:
-// violationOf only ever fires for a :feature: consumer, and apiLeakOf only ever fires for a
-// producer re-exporting :core:network or :core:database — :core:model is neither.
+// Same two architecture rules as showtrack.android.library. Only one half is unreachable here:
+// violationOf can never fire for :core:model, because it only ever checks a :feature: consumer and
+// :core:model can never be one by construction. apiLeakOf is live protection, not a no-op — the
+// Kotlin JVM plugin brings java-library's `api` configuration along with it, so
+// `api(project(":core:network"))` in :core:model would re-export Retrofit to every feature that
+// depends on it exactly as it would from an Android module, and this block catches that the same
+// way it does in showtrack.android.library. Covered by DependencyRuleTestKitTest.
 val consumerPath = project.path
 
 configurations.configureEach {
