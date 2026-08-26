@@ -14,6 +14,11 @@ max_line_length = 120
 ij_kotlin_allow_trailing_comma = true
 ij_kotlin_allow_trailing_comma_on_call_site = true
 
+# @Composable functions are PascalCase by Compose convention. This is ktlint's half of the same
+# accommodation config/detekt/detekt.yml makes for detekt's FunctionNaming rule — the two linters
+# have to agree or one of them fails every Composable in the project.
+ktlint_function_naming_ignore_when_annotated_with = Composable
+
 [*.{xml,yml,yaml,toml}]
 indent_style = space
 indent_size = 2

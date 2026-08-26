@@ -60,8 +60,15 @@ val androidSdkLocation: Provider<String> =
 
 val versionCatalogLocation: String = rootDir.parentFile.resolve("gradle/libs.versions.toml").absolutePath
 
+// TestKit otherwise gets a throwaway Gradle home and re-downloads AGP and the ktlint runtime from
+// cold on every machine that has never run these tests — measured at 71 minutes for one ktlint test,
+// against 15s warm. Pointing it at the shared Gradle home reuses what the gate's own ktlint and
+// detekt run has already fetched, which on CI is the Lint step that runs immediately before this one.
+val sharedGradleUserHome: String = gradle.gradleUserHomeDir.absolutePath
+
 tasks.withType<Test>().configureEach {
     useJUnitPlatform()
     systemProperty("showtrack.versionCatalog", versionCatalogLocation)
     systemProperty("showtrack.androidSdk", androidSdkLocation.get())
+    systemProperty("showtrack.gradleUserHome", sharedGradleUserHome)
 }

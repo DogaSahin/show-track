@@ -40,4 +40,35 @@ class ModuleRulesTest {
     fun `app depending on a feature is allowed`() {
         assertNull(ModuleRules.violationOf(":app", ":feature:library"))
     }
+
+    @Test
+    fun `core data re-exporting core network on api is a violation naming both`() {
+        val message = ModuleRules.apiLeakOf(":core:data", "api", ":core:network")
+        assertTrue(message != null && message.contains(":core:data") && message.contains(":core:network"))
+    }
+
+    @Test
+    fun `core data re-exporting core database on a per-variant api configuration is a violation`() {
+        assertTrue(ModuleRules.apiLeakOf(":core:data", "debugApi", ":core:database") != null)
+    }
+
+    @Test
+    fun `core data depending on core network on implementation is allowed`() {
+        assertNull(ModuleRules.apiLeakOf(":core:data", "implementation", ":core:network"))
+    }
+
+    @Test
+    fun `core data re-exporting core model on api is allowed`() {
+        assertNull(ModuleRules.apiLeakOf(":core:data", "api", ":core:model"))
+    }
+
+    @Test
+    fun `app re-exporting core network on api is not this rule's business`() {
+        assertNull(ModuleRules.apiLeakOf(":app", "api", ":core:network"))
+    }
+
+    @Test
+    fun `core network re-exporting itself is allowed`() {
+        assertNull(ModuleRules.apiLeakOf(":core:network", "api", ":core:network"))
+    }
 }

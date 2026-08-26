@@ -74,16 +74,27 @@ data access goes through `:core:data`, which is the only module that knows Retro
 That is what keeps "Room is a cache, never the source of truth" structural rather than a convention
 that erodes.
 
-Both rules are **enforced by the build**, not by review: `showtrack.android.feature` inspects its own
-project's project-dependencies and fails configuration on a violation, naming the two modules and the
-reason. The rule itself is a pure function (`build-logic/.../ModuleRules.kt`) with unit tests, and a
-Gradle TestKit test drives a real build into each violation to prove the guard is actually reached —
-a guard nobody has watched fail is indistinguishable from one that is never invoked.
+Both rules are **enforced by the build**, not by review. `showtrack.android.library` — applied by
+every module, so applying `library` + `compose` by hand cannot opt out — inspects its own project's
+project-dependencies and fails configuration on a violation, naming the two modules and the reason.
+A third check closes the same rule from the export side: a `:core:*` module may not put
+`:core:network` or `:core:database` on its `api` configuration, since one `api` edge would re-export
+Retrofit or Room to every feature while every declared dependency in the build stayed legal.
+
+The rules themselves are pure functions (`build-logic/.../ModuleRules.kt`) with unit tests, and
+Gradle TestKit tests drive a real build into each violation to prove the guards are actually reached
+— a guard nobody has watched fail is indistinguishable from one that is never invoked.
 
 Shared build configuration lives in the `build-logic` **included build** rather than `buildSrc`,
 which would invalidate every build script on any change to it. It publishes four plugin ids:
 `showtrack.android.application`, `.library`, `.compose` and `.feature`. Test dependencies are
 declared there, once, instead of per module.
+
+One sharp edge lives there too. AGP 9 provides Kotlin itself and refuses to run alongside the Kotlin
+Android Gradle plugin, and `ktlint-gradle` registers its source-set tasks only when *that* plugin is
+applied — so out of the box `ktlintCheck` lints build scripts and not one line of Kotlin. The
+convention plugins widen the tasks it does register to cover `src/**/*.kt`, and a TestKit test drives
+a malformed Kotlin file through a real build so the check cannot go quietly inert again.
 
 ## Getting started
 

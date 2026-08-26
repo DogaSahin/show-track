@@ -14,6 +14,12 @@ internal object TestFixtures {
             "showtrack.versionCatalog system property is not set; see build-logic/build.gradle.kts"
         })
 
+    /** Shared with the outer build so TestKit reuses its downloads instead of starting cold. */
+    val gradleUserHome: File =
+        File(requireNotNull(System.getProperty("showtrack.gradleUserHome")) {
+            "showtrack.gradleUserHome system property is not set; see build-logic/build.gradle.kts"
+        })
+
     private val androidSdk: String? = System.getProperty("showtrack.androidSdk")?.takeIf { it.isNotBlank() }
 
     fun writeLocalProperties(projectDir: File) {

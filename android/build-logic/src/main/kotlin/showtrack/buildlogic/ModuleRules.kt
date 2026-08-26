@@ -22,4 +22,26 @@ object ModuleRules {
         }
         return null
     }
+
+    /**
+     * Rule 2 arriving from the other side. `violationOf` inspects what a feature *declares*, which
+     * says nothing about what reaches it transitively: one `api(project(":core:network"))` inside
+     * `:core:data` re-exports Retrofit to every feature that depends on it, and every declared
+     * dependency in the build stays legal. So the export side is checked at its source.
+     */
+    fun apiLeakOf(producerPath: String, configurationName: String, dependencyPath: String): String? {
+        if (!producerPath.startsWith(":core:")) return null
+        if (producerPath == dependencyPath) return null
+        if (!isApiConfiguration(configurationName)) return null
+        if (dependencyPath !in FORBIDDEN_CORE) return null
+        return "$producerPath re-exports $dependencyPath on the '$configurationName' configuration. " +
+            "Use implementation instead: an api dependency would put $dependencyPath on the compile " +
+            "classpath of every feature module, which is the rule about :core:data being the only " +
+            "data access point, defeated transitively."
+    }
+
+    // `api`, plus the per-variant and test-fixture forms AGP derives from it (debugApi, releaseApi,
+    // testFixturesApi) — all of them export to consumers, so all of them leak.
+    private fun isApiConfiguration(configurationName: String): Boolean =
+        configurationName == "api" || configurationName.endsWith("Api")
 }

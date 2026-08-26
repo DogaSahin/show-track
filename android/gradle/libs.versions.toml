@@ -92,6 +92,10 @@ junit-jupiter = { group = "org.junit.jupiter", name = "junit-jupiter", version.r
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 android-library      = { id = "com.android.library",                       version.ref = "agp" }
+# DO NOT APPLY on an Android module: AGP 9 provides Kotlin itself and hard-fails with
+# "The 'org.jetbrains.kotlin.android' plugin is no longer required for Kotlin support since
+# AGP 9.0". Use the showtrack.android.* convention plugins; `kotlin { compilerOptions { } }`
+# comes from AGP. Kept only so a pure-JVM or KMP module could reference it.
 kotlin-android       = { id = "org.jetbrains.kotlin.android",              version.ref = "kotlin" }
 kotlin-jvm           = { id = "org.jetbrains.kotlin.jvm",                  version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
