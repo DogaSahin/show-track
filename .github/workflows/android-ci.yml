@@ -46,8 +46,9 @@ jobs:
         run: ./gradlew testDebugUnitTest
 
       # assembleDebugAndroidTest alongside assembleDebug: :core:network has an instrumentation
-      # test for the Android Keystore, which has no off-device stand-in. Nothing here can RUN it
-      # (there is no emulator in this pipeline), but without compiling it the androidTest source
-      # set is never built by anything and would rot silently on the first refactor.
+      # test for the Android Keystore, and :core:database has one for its Room DAO — neither has
+      # an off-device stand-in. Nothing here can RUN them (there is no emulator in this pipeline),
+      # but without compiling them their androidTest source sets are never built by anything and
+      # would rot silently on the first refactor.
       - name: Assemble debug
         run: ./gradlew assembleDebug assembleDebugAndroidTest

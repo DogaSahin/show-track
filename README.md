@@ -88,6 +88,19 @@ forever. Neither the interceptor nor the authenticator will attach a credential 
 not the API's, so the authenticated client stays safe to share with something that fetches images
 from a third-party CDN.
 
+`:core:database` is the Room cache the module-dependency rule above exists to protect: one table,
+`library_entries`, holding exactly what the library list screen renders — never the full
+`:core:model.LibraryEntry` (which nests `Media`) and never a mirror of `LibraryEntryDto`. Room only
+ever answers a cold start's first frame; every successful fetch overwrites the table in full through
+`LibraryDao.replaceAll`, whose `@Transaction` matters for the same reason the network client's
+dispatcher split does — without it, a crash between clearing the table and repopulating it leaves the
+next cold start with nothing instead of yesterday's data. `score` stays a raw `String?` in the entity
+too, for the same `NUMERIC(3,1)`-precision reason as the DTO; `updated_at` stores as INTEGER epoch
+millis (`Converters` maps it to/from `java.time.Instant`) so `LibraryDao.observeAll`'s
+`ORDER BY updated_at DESC` is a numeric comparison rather than one over a formatted string. The module
+depends on nothing else in the monorepo, not even `:core:model` — mapping between this table and
+either the wire or the domain shape is entirely `:core:data`'s job.
+
 Both rules are **enforced by the build**, not by review. Both checks live in one of two "library"
 convention plugins — `showtrack.android.library` for Android modules, or the pure-Kotlin/JVM
 `showtrack.jvm.library` for a module like `:core:model` that must stay importable without pulling in
@@ -552,10 +565,13 @@ protection is not enabled.
 ./gradlew assembleDebug assembleDebugAndroidTest
 ```
 
-`assembleDebugAndroidTest` compiles but does not run the instrumentation tests. `:core:network`
-has one — the Android Keystore has no off-device implementation, so whether it accepts the app's
-key spec is only answerable on a device. Run it by hand against a connected device or emulator
-with `./gradlew :core:network:connectedDebugAndroidTest`; the gate compiles it so it cannot rot
+`assembleDebugAndroidTest` compiles the instrumentation tests but does not run them — there is no
+emulator in this environment or in CI. `:core:network` has one (the Android Keystore has no
+off-device implementation, so whether it accepts the app's key spec is only answerable on a device);
+`:core:database` has one too (Room DAO tests need a real SQLite, which the JVM unit-test classpath
+doesn't have). Run either by hand against a connected device or emulator —
+`./gradlew :core:network:connectedDebugAndroidTest` or
+`./gradlew :core:database:connectedDebugAndroidTest` — the gate compiles both so neither can rot
 between those runs.
 
 ## Contributing
