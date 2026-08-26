@@ -136,7 +136,15 @@ class DependencyRuleTestKitTest {
     fun `ktlintCheck fails on a malformed Kotlin source file`(@TempDir projectDir: File) {
         scaffold(projectDir)
         val a = module(projectDir, ":feature:a")
-        a.resolve("build.gradle.kts").writeText("""plugins { id("showtrack.android.feature") }""")
+        // Trailing newline matters here: without one this file itself trips
+        // standard:final-newline, giving ktlintKotlinScriptCheck and ktlintMainSourceSetCheck two
+        // independent failure reasons with no ordering between them — whichever task reports first
+        // wins, and only one of them is guaranteed to name Malformed.kt. showtrack.android.library's
+        // blanket widening happens to make both tasks see the same file set here, which is why this
+        // was "accidentally" safe rather than actually well-formed — fixed anyway, so this scaffold
+        // does not rely on that coincidence either (see the jvm-library test below for the case
+        // where the same mistake was NOT accidentally safe).
+        a.resolve("build.gradle.kts").writeText("""plugins { id("showtrack.android.feature") }""" + "\n")
         // ktlint-gradle registers no source-set task on AGP 9, so `ktlintCheck` silently linted
         // build scripts only. This is the regression test for that: a formatting error in a .kt
         // file has to fail the gate, not merely be reported by a task that never runs.
@@ -164,7 +172,17 @@ class DependencyRuleTestKitTest {
     fun `ktlintCheck fails on a malformed Kotlin source file in a jvm-library module`(@TempDir projectDir: File) {
         scaffoldJvm(projectDir)
         val model = module(projectDir, ":core:model")
-        model.resolve("build.gradle.kts").writeText("""plugins { id("showtrack.jvm.library") }""")
+        // Trailing newline matters, causally: without one, this file itself trips
+        // standard:final-newline, so ktlintKotlinScriptCheck and ktlintMainSourceSetCheck fail
+        // independently with no ordering between them. showtrack.jvm.library does NOT widen ktlint's
+        // task sources (see below), so — unlike the Android scaffold above — the two tasks see
+        // disjoint file sets: only ktlintMainSourceSetCheck's failure names Malformed.kt. Without
+        // --continue, whichever task reports first aborts the build, so when the script-check task
+        // won this race the assertion below failed even though the real check (main-source-set
+        // linting a .kt file) was working correctly the whole time. Confirmed causally: with the
+        // trailing newline, ktlintKotlinScriptCheck passes and ktlintMainSourceSetCheck FAILED is
+        // the only failure, which is what makes the assertion deterministic rather than lucky.
+        model.resolve("build.gradle.kts").writeText("""plugins { id("showtrack.jvm.library") }""" + "\n")
         // Unlike the Android case above, showtrack.jvm.library does not widen ktlint's task
         // sources — org.jetbrains.kotlin.jvm is the exact plugin id ktlint-gradle listens for, so
         // it registers ktlintMainSourceSetCheck natively. This is the regression test that keeps

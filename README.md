@@ -74,10 +74,13 @@ data access goes through `:core:data`, which is the only module that knows Retro
 That is what keeps "Room is a cache, never the source of truth" structural rather than a convention
 that erodes.
 
-Both rules are **enforced by the build**, not by review. Every module applies one of two "library"
+Both rules are **enforced by the build**, not by review. Both checks live in one of two "library"
 convention plugins — `showtrack.android.library` for Android modules, or the pure-Kotlin/JVM
 `showtrack.jvm.library` for a module like `:core:model` that must stay importable without pulling in
-Retrofit or Room — and both carry the identical two checks, so applying `library`/`jvm.library` (plus
+Retrofit or Room — which every module applies except `:app`, which uses
+`showtrack.android.application` and needs neither check: both rules return `null` for it, since it
+can never be a `:feature:*` consumer or a `:core:*` producer. Everywhere the checks do apply,
+`library`/`jvm.library` carry the identical two of them, so applying `library`/`jvm.library` (plus
 `compose`, for the Android modules that use it) by hand cannot opt out. Each inspects its own
 project's project-dependencies and fails configuration on a violation, naming the two modules and the
 reason. A third check closes the same rule from the export side: a `:core:*` module may not put

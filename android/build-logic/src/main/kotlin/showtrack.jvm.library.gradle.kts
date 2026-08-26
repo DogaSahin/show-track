@@ -21,8 +21,9 @@ val libs = extensions.getByType<VersionCatalogsExtension>().named("libs")
 // task-name matching means the root `testDebugUnitTest` lifecycle task (see the root
 // build.gradle.kts, which wires it to build-logic's own tests for the same reason) never reaches
 // this module without an explicit alias. Verified with `./gradlew testDebugUnitTest --dry-run`:
-// zero :core:model tasks before this line existed, exactly one (`:core:model:test`, run via this
-// alias) after.
+// zero :core:model tasks before this line existed; a dozen after (compileKotlin, jar, test,
+// testDebugUnitTest and the rest of the task graph they pull in) — this line is what makes
+// `:core:model:test` reachable from the alias at all.
 tasks.register("testDebugUnitTest") {
     dependsOn(tasks.named("test"))
 }
