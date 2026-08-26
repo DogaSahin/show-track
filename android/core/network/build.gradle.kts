@@ -37,4 +37,17 @@ dependencies {
     implementation(libs.androidx.datastore.preferences)
 
     testImplementation(libs.okhttp.mockwebserver)
+    // Dagger's own @Component processor, for unit tests only. It is what lets NetworkModuleTest
+    // assemble the REAL module into a graph instead of hand-copying what the module provides —
+    // the qualifier on a @Provides parameter is invisible to a direct function call, so without a
+    // component nothing can catch AuthApi being moved onto the authenticated client.
+    // hilt-android-compiler bundles dagger-compiler, so no extra artifact is needed.
+    kspTest(libs.hilt.compiler)
+
+    // Instrumentation only: the Android Keystore has no off-device implementation, so whether it
+    // accepts this KeyGenParameterSpec is only answerable on a device. espresso-core is here for
+    // the AndroidJUnitRunner it brings with it, not for Espresso itself.
+    androidTestImplementation(libs.androidx.junit)
+    androidTestImplementation(libs.androidx.espresso.core)
+    androidTestImplementation(libs.kotlinx.coroutines.android)
 }

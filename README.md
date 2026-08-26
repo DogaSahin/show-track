@@ -82,7 +82,11 @@ re-enter the authenticator and deadlock behind its own lock. That authenticator 
 expiry no matter how many requests 401 together (the backend rotates refresh tokens, so parallel
 refreshes would invalidate each other and log the user out mid-session) and gives up after one replay
 rather than retrying forever. Tokens live in DataStore under AES-GCM with a key from the Android
-Keystore; a terminal refresh failure clears them and emits `AuthEvent.LoggedOut`.
+Keystore; a terminal refresh failure clears them and emits `AuthEvent.LoggedOut`, and so does a
+replayed request that 401s again — dead credentials are cleared rather than left to be refreshed
+forever. Neither the interceptor nor the authenticator will attach a credential to a host that is
+not the API's, so the authenticated client stays safe to share with something that fetches images
+from a third-party CDN.
 
 Both rules are **enforced by the build**, not by review. Both checks live in one of two "library"
 convention plugins — `showtrack.android.library` for Android modules, or the pure-Kotlin/JVM
@@ -545,8 +549,14 @@ protection is not enabled.
 ```bash
 ./gradlew ktlintCheck detekt
 ./gradlew testDebugUnitTest       # also runs the build-logic convention-plugin tests
-./gradlew assembleDebug
+./gradlew assembleDebug assembleDebugAndroidTest
 ```
+
+`assembleDebugAndroidTest` compiles but does not run the instrumentation tests. `:core:network`
+has one — the Android Keystore has no off-device implementation, so whether it accepts the app's
+key spec is only answerable on a device. Run it by hand against a connected device or emulator
+with `./gradlew :core:network:connectedDebugAndroidTest`; the gate compiles it so it cannot rot
+between those runs.
 
 ## Contributing
 

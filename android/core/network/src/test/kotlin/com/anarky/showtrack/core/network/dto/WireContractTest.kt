@@ -1,7 +1,7 @@
 package com.anarky.showtrack.core.network.dto
 
+import com.anarky.showtrack.core.network.di.NetworkModule
 import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -18,9 +18,10 @@ import org.junit.Test
  * the server. Re-record them whenever the API contract moves.
  */
 class WireContractTest {
-    // Byte-for-byte the configuration NetworkModule provides. A test with a more permissive Json
-    // than production would pass on data production cannot read.
-    private val json = Json { ignoreUnknownKeys = true }
+    // THE instance production uses, taken from the module rather than reconstructed. A private
+    // copy would keep passing after `ignoreUnknownKeys` was deleted from NetworkModule — which
+    // is exactly the shape of regression these fixtures exist to catch.
+    private val json = NetworkModule.json()
 
     private fun fixture(name: String): String =
         checkNotNull(javaClass.classLoader?.getResourceAsStream("wire/$name")) {

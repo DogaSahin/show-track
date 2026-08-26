@@ -2,21 +2,17 @@ package com.anarky.showtrack.core.network.auth
 
 import app.cash.turbine.test
 import com.anarky.showtrack.core.model.AuthEvent
-import com.anarky.showtrack.core.network.api.AuthApi
 import com.anarky.showtrack.core.network.api.ShowTrackApi
-import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
+import com.anarky.showtrack.core.network.di.DaggerTestNetworkComponent
+import com.anarky.showtrack.core.network.di.TestNetworkComponent
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
-import kotlinx.serialization.json.Json
 import mockwebserver3.Dispatcher
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
 import mockwebserver3.RecordedRequest
-import okhttp3.ConnectionPool
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -24,10 +20,8 @@ import org.junit.Assert.assertThrows
 import org.junit.Before
 import org.junit.Test
 import retrofit2.HttpException
-import retrofit2.Retrofit
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
-import javax.inject.Provider
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -44,6 +38,7 @@ import kotlin.time.Duration.Companion.seconds
 class TokenRefreshAuthenticatorTest {
     private lateinit var server: MockWebServer
     private lateinit var store: FakeTokenStore
+    private lateinit var component: TestNetworkComponent
     private lateinit var events: AuthEventBus
     private lateinit var api: ShowTrackApi
 
@@ -55,7 +50,6 @@ class TokenRefreshAuthenticatorTest {
         server = MockWebServer()
         server.start()
         store = FakeTokenStore(TokenPair(access = EXPIRED_ACCESS, refresh = VALID_REFRESH))
-        events = AuthEventBus()
     }
 
     @After
@@ -124,35 +118,43 @@ class TokenRefreshAuthenticatorTest {
     }
 
     /**
-     * The production wiring in miniature: two clients over one connection pool, the auth
-     * endpoints served by the client that has neither the interceptor nor the authenticator on
-     * it. Sharing one client here would deadlock the moment a refresh 401s.
+     * Stopping is not enough. A freshly minted token that is itself rejected means the
+     * credentials are dead, and leaving them in the store makes every LATER call repeat the
+     * whole dance — refresh (rotating the refresh token server-side), 401, give up — with
+     * nothing ever telling the app to show a login screen.
      */
-    private fun buildApi() {
-        val json = Json { ignoreUnknownKeys = true }
-        val pool = ConnectionPool()
-        val plain = OkHttpClient.Builder().connectionPool(pool).build()
-        val authApi = retrofit(plain, json).create(AuthApi::class.java)
-        val authenticated =
-            OkHttpClient
-                .Builder()
-                .connectionPool(pool)
-                .addInterceptor(AuthInterceptor(store))
-                .authenticator(TokenRefreshAuthenticator(store, Provider { authApi }, events))
-                .build()
-        api = retrofit(authenticated, json).create(ShowTrackApi::class.java)
+    @Test
+    fun `a 401 on the retried request also logs the user out`() {
+        buildApi()
+        server.dispatcher = backend(libraryAlwaysRejects = true)
+
+        runBlocking {
+            events.events.test(timeout = 10.seconds) {
+                assertThrows(HttpException::class.java) { runBlocking { api.library(null, 20) } }
+                assertEquals(AuthEvent.LoggedOut, awaitItem())
+            }
+        }
+
+        assertNull("dead credentials must not be left in the store", runBlocking { store.tokens() })
     }
 
-    private fun retrofit(
-        client: OkHttpClient,
-        json: Json,
-    ): Retrofit =
-        Retrofit
-            .Builder()
-            .baseUrl(server.url("/"))
-            .client(client)
-            .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
-            .build()
+    /**
+     * The PRODUCTION wiring, assembled by Dagger from the real [NetworkModule] — not a
+     * hand-built copy of it.
+     *
+     * This distinction is the whole reason these tests are worth anything. A local
+     * `OkHttpClient.Builder()` here would mirror the module's shape rather than exercise it, and
+     * every regression that matters (a shared dispatcher, AuthApi on the wrong client, a dropped
+     * `ignoreUnknownKeys`) would leave the suite green.
+     */
+    private fun buildApi() {
+        component =
+            DaggerTestNetworkComponent
+                .factory()
+                .create(store, server.url("/").toString())
+        events = component.events()
+        api = component.showTrackApi()
+    }
 
     /**
      * A stateful dispatcher rather than a queue of canned responses: with five calls in flight

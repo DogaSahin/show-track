@@ -2,19 +2,31 @@ package com.anarky.showtrack.core.network.auth
 
 import android.content.Context
 import androidx.datastore.core.DataStore
+import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
+import java.io.IOException
 import javax.inject.Inject
 import javax.inject.Singleton
 
 // A top-level delegate, which is how DataStore enforces one instance per file per process:
 // constructing two DataStores over the same file throws, and that is exactly the bug a
 // per-injection factory would create.
-private val Context.tokenDataStore: DataStore<Preferences> by preferencesDataStore(name = "showtrack_tokens")
+//
+// The corruption handler is the half of the story `.catch` on the read flow cannot cover. A
+// CorruptionException is raised on WRITES too, so without this a damaged file makes `clear()`
+// throw as well — leaving the app with no in-app recovery at all, only "clear app data". Losing
+// the file replaces two tokens the user can re-mint by logging in.
+private val Context.tokenDataStore: DataStore<Preferences> by preferencesDataStore(
+    name = "showtrack_tokens",
+    corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() },
+)
 
 /**
  * DataStore for the storage, [TokenCrypto] for the confidentiality (decision A-I).
@@ -31,7 +43,13 @@ class DataStoreTokenStore
         private val crypto: TokenCrypto,
     ) : TokenStore {
         override suspend fun tokens(): TokenPair? {
-            val prefs = context.tokenDataStore.data.first()
+            val prefs =
+                context.tokenDataStore.data
+                    // The documented DataStore idiom. An unreadable file means "no tokens", i.e.
+                    // log in again — not an IOException thrown from an OkHttp worker thread,
+                    // where an uncaught throwable takes the process down with it.
+                    .catch { cause -> if (cause is IOException) emit(emptyPreferences()) else throw cause }
+                    .first()
             val access = prefs[ACCESS_KEY]?.let(crypto::decrypt)
             val refresh = prefs[REFRESH_KEY]?.let(crypto::decrypt)
             // All or nothing: half a pair is unusable, and treating it as usable would send a

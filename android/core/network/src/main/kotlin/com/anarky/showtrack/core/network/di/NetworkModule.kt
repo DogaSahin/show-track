@@ -5,6 +5,8 @@ import com.anarky.showtrack.core.network.api.AuthApi
 import com.anarky.showtrack.core.network.api.ShowTrackApi
 import com.anarky.showtrack.core.network.auth.AuthInterceptor
 import com.anarky.showtrack.core.network.auth.DataStoreTokenStore
+import com.anarky.showtrack.core.network.auth.KeystoreSecretKeySource
+import com.anarky.showtrack.core.network.auth.SecretKeySource
 import com.anarky.showtrack.core.network.auth.TokenRefreshAuthenticator
 import com.anarky.showtrack.core.network.auth.TokenStore
 import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
@@ -96,36 +98,54 @@ object NetworkModule {
             .authenticator(authenticator)
             .build()
 
+    /**
+     * `@PlainClient`, and this is load-bearing rather than a preference: served by the
+     * authenticated client, a 401 from `/v1/auth/refresh` would re-enter
+     * [com.anarky.showtrack.core.network.auth.TokenRefreshAuthenticator] on another OkHttp
+     * thread and block on the mutex the outer refresh still holds. NetworkModuleTest asserts
+     * the login request carries no Authorization header, which is what that swap would change.
+     */
     @Provides
     @Singleton
     fun authApi(
         @PlainClient client: OkHttpClient,
         json: Json,
-    ): AuthApi = retrofit(client, json).create(AuthApi::class.java)
+        @BaseUrl baseUrl: String,
+    ): AuthApi = retrofit(client, json, baseUrl).create(AuthApi::class.java)
 
     @Provides
     @Singleton
     fun showTrackApi(
         @AuthenticatedClient client: OkHttpClient,
         json: Json,
-    ): ShowTrackApi = retrofit(client, json).create(ShowTrackApi::class.java)
+        @BaseUrl baseUrl: String,
+    ): ShowTrackApi = retrofit(client, json, baseUrl).create(ShowTrackApi::class.java)
 
     private fun retrofit(
         client: OkHttpClient,
         json: Json,
+        baseUrl: String,
     ): Retrofit =
         Retrofit
             .Builder()
-            .baseUrl(BuildConfig.API_BASE_URL)
+            .baseUrl(baseUrl)
             .client(client)
             .addConverterFactory(json.asConverterFactory(JSON_MEDIA_TYPE))
             .build()
 }
 
+/**
+ * The Android-backed half, kept separate from [NetworkModule] so the latter stays free of any
+ * binding that needs a `Context` — which is what lets NetworkModuleTest assemble it on the JVM.
+ */
 @Module
 @InstallIn(SingletonComponent::class)
 abstract class TokenStoreModule {
     @Binds
     @Singleton
     abstract fun tokenStore(impl: DataStoreTokenStore): TokenStore
+
+    @Binds
+    @Singleton
+    abstract fun secretKeySource(impl: KeystoreSecretKeySource): SecretKeySource
 }

@@ -45,5 +45,9 @@ jobs:
       - name: Unit tests
         run: ./gradlew testDebugUnitTest
 
+      # assembleDebugAndroidTest alongside assembleDebug: :core:network has an instrumentation
+      # test for the Android Keystore, which has no off-device stand-in. Nothing here can RUN it
+      # (there is no emulator in this pipeline), but without compiling it the androidTest source
+      # set is never built by anything and would rot silently on the first refactor.
       - name: Assemble debug
-        run: ./gradlew assembleDebug
+        run: ./gradlew assembleDebug assembleDebugAndroidTest
