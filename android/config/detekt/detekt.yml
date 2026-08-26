@@ -11,3 +11,8 @@ style:
     # Named top-level constants (theme colours, dimensions) are the fix MagicNumber asks for;
     # flagging the constant's own literal has nowhere left to go.
     ignorePropertyDeclaration: true
+  UnusedPrivateMember:
+    # A private @Preview-only composable is never called from application code — only rendered
+    # by tooling — so without this it reads as dead code. Every :feature:* module gains previews
+    # in Phase 9; a per-call-site @Suppress does not scale the way one config entry does.
+    ignoreAnnotated: ['Preview']

@@ -3,6 +3,7 @@ package com.anarky.showtrack.core.designsystem
 import android.content.res.Configuration.UI_MODE_NIGHT_YES
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -14,6 +15,7 @@ import com.anarky.showtrack.core.designsystem.component.ErrorState
 import com.anarky.showtrack.core.designsystem.component.LoadingState
 import com.anarky.showtrack.core.designsystem.component.MediaCard
 import com.anarky.showtrack.core.designsystem.component.ScoreChip
+import com.anarky.showtrack.core.designsystem.component.StatusTab
 import com.anarky.showtrack.core.designsystem.theme.ShowTrackTheme
 import com.anarky.showtrack.core.model.Media
 import com.anarky.showtrack.core.model.MediaSource
@@ -41,11 +43,6 @@ private val previewMedia =
         daysUntilNextEpisode = 1,
     )
 
-// detekt's UnusedPrivateMember has no @Preview-aware exemption (unlike ktlint's naming rule,
-// which config/detekt/detekt.yml already special-cases for @Composable) — a private
-// @Preview-only composable is never called from application code, only rendered by tooling, so
-// it reads as dead code without this.
-@Suppress("unused")
 @Preview(showBackground = true, name = "Design system gallery")
 @Preview(showBackground = true, name = "Dark", uiMode = UI_MODE_NIGHT_YES)
 @Composable
@@ -62,6 +59,12 @@ private fun GalleryPreview() {
             CountdownBadge(daysUntil = 12)
             ScoreChip(score = BigDecimal("8.5"))
             ScoreChip(score = null)
+            // Selected state is the only thing visually distinguishing a tab from a plain label,
+            // so both states are shown side by side rather than just one.
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                StatusTab(status = UserMediaStatus.WATCHING, selected = true, onClick = {})
+                StatusTab(status = UserMediaStatus.COMPLETED, selected = false, onClick = {})
+            }
             EmptyState(message = "Nothing here yet")
             LoadingState()
             ErrorState(message = "Could not reach the server", onRetry = {})

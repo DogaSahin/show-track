@@ -13,6 +13,7 @@ hilt = "2.57"
 androidxHiltNavigationCompose = "1.2.0"
 retrofit = "3.0.0"
 okhttp = "5.1.0"
+coil = "3.2.0"
 kotlinxSerialization = "1.9.0"
 retrofitKotlinxConverter = "1.0.0"
 room = "2.8.1"
@@ -66,6 +67,12 @@ okhttp-core = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "
 okhttp-logging = { group = "com.squareup.okhttp3", name = "logging-interceptor", version.ref = "okhttp" }
 okhttp-mockwebserver = { group = "com.squareup.okhttp3", name = "mockwebserver", version.ref = "mockwebserver" }
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
+
+# --- Images ---
+# Compose-native image loading. coil-network-okhttp rather than coil-network-ktor3: this project
+# already brings OkHttp in for Retrofit (Task 4), so the network engine is shared, not duplicated.
+coil-compose = { group = "io.coil-kt.coil3", name = "coil-compose", version.ref = "coil" }
+coil-network-okhttp = { group = "io.coil-kt.coil3", name = "coil-network-okhttp", version.ref = "coil" }
 
 # --- Persistence ---
 androidx-room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
