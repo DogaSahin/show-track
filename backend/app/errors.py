@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from starlette.requests import Request
 from starlette.responses import Response
 
+from app.library.service import MediaMissing
 from app.media.providers.errors import (
     ProviderError,
     ProviderRateLimited,
@@ -34,9 +35,17 @@ logger = logging.getLogger(__name__)
 # the pre-params URL, and httpx transport exceptions carry no URL in their own message. This is
 # a containment policy against future drift, not a fix for a live leak — do not weaken it on the
 # grounds that nothing leaks right now.
+#
+# MediaNotFound and MediaMissing share a status and a detail and are deliberately NOT merged.
+# They are different facts about different systems: MediaNotFound means "the provider answered
+# and has no title with that id", and is only ever raised after an upstream call; MediaMissing
+# means "no local `media` row for this internal id", and is raised from an FK 23503. Collapsing
+# them would couple an upstream-provider contract to a local-FK contract on the strength of a
+# status code they happen to share today.
 HANDLED: dict[type[Exception], tuple[int, str]] = {
     MediaSourceNotConfigured: (503, "media source is not configured on this server"),
     MediaNotFound: (404, "no such title"),
+    MediaMissing: (404, "no such title"),
     UserListNotAvailable: (404, "no public list for that username"),
     ProviderTimeout: (504, "the upstream provider timed out"),
     ProviderRateLimited: (429, "the upstream provider rate limited this server"),

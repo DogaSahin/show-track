@@ -7,15 +7,18 @@ from typing import Any
 
 from sqlalchemy import ColumnElement, func, select, tuple_
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
 
-from app.db import BULK_INSERT_CHUNK_SIZE, chunked
-from app.library.models import UserMedia, UserMediaStatus
-from app.library.schemas import LibraryEntry, LibrarySort
+from app.db import BULK_INSERT_CHUNK_SIZE, FOREIGN_KEY_VIOLATION, UNIQUE_VIOLATION, chunked
+from app.library import activity
+from app.library.models import Activity, ActivityKind, Review, UserMedia, UserMediaStatus
+from app.library.schemas import LibraryEntry, LibrarySort, ReviewAuthor, ReviewRead
 from app.media import service as media_service
 from app.media.models import Media
 from app.pagination import Cursor, encode_cursor
+from app.users.models import User
 
 
 def to_entry(entry: UserMedia, media: Media, now: datetime) -> LibraryEntry:
@@ -30,6 +33,25 @@ def to_entry(entry: UserMedia, media: Media, now: datetime) -> LibraryEntry:
     )
 
 
+async def _emit(
+    session: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+    media_id: uuid.UUID | None,
+    kind: ActivityKind,
+    payload: dict[str, Any] | None = None,
+) -> None:
+    """Write one activity row IN THE CALLER'S TRANSACTION (decision S-E).
+
+    Flushes, never commits — the route owns the transaction boundary, which is what makes an
+    activity row and the user_media change it describes inseparable by construction rather than
+    by discipline. 7.5.3's acceptance criterion — a failed library mutation writes none — then
+    has something real to test.
+    """
+    session.add(Activity(user_id=user_id, media_id=media_id, kind=kind, payload=payload or {}))
+    await session.flush()
+
+
 async def add_entry(session: AsyncSession, *, user_id: uuid.UUID, media_id: uuid.UUID) -> tuple[UserMedia, bool]:
     """Returns (entry, created). Never overwrites an existing entry.
 
@@ -40,9 +62,14 @@ async def add_entry(session: AsyncSession, *, user_id: uuid.UUID, media_id: uuid
     always returns a row.
 
     Accepted imprecision: `created` is decided by the SELECT, so in a genuine race both callers
-    report 201 while one of them actually resolved the other's row. That is a cosmetically wrong
-    status code on a rare race with no data consequence. Deciding it correctly means
+    report 201 while one of them actually resolved the other's row. Deciding it correctly means
     RETURNING (xmax = 0), a system-column trick with edge cases this project cannot verify.
+
+    That race is no longer free of data consequence, only of harm. Phase 7.5b made this function
+    emit an ADDED activity on the DO UPDATE path as well, so both racers write one and the group
+    feed shows the title added twice by the same user. The `user_media` row itself stays single —
+    the unique constraint guarantees that — so the duplicate is a cosmetic feed artefact, not
+    divergent library state. Suppressing it would need the same xmax trick.
     """
     existing = await session.scalar(
         select(UserMedia).where(UserMedia.user_id == user_id, UserMedia.media_id == media_id)
@@ -62,7 +89,12 @@ async def add_entry(session: AsyncSession, *, user_id: uuid.UUID, media_id: uuid
     entry_id = await session.scalar(statement)
     # progress, favorite and updated_at come from their server defaults, so the row is read back
     # rather than assembled here.
-    return await session.get(UserMedia, entry_id), True
+    entry = await session.get(UserMedia, entry_id)
+    # Reached only when the SELECT above missed, so re-adding a title you already track stays a
+    # no-op the feed never hears about. NOT the same as "exactly once per title": the DO UPDATE
+    # path lands here too, so two callers racing the SELECT both emit, per the docstring above.
+    await _emit(session, user_id=user_id, media_id=media_id, kind=ActivityKind.ADDED)
+    return entry, True
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,6 +229,16 @@ async def update_entry(session: AsyncSession, entry: UserMedia, changes: dict[st
         setattr(entry, field, value)
     await session.flush()
     await session.refresh(entry)
+
+    kind = activity.kind_for(changes)
+    if kind is not None:
+        await _emit(
+            session,
+            user_id=entry.user_id,
+            media_id=entry.media_id,
+            kind=kind,
+            payload=activity.payload_for(changes),
+        )
     return entry
 
 
@@ -294,4 +336,105 @@ async def bulk_add_entries(session: AsyncSession, *, user_id: uuid.UUID, rows: S
             .returning(UserMedia.id)
         )
         inserted += len((await session.execute(statement)).all())
+
+    if inserted:
+        # media_id is None: an import is about N titles, not one (S-A/S-D). Guarded on the count
+        # because re-importing is idempotent by design, and "imported 0 titles" is not an event.
+        await _emit(
+            session,
+            user_id=user_id,
+            media_id=None,
+            kind=ActivityKind.IMPORTED,
+            payload={"count": inserted},
+        )
     return inserted
+
+
+def to_review_read(review: Review, author: User) -> ReviewRead:
+    """The one place a Review becomes wire format, so the nested author cannot be forgotten on
+    one of the four routes that return one."""
+    return ReviewRead(
+        id=review.id,
+        author=ReviewAuthor(id=author.id, username=author.username),
+        media_id=review.media_id,
+        body=review.body,
+        contains_spoilers=review.contains_spoilers,
+        created_at=review.created_at,
+        updated_at=review.updated_at,
+    )
+
+
+class ReviewExists(Exception):
+    """One review per person per title. The route turns this into a 409 (decision S-K)."""
+
+
+class MediaMissing(Exception):
+    """No `media` row for the supplied media_id. The route turns this into a 404."""
+
+
+async def create_review(
+    session: AsyncSession, *, user_id: uuid.UUID, media_id: uuid.UUID, body: str, contains_spoilers: bool
+) -> Review:
+    review = Review(user_id=user_id, media_id=media_id, body=body, contains_spoilers=contains_spoilers)
+    try:
+        # Scoped to a SAVEPOINT so a duplicate does not unwind the caller's transaction — the
+        # discipline 7.5a established after session.rollback() was found to discard a caller's
+        # pending work.
+        #
+        # The `session.add` belongs INSIDE the savepoint, exactly as join_by_code/add_member do
+        # it. Adding first and only wrapping the flush does NOT work: the pending Review is then
+        # part of the snapshot the nested transaction was opened on, so rolling that savepoint
+        # back does not expunge it, and the session is left with a _rollback_exception — the
+        # caller's very next statement raises PendingRollbackError instead of proceeding.
+        # Measured: with the add outside, the follow-up query in
+        # test_a_duplicate_does_not_unwind_the_callers_pending_work raised
+        # "This Session's transaction has been rolled back due to a previous exception during
+        # flush", which is the precise failure the savepoint exists to prevent.
+        async with session.begin_nested():
+            session.add(review)
+            await session.flush()
+    except IntegrityError as exc:
+        # `except IntegrityError` alone is broader than the constraint it means. reviews.media_id
+        # is an FK, so a media_id that matches no row raises here too — and reporting that as
+        # "you have already reviewed this title" sends the client to a review it cannot PATCH and
+        # a group list that comes back empty. This is the first endpoint in the codebase to take
+        # a client-supplied internal media_id (POST /v1/library resolves source/external_id
+        # through get_or_create_media), so no earlier route could reach an FK violation this way.
+        sqlstate = getattr(exc.orig, "sqlstate", None)
+        if sqlstate == UNIQUE_VIOLATION:
+            raise ReviewExists from exc
+        if sqlstate == FOREIGN_KEY_VIOLATION:
+            # Reads the 23503 as a bad media_id, and reviews.user_id is ALSO an FK. Unreachable
+            # today because user_id comes from current_user, which is always a live row — but a
+            # future route taking a client-supplied user_id would inherit exactly the
+            # misclassification this branch exists to fix. Narrow it to the constraint name then.
+            raise MediaMissing from exc
+        # Deliberately re-raised rather than folded into either branch: an integrity error we did
+        # not anticipate is not evidence for whichever answer happens to be listed last, and
+        # guessing here would recreate exactly the misclassification above.
+        raise
+    return review
+
+
+async def get_own_review(session: AsyncSession, *, review_id: uuid.UUID, user_id: uuid.UUID) -> Review | None:
+    """Scoped to the caller. A review you do not own is indistinguishable from one that does not
+    exist, so the endpoint never confirms which ids are real."""
+    return await session.scalar(select(Review).where(Review.id == review_id, Review.user_id == user_id))
+
+
+async def update_review(session: AsyncSession, review: Review, changes: dict[str, Any]) -> Review:
+    if not changes:
+        return review
+    for field, value in changes.items():
+        setattr(review, field, value)
+    await session.flush()
+    # updated_at carries onupdate=func.now(), a SQL-expression default that SQLAlchemy EXPIRES
+    # after the flush. Serialising it without this refresh is a MissingGreenlet 500 — the exact
+    # trap update_entry documents.
+    await session.refresh(review)
+    return review
+
+
+async def delete_review(session: AsyncSession, review: Review) -> None:
+    await session.delete(review)
+    await session.flush()

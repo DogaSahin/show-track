@@ -124,3 +124,73 @@ class ImportSummary(BaseModel):
     # Decision 4-L. Without this, a list truncated at the chunk cap returns a body byte-identical
     # to a complete import and the caller cannot tell it got a prefix.
     truncated: bool = False
+
+
+# 4000 characters is a review, not an essay. Capped here rather than in the database (S-N):
+# nothing writes a review except this endpoint, unlike UserMedia.score, whose CHECK exists
+# because the AniList importer bypasses the API schema entirely.
+# strip_whitespace INSIDE the constraint, so min_length applies to the stripped value — the same
+# trap ImportRequest.username documents below. Without it `{"body": "   "}` is a 201, and that
+# blank row then occupies the (user_id, media_id) slot, so the user's next real review of the
+# title is a 409 they can only escape via PATCH.
+ReviewBody = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=4000)]
+
+
+class CreateReviewRequest(BaseModel):
+    # extra="forbid" throughout, matching AddLibraryEntryRequest/UpdateLibraryEntryRequest above:
+    # update_review setattr()s whatever survives validation, and on a partial update the ABSENCE
+    # of a field is meaningful, so a typo'd key must 422 rather than return 200 having done
+    # nothing.
+    model_config = ConfigDict(extra="forbid")
+
+    media_id: uuid.UUID
+    body: ReviewBody
+    contains_spoilers: bool = False
+
+
+class UpdateReviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    body: ReviewBody | None = None
+    contains_spoilers: bool | None = None
+
+    @model_validator(mode="after")
+    def _reject_explicit_nulls(self) -> "UpdateReviewRequest":
+        """Both columns are NOT NULL in `reviews`, and unlike UserMedia.score neither has a
+        "clear it" meaning — so an explicit null has nothing to express and would otherwise
+        reach the flush as an uncaught IntegrityError 500 (measured: `PATCH {"body": null}` ->
+        NotNullViolationError). Same shape as UpdateLibraryEntryRequest's validator above.
+        """
+        nulled = [
+            field
+            for field in ("body", "contains_spoilers")
+            if field in self.model_fields_set and getattr(self, field) is None
+        ]
+        if nulled:
+            raise ValueError(f"{', '.join(nulled)} cannot be null")
+        return self
+
+
+class ReviewAuthor(BaseModel):
+    """Structurally identical to groups.schemas.FeedActor, and duplicated on purpose.
+
+    app/groups/routes.py already imports from this module, so importing FeedActor back the other
+    way would close an import cycle. Two two-field DTOs pointing in opposite directions is the
+    cheaper problem — but they are one concept, so a change to either should be made to both.
+    """
+
+    id: uuid.UUID
+    username: str
+
+
+class ReviewRead(BaseModel):
+    id: uuid.UUID
+    # Nested author rather than a bare user_id, matching FeedItem.actor: both are group-scoped
+    # reads, and a client rendering "reviews from your group" should not have to cross-reference
+    # GET /v1/groups/{id}/members to show a name. author.id carries what user_id used to.
+    author: ReviewAuthor
+    media_id: uuid.UUID
+    body: str
+    contains_spoilers: bool
+    created_at: datetime
+    updated_at: datetime

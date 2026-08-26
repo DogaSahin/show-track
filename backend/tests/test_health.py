@@ -44,12 +44,13 @@ def test_include_router_mounts_domain_routers_under_v1_prefix() -> None:
         importlib.reload(main)
 
 
-def test_domain_routers_cover_all_seven_domains_with_expected_prefixes() -> None:
+def test_domain_routers_cover_all_eight_domains_with_expected_prefixes() -> None:
     """Catches a forgotten or misnamed domain router in main.DOMAIN_ROUTERS."""
     expected_prefixes = {
         "/users",
         "/media",
         "/library",
+        "/reviews",
         "/sync",
         "/notifications",
         "/recommendations",
@@ -58,7 +59,7 @@ def test_domain_routers_cover_all_seven_domains_with_expected_prefixes() -> None
 
     actual_prefixes = {router.prefix for router in main.DOMAIN_ROUTERS}
 
-    assert len(main.DOMAIN_ROUTERS) == 7
+    assert len(main.DOMAIN_ROUTERS) == 8
     assert actual_prefixes == expected_prefixes
 
 
@@ -67,7 +68,7 @@ async def test_openapi_lists_only_versioned_routes(client: AsyncClient) -> None:
     catches any route that leaks outside /v1. On its own today it is vacuous (all
     domain routers are still empty) — real coverage of the mounting invariant lives in
     test_include_router_mounts_domain_routers_under_v1_prefix and
-    test_domain_routers_cover_all_seven_domains_with_expected_prefixes above.
+    test_domain_routers_cover_all_eight_domains_with_expected_prefixes above.
     """
     response = await client.get("/openapi.json")
     paths = response.json()["paths"].keys()

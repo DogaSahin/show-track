@@ -1,13 +1,21 @@
 import uuid
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import select, tuple_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
+from app.db import FOREIGN_KEY_VIOLATION, UNIQUE_VIOLATION
 from app.groups import invites
-from app.groups.models import Group, GroupMember, GroupRole
+from app.groups.models import Group, GroupMember, GroupRole, GroupWatchlist
+from app.groups.schemas import FeedActor, FeedItem, ProgressEntry, WatchlistItem
+from app.library.models import Activity, Review, UserMedia
+from app.library.schemas import ReviewRead
+from app.library.service import MediaMissing, to_review_read
+from app.media.models import Media
+from app.media.service import to_detail
+from app.pagination import Cursor, encode_cursor
 from app.users.models import User
 
 # Bounded, not optimistic: at 60 bits a collision is not a probability worth reasoning about,
@@ -213,3 +221,273 @@ async def remove_member(
 
     await session.delete(target)
     await session.flush()
+
+
+FEED_SORT_KEY = "created_at"
+
+
+def parse_created_at(raw: str) -> datetime:
+    """Total into timestamptz's domain. Every failure here is client-supplied cursor content, so
+    it must raise ValueError for decode_cursor to turn into InvalidCursor rather than a 500.
+
+    A naive datetime is silently reinterpreted in the SERVER's timezone against a timestamptz
+    column, so pagination quietly walks the wrong window. Bounded at both ends for the reason
+    library/service.py documents: datetime.min encodes as `-infinity`, which sorts below
+    everything and makes a descending comparison match every row — the same failure mode as a
+    NaN score cursor.
+    """
+    value = datetime.fromisoformat(raw)
+    if value.tzinfo is None:
+        raise ValueError("cursor value must be timezone-aware")
+    if not (datetime(1, 1, 2, tzinfo=UTC) <= value <= datetime(9999, 1, 1, tzinfo=UTC)):
+        raise ValueError("cursor value is outside the column's range")
+    return value
+
+
+async def list_feed(
+    session: AsyncSession, *, group_id: uuid.UUID, limit: int, cursor: Cursor | None, now: datetime
+) -> tuple[list[FeedItem], str | None]:
+    """Read-fanout: "activity by members of this group", resolved at query time.
+
+    No per-group rows exist (design doc §5.3), so joining a group shows history instantly and
+    leaving revokes instantly, with no denormalised state to repair.
+
+    LEFT OUTER JOIN on media, and it is load-bearing (S-H): `imported` rows carry media_id = NULL,
+    and an inner join would silently drop every import summary — the one row type S-A exists to
+    create.
+    """
+    members = select(GroupMember.user_id).where(GroupMember.group_id == group_id)
+    statement = (
+        select(Activity, Media, User.username)
+        .outerjoin(Media, Media.id == Activity.media_id)
+        .join(User, User.id == Activity.user_id)
+        .where(Activity.user_id.in_(members))
+        .order_by(Activity.created_at.desc(), Activity.id.desc())
+        .limit(limit + 1)
+    )
+    if cursor is not None:
+        statement = statement.where(tuple_(Activity.created_at, Activity.id) < (cursor.value, cursor.id))
+
+    rows = (await session.execute(statement)).all()
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+
+    items = [
+        FeedItem(
+            id=row.Activity.id,
+            actor=FeedActor(id=row.Activity.user_id, username=row.username),
+            kind=row.Activity.kind,
+            media=to_detail(row.Media, now) if row.Media is not None else None,
+            payload=row.Activity.payload,
+            created_at=row.Activity.created_at,
+        )
+        for row in rows
+    ]
+    next_cursor = (
+        encode_cursor(FEED_SORT_KEY, rows[-1].Activity.created_at, rows[-1].Activity.id) if has_more and rows else None
+    )
+    return items, next_cursor
+
+
+async def list_group_reviews(session: AsyncSession, *, group_id: uuid.UUID, media_id: uuid.UUID) -> list[ReviewRead]:
+    """Reviews of one title by this group's members. Bounded by membership, so the route returns
+    a plain list rather than a cursor page (S-J).
+
+    The author is JOINED, not lazy-loaded, and that is load-bearing rather than an optimisation.
+    A lazy `Review.user` would be a many-to-one on the target's PRIMARY KEY, which takes
+    SQLAlchemy's `load_on_pk_identity` identity-map shortcut: it returns the User with no
+    statement emitted whenever that row is already in the session, and raises MissingGreenlet the
+    moment it is not. A real request's session is always the second case.
+
+    That asymmetry is also why this is a join rather than a relationship plus a remembered
+    `selectinload`: the eagerness stays at the only call site instead of being an attribute a
+    future caller can touch from a session where it happens to be unloaded. Same shape as
+    `list_feed` above, which solves the identical problem for FeedActor.
+
+    Pinned by test_the_group_read_attributes_each_review_to_its_own_author, which expunges the
+    identity map before the request so the shortcut cannot fire. It took a mutation to find that
+    the obvious version of that test proved nothing.
+    """
+    members = select(GroupMember.user_id).where(GroupMember.group_id == group_id)
+    statement = (
+        select(Review, User)
+        .join(User, User.id == Review.user_id)
+        .where(Review.media_id == media_id, Review.user_id.in_(members))
+        .order_by(Review.created_at.asc(), Review.id.asc())
+    )
+    rows = (await session.execute(statement)).all()
+    return [to_review_read(row.Review, row.User) for row in rows]
+
+
+# Deliberately NOT "created_at", which is what FEED_SORT_KEY is. decode_cursor's sort guard
+# compares this string, so two endpoints sharing one value means a feed cursor decodes cleanly
+# against the watchlist and repositions the caller in a window that means nothing. Harmless
+# today — both endpoints are gated on the same group, and a cursor is unsigned and opaque by
+# design — but the guard reads stronger than it is. Renaming ONE side resolves the collision;
+# Task 3's contract stays untouched.
+WATCHLIST_SORT_KEY = "watchlist_created_at"
+
+
+async def _find_entry(session: AsyncSession, *, group_id: uuid.UUID, media_id: uuid.UUID) -> GroupWatchlist | None:
+    """The one definition of "this group's entry for this title".
+
+    Both of propose_title's lookups go through it — the dedupe check and the lost-race recovery —
+    so the two cannot drift into asking different questions about the same unique constraint.
+    """
+    return await session.scalar(
+        select(GroupWatchlist).where(GroupWatchlist.group_id == group_id, GroupWatchlist.media_id == media_id)
+    )
+
+
+async def list_watchlist(
+    session: AsyncSession, *, group_id: uuid.UUID, limit: int, cursor: Cursor | None, now: datetime
+) -> tuple[list[WatchlistItem], str | None]:
+    """Cursor-paginated: unlike the member list, a watchlist grows without bound (S-J).
+
+    An INNER join on media, unlike list_feed's outer one: group_watchlist.media_id is NOT NULL
+    and an FK, so there is no row this can drop.
+
+    A join rather than a `GroupWatchlist.media` relationship, for the reason list_group_reviews
+    spells out: a lazy many-to-one on the target's PRIMARY KEY takes SQLAlchemy's identity-map
+    shortcut and returns without emitting a statement whenever the row happens to be loaded, then
+    raises MissingGreenlet the moment it is not — which is every real request. Keeping the
+    eagerness in the statement means there is no attribute for a later caller to touch.
+    """
+    statement = (
+        select(GroupWatchlist, Media)
+        .join(Media, Media.id == GroupWatchlist.media_id)
+        .where(GroupWatchlist.group_id == group_id)
+        .order_by(GroupWatchlist.created_at.desc(), GroupWatchlist.id.desc())
+        .limit(limit + 1)
+    )
+    if cursor is not None:
+        statement = statement.where(tuple_(GroupWatchlist.created_at, GroupWatchlist.id) < (cursor.value, cursor.id))
+
+    rows = (await session.execute(statement)).all()
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    items = [
+        WatchlistItem(
+            id=row.GroupWatchlist.id,
+            media=to_detail(row.Media, now),
+            proposed_by=row.GroupWatchlist.proposed_by,
+            created_at=row.GroupWatchlist.created_at,
+        )
+        for row in rows
+    ]
+    next_cursor = (
+        encode_cursor(WATCHLIST_SORT_KEY, rows[-1].GroupWatchlist.created_at, rows[-1].GroupWatchlist.id)
+        if has_more and rows
+        else None
+    )
+    return items, next_cursor
+
+
+async def propose_title(
+    session: AsyncSession, *, group_id: uuid.UUID, media_id: uuid.UUID, user_id: uuid.UUID
+) -> GroupWatchlist:
+    """Idempotent (S-I): two housemates proposing the same show is agreement, not a conflict.
+
+    Raises MediaMissing — the library service's, not a second name for one condition — when
+    media_id matches no row. The route turns it into the same 404 POST /v1/reviews gives.
+    """
+    existing = await _find_entry(session, group_id=group_id, media_id=media_id)
+    if existing is not None:
+        return existing
+
+    entry = GroupWatchlist(group_id=group_id, media_id=media_id, proposed_by=user_id)
+    try:
+        # A SAVEPOINT, so a lost race does not unwind the caller's transaction — the discipline
+        # 7.5a established after session.rollback() was found to discard a caller's pending work.
+        #
+        # `session.add` belongs INSIDE the nested block, as join_by_code/add_member and
+        # create_review all do it. Adding first and wrapping only the flush does NOT work: the
+        # pending entry is then part of the snapshot the nested transaction was opened on, so
+        # rolling that savepoint back neither expunges it nor confines the exception, and the
+        # caller's next statement raises PendingRollbackError instead of proceeding. That shape
+        # reads correctly and buys nothing, which is why it has now shipped green twice.
+        async with session.begin_nested():
+            session.add(entry)
+            await session.flush()
+    except IntegrityError as exc:
+        # `except IntegrityError` alone is broader than the constraint it documents.
+        # group_watchlist.media_id is an FK and — unlike everywhere before Task 4 — the media_id
+        # is CLIENT-SUPPLIED, so an id matching no row fails the same flush a duplicate does.
+        # Reading that as the unique constraint sends the recovery lookup after a row that was
+        # never written, and the route then evaluates `entry.id` on None: a 500 on ordinary bad
+        # input. Ask the database which constraint it was.
+        sqlstate = getattr(exc.orig, "sqlstate", None)
+        if sqlstate == FOREIGN_KEY_VIOLATION:
+            # group_id and proposed_by are ALSO foreign keys here, so a group deleted by its last
+            # member leaving (G-E) between the dependency's membership check and this flush lands
+            # in this branch too and answers "no such title". The status is right and the wording
+            # is not; narrow this to the constraint name if that race ever matters.
+            raise MediaMissing from exc
+        if sqlstate != UNIQUE_VIOLATION:
+            # An integrity error we did not anticipate is not evidence for whichever answer is
+            # listed last. Re-raised rather than guessed at.
+            raise
+        # Lost the race on uq(group_id, media_id); the winner's row is committed and visible to
+        # this new statement.
+        winner = await _find_entry(session, group_id=group_id, media_id=media_id)
+        if winner is None:
+            # Unreachable in theory — a 23505 means a conflicting row committed, and READ
+            # COMMITTED takes a fresh snapshot per statement, so the lookup above must see it.
+            # Re-raised rather than returned, because returning None here is exactly the 500 the
+            # discrimination above exists to remove.
+            raise
+        return winner
+    return entry
+
+
+async def remove_watchlist_entry(session: AsyncSession, *, group_id: uuid.UUID, entry_id: uuid.UUID) -> bool:
+    """Any member may remove any entry (S-L). Returns whether anything was removed.
+
+    Scoped to group_id, not entry_id alone: without it a member of one group could delete another
+    group's entries by id, since GroupMemberDep only proves membership of the group in the PATH.
+    """
+    entry = await session.scalar(
+        select(GroupWatchlist).where(GroupWatchlist.id == entry_id, GroupWatchlist.group_id == group_id)
+    )
+    if entry is None:
+        return False
+    await session.delete(entry)
+    await session.flush()
+    return True
+
+
+async def compare_progress(session: AsyncSession, *, group_id: uuid.UUID, media_id: uuid.UUID) -> list[ProgressEntry]:
+    """Who is ahead. No new table — this reads user_media.
+
+    Raw episode numbers, no clamping (design doc §5.3). Ordered by progress descending because
+    "who's ahead" is the question the endpoint answers; the username tiebreak keeps the list
+    stable when several members sit on the same episode, which is the ordinary case in a group
+    watching together.
+
+    Scoped by `UserMedia.user_id.in_(members)`, and that clause is the authorization boundary
+    rather than a filter: without it the endpoint reports every user on the instance who tracks
+    the title to anybody in any group. Pinned by
+    test_another_groups_tracker_is_never_in_this_groups_comparison.
+
+    `User` is JOINED explicitly, the same shape as `list_feed` and `list_group_reviews`. There is
+    no relationship on UserMedia to lazy-load today, and this is why one is not added: a
+    many-to-one on the target's PRIMARY KEY takes SQLAlchemy's `load_on_pk_identity` identity-map
+    shortcut, so it emits no statement when the row happens to be loaded and raises
+    MissingGreenlet from the cold session a real request always has.
+    """
+    members = select(GroupMember.user_id).where(GroupMember.group_id == group_id)
+    statement = (
+        select(UserMedia, User.id.label("member_id"), User.username)
+        .join(User, User.id == UserMedia.user_id)
+        .where(UserMedia.media_id == media_id, UserMedia.user_id.in_(members))
+        .order_by(UserMedia.progress.desc(), User.username.asc())
+    )
+    rows = (await session.execute(statement)).all()
+    return [
+        ProgressEntry(
+            member=FeedActor(id=row.member_id, username=row.username),
+            status=row.UserMedia.status,
+            progress=row.UserMedia.progress,
+        )
+        for row in rows
+    ]

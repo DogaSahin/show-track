@@ -26,6 +26,7 @@ DOMAIN_ROUTERS = (
     users_routes.router,
     media_routes.router,
     library_routes.router,
+    library_routes.reviews_router,
     sync_routes.router,
     notifications_routes.router,
     recommendations_routes.router,
@@ -99,8 +100,8 @@ for router in DOMAIN_ROUTERS:
 
 app.include_router(users_routes.auth_router, prefix="/v1")
 
-# Mounted separately from DOMAIN_ROUTERS, so tests/test_health.py's "seven domain routers with
-# seven domain prefixes" invariant keeps meaning what it says — /debug is not a domain. Explicit
+# Mounted separately from DOMAIN_ROUTERS, so tests/test_health.py's "eight domain routers with
+# eight domain prefixes" invariant keeps meaning what it says — /debug is not a domain. Explicit
 # dependencies=, because this router does not inherit the mounting loop's auth above.
 app.include_router(sync_routes.debug_router, prefix="/v1", dependencies=[Depends(get_current_user)])
 
