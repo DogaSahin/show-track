@@ -1,3 +1,1 @@
-plugins {
-    id("showtrack.android.library")
-}
+plugins { alias(libs.plugins.kotlin.jvm) }
