@@ -22,6 +22,7 @@ android {
 }
 
 dependencies {
+    implementation(project(":core:designsystem"))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.material3.adaptive.navigation.suite)
     implementation(libs.androidx.core.ktx)

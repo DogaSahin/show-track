@@ -1,0 +1,70 @@
+package com.anarky.showtrack.core.designsystem
+
+import android.content.res.Configuration.UI_MODE_NIGHT_YES
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.padding
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
+import com.anarky.showtrack.core.designsystem.component.CountdownBadge
+import com.anarky.showtrack.core.designsystem.component.EmptyState
+import com.anarky.showtrack.core.designsystem.component.ErrorState
+import com.anarky.showtrack.core.designsystem.component.LoadingState
+import com.anarky.showtrack.core.designsystem.component.MediaCard
+import com.anarky.showtrack.core.designsystem.component.ScoreChip
+import com.anarky.showtrack.core.designsystem.theme.ShowTrackTheme
+import com.anarky.showtrack.core.model.Media
+import com.anarky.showtrack.core.model.MediaSource
+import com.anarky.showtrack.core.model.MediaStatus
+import com.anarky.showtrack.core.model.MediaType
+import com.anarky.showtrack.core.model.UserMediaStatus
+import java.math.BigDecimal
+
+// coverImageUrl = null is deliberate: a preview must render without network, so this is what
+// exercises MediaCard's placeholder path rather than a real image load.
+private val previewMedia =
+    Media(
+        id = "preview",
+        source = MediaSource.ANILIST,
+        externalId = "1",
+        type = MediaType.ANIME,
+        title = "Frieren: Beyond Journey's End",
+        year = 2023,
+        genres = listOf("Adventure", "Drama", "Fantasy"),
+        coverImageUrl = null,
+        status = MediaStatus.AIRING,
+        nextEpisodeSeason = 1,
+        nextEpisodeNumber = 12,
+        nextEpisodeDate = null,
+        daysUntilNextEpisode = 1,
+    )
+
+// detekt's UnusedPrivateMember has no @Preview-aware exemption (unlike ktlint's naming rule,
+// which config/detekt/detekt.yml already special-cases for @Composable) — a private
+// @Preview-only composable is never called from application code, only rendered by tooling, so
+// it reads as dead code without this.
+@Suppress("unused")
+@Preview(showBackground = true, name = "Design system gallery")
+@Preview(showBackground = true, name = "Dark", uiMode = UI_MODE_NIGHT_YES)
+@Composable
+private fun GalleryPreview() {
+    ShowTrackTheme {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(16.dp)) {
+            MediaCard(
+                media = previewMedia,
+                status = UserMediaStatus.WATCHING,
+                score = BigDecimal("8.5"),
+                onClick = {},
+            )
+            CountdownBadge(daysUntil = 1)
+            CountdownBadge(daysUntil = 12)
+            ScoreChip(score = BigDecimal("8.5"))
+            ScoreChip(score = null)
+            EmptyState(message = "Nothing here yet")
+            LoadingState()
+            ErrorState(message = "Could not reach the server", onRetry = {})
+        }
+    }
+}

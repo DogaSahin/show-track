@@ -1,4 +1,4 @@
-package com.anarky.showtrack.ui.theme
+package com.anarky.showtrack.core.designsystem.theme
 
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
