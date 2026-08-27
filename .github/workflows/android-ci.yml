@@ -49,7 +49,7 @@ jobs:
       # test for the Android Keystore, which has no off-device stand-in. Nothing here can RUN it
       # (there is no emulator in this pipeline), but without compiling it the androidTest source
       # set is never built by anything and would rot silently on the first refactor.
-      # (:core:database's Room DAO test runs on Robolectric instead, so it's exercised by the
-      # unit-test step above, not by this one.)
+      # (The Room tests in :core:database and :core:data run on Robolectric instead, so they are
+      # exercised by the unit-test step above, not by this one.)
       - name: Assemble debug
         run: ./gradlew assembleDebug assembleDebugAndroidTest

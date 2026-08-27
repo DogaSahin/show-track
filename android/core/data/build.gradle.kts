@@ -1,3 +1,38 @@
 plugins {
     id("showtrack.android.library")
+    // Brings KSP and the Hilt Gradle plugin for `di/DataModule.kt`. Applied, not hand-wired:
+    // the plugin is the single place that knows AGP 9 forbids KGP but permits KSP.
+    id("showtrack.android.hilt")
+}
+
+android {
+    testOptions {
+        // LibraryRepositoryImplTest builds a REAL in-memory Room database on the JVM via
+        // Robolectric, and Robolectric cannot load the merged resources/manifest it shadows
+        // without this. Per-module, so :core:database setting it says nothing about this module.
+        unitTests {
+            isIncludeAndroidResources = true
+        }
+    }
+}
+
+dependencies {
+    // `api`, deliberately: LibraryRepository's signature is `Flow<List<LibraryEntry>>`, so every
+    // :feature: consumer needs :core:model on its compile classpath just to name what it is
+    // handed. That is the whole distinction this module draws — the wire shape (:core:network)
+    // and the cache shape (:core:database) stop here, the domain shape does not.
+    api(project(":core:model"))
+
+    // `implementation`, NEVER `api`. An `api` edge here would put Retrofit and Room on the
+    // compile classpath of every feature module and defeat architecture rule 2 transitively;
+    // ModuleRules.apiLeakOf fails the build for exactly that, from this side of the edge.
+    implementation(project(":core:network"))
+    implementation(project(":core:database"))
+
+    // Room's runtime is `implementation` inside :core:database, so it reaches this module's
+    // RUNTIME classpath but not its COMPILE one. The repository test calls
+    // `Room.inMemoryDatabaseBuilder` directly, so the test source set needs it compiled against.
+    testImplementation(libs.androidx.room.runtime)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
 }

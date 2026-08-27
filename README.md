@@ -104,6 +104,33 @@ isn't there. The module depends on nothing else in the monorepo, not even `:core
 between this table and
 either the wire or the domain shape is entirely `:core:data`'s job.
 
+`:core:data` is the module that joins those two and the only one a `:feature:*` module may talk to.
+It owns the mappers, the pagination and `LibraryRepository` — whose three methods are the entire
+data-layer surface a screen ever sees. There is no use-case layer; ViewModels call repositories
+directly, because a use case per method would be one class each forwarding a single call. Reading is
+cache-then-network: `observeLibrary()` is the Room flow, so a cold start renders immediately, and
+`refresh()` overwrites the table from the network. Only the *first* page is ever cached — persisting
+every page would make Room the thing you scroll, which is the source-of-truth inversion the module
+rule exists to prevent — so scrolling is served from the paginator's in-memory list, which is why the
+repository binding is `@Singleton`. Pagination is hand-rolled rather than Paging 3: Paging's offline
+story is `RemoteMediator`, which makes Room the paging source of truth and hands back exactly the rule
+the build enforces. `CursorPaginator` carries a `started` flag alongside its cursor, because a null
+cursor means both "not begun" and "finished", and conflating them makes an exhausted list silently
+repeat page one at the bottom; `PagePaginator` needs no such flag, since `/v1/media/search`'s page
+number is never ambiguous. Both take a mutex rather than checking an `isLoading` boolean — a flag is
+not atomic across a suspension point, and a scroll listener that fires twice would otherwise send the
+same cursor twice.
+
+Mapping is where the `score` contract is honoured or lost. The wire carries `"8.5"` as a JSON *string*
+so the value can be reconstructed exactly, and the mappers use `BigDecimal(String)` in and
+`toPlainString()` out. Worth knowing precisely which conversions are unsafe, because the obvious guess
+is wrong in both directions: Kotlin's `Double.toBigDecimal()` is specified as
+`BigDecimal(this.toString())` and round-trips fine, while the raw `java.math.BigDecimal(double)`
+constructor turns `8.1` into `8.0999999999999996447286321199499070644378662109375`. And of the ten
+tenths a `NUMERIC(3,1)` score can end in, only `.0` and `.5` are exactly representable as doubles — so
+a test written on `8.5`, the value the recorded wire fixture happens to carry, passes with the whole
+guarantee deleted. The mapper tests use `8.1`.
+
 Both rules are **enforced by the build**, not by review. Both checks live in one of two "library"
 convention plugins — `showtrack.android.library` for Android modules, or the pure-Kotlin/JVM
 `showtrack.jvm.library` for a module like `:core:model` that must stay importable without pulling in
@@ -575,14 +602,25 @@ it by hand against a connected device or emulator with
 `./gradlew :core:network:connectedDebugAndroidTest`; the gate compiles it so it cannot rot between
 those runs.
 
-`:core:database`'s DAO test looked like it would need the same treatment — Room needs a real SQLite,
-which a JVM unit test doesn't have — but it runs on [Robolectric](https://robolectric.org) instead,
-which ships a real native SQLite for the host JVM rather than a fake one. `@Config(sdk = [35])`, not
-this module's `compileSdk` (36): Robolectric selects its Android platform shadow independently via
-`@Config`, and 35 is the newest level `robolectric:4.15.1` has a shadow for as of this writing —
-`sdk = [36]` fails immediately with `API level 36 is not available`. So `LibraryDaoTest` is a genuine
-JVM unit test, executed by `testDebugUnitTest` above, not an instrumentation test — one fewer
-compiled-but-unrun test than this section used to describe.
+The Room tests looked like they would need the same treatment — Room needs a real SQLite, which a JVM
+unit test doesn't have — but they run on [Robolectric](https://robolectric.org) instead, which ships a
+real native SQLite for the host JVM rather than a fake one. `sdk=35`, not these modules' `compileSdk`
+(36): Robolectric selects its Android platform shadow independently of `compileSdk`, and 35 is the
+newest level `robolectric:4.15.1` has a shadow for as of this writing — 36 fails immediately with
+`API level 36 is not available`. The pin lives in each module's `src/test/resources/robolectric.properties`
+rather than in a `@Config` annotation, so a test class added later inherits it instead of
+rediscovering the failure. Both `:core:database`'s `LibraryDaoTest` and `:core:data`'s
+`LibraryRepositoryImplTest` are therefore genuine JVM unit tests, executed by `testDebugUnitTest`
+above, not instrumentation tests.
+
+The repository test builds a real in-memory database rather than a fake DAO, and that is a deliberate
+choice: a fake cannot have transaction semantics, so `LibraryDao.replaceAll`'s `@Transaction` would be
+unexercisable and the cache path — the whole reason `:core:database` exists — would ship untested end
+to end. It also earns its keep immediately. The API sends `updated_at` with microsecond precision and
+the cache column is INTEGER epoch millis, so a round trip through SQLite truncates; a fake, or an
+expectation written as `dto.toDomain().toEntity().toDomain()`, would assert the mappers against
+themselves and never show it. Robolectric needs `testOptions.unitTests.isIncludeAndroidResources =
+true`, which is per-module and fails without naming itself when missing.
 
 ## Contributing
 
