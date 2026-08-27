@@ -24,9 +24,10 @@ dependencies {
     ksp(libs.androidx.room.compiler)
 
     // LibraryDaoTest runs on Robolectric: a real SQLite on the host JVM, not a fake, so this is a
-    // JVM unit test rather than an androidTest — see the class doc for why (and why `sdk = [35]`).
+    // JVM unit test rather than an androidTest — see the class doc for why (and why sdk=35, in
+    // src/test/resources/robolectric.properties). kotlinx-coroutines-test and turbine are already
+    // testImplementation from showtrack.android.library; only what's genuinely module-specific
+    // goes here.
     testImplementation(libs.robolectric)
     testImplementation(libs.androidx.test.core)
-    testImplementation(libs.kotlinx.coroutines.test)
-    testImplementation(libs.turbine)
 }
