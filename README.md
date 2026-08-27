@@ -108,11 +108,16 @@ either the wire or the domain shape is entirely `:core:data`'s job.
 It owns the mappers, the pagination and `LibraryRepository` — whose three methods are the entire
 data-layer surface a screen ever sees. There is no use-case layer; ViewModels call repositories
 directly, because a use case per method would be one class each forwarding a single call. Reading is
-cache-then-network: `observeLibrary()` is the Room flow, so a cold start renders immediately, and
-`refresh()` overwrites the table from the network. Only the *first* page is ever cached — persisting
-every page would make Room the thing you scroll, which is the source-of-truth inversion the module
-rule exists to prevent — so scrolling is served from the paginator's in-memory list, which is why the
-repository binding is `@Singleton`. Pagination is hand-rolled rather than Paging 3: Paging's offline
+cache-then-network: `observeLibrary()` combines the Room flow with the paginator's in-memory list and
+takes whichever the paginator has, falling back to the cache while it is empty. So a cold start renders
+from the cache immediately, and once the network answers, the paged list takes over *wholesale* — which
+means there is no dedup to get wrong and no window where a row appears twice. Only the *first* page is
+ever cached: persisting every page would make Room the thing you scroll, which is the source-of-truth
+inversion the module rule exists to prevent. Pages 2..n therefore exist nowhere but the paginator,
+which is both why the binding is `@Singleton` and why `observeLibrary()` has to read it — returning the
+Room flow alone would leave `loadMore()` fetching pages that reach no consumer at all. The combined flow
+is `distinctUntilChanged`, because `combine` re-emits on every emission of either source and `refresh()`
+moves both. Pagination is hand-rolled rather than Paging 3: Paging's offline
 story is `RemoteMediator`, which makes Room the paging source of truth and hands back exactly the rule
 the build enforces. `CursorPaginator` carries a `started` flag alongside its cursor, because a null
 cursor means both "not begun" and "finished", and conflating them makes an exhausted list silently

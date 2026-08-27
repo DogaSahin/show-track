@@ -95,14 +95,55 @@ class LibraryRepositoryImplTest {
                 assertEquals("1", fresh.id)
                 assertEquals("Title 1", fresh.media.title)
                 assertEquals(UserMediaStatus.WATCHING, fresh.status)
-                // Note what the cache does NOT preserve. The API sends microseconds
-                // ("...:10.558339Z") and the column is INTEGER epoch millis, so a round trip
-                // through SQLite truncates. That is acceptable — `updatedAt` feeds ordering and
-                // display, never equality — but it is why asserting `dto.toDomain().toEntity()
-                // .toDomain()` here would be asserting the mappers against themselves rather
-                // than against the cache. The real database is what surfaced the difference.
-                assertEquals(Instant.parse("2026-08-26T13:41:10.558Z"), fresh.updatedAt)
+                // Full microsecond precision, and that is the assertion doing the work: the
+                // network list takes over WHOLESALE, so what is emitted here came straight off
+                // the wire rather than back out of SQLite. Asserting the truncated value would
+                // pass whether the emission came from the cache or the network, which is exactly
+                // the distinction this test exists to pin.
+                assertEquals(Instant.parse("2026-08-26T13:41:10.558339Z"), fresh.updatedAt)
+
+                // The other half of the asymmetry, and the reason a mapper round trip is NOT a
+                // cache round trip: the row that was written for the next cold start is
+                // truncated to millis, because `library_entries.updated_at` is INTEGER epoch
+                // millis. Harmless (the field feeds ordering and display, never equality) but a
+                // hand-written fake DAO would never have shown it.
+                val cachedRow = dao.observeAll().first().single()
+                assertEquals(Instant.parse("2026-08-26T13:41:10.558Z"), cachedRow.updatedAt)
             }
+        }
+
+    /**
+     * The test the repository had no way to fail before `observeLibrary()` combined the paginator
+     * in. The cache is deliberately first-page-only, so pages 2..n live nowhere but
+     * `CursorPaginator.items` — with `observeLibrary()` returning the DAO flow alone, `loadMore()`
+     * fetched and mapped a page that reached no consumer, and a screen calling it would have seen
+     * nothing happen with nothing to diagnose.
+     */
+    @Test
+    fun `loadMore appends the next page to what observeLibrary emits`() =
+        runTest {
+            repository.refresh()
+
+            repository.observeLibrary().test {
+                assertEquals(listOf("1"), awaitItem().map { it.id })
+
+                repository.loadMore()
+
+                assertEquals(listOf("1", "2"), awaitItem().map { it.id })
+            }
+        }
+
+    /**
+     * The cold-start property the `combine` must not break: with nothing paged yet, the cache is
+     * what renders. `ifEmpty` rather than a `started`-style flag because the paginator's own list
+     * already carries that information.
+     */
+    @Test
+    fun `the cache still wins when nothing has been paged`() =
+        runTest {
+            dao.replaceAll(listOf(cachedEntry))
+
+            assertEquals(listOf("cached"), repository.observeLibrary().first().map { it.id })
         }
 
     /**
