@@ -5,6 +5,17 @@ plugins {
     id("showtrack.android.hilt")
 }
 
+android {
+    testOptions {
+        // Robolectric needs this to load the Android resources/manifest it shadows, even though
+        // LibraryDaoTest itself touches no resources — it's Robolectric's own prerequisite, not
+        // a Room one.
+        unitTests {
+            isIncludeAndroidResources = true
+        }
+    }
+}
+
 dependencies {
     implementation(libs.androidx.room.runtime)
     // Enables `suspend fun` / `Flow<T>` return types on @Query and @Insert methods. Without it,
@@ -12,10 +23,10 @@ dependencies {
     implementation(libs.androidx.room.ktx)
     ksp(libs.androidx.room.compiler)
 
-    // Room DAO tests need a real SQLite (there is no off-device stand-in the way there is for the
-    // pure-Kotlin logic elsewhere), so this is an androidTest, not a JVM unit test.
-    androidTestImplementation(libs.androidx.junit)
-    androidTestImplementation(libs.androidx.espresso.core)
-    androidTestImplementation(libs.kotlinx.coroutines.test)
-    androidTestImplementation(libs.turbine)
+    // LibraryDaoTest runs on Robolectric: a real SQLite on the host JVM, not a fake, so this is a
+    // JVM unit test rather than an androidTest — see the class doc for why (and why `sdk = [35]`).
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.turbine)
 }
