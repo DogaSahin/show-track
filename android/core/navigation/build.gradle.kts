@@ -11,5 +11,10 @@ plugins {
 }
 
 dependencies {
-    implementation(libs.kotlinx.serialization.json)
+    // -core, not -json: @Serializable and the generated KSerializers need only the runtime
+    // annotations/interfaces; this module never encodes to JSON itself. `api`, not
+    // `implementation`: every consumer of a route type transitively needs this on its own compile
+    // classpath the moment it calls `serializer<DetailRoute>()` (as Task 9's NavGraphBuilder
+    // entries will) — it is part of this module's public surface, not an implementation detail.
+    api(libs.kotlinx.serialization.core)
 }

@@ -4,6 +4,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import com.anarky.showtrack.core.navigation.AppRoute
 import com.anarky.showtrack.core.navigation.DetailRoute
 
 /**
@@ -15,15 +16,20 @@ import com.anarky.showtrack.core.navigation.DetailRoute
  * by a test that could never fail (there is no build-file text to assert against once the real
  * guard already lives in the convention plugin).
  *
- * `onNavigate: (Any) -> Unit` rather than a `(AppRoute) -> Unit`: this is the shape Task 9's
- * `NavHost` will hand every feature's entry point (`navController::navigate` itself takes `Any`),
- * so this screen is written against the exact signature it will be composed into, not a
- * placeholder.
+ * `onNavigate: (AppRoute) -> Unit`, not `(Any) -> Unit`: the entire point of `:core:navigation`
+ * is that `DetailRoute("abc")` is compiler-checked where a string route is not, and `(Any) ->
+ * Unit` would accept `onNavigate("detail/abc")` or `onNavigate(42)` with no diagnostic — the
+ * string route back, one module up from where it was removed. This composes into Task 9's
+ * `NavHost` unchanged: `NavController.navigate(route: Any)` accepts an `AppRoute` because
+ * `AppRoute : Any`, so `onNavigate = navController::navigate` still type-checks. No default
+ * value, deliberately: a navigation callback defaulted to a no-op would let a screen get wired
+ * into the graph without one and silently do nothing on tap; a missing-argument compile error at
+ * the `NavGraphBuilder` call site is worth more than the convenience.
  */
 @Composable
 fun FeedScreen(
     modifier: Modifier = Modifier,
-    onNavigate: (Any) -> Unit = {},
+    onNavigate: (AppRoute) -> Unit,
 ) {
     Text(
         text = "Feed",

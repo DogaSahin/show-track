@@ -74,6 +74,7 @@ okhttp-logging = { group = "com.squareup.okhttp3", name = "logging-interceptor",
 # whole API (okhttp3.mockwebserver.MockResponse, .Dispatcher) delegates to this package.
 okhttp-mockwebserver = { group = "com.squareup.okhttp3", name = "mockwebserver3", version.ref = "mockwebserver" }
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
+kotlinx-serialization-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-core", version.ref = "kotlinxSerialization" }
 
 # --- Images ---
 # Compose-native image loading. coil-network-okhttp rather than coil-network-ktor3: this project
@@ -106,6 +107,12 @@ unifiedpush-connector = { group = "org.unifiedpush.android", name = "connector",
 # --- Test ---
 turbine = { group = "app.cash.turbine", name = "turbine", version.ref = "turbine" }
 kotlin-test = { group = "org.jetbrains.kotlin", name = "kotlin-test", version.ref = "kotlin" }
+# JVM-test-only classpath addition for AppRoute::class.sealedSubclasses (Task 9's route-
+# enumeration test): kotlin-reflect is required at runtime for sealedSubclasses or it throws
+# KotlinReflectionNotSupportedError, and nothing in this build pulls it in transitively.
+# Never ship on a production/app classpath — R8 is a non-issue here because the only consumer
+# is a JVM test, not :app (whose release build has optimization disabled anyway).
+kotlin-reflect = { group = "org.jetbrains.kotlin", name = "kotlin-reflect", version.ref = "kotlin" }
 junit-jupiter = { group = "org.junit.jupiter", name = "junit-jupiter", version.ref = "junitJupiter" }
 robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
 androidx-test-core = { group = "androidx.test", name = "core", version.ref = "androidxTestCore" }
