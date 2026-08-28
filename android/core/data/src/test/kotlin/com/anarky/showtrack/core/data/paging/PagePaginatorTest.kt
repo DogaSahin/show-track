@@ -6,6 +6,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
 
@@ -47,10 +48,43 @@ class PagePaginatorTest {
         }
 
     /**
-     * The half of [PagePaginator.restart]'s contract that is easy to get wrong, mirrored from
-     * [CursorPaginator]: it fetches BEFORE it mutates, so a failed refresh is not destructive —
-     * the loaded pages and the page counter survive. Only this property is tested here rather
-     * than the whole of `restart`; the rest is a direct mirror covered by `CursorPaginatorTest`.
+     * [PagePaginator.restart]'s success path: it goes back to page 1, returns that page, and
+     * leaves the counter pointing at page 2.
+     *
+     * This exists because the failure-path test below cannot see it. A `restart()` that fetched
+     * correctly and then did `_items.value = emptyList(); emptyList()` — silently blanking the
+     * list and returning nothing — passed every other test in this module. `CursorPaginatorTest`
+     * does not cover it either: that is a different class, and "it is a direct mirror" is an
+     * argument from inspection, not coverage.
+     */
+    @Test
+    fun `restart goes back to the first page, returns it, and advances the counter`() =
+        runTest {
+            val requested = mutableListOf<Int>()
+            val paginator =
+                PagePaginator<String> { page ->
+                    requested += page
+                    NumberedPage(listOf("p$page"), hasMore = page < 3)
+                }
+            paginator.loadMore()
+            paginator.loadMore()
+
+            val page = paginator.restart()
+
+            assertEquals(listOf("p1"), page)
+            assertEquals(listOf("p1"), paginator.items.value)
+            assertTrue(paginator.hasMore.value)
+
+            // The counter advanced to 2, so the next load continues rather than repeating page 1.
+            paginator.loadMore()
+            assertEquals(listOf(1, 2, 1, 2), requested)
+            assertEquals(listOf("p1", "p2"), paginator.items.value)
+        }
+
+    /**
+     * The other half of the contract, and the one that is easy to get wrong: `restart()` fetches
+     * BEFORE it mutates, so a failed refresh is not destructive — the loaded pages and the page
+     * counter both survive.
      */
     @Test
     fun `a failed restart leaves the loaded pages and the page counter untouched`() =

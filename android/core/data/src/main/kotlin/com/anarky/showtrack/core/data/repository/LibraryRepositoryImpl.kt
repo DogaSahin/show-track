@@ -39,6 +39,15 @@ class LibraryRepositoryImpl(
      * stale cache for the whole network round trip and then re-expanded, so a pull-to-refresh
      * jumped twice and lost its scroll position.
      *
+     * One inherent edge, recorded so it is not mistaken for a regression: `ifEmpty` is a
+     * sentinel, so an EMPTY first page is indistinguishable from "nothing fetched yet". If a
+     * refresh legitimately returns zero rows — the user emptied their library on another device
+     * — this momentarily falls back to the stale cache until the `dao.replaceAll` a line later
+     * clears it. The flicker is inherent to the sentinel, not to the fetch-before-mutate change,
+     * and behaves identically either way. Distinguishing the two states properly would mean
+     * carrying an explicit "has loaded" signal out of the paginator; not worth it for a
+     * single-frame flicker on an empty library, but that is the fix if it ever matters.
+     *
      * Note the asymmetry this surfaces, because it is easy to trip over: an entry that has been
      * through the cache is NOT `==` to the same entry straight off the wire. The API sends
      * `updated_at` with microsecond precision and `library_entries.updated_at` is INTEGER epoch
