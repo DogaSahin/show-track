@@ -32,9 +32,12 @@ class LibraryRepositoryImpl(
      * is also what makes [loadMore] visible, which it is not if this returns the DAO flow alone:
      * the cache is deliberately first-page-only, so pages 2..n exist nowhere else.
      *
-     * `ifEmpty` also gives the right behaviour after a FAILED refresh: [refresh] resets the
-     * paginator before fetching, so a fetch that throws leaves it empty and the screen falls back
-     * to the stale-but-useful cache rather than blanking.
+     * `ifEmpty` is the cold-start fallback only. It is deliberately NOT the failure path:
+     * `CursorPaginator.restart` fetches before it mutates, so a failed refresh leaves the paged
+     * list standing and the user keeps the rows they were looking at. An earlier version cleared
+     * the paginator first, and the cost was visible — refreshing a 40-row list emitted the 20-row
+     * stale cache for the whole network round trip and then re-expanded, so a pull-to-refresh
+     * jumped twice and lost its scroll position.
      *
      * Note the asymmetry this surfaces, because it is easy to trip over: an entry that has been
      * through the cache is NOT `==` to the same entry straight off the wire. The API sends
@@ -48,6 +51,11 @@ class LibraryRepositoryImpl(
      * without it a refresh delivers the identical list twice and a `LazyColumn` recomposes for
      * the second one. It restores the conflation-by-equality a `StateFlow` would have given for
      * free and [combine] drops; the cost is one structural comparison of a page-sized list.
+     *
+     * Its reach is narrower than that makes it sound, and the `updatedAt` asymmetry above is why.
+     * It suppresses the duplicate emission of ONE list — the paged one, which wins both times
+     * whenever it is non-empty. It cannot conflate a cache-sourced row with a wire-sourced one:
+     * those differ in the microsecond field and are never `==`. Duplicates, not equivalents.
      */
     override fun observeLibrary(): Flow<List<LibraryEntry>> =
         combine(
@@ -62,12 +70,19 @@ class LibraryRepositoryImpl(
         }
 
     override suspend fun refresh() {
-        paginator.reset()
-        paginator.loadMore()
+        // ONE call, not `reset()` then `loadMore()`. Those take the paginator's lock twice, and a
+        // scroll-triggered loadMore() landing in the gap would fetch page 1 itself and leave this
+        // refresh fetching page 2 — after which the snapshot below holds two pages and the
+        // first-page-only invariant is broken. The repository is a @Singleton with no dispatcher
+        // confinement, so a pull-to-refresh overlapping a scroll is the ordinary case.
+        val firstPage = paginator.restart()
+        // The RETURNED page, never a re-read of `paginator.items.value`: that list can have grown
+        // by the time we look at it, which is the same race one step further out.
+        //
         // Only the FIRST page is cached. The cache exists so a cold start renders instantly, not
         // to mirror the API — persisting every page would make Room the thing you scroll, which is
         // the source-of-truth inversion rule 2 exists to prevent.
-        dao.replaceAll(paginator.items.value.map(LibraryEntry::toEntity))
+        dao.replaceAll(firstPage.map(LibraryEntry::toEntity))
     }
 
     override suspend fun loadMore() = paginator.loadMore()

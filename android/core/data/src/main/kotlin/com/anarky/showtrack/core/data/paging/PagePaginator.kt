@@ -47,13 +47,15 @@ class PagePaginator<T>(
         }
     }
 
-    suspend fun reset() {
+    /** [CursorPaginator.restart]'s contract, for the same two reasons — see its doc comment. */
+    suspend fun restart(): List<T> =
         mutex.withLock {
-            nextPage = FIRST_PAGE
-            _hasMore.value = true
-            _items.value = emptyList()
+            val page = fetch(FIRST_PAGE)
+            nextPage = FIRST_PAGE + 1
+            _hasMore.value = page.hasMore
+            _items.value = page.items
+            page.items
         }
-    }
 
     private companion object {
         // The backend's search pagination is 1-based, not 0-based.

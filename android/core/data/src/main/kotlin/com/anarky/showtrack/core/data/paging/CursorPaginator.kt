@@ -56,12 +56,32 @@ class CursorPaginator<T>(
         }
     }
 
-    suspend fun reset() {
+    /**
+     * Reload from the first page and return the page that was loaded. Two properties, both of
+     * which are the reason this exists instead of a `reset()` the caller follows with
+     * [loadMore] — that sequence takes the lock TWICE, and a scroll-triggered [loadMore] slipping
+     * into the gap is the ordinary case for a pull-to-refresh, not an exotic one.
+     *
+     * **One lock across the whole operation.** With two acquisitions, a concurrent [loadMore] can
+     * fetch the first page in the gap, leaving this call to fetch the SECOND — after which the
+     * caller's "first page only" snapshot silently holds two pages.
+     *
+     * **The fetch happens BEFORE anything is mutated.** So a failed refresh leaves the cursor,
+     * the exhaustion state and the loaded pages exactly as they were: the user keeps the rows
+     * they were looking at instead of watching the list collapse to a stale cached page and then
+     * re-expand. Clearing first would also make the failure destructive, which a refresh never
+     * should be.
+     *
+     * Returning the page rather than leaving the caller to re-read [items] closes the same race
+     * one step further out: [items] can have grown by the time the caller looks at it.
+     */
+    suspend fun restart(): List<T> =
         mutex.withLock {
-            cursor = null
-            started = false
-            _hasMore.value = true
-            _items.value = emptyList()
+            val page = fetch(null)
+            cursor = page.nextCursor
+            started = true
+            _hasMore.value = page.nextCursor != null
+            _items.value = page.items
+            page.items
         }
-    }
 }

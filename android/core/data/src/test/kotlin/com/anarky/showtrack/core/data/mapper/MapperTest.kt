@@ -5,9 +5,12 @@ import com.anarky.showtrack.core.model.MediaSource
 import com.anarky.showtrack.core.model.MediaStatus
 import com.anarky.showtrack.core.model.MediaType
 import com.anarky.showtrack.core.model.UserMediaStatus
+import com.anarky.showtrack.core.network.dto.LibraryEntryDto
 import com.anarky.showtrack.core.network.dto.MediaDto
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.math.BigDecimal
 import java.time.Instant
@@ -61,6 +64,33 @@ class MapperTest {
         assertEquals(null, media.daysUntilNextEpisode)
     }
 
+    /**
+     * The mapper on the PRIMARY read path, and the one this file originally missed. `progress`
+     * and `favorite` in particular had no literal expectation anywhere: hard-coding them to
+     * `0` and `false` passed the whole suite, which would have shipped every library row reading
+     * `0/24 episodes` with an un-favourited heart, on a green gate.
+     */
+    @Test
+    fun `a library entry dto maps every field into the domain`() {
+        val entry = libraryEntryDto().toDomain()
+
+        assertEquals("entry-1", entry.id)
+        // Wire status is lower-case; the domain enum is not.
+        assertEquals(UserMediaStatus.WATCHING, entry.status)
+        assertEquals(BigDecimal("8.1"), entry.score)
+        assertEquals(12, entry.progress)
+        assertTrue(entry.favorite)
+        assertEquals(Instant.parse("2026-08-26T13:41:10.558339Z"), entry.updatedAt)
+        // The nested media is mapped, not dropped or defaulted.
+        assertEquals("media-1", entry.media.id)
+        assertEquals("One Piece", entry.media.title)
+    }
+
+    @Test
+    fun `an unscored entry maps to a null score rather than zero`() {
+        assertNull(libraryEntryDto().copy(score = null).toDomain().score)
+    }
+
     @Test
     fun `a cached row maps back to the domain fields a list row draws`() {
         val entry = cachedEntity().toDomain()
@@ -94,6 +124,17 @@ class MapperTest {
         assertEquals("https://example.com/cached.jpg", entity.coverUrl)
         assertEquals(5, entity.daysUntilNextEpisode)
     }
+
+    private fun libraryEntryDto() =
+        LibraryEntryDto(
+            id = "entry-1",
+            status = "watching",
+            score = "8.1",
+            progress = 12,
+            favorite = true,
+            updatedAt = "2026-08-26T13:41:10.558339Z",
+            media = mediaDto(),
+        )
 
     private fun mediaDto() =
         MediaDto(

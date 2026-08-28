@@ -86,7 +86,13 @@ class LibraryRepositoryImplTest {
 
             repository.observeLibrary().test {
                 // No network call yet: the first emission is purely the cold-start cache.
-                assertEquals(listOf(cachedEntry.toDomain()), awaitItem())
+                // Fields, not `cachedEntry.toDomain()` — comparing the emission to the mapper's
+                // own output asserts the mapper against itself and holds for a broken mapper too.
+                val cold = awaitItem().single()
+                assertEquals("cached", cold.id)
+                assertEquals("Cached Title", cold.media.title)
+                assertEquals(BigDecimal("7.0"), cold.score)
+                assertEquals(3, cold.progress)
                 assertEquals(emptyList<String?>(), api.requestedCursors)
 
                 repository.refresh()
@@ -196,6 +202,62 @@ class LibraryRepositoryImplTest {
             runCatching { repository.refresh() }
 
             assertEquals(listOf(cachedEntry), dao.observeAll().first())
+        }
+
+    /**
+     * The half the DAO assertion above cannot see. `CursorPaginator.restart` fetches before it
+     * mutates, so a failed refresh must emit NOTHING — the user keeps the rows they were looking
+     * at. Clearing first would drop a 40-row list to whatever 20 rows the cache happens to hold.
+     *
+     * The absence of an emission is asserted by the turbine block itself: an unexpected item is
+     * an unconsumed event and fails at the end of the block.
+     */
+    @Test
+    fun `a failed refresh leaves the on-screen list standing`() =
+        runTest {
+            repository.refresh()
+            repository.loadMore()
+
+            repository.observeLibrary().test {
+                assertEquals(listOf("1", "2"), awaitItem().map { it.id })
+
+                api.failNext()
+                runCatching { repository.refresh() }
+            }
+        }
+
+    /**
+     * The emission sequence a pull-to-refresh actually produces, which is the property an earlier
+     * version got wrong invisibly. With the paginator cleared BEFORE the network call, refreshing
+     * a two-page list emitted the stale first-page cache for the whole round trip:
+     *
+     *     [1(wire), 2(wire)] -> [1(millis)] <- stale cache -> [1(wire)]
+     *
+     * — 40 rows collapsing to 20 stale ones and back, so a pull-to-refresh jumped twice and lost
+     * its scroll position. Fetching before mutating makes it one transition. The millisecond
+     * precision on the middle emission is what identified it as cache-sourced, and is why this
+     * test asserts `updatedAt` rather than just the ids.
+     */
+    @Test
+    fun `a refresh goes straight to the fresh page without a stale detour`() =
+        runTest {
+            repository.refresh()
+            repository.loadMore()
+
+            repository.observeLibrary().test {
+                assertEquals(listOf("1", "2"), awaitItem().map { it.id })
+
+                repository.refresh()
+
+                val afterRefresh = awaitItem()
+                assertEquals(listOf("1"), afterRefresh.map { it.id })
+                // Wire precision: this is the FRESH page. The stale cache row would be the same
+                // id truncated to millis, which is exactly the emission that must not appear.
+                assertEquals(
+                    Instant.parse("2026-08-26T13:41:10.558339Z"),
+                    afterRefresh.single().updatedAt,
+                )
+            }
         }
 
     /**

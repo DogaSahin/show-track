@@ -18,12 +18,19 @@ import java.time.Instant
  * (backend decision 4-N): `"8.1"` becomes `8.0999999999999996447286321199499070644378662109375`.
  *
  * Two details that are easy to get backwards, both established by mutation testing this mapper.
- * Kotlin's own `Double.toBigDecimal()` is NOT the hazard — it is specified as
- * `BigDecimal(this.toString())`, and `Double.toString` already emits the shortest decimal that
- * round-trips, so it survives. And `"8.5"` — the value the recorded wire fixture carries — is
- * 17/2, exactly representable, so it survives every unsafe conversion there is. Only `.0` and
- * `.5` of the ten tenths a `NUMERIC(3,1)` score can end in are; a test or an example that reaches
- * for either is demonstrating nothing, which is why the tests use `8.1`.
+ *
+ * Kotlin's own `Double.toBigDecimal()` is not the same hazard: it is specified as
+ * `BigDecimal(this.toString())`, and `Double.toString` emits the shortest decimal that
+ * round-trips, so it is safe **for the shortest-form decimals this API sends**. It is value-safe,
+ * not scale-safe — `"8.10"` would come back as `8.1` and `"7"` as `7.0`, and since
+ * `BigDecimal.equals` compares scale and [LibraryEntry] is a data class, a backend that ever
+ * emitted a trailing zero would make even that conversion observably wrong. `BigDecimal(String)`
+ * has no such caveat, which is why it is what this uses.
+ *
+ * And `"8.5"` — the value the recorded wire fixture carries — is 17/2, exactly representable, so
+ * it survives every unsafe conversion there is. Only `.0` and `.5` of the ten tenths a
+ * `NUMERIC(3,1)` score can end in are; a test or an example that reaches for either is
+ * demonstrating nothing, which is why the tests use `8.1`.
  */
 fun LibraryEntryDto.toDomain(): LibraryEntry =
     LibraryEntry(

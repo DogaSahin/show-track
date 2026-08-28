@@ -117,7 +117,22 @@ inversion the module rule exists to prevent. Pages 2..n therefore exist nowhere 
 which is both why the binding is `@Singleton` and why `observeLibrary()` has to read it — returning the
 Room flow alone would leave `loadMore()` fetching pages that reach no consumer at all. The combined flow
 is `distinctUntilChanged`, because `combine` re-emits on every emission of either source and `refresh()`
-moves both. Pagination is hand-rolled rather than Paging 3: Paging's offline
+moves both.
+
+`refresh()` is a single `CursorPaginator.restart()` rather than a `reset()` followed by a load, and both
+halves of that matter. It takes the paginator's lock **once**: with two acquisitions a scroll-triggered
+`loadMore()` can land in the gap, fetch page one itself and leave the refresh fetching page two, after
+which the refresh caches two pages while believing it cached one — and the repository is a `@Singleton`
+with no dispatcher confinement, so a pull-to-refresh overlapping a scroll is the ordinary case rather
+than an exotic one. And it **fetches before it mutates**, so a refresh is never destructive: an earlier
+version cleared the paginator first, and refreshing a two-page list then emitted the stale one-page
+cache for the whole network round trip — measured as
+`[1, 2] → [1 (stale)] → [1 (fresh)]` — so the list visibly halved and re-expanded, and a failure left
+the user on a stale 20 rows instead of the 40 they had. Fetching first makes it one transition and
+makes a failed refresh emit nothing at all. `refresh()` then caches the page that call *returns*
+rather than re-reading `paginator.items`, which closes the same race one step further out.
+
+Pagination is hand-rolled rather than Paging 3: Paging's offline
 story is `RemoteMediator`, which makes Room the paging source of truth and hands back exactly the rule
 the build enforces. `CursorPaginator` carries a `started` flag alongside its cursor, because a null
 cursor means both "not begun" and "finished", and conflating them makes an exhausted list silently
@@ -130,8 +145,10 @@ Mapping is where the `score` contract is honoured or lost. The wire carries `"8.
 so the value can be reconstructed exactly, and the mappers use `BigDecimal(String)` in and
 `toPlainString()` out. Worth knowing precisely which conversions are unsafe, because the obvious guess
 is wrong in both directions: Kotlin's `Double.toBigDecimal()` is specified as
-`BigDecimal(this.toString())` and round-trips fine, while the raw `java.math.BigDecimal(double)`
-constructor turns `8.1` into `8.0999999999999996447286321199499070644378662109375`. And of the ten
+`BigDecimal(this.toString())`, so it is safe for the shortest-form decimals this API sends — value-safe
+but not scale-safe, since `"8.10"` would come back as `8.1` and `BigDecimal.equals` compares scale —
+while the raw `java.math.BigDecimal(double)` constructor turns `8.1` into
+`8.0999999999999996447286321199499070644378662109375`. And of the ten
 tenths a `NUMERIC(3,1)` score can end in, only `.0` and `.5` are exactly representable as doubles — so
 a test written on `8.5`, the value the recorded wire fixture happens to carry, passes with the whole
 guarantee deleted. The mapper tests use `8.1`.
@@ -301,8 +318,11 @@ ceiling and only its first chunk-run was imported. A private or nonexistent user
 
 Adding a title you already track returns **200** with the existing entry rather than an error, and
 changes nothing — so a retry after a dropped connection is safe. `score` travels as a JSON string
-(`"8.5"`) because the column is `NUMERIC(3,1)`: a JSON number is a float, and floats cannot hold
-8.5-style values exactly. `/v1/library` is cursor-paginated — follow `next_cursor` until it is
+(`"8.5"`) because the column is `NUMERIC(3,1)`: a JSON number is an IEEE 754 double, and a double
+cannot hold most one-decimal values exactly — `8.1` becomes
+`8.0999999999999996447286321199499070644378662109375`. (`8.5` itself is 17/2 and *is* exact, which is
+precisely why it is a misleading value to reason or write tests with; see the `:core:data` notes
+above.) `/v1/library` is cursor-paginated — follow `next_cursor` until it is
 `null`, and do not change `sort` while paging (the cursor is bound to the sort it was issued for
 and answers 400 otherwise).
 
