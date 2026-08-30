@@ -2,13 +2,16 @@ package com.anarky.showtrack
 
 import android.app.Application
 import android.content.Context
+import androidx.core.net.toUri
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.ComposeNavigator
 import androidx.navigation.createGraph
 import androidx.test.core.app.ApplicationProvider
 import com.anarky.showtrack.core.navigation.AppRoute
 import com.anarky.showtrack.core.navigation.LibraryRoute
+import com.anarky.showtrack.core.navigation.detailDeepLink
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -118,6 +121,37 @@ class NavGraphRegistrationTest {
             declaredRoutes.mapNotNull { it.qualifiedName }.toSortedSet(),
             graphRoutes.filterNotNull().toSortedSet(),
         )
+    }
+
+    /**
+     * The graph half of the notification deep link.
+     *
+     * `PushNotifier` builds `showtrack://detail/<id>` and hands it to the system; `:app`'s
+     * manifest lets it in; this asserts the graph then has somewhere to put it. All three must
+     * agree, and the failure when they do not is SILENT — the tap opens the launcher screen, no
+     * exception, nothing in logcat. This is the one of the three a JVM test can reach.
+     *
+     * `hasDeepLink` is asked of the GRAPH, not of a destination looked up by hand, so it
+     * exercises the same matching a real `NavController.handleDeepLink` performs.
+     */
+    @Test
+    fun `the nav graph answers the deep link a push notification opens`() {
+        val graph = buildGraph()
+
+        assertTrue(
+            "the graph must answer showtrack://detail/<id>; a push notification's tap resolves " +
+                "to exactly this URI and would otherwise open the start destination silently",
+            graph.hasDeepLink(detailDeepLink("abc-123").toUri()),
+        )
+    }
+
+    /**
+     * The negative control, without which the assertion above would pass on a graph that matched
+     * everything. A route that does not exist must NOT match.
+     */
+    @Test
+    fun `an unregistered deep link host is not answered`() {
+        assertFalse(buildGraph().hasDeepLink("showtrack://nosuchscreen/abc-123".toUri()))
     }
 
     /**

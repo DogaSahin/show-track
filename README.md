@@ -23,7 +23,8 @@ on a title. The Android client is not built yet. See [Project status](#project-s
 - **Know when the next episode airs.** A background job refreshes airing dates on a schedule and
   queues a notification 24 hours before an episode airs, and again shortly before; a second job
   drains that queue to your phone. Push is delivered by a **self-hosted [ntfy](https://ntfy.sh)
-  server**, not Firebase — see [Notifications](#notifications).
+  server**, not Firebase — over **UnifiedPush** to the Android app, or to a plain ntfy topic
+  without one. See [Notifications](#notifications).
 - **Import** an existing AniList list by username. **The profile must be public** — the import
   sends no credentials, so a private list is not readable and returns a 404. Read-only and
   one-way: ShowTrack never writes back to AniList.
@@ -100,6 +101,17 @@ build has one node per registration call. A route declared and never wired is ot
 crash on a screen nobody opened during development. (`NavGraph.addDestination` silently *replaces* a
 same-id destination rather than failing, so counting nodes alone would not notice a route registered
 twice — hence the comparison against the number of registration calls.)
+
+One route is reachable from outside the app entirely. `:core:navigation` also owns a deep-link
+contract — `showtrack://detail/<mediaId>` — which `:feature:detail` registers as a
+`navDeepLink<DetailRoute>` and `:app`'s manifest lets in. That is how a push notification's tap
+opens the title it is *about* without `:feature:profile`, which builds the notification, ever
+naming `:feature:detail`. Same trick as `onNavigate`, one layer out: the route contract travels,
+the module does not — and unlike `onNavigate` it survives a cold start, because the tap goes
+through the system rather than through a live `NavController`. Three things have to agree for it to
+work (the URI the notifier builds, the manifest filter, the graph's registration) and the failure
+when they do not is silent — the tap opens the start screen — so `NavGraphRegistrationTest` asserts
+the graph answers a concrete one and `PushNotifierTest` pins the literal the manifest also spells.
 
 The auth gate sits above the `NavHost` and outside it, collecting `AuthEvent` from `:core:data`. A
 collector inside a destination would be cancelled exactly when the user navigated away from it,
@@ -906,6 +918,58 @@ scoped `ro` to a single topic rather than given blanket access. There is no way 
 topic has leaked: nothing observes subscribers. **Rotation means deleting the target and
 registering a new one** (`DELETE /v1/notifications/targets/{id}`), then re-subscribing the phone.
 
+##### UnifiedPush — how the ShowTrack app itself receives
+
+Everything above describes subscribing the **ntfy app** to a topic, which is how push worked
+before there was an Android client to receive it. The ShowTrack app uses the other half of the
+same server: **UnifiedPush**, with ntfy acting as the *distributor*.
+
+The difference is who mints the target. For `ntfy` the server generates the topic and refuses a
+client-supplied one. For `unifiedpush` the distributor on the phone mints a full callback URL and
+is the only party that can know it, so the client supplies it — and the backend **origin-checks**
+it against `NTFY_BASE_URL` before storing it. That check is not decoration: an unchecked
+client-supplied callback URL means the dispatcher will later POST a body of our choosing, with
+`NTFY_TOKEN` attached, to a host of the attacker's choosing.
+
+On the phone:
+
+1. Install a UnifiedPush distributor. **ntfy** is the one this deployment is built around — the
+   same app you may already have from the topic flow above. If none is installed, ShowTrack's
+   Profile screen says so and names ntfy; it does not fail silently.
+2. Point the distributor at your server (ntfy: **Settings → Default server**), with a user that
+   has write access to `up*` topics.
+3. Open ShowTrack → **Profile** → **Use this app**, and allow notifications when Android asks.
+   On API 33+ a notification posted without `POST_NOTIFICATIONS` is dropped with no error at all.
+
+The app registers by itself from there — no curl:
+
+```bash
+# what the app POSTs, shown for reference. 201 the first time, 200 every time after, same body.
+curl -s -X POST localhost:8000/v1/notifications/targets \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"transport":"unifiedpush","target":"http://localhost:8080/upSomeTopic"}'
+```
+
+**200 rather than 409 on a repeat is the contract, not a shrug.** The distributor re-delivers the
+endpoint through `onNewEndpoint` on *every app start*, so the app cannot avoid re-registering;
+without server-side idempotency on the endpoint, one cold start per day would add one push target
+per day and a single episode would arrive N times on one phone. An endpoint already registered to
+a *different* account is a 409, and one that is not on `NTFY_BASE_URL` is a 422.
+
+What arrives on the wire is the whole notification as JSON, not ntfy's title/message format:
+
+```json
+{"title":"Cowboy Bebop","body":"Episode 12 airs soon",
+ "media_id":"11111111-2222-3333-4444-555555555555","episode_number":12,"threshold":"24h"}
+```
+
+`media_id` is the reason for the whole transport. The app renders the notification itself and its
+tap opens `showtrack://detail/<media_id>` — the title the notification is *about*, rather than
+whatever screen the app happened to be on. ntfy's own format has nowhere to put that field.
+
+The endpoint is a bearer secret exactly as the topic is: `GET /v1/notifications/targets` withholds
+it, and it never appears in a log line.
+
 ##### Push requires the VPN
 
 ntfy runs on the home server, so **the phone must be able to reach it** — in practice, be on the
@@ -937,8 +1001,9 @@ but it does so by routing every notification about what you are watching through
 a Google Cloud project and a service-account key to exist at all, and puts a proprietary
 dependency on the delivery path of a project whose premise is that it runs on your own hardware.
 The transport sits behind a `NotificationTransport` protocol with exactly one method, so nothing
-above `send()` knows which one is in use — swapping in FCM or UnifiedPush later is a new file, not
-a rewrite.
+above `send()` knows which one is in use. That claim has since been cashed: **UnifiedPush was
+added as a second transport and it was a new file** (`app/notifications/unifiedpush.py`) plus a
+per-target lookup in the dispatcher. Nothing above `send()` changed.
 
 #### Recommendations
 
@@ -1137,6 +1202,7 @@ and both get worse the longer they wait.
 | 7.5a | Groups — create, invite, join, leave, roles, ownership transfer | done |
 | 7.5b | Groups — shared feed, reviews, shared watchlist, progress comparison | done |
 | 8–9 | Android foundations and feature modules | in progress |
+| 8.9 | Push over UnifiedPush — backend transport, Android receiver, deep-linked taps | done |
 | 10 | Polish and deployment | |
 
 Architecture documentation lives outside this repository, alongside the working copy: a design doc, a

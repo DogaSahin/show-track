@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+        API 33+. Without it a posted notification is dropped SILENTLY — no exception, nothing in
+        logcat — so push would look registered and simply never arrive. Declared in this module
+        rather than in :app because this is the module that posts them; the manifest merger folds
+        it into the app.
+    -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <application>
+        <!--
+            The four actions a UnifiedPush distributor broadcasts. Declared here, in the feature
+            that owns push, and merged into :app's manifest by AGP.
+
+            android:exported="true" is REQUIRED and is not a mistake: the distributor is a
+            different application, so an unexported receiver would never be reached — the
+            registration would appear to succeed and no message would ever arrive. The connector
+            library declares its own internal receiver the same way. What limits the exposure is
+            the payload, not the door: a forged broadcast can at worst make this app render a
+            notification, and everything behind the deep link needs a token.
+        -->
+        <receiver
+            android:name="com.anarky.showtrack.feature.profile.push.ShowTrackMessagingReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="org.unifiedpush.android.connector.MESSAGE" />
+                <action android:name="org.unifiedpush.android.connector.UNREGISTERED" />
+                <action android:name="org.unifiedpush.android.connector.NEW_ENDPOINT" />
+                <action android:name="org.unifiedpush.android.connector.REGISTRATION_FAILED" />
+            </intent-filter>
+        </receiver>
+    </application>
+
+</manifest>

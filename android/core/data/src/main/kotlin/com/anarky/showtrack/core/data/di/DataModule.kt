@@ -2,6 +2,10 @@ package com.anarky.showtrack.core.data.di
 
 import com.anarky.showtrack.core.data.auth.AuthEventSource
 import com.anarky.showtrack.core.data.auth.AuthEventSourceImpl
+import com.anarky.showtrack.core.data.push.DataStorePushRegistrationStore
+import com.anarky.showtrack.core.data.push.PushRegistrationStore
+import com.anarky.showtrack.core.data.push.PushRepository
+import com.anarky.showtrack.core.data.push.PushRepositoryImpl
 import com.anarky.showtrack.core.data.repository.LibraryRepository
 import com.anarky.showtrack.core.data.repository.LibraryRepositoryImpl
 import dagger.Binds
@@ -50,4 +54,23 @@ abstract class DataModule {
      */
     @Binds
     abstract fun authEventSource(impl: AuthEventSourceImpl): AuthEventSource
+
+    /**
+     * No `@Singleton` on the method for the third time, and the same reasoning:
+     * [PushRepositoryImpl] carries the scope. It matters here because the impl holds a
+     * `PushRegistrationStore`, and DataStore THROWS if two instances are constructed over the
+     * same file in one process — an unscoped binding plus one direct injection of the concrete
+     * type would be exactly that crash. (`PushRegistrationStore` is itself `@Singleton`, so this
+     * is belt and braces rather than the only guard.)
+     */
+    @Binds
+    abstract fun pushRepository(impl: PushRepositoryImpl): PushRepository
+
+    /**
+     * `DataStorePushRegistrationStore` carries the `@Singleton`, and here that is not a style
+     * preference: DataStore THROWS if two instances are constructed over the same file in one
+     * process, so a second instance is a crash rather than a duplicated cache.
+     */
+    @Binds
+    abstract fun pushRegistrationStore(impl: DataStorePushRegistrationStore): PushRegistrationStore
 }

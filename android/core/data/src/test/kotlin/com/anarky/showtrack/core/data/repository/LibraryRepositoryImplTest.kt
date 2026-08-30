@@ -14,6 +14,8 @@ import com.anarky.showtrack.core.network.api.ShowTrackApi
 import com.anarky.showtrack.core.network.dto.LibraryEntryDto
 import com.anarky.showtrack.core.network.dto.LibraryPageDto
 import com.anarky.showtrack.core.network.dto.MediaDto
+import com.anarky.showtrack.core.network.dto.PushTargetDto
+import com.anarky.showtrack.core.network.dto.RegisterTargetRequest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.After
@@ -355,4 +357,13 @@ private class FakeShowTrackApi(
         }
         return pages.getValue(cursor)
     }
+
+    // The push half of the same interface. `error(...)` rather than a silent no-op: a library
+    // test that reached these would be doing something it has no business doing, and should say
+    // so loudly. PushRepositoryImplTest has its own fake for them.
+    override suspend fun registerPushTarget(request: RegisterTargetRequest): PushTargetDto =
+        error("the library repository must not touch push registration")
+
+    override suspend fun deletePushTarget(id: String): Unit =
+        error("the library repository must not touch push registration")
 }

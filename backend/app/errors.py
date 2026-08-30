@@ -15,6 +15,8 @@ from app.media.providers.errors import (
     UserListNotAvailable,
 )
 from app.media.service import MediaNotFound, MediaSourceNotConfigured
+from app.notifications.service import TargetOwnedByAnotherUser
+from app.notifications.unifiedpush import EndpointNotAllowed
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +46,18 @@ logger = logging.getLogger(__name__)
 # status code they happen to share today.
 HANDLED: dict[type[Exception], tuple[int, str]] = {
     MediaSourceNotConfigured: (503, "media source is not configured on this server"),
+    # 422, matching the shape a schema-level rejection already produces: from the client's side
+    # "this endpoint is unacceptable" is a fact about the body it sent, whichever layer noticed.
+    # The fixed detail is doing real work here — validate_endpoint distinguishes "push is not
+    # configured on this server" from "not on the configured push server", and answering with
+    # either would tell a caller which is true of this deployment.
+    EndpointNotAllowed: (422, "push endpoint is not acceptable"),
+    # 409, not 404-for-everything the way delete_target hides another user's row. The disclosure
+    # is already implied: the caller had to KNOW the endpoint to send it, and knowing a
+    # UnifiedPush endpoint is itself the ability to push to that device. What a 404 would buy is
+    # nothing; what it would cost is a client that cannot tell "already registered elsewhere"
+    # from a routing bug.
+    TargetOwnedByAnotherUser: (409, "that push endpoint is already registered"),
     MediaNotFound: (404, "no such title"),
     MediaMissing: (404, "no such title"),
     UserListNotAvailable: (404, "no public list for that username"),
