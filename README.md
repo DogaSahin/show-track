@@ -110,8 +110,11 @@ naming `:feature:detail`. Same trick as `onNavigate`, one layer out: the route c
 the module does not — and unlike `onNavigate` it survives a cold start, because the tap goes
 through the system rather than through a live `NavController`. Three things have to agree for it to
 work (the URI the notifier builds, the manifest filter, the graph's registration) and the failure
-when they do not is silent — the tap opens the start screen — so `NavGraphRegistrationTest` asserts
-the graph answers a concrete one and `PushNotifierTest` pins the literal the manifest also spells.
+when they do not is silent — the tap opens the start screen — so all three are pinned by JVM
+tests: `PushNotifierTest` on the URI, `NavGraphRegistrationTest` on the graph, and
+`MergedManifestTest` on the manifest, which Robolectric can query through a real `PackageManager`
+because it loads `:app`'s *merged* manifest — the one `:feature:profile`'s receiver and permission
+land in.
 
 The auth gate sits above the `NavHost` and outside it, collecting `AuthEvent` from `:core:data`. A
 collector inside a destination would be cancelled exactly when the user navigated away from it,
@@ -940,6 +943,8 @@ On the phone:
    has write access to `up*` topics.
 3. Open ShowTrack → **Profile** → **Use this app**, and allow notifications when Android asks.
    On API 33+ a notification posted without `POST_NOTIFICATIONS` is dropped with no error at all.
+   The screen re-reads what is installed on every resume, so installing a distributor and coming
+   back is enough — no restart.
 
 The app registers by itself from there — no curl:
 
@@ -968,7 +973,14 @@ tap opens `showtrack://detail/<media_id>` — the title the notification is *abo
 whatever screen the app happened to be on. ntfy's own format has nowhere to put that field.
 
 The endpoint is a bearer secret exactly as the topic is: `GET /v1/notifications/targets` withholds
-it, and it never appears in a log line.
+it, and it never appears in a log line. It is also checked by **path**, not just by origin: only
+`/up…` is accepted, because the configured ntfy host is exactly where `NTFY_TOKEN` is privileged
+and an origin-only check would admit `/v1/account/…` — ntfy's own account API — as a callback the
+dispatcher would then POST to bearing that credential.
+
+**Logging out clears the registration.** On a shared device the distributor hands the *same*
+endpoint to whoever logs in next, so without that clear the previous account's target row still
+points at the phone and the new user receives their notifications.
 
 ##### Push requires the VPN
 
@@ -1001,9 +1013,13 @@ but it does so by routing every notification about what you are watching through
 a Google Cloud project and a service-account key to exist at all, and puts a proprietary
 dependency on the delivery path of a project whose premise is that it runs on your own hardware.
 The transport sits behind a `NotificationTransport` protocol with exactly one method, so nothing
-above `send()` knows which one is in use. That claim has since been cashed: **UnifiedPush was
-added as a second transport and it was a new file** (`app/notifications/unifiedpush.py`) plus a
-per-target lookup in the dispatcher. Nothing above `send()` changed.
+above `send()` knows which *wire format* is in use. Adding UnifiedPush as a second transport was
+largely a new file (`app/notifications/unifiedpush.py`) — but not only that, and the difference is
+worth recording rather than glossing: `send()` receives only the target **string**, which cannot
+distinguish an ntfy topic from a UnifiedPush URL, so the dispatcher had to learn to select a
+transport per target **row**. `dispatch_once` and `run_dispatch` went from taking one transport to
+taking a `Mapping[PushTransport, NotificationTransport]`. The protocol held; the dispatcher's
+signature did not.
 
 #### Recommendations
 
@@ -1202,7 +1218,7 @@ and both get worse the longer they wait.
 | 7.5a | Groups — create, invite, join, leave, roles, ownership transfer | done |
 | 7.5b | Groups — shared feed, reviews, shared watchlist, progress comparison | done |
 | 8–9 | Android foundations and feature modules | in progress |
-| 8.9 | Push over UnifiedPush — backend transport, Android receiver, deep-linked taps | done |
+| 8.9 | Push over UnifiedPush — backend transport, Android receiver, deep-linked taps | in progress |
 | 10 | Polish and deployment | |
 
 Architecture documentation lives outside this repository, alongside the working copy: a design doc, a

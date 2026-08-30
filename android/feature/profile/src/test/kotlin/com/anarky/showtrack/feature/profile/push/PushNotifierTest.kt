@@ -14,10 +14,11 @@ import org.robolectric.annotation.Config
  * JVM class. `sdk = [35]` because Robolectric ships no shadow jar for 36 — the same call
  * `:app`, `:core:data`, `:core:database` and `:core:network` already made.
  *
- * This is the half of the deep link a test can reach. The other half — that the nav graph
- * ANSWERS this URI — is asserted in `:app`'s NavGraphRegistrationTest, and the third half — the
- * manifest intent filter that lets the URI leave the system at all — cannot be asserted by any
- * JVM test and is listed as owner-verification.
+ * One of three tests that have to agree, because the deep link fails SILENTLY when they do not —
+ * a wrong URI opens the launcher with no error anywhere. This pins the URI the notifier builds;
+ * `:app`'s NavGraphRegistrationTest pins that the graph answers it; `:app`'s MergedManifestTest
+ * pins the intent filter that lets it in at all. That last one was wrongly recorded as
+ * untestable: Robolectric loads `:app`'s MERGED manifest, so a real PackageManager can be asked.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])

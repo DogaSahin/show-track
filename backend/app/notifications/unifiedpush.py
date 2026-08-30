@@ -35,18 +35,34 @@ class EndpointNotAllowed(Exception):
     """
 
 
+# Every UnifiedPush endpoint ntfy mints is a topic beginning `up` (`https://<server>/upAbC123…`),
+# and the README's own setup grants the backend's ntfy user `rw` on exactly `up*`. Pinning the
+# path prefix here makes that convention a check rather than a habit.
+#
+# Why a HOST match alone is not enough, which is the whole reason this constant exists: the host
+# is precisely where NTFY_TOKEN is privileged. Without a path check, an authenticated user could
+# register `https://<ntfy>/v1/account/token` and the dispatcher would POST to ntfy's ACCOUNT API
+# bearing that credential, once per matching episode — or register another user's topic and inject
+# notifications into it. The body shape is not attacker-controlled, which caps the severity, but
+# "the host is our own" was doing all the work on the one host where that is least sufficient.
+UNIFIEDPUSH_PATH_PREFIX = "/up"
+
+
 def validate_endpoint(endpoint: str) -> None:
     """The origin check (decision A-L), and the reason it is not optional.
 
     A UnifiedPush endpoint is a callback URL the CLIENT supplies. Storing one unchecked means the
     dispatcher will later POST a body of our choosing — with the ntfy credential attached — to a
     host of the ATTACKER's choosing: a server-side request forgery with a credential leak stapled
-    to it, reachable by anyone who can register a device. Pinning scheme and netloc to the
-    configured ntfy server is what makes attaching that credential safe at all.
+    to it, reachable by anyone who can register a device. Pinning scheme, netloc AND path prefix
+    to the configured ntfy server is what makes attaching that credential safe at all.
 
     Netloc, not hostname: `evil.example@ntfy.internal` and a port swap are both host-authority
     tricks that a hostname-only comparison waves through. urlparse puts userinfo and port in
     netloc, so comparing it whole rejects them.
+
+    Path, not just origin: see [UNIFIEDPUSH_PATH_PREFIX]. `/v1/...` — ntfy's own account and admin
+    API — is the thing the prefix has to exclude, and it lives on the same host.
     """
     base = get_settings().ntfy_base_url
     if base is None:
@@ -55,9 +71,20 @@ def validate_endpoint(endpoint: str) -> None:
         # would tell an unauthenticated-adjacent caller which of the two is true about this
         # deployment, and the client's remedy ("this server cannot register you") is identical.
         raise EndpointNotAllowed("push is not configured on this server")
-    parsed, expected = urlparse(endpoint), urlparse(base)
+    try:
+        parsed, expected = urlparse(endpoint), urlparse(base)
+    except ValueError as exc:
+        # urlparse RAISES on some inputs rather than returning a useless parse: an unclosed IPv6
+        # literal (`https://[evil/x`) gives "Invalid IPv6 URL", and an NFKC-unsafe netloc gives a
+        # netloc-contains-invalid-characters error. Unwrapped, both escape as a 500 for what is
+        # plainly a bad request — the same class of bug as an unbounded `target` length, which
+        # `TargetCreate` already turns into a 422. Caught here rather than handled globally,
+        # because a ValueError from anywhere else in this app is genuinely a 500.
+        raise EndpointNotAllowed("endpoint is not a parseable URL") from exc
     if parsed.scheme != expected.scheme or parsed.netloc != expected.netloc:
         raise EndpointNotAllowed("endpoint is not on the configured push server")
+    if not parsed.path.startswith(UNIFIEDPUSH_PATH_PREFIX):
+        raise EndpointNotAllowed("endpoint is not a UnifiedPush topic on the configured push server")
 
 
 class UnifiedPushTransport:

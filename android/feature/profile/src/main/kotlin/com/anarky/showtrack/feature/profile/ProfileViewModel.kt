@@ -35,8 +35,11 @@ sealed interface PushState {
  * `ProfileUiState` wrapping it — a wrapper with one field is a rename waiting to happen.
  *
  * Re-read on [refresh] rather than observed: a distributor is installed or uninstalled by the
- * user leaving the app entirely, and `PackageManager` offers no flow. The screen calls this on
- * resume, which is exactly when the answer can have changed.
+ * user leaving the app entirely, and `PackageManager` offers no flow. `ProfileScreen` calls
+ * [refresh] from a `LifecycleResumeEffect`, which is exactly when the answer can have changed —
+ * the `init` below covers only the first composition, and the ViewModel is scoped to the
+ * NavBackStackEntry, so it survives the trip to the Play Store and back that the NoDistributor
+ * prompt asks the user to make.
  */
 @HiltViewModel
 class ProfileViewModel

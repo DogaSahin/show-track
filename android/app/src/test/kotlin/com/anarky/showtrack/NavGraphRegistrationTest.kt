@@ -129,7 +129,8 @@ class NavGraphRegistrationTest {
      * `PushNotifier` builds `showtrack://detail/<id>` and hands it to the system; `:app`'s
      * manifest lets it in; this asserts the graph then has somewhere to put it. All three must
      * agree, and the failure when they do not is SILENT — the tap opens the launcher screen, no
-     * exception, nothing in logcat. This is the one of the three a JVM test can reach.
+     * exception, nothing in logcat. All three are now pinned: [PushNotifierTest] on the URI, this
+     * on the graph, and [MergedManifestTest] on the manifest.
      *
      * `hasDeepLink` is asked of the GRAPH, not of a destination looked up by hand, so it
      * exercises the same matching a real `NavController.handleDeepLink` performs.

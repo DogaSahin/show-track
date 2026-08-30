@@ -20,7 +20,11 @@
             library declares its own internal receiver the same way. What limits the exposure is
             the payload, not the door: a forged broadcast can at worst make this app render a
             notification, and everything behind the deep link needs a token.
-        -->
+
+            :app's MergedManifestTest queries this through a real PackageManager after the merger
+            has run — a dropped action here fails that test rather than silently registering a
+            device that then never receives a message.
+    -->
         <receiver
             android:name="com.anarky.showtrack.feature.profile.push.ShowTrackMessagingReceiver"
             android:enabled="true"

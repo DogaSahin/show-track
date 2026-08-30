@@ -86,4 +86,21 @@ class ProfileViewModelTest {
         assertEquals(PushState.Available(listOf(NTFY)), viewModel.pushState.value)
         assertEquals(true, distributors.unregistered)
     }
+
+    @Test
+    fun `refresh picks up a distributor installed while the app was in the background`() {
+        // The state the NoDistributor prompt creates and must be able to leave. The prompt sends
+        // the user out of the app to install ntfy; the ViewModel is scoped to the
+        // NavBackStackEntry and survives that trip, so `init` does not run again. If nothing
+        // re-reads on the way back, the screen still says "push needs one more app" after the
+        // user did exactly what it asked — A-A's failure mode wearing its own prompt.
+        val distributors = FakeDistributors()
+        val viewModel = ProfileViewModel(distributors)
+        assertEquals(PushState.NoDistributor, viewModel.pushState.value)
+
+        distributors.installed = listOf(NTFY)
+        viewModel.refresh()
+
+        assertEquals(PushState.Available(listOf(NTFY)), viewModel.pushState.value)
+    }
 }

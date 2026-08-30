@@ -29,6 +29,11 @@ private class FakeRepository(
         unregisterCalls++
     }
 
+    // PushRegistrar never calls this — the logout path is `:core:data`'s
+    // PushSessionObserver, not a distributor callback. `error(...)` rather than a no-op so a
+    // future edit that routed logout through the registrar says so loudly.
+    override suspend fun onLoggedOut(): Unit = error("the distributor callbacks must not drive logout")
+
     override fun decodeMessage(body: ByteArray): PushNotification? = null
 }
 

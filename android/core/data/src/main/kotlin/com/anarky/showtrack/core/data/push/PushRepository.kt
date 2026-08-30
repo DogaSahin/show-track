@@ -27,6 +27,24 @@ interface PushRepository {
     suspend fun unregister()
 
     /**
+     * The user's session ended. Deletes this device's target if it still can, and **always**
+     * forgets it locally.
+     *
+     * Distinct from [unregister], and the difference is the whole point. Without it, a shared
+     * device leaks notifications across accounts: A logs out, B logs in, `onNewEndpoint` delivers
+     * the SAME endpoint, [register]'s local skip sees it unchanged and posts nothing — so A's row
+     * still points at that device and **B receives A's notifications**. Even with the skip gone,
+     * B's POST would hit the global `(transport, target)` constraint as a 409 and fail, so the
+     * handover is broken in both directions until the row is cleared.
+     *
+     * "Always forgets it locally" is the part that must not be conditional. The commonest logout
+     * here is a TERMINAL REFRESH FAILURE, i.e. the token is already dead — so the DELETE will
+     * fail, and keeping the record on failure (which is right for [unregister]) would leave the
+     * next user permanently blocked by our own skip.
+     */
+    suspend fun onLoggedOut()
+
+    /**
      * Decodes a UnifiedPush message body into the domain type, or null if it is not one of ours.
      *
      * Null rather than throwing: this runs inside a `BroadcastReceiver`, where an exception is a

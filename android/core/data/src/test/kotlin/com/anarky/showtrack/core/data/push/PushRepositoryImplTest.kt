@@ -10,6 +10,9 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
 private const val ENDPOINT = "https://push.example.test/UPabcdef0123456789"
 
@@ -73,6 +76,13 @@ private class FakeStore : PushRegistrationStore {
     }
 }
 
+/**
+ * Robolectric because [PushRepositoryImpl.onLoggedOut] logs a failed DELETE through
+ * `android.util.Log`, which a plain JVM test answers with "not mocked" — and THROWS. Without a
+ * shadow, the device-handover test below would fail for the opposite of the reason it exists.
+ */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [35])
 class PushRepositoryImplTest {
     private fun repository(
         api: ShowTrackApi,
@@ -196,5 +206,66 @@ class PushRepositoryImplTest {
 
             // Clearing first would leak a server row with no local trace of it, permanently.
             assertEquals("target-1", store.record?.targetId)
+        }
+
+    @Test
+    fun `logging out deletes the target and forgets it`() =
+        runTest {
+            val api = FakeApi()
+            val store = FakeStore()
+            val push = repository(api, store)
+            push.register(ENDPOINT)
+
+            push.onLoggedOut()
+
+            assertEquals(listOf("target-1"), api.deletions)
+            assertNull(store.record)
+        }
+
+    @Test
+    fun `logging out forgets the target even when the DELETE fails`() =
+        runTest {
+            // The COMMONEST logout path: the app learns it is logged out from a terminal refresh
+            // failure, so the token is already dead and the DELETE cannot succeed. Keeping the
+            // record on failure — which is right for unregister() — would leave the next user
+            // permanently blocked by our own local skip.
+            val api = FakeApi().apply { deleteFailure = IllegalStateException("401") }
+            val store = FakeStore()
+            val push = repository(api, store)
+            push.register(ENDPOINT)
+
+            push.onLoggedOut()
+
+            assertNull(store.record)
+        }
+
+    @Test
+    fun `a second user on the same device can register the same endpoint`() =
+        runTest {
+            // THE device-handover test. The distributor is unchanged across a logout, so
+            // `onNewEndpoint` hands the SAME endpoint to the next account. Without the logout
+            // clear, register()'s local skip posts nothing, the previous user's row still points
+            // at this device, and this user receives their notifications.
+            val api = FakeApi()
+            val store = FakeStore()
+            val push = repository(api, store)
+            push.register(ENDPOINT) // user A
+            api.nextId = "target-2"
+
+            push.onLoggedOut()
+            push.register(ENDPOINT) // user B, same device, same endpoint
+
+            assertEquals(2, api.registrations.size)
+            assertEquals("target-2", store.record?.targetId)
+        }
+
+    @Test
+    fun `logging out with nothing registered is a no-op`() =
+        runTest {
+            val api = FakeApi()
+
+            repository(api, FakeStore()).onLoggedOut()
+
+            assertTrue(api.deletions.isEmpty())
         }
 }

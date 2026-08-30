@@ -48,6 +48,15 @@ def test_an_endpoint_on_the_configured_server_is_allowed(configured_push):
     validate_endpoint(ENDPOINT)
 
 
+def test_the_path_check_does_not_reject_a_real_unifiedpush_topic(configured_push):
+    """The positive control for the prefix. ntfy mints `/up<random>`, and the README's setup grants
+    the backend's user `rw` on `up*` — so a rule tighter than this would reject every genuine
+    endpoint, which is a failure mode that looks exactly like "push is broken".
+    """
+    validate_endpoint("https://push.example.test/upAbCdEf0123456789")
+    validate_endpoint("https://push.example.test/up_another-topic")
+
+
 @pytest.mark.parametrize(
     ("endpoint", "why"),
     [
@@ -61,6 +70,27 @@ def test_an_endpoint_on_the_configured_server_is_allowed(configured_push):
         ),
         ("https://push.example.test.evil.example/UPtopic", "a suffix that a prefix check would admit"),
         ("file:///etc/passwd", "not even HTTP"),
+        # THE PATH CASES. Same host, same scheme — so an origin-only check admits both, and the
+        # host is exactly where NTFY_TOKEN is privileged.
+        (
+            "https://push.example.test/v1/account/token",
+            "ntfy's own ACCOUNT API. Admitted by an origin-only check, and the dispatcher would "
+            "then POST to it bearing NTFY_TOKEN, once per matching episode",
+        ),
+        (
+            "https://push.example.test/v1/account/access",
+            "ntfy's ACL API, same host, same credential",
+        ),
+        (
+            "https://push.example.test/someone-elses-topic",
+            "another user's ntfy topic — not an SSRF, but notification injection into a stream "
+            "that is not this device's",
+        ),
+        ("https://push.example.test/", "no topic at all"),
+        # urlparse RAISES on these rather than returning a useless parse. Unwrapped they are a
+        # 500 for what is plainly a bad request.
+        ("https://[evil/x", "an unclosed IPv6 literal: urlparse raises ValueError('Invalid IPv6 URL')"),
+        ("https://push.example\u2100test/upTopic", "an NFKC-unsafe netloc, which urlparse also refuses"),
     ],
 )
 def test_an_endpoint_off_the_configured_server_is_rejected(configured_push, endpoint, why):
@@ -222,6 +252,13 @@ async def test_registering_the_same_endpoint_twice_creates_one_row(db_session, c
     # map can be answered from cache and pass while the database holds two rows. Measured
     # elsewhere in this project — after a DB-side cascade session.get returns the stale row while
     # the Core count reads 0.
+    #
+    # It carries no weight against any mutation of THIS code, and that is worth stating rather
+    # than leaving for the next reader to rediscover: `uq_push_targets_transport_target` is
+    # global on (transport, target) (6-D), so any second row with this endpoint is an
+    # IntegrityError before a count could ever read 2. The assertion starts earning its keep the
+    # day that constraint is narrowed to per-user — which is exactly when someone would delete it
+    # for looking redundant.
     count = await db_session.scalar(select(func.count()).select_from(PushTarget).where(PushTarget.user_id == user.id))
     assert count == 1
 

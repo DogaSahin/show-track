@@ -1,5 +1,6 @@
 import uuid
 
+import pytest
 from sqlalchemy import func, select
 
 from app.notifications.models import PushTarget
@@ -156,6 +157,13 @@ async def test_registering_the_same_endpoint_twice_creates_one_row(auth_client, 
     # invalidated only by that session's OWN ORM writes, so an assertion routed through the map
     # can be answered from cache and report one row while the database holds two — a guaranteed
     # false green, and precisely the bug this test exists to catch.
+    #
+    # It carries no weight against any mutation of THIS code, and that is worth stating rather
+    # than leaving for the next reader to rediscover: `uq_push_targets_transport_target` is
+    # global on (transport, target) (6-D), so any second row with this endpoint is an
+    # IntegrityError before a count could ever read 2. The assertion starts earning its keep the
+    # day that constraint is narrowed to per-user — which is exactly when someone would delete it
+    # for looking redundant.
     assert await db_session.scalar(select(func.count()).select_from(PushTarget)) == 1
 
 
@@ -200,6 +208,39 @@ async def test_an_over_long_endpoint_is_a_422_rather_than_a_500(auth_client, con
 
     response = await auth_client.post(
         "/v1/notifications/targets", json={"transport": "unifiedpush", "target": long_endpoint}
+    )
+
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "why"),
+    [
+        ("https://[evil/x", "urlparse raises ValueError('Invalid IPv6 URL') on an unclosed literal"),
+        ("https://push.example℀test/upTopic", "urlparse refuses an NFKC-unsafe netloc"),
+    ],
+)
+async def test_an_unparseable_endpoint_is_a_422_rather_than_a_500(auth_client, configured_push, endpoint, why):
+    """`urlparse` RAISES on some inputs rather than returning a useless parse, and `app/errors.py`
+    registers no handler for `ValueError` — so unwrapped these are a 500 for what is plainly a bad
+    request. Same class as the unbounded `target` length above; both are closed at the boundary.
+    """
+    response = await auth_client.post(
+        "/v1/notifications/targets", json={"transport": "unifiedpush", "target": endpoint}
+    )
+
+    assert response.status_code == 422
+
+
+async def test_ntfys_own_account_api_cannot_be_registered_as_an_endpoint(auth_client, configured_push):
+    """The check that stops an origin match from being the whole story. This URL is on the
+    configured server, so scheme and netloc both match — and it is ntfy's ACCOUNT API, which is
+    exactly where NTFY_TOKEN is privileged. Registered, the dispatcher would POST to it bearing
+    that credential once per matching episode.
+    """
+    response = await auth_client.post(
+        "/v1/notifications/targets",
+        json={"transport": "unifiedpush", "target": "https://push.example.test/v1/account/token"},
     )
 
     assert response.status_code == 422

@@ -5,9 +5,13 @@ import coil3.ImageLoader
 import coil3.PlatformContext
 import coil3.SingletonImageLoader
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
+import com.anarky.showtrack.core.data.push.PushSessionObserver
 import com.anarky.showtrack.core.network.di.PlainClient
 import dagger.Lazy
 import dagger.hilt.android.HiltAndroidApp
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import okhttp3.OkHttpClient
 import javax.inject.Inject
 
@@ -40,6 +44,30 @@ class ShowTrackApplication :
     @Inject
     @PlainClient
     lateinit var plainClient: Lazy<OkHttpClient>
+
+    /**
+     * Started here rather than from a screen, and it is not arbitrary: `AuthEventBus` has
+     * `replay = 0`, so a subscriber that arrives after the event misses it entirely. `onCreate`
+     * is the only place guaranteed to be earlier than any request that could 401.
+     *
+     * NOT `Lazy`, unlike [plainClient] above: the whole point is to be subscribed before the
+     * event, so deferring construction to first use would defeat it.
+     */
+    @Inject
+    lateinit var pushSessionObserver: PushSessionObserver
+
+    /**
+     * Process-lifetime, never cancelled — which is correct for exactly one subscriber that must
+     * outlive every screen, and would be a leak for anything else. `SupervisorJob` so a failure
+     * in the collector cannot take a sibling down with it; `Dispatchers.IO` because the work it
+     * triggers is an HTTP DELETE and a DataStore write.
+     */
+    private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    override fun onCreate() {
+        super.onCreate()
+        pushSessionObserver.start(applicationScope)
+    }
 
     /**
      * Reusing the app's OkHttp rather than letting Coil build its own means ONE connection pool

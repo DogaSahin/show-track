@@ -25,6 +25,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 @Composable
@@ -33,6 +34,21 @@ fun ProfileScreen(
     viewModel: ProfileViewModel = hiltViewModel(),
 ) {
     val pushState by viewModel.pushState.collectAsStateWithLifecycle()
+
+    // ON RESUME, not just in the ViewModel's `init`, and this is the difference between the
+    // NoDistributor prompt working and being a dead end. The prompt tells the user to go and
+    // install ntfy; doing so takes them out of the app and back. The ViewModel is scoped to the
+    // NavBackStackEntry and survives that round trip, so its `init` does not run again — the
+    // screen would still say "push needs one more app" after they had installed the app it asked
+    // for. That is decision A-A's own failure mode wearing the prompt written to prevent it.
+    //
+    // LifecycleResumeEffect rather than LaunchedEffect(Unit): the state is a function of what is
+    // installed on the DEVICE, and PackageManager offers no flow to observe. Resume is exactly
+    // when the answer can have changed.
+    LifecycleResumeEffect(viewModel) {
+        viewModel.refresh()
+        onPauseOrDispose { }
+    }
 
     Column(
         modifier = modifier.fillMaxWidth().padding(all = 16.dp),

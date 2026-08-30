@@ -18,8 +18,12 @@ from main import app
 # an endpoint on it. Module constants rather than per-test literals so a route test and a service
 # test cannot disagree about which host is "ours" — the whole check is a comparison between two
 # strings, and a test that supplies both sides of it proves nothing if they drift.
+#
+# The `/up` prefix is not decoration: ntfy mints UnifiedPush topics as `up<random>` and
+# validate_endpoint pins that prefix, so a fixture without it would be rejected for the wrong
+# reason and hide the host check it is meant to exercise.
 PUSH_BASE_URL = "https://push.example.test"
-PUSH_ENDPOINT = f"{PUSH_BASE_URL}/UPabcdef0123456789"
+PUSH_ENDPOINT = f"{PUSH_BASE_URL}/upabcdef0123456789"
 
 
 @pytest.fixture(scope="session")
