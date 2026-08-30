@@ -11,7 +11,9 @@ import kotlin.test.assertTrue
  * rules are *right*; these prove they are *reached*. A guard nobody has watched fail is
  * indistinguishable from one that is never invoked — comment out both `error(it)` calls in
  * showtrack.android.library and the four rule tests here must go red while all 13 unit tests stay
- * green. The fifth test guards a different silent failure: ktlint linting no Kotlin source at all.
+ * green. One test guards a different silent failure: ktlint linting no Kotlin source at all. And the
+ * positive control guards the scaffold itself — every other test asserts a FAILING build, so
+ * without it a scaffold that cannot configure at all would keep them all green.
  * The last two cover showtrack.jvm.library's own copies of both guards: apiLeakOf is live for a
  * pure-Kotlin/JVM module (it brings java-library's `api` configuration with it), and ktlint
  * registers its source-set tasks natively there with no widening — these tests are what keeps that
@@ -65,14 +67,39 @@ class DependencyRuleTestKitTest {
     private fun module(projectDir: File, path: String): File =
         projectDir.resolve(path.removePrefix(":").replace(':', '/')).apply { mkdirs() }
 
-    private fun buildAndFail(projectDir: File, task: String): String =
+    private fun runner(projectDir: File, task: String): GradleRunner =
         GradleRunner.create()
             .withProjectDir(projectDir)
             .withTestKitDir(TestFixtures.gradleUserHome)
             .withPluginClasspath()
             .withArguments(task)
-            .buildAndFail()
-            .output
+
+    private fun buildAndFail(projectDir: File, task: String): String =
+        runner(projectDir, task).buildAndFail().output
+
+    private fun build(projectDir: File, task: String): String =
+        runner(projectDir, task).build().output
+
+    /**
+     * The POSITIVE control, and the only assertion in this class that can catch a broken scaffold.
+     *
+     * Every other test here calls `buildAndFail`, so each one passes when the build fails for the
+     * RIGHT reason and equally when it fails for a wrong one — a missing SDK, an unapplied plugin,
+     * a `gradle.properties` the synthetic build does not have. Measured, not theorised: with
+     * `TestFixtures.writeGradleProperties` removed, the three rule tests below all still PASS
+     * while the scaffold cannot configure a feature module at all. Only a run that must SUCCEED
+     * distinguishes "the rule fired" from "nothing worked".
+     */
+    @Test
+    fun `a compliant feature module configures cleanly`(@TempDir projectDir: File) {
+        scaffold(projectDir)
+        module(projectDir, ":feature:b").resolve("build.gradle.kts").writeText(
+            """plugins { id("showtrack.android.feature") }""" + "\n",
+        )
+        // build(), not buildAndFail(): :feature:b declares no forbidden dependency, so applying
+        // the full feature plugin — library + compose + hilt, and with hilt, KSP — has to work.
+        build(projectDir, ":feature:b:help")
+    }
 
     @Test
     fun `a feature depending on another feature fails the build and names both modules`(

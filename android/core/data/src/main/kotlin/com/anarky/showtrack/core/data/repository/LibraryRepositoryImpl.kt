@@ -14,13 +14,18 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
+import javax.inject.Singleton
 
 private const val PAGE_SIZE = 20
 
 /**
- * Must be held as a singleton: [paginator] carries the cursor and the accumulated pages as
- * instance state, so a per-consumer instance would restart pagination for every collector.
+ * `@Singleton` here on the CLASS rather than on `DataModule`'s `@Binds` method: scoping the bind
+ * would scope only the [LibraryRepository] interface, leaving anyone who injected this type
+ * concretely with a second instance. The scope belongs to the type because the state does —
+ * [paginator] carries the cursor and the accumulated pages as instance state, so a per-consumer
+ * instance would restart pagination from page one for every collector.
  */
+@Singleton
 class LibraryRepositoryImpl
     @Inject
     constructor(

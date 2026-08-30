@@ -193,10 +193,16 @@ The rules themselves are pure functions (`build-logic/.../ModuleRules.kt`) with 
 Gradle TestKit tests drive a real build into each violation to prove the guards are actually reached
 — a guard nobody has watched fail is indistinguishable from one that is never invoked. That scaffold
 is a *separate* Gradle build, so it needs its own copy of anything the convention plugins depend on:
-an SDK location, and `android.disallowKotlinSourceSets=false`. The second only became load-bearing
-when `showtrack.android.feature` started applying KSP, and it hid well — two of the three affected
-tests failed on the same defect without showing it, because the dependency-rule check aborts
-configuration before AGP validates source sets.
+an SDK location, and `android.disallowKotlinSourceSets=false` (which only became load-bearing when
+`showtrack.android.feature` started applying KSP).
+
+Which exposes the weakness in a suite built entirely from `buildAndFail`: **a rule test passes when
+the build fails for the wrong reason just as readily as for the right one.** Measured — with the
+scaffold's `gradle.properties` removed, so that no feature module can configure at all, all three
+dependency-rule tests still pass, because the rule fires from `dependencies.configureEach` and
+aborts configuration before AGP ever validates source sets. The suite therefore also carries a
+**positive control**: one run that must *succeed*, on a compliant feature module. It is the only
+assertion in the class that can tell "the rule fired" from "nothing worked".
 
 Shared build configuration lives in the `build-logic` **included build** rather than `buildSrc`,
 which would invalidate every build script on any change to it. It publishes six plugin ids:

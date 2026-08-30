@@ -1,29 +1,36 @@
 package com.anarky.showtrack.core.network.auth
 
 import android.content.Context
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.mutablePreferencesOf
+import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.test.core.app.ApplicationProvider
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import java.io.IOException
 import javax.crypto.KeyGenerator
 
 /**
  * The store's own logic, on the JVM.
  *
- * Robolectric rather than an `androidTest`, deliberately: everything asserted here needs a
- * `Context` and a file, not the Android Keystore, so it can be EXECUTED by
- * `./gradlew testDebugUnitTest` instead of merely compiled by `assembleDebugAndroidTest`. The
- * genuinely device-only parts — whether the Keystore accepts the `KeyGenParameterSpec`, and
- * whether the key survives into a later process — stay in [TokenStoreInstrumentationTest], which
- * has no off-device stand-in.
+ * Robolectric rather than an `androidTest`, deliberately: everything asserted here needs a file or
+ * a fake, not the Android Keystore, so it can be EXECUTED by `./gradlew testDebugUnitTest` instead
+ * of merely compiled by `assembleDebugAndroidTest`. The genuinely device-only parts — whether the
+ * Keystore accepts the `KeyGenParameterSpec`, and whether the key survives into a later process —
+ * stay in `TokenStoreInstrumentationTest`, which has no off-device stand-in.
  *
- * One test method on purpose: the `preferencesDataStore` delegate caches a single DataStore
- * instance against the first `Context` it sees, and Robolectric hands out a fresh `filesDir` per
- * test, so a second method in this class would be operating on a DataStore pointed at a directory
- * that no longer exists.
+ * Only [undecryptable tokens are dropped rather than re-read forever] touches the real
+ * `preferencesDataStore` delegate, and that is a constraint rather than a coincidence: the
+ * delegate caches ONE DataStore against the first `Context` it is given, while Robolectric hands
+ * out a fresh `filesDir` per test. A second method reaching for it would be operating on a store
+ * pointed at a directory that no longer exists. Everything else goes through the constructor seam.
  */
 @RunWith(RobolectricTestRunner::class)
 class DataStoreTokenStoreTest {
@@ -63,6 +70,40 @@ class DataStoreTokenStoreTest {
             // "cleared" from "skipped" — a store that merely ignored it would answer here too.
             assertNull("the unusable ciphertext must have been cleared, not just ignored", store.tokens())
         }
+
+    /**
+     * The cleanup is a disk WRITE reached from a READ, and `AuthInterceptor` calls `tokens()`
+     * inside `runBlocking` on an OkHttp worker thread with no catch of its own — so an IOException
+     * escaping here does not surface as a failed request, it takes the process down. A full or
+     * read-only filesystem is enough to trigger it.
+     *
+     * This is the assertion that was missing: without it, deleting the catch in
+     * `dropUndecryptable` leaves every other test in the suite green, and the hazard is closed in
+     * code and defended by nothing.
+     */
+    @Test
+    fun `a failing cleanup does not escape the read`() =
+        runBlocking {
+            val strandedCiphertext =
+                mutablePreferencesOf(
+                    stringPreferencesKey("access_token") to "not-decryptable-under-any-key",
+                    stringPreferencesKey("refresh_token") to "nor-is-this",
+                )
+            val store = DataStoreTokenStore(WriteFailingDataStore(strandedCiphertext), TokenCrypto { newKey() })
+
+            // The call must COMPLETE, returning "no tokens", rather than throwing.
+            assertNull(store.tokens())
+        }
+
+    /** Reads back a fixed snapshot; every write fails the way a full disk would. */
+    private class WriteFailingDataStore(
+        snapshot: Preferences,
+    ) : DataStore<Preferences> {
+        override val data: Flow<Preferences> = flowOf(snapshot)
+
+        override suspend fun updateData(transform: suspend (t: Preferences) -> Preferences): Preferences =
+            throw IOException("no space left on device")
+    }
 
     private fun newKey() = KeyGenerator.getInstance("AES").apply { init(TokenCrypto.KEY_SIZE_BITS) }.generateKey()
 }
