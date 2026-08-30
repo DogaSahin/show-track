@@ -167,23 +167,36 @@ async def test_registering_the_same_endpoint_twice_creates_one_row(auth_client, 
     assert await db_session.scalar(select(func.count()).select_from(PushTarget)) == 1
 
 
-async def test_another_users_endpoint_cannot_be_claimed(auth_client, db_session, configured_push):
-    """409, not a 500. `uq_push_targets_transport_target` is GLOBAL (6-D) — deliberately, so
-    account A cannot register account B's target and receive B's notifications — so inserting
-    anyway is an IntegrityError. The disclosure a 404 would hide is already implied: the caller
-    had to know the endpoint, and knowing a UnifiedPush endpoint IS the ability to push to it.
+async def test_a_previous_users_endpoint_is_taken_over_not_refused(auth_client, auth_user, db_session, configured_push):
+    """THE DEVICE-HANDOVER CASE, and the exact state the app is left in when it cannot clean up
+    after itself: the previous account's row survives because the logout DELETE could not
+    authenticate — a terminal refresh failure is how the app learns it is logged out, so the token
+    is already dead. A 409 here is a permanent dead end for the person holding the phone.
+
+    Possession of the endpoint IS the device credential: the distributor mints it per app per
+    device and ntfy delivers by topic to whoever subscribes, so refusing takes nothing away from
+    anyone who already has the string. 200 with the row reassigned.
     """
     other = make_user(username="other-up", email="other-up@example.com")
     db_session.add(other)
     await db_session.flush()
-    db_session.add(make_push_target(other.id, transport="unifiedpush", target=PUSH_ENDPOINT))
+    stranded = make_push_target(other.id, transport="unifiedpush", target=PUSH_ENDPOINT)
+    db_session.add(stranded)
     await db_session.flush()
 
     response = await auth_client.post(
         "/v1/notifications/targets", json={"transport": "unifiedpush", "target": PUSH_ENDPOINT}
     )
 
-    assert response.status_code == 409
+    assert response.status_code == 200
+    assert response.json()["id"] == str(stranded.id)
+    # ARCHITECTURE RULE 8: through Core, never session.get(). Measured to be hygiene here too —
+    # the insert-instead-of-update mutation dies on the unique constraint, and with the constraint
+    # dropped it dies on the id assertion below. See test_unifiedpush.py for the full note.
+    assert await db_session.scalar(select(func.count()).select_from(PushTarget)) == 1
+    # The row is genuinely the caller's now, not merely returned to them.
+    owner = await db_session.scalar(select(PushTarget.user_id).where(PushTarget.id == stranded.id))
+    assert owner == auth_user.id
 
 
 async def test_listing_still_withholds_a_unifiedpush_endpoint(auth_client, configured_push):

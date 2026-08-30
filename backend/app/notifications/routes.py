@@ -44,10 +44,15 @@ async def register_target(
 
     For `unifiedpush` the distributor already minted the endpoint, so registration is IDEMPOTENT
     on it (decision A-O) and the status code carries which of the two happened: 201 when a row
-    was inserted, 200 when the endpoint was already registered to this user. Both return the same
-    body. The client cannot avoid re-registering — `onNewEndpoint` fires on every app start, not
-    once — so "you already told me this" has to be a success, not a 409, or the app would log an
-    error on every cold start.
+    was inserted, 200 when the endpoint was already registered — to this user OR to a previous
+    one, whose row is TAKEN OVER rather than refused. Both return the same body.
+
+    Two reasons there is no 409 anywhere on this path. The client cannot avoid re-registering —
+    `onNewEndpoint` fires on every app start, not once — so "you already told me this" has to be
+    a success or the app logs an error on every cold start. And possession of the endpoint IS the
+    device credential (see `service.create_unifiedpush_target`), so refusing a different owner
+    protects nothing an attacker does not already have while permanently stranding the next real
+    user of a shared phone.
 
     `response.status_code` rather than two routes or a `JSONResponse`: the decorator's 201 is the
     default and this overrides it for the one case, while `response_model=TargetCreated` keeps

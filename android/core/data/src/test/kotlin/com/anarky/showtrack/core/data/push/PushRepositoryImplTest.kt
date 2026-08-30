@@ -260,6 +260,29 @@ class PushRepositoryImplTest {
         }
 
     @Test
+    fun `handover works even when the logout DELETE never reached the server`() =
+        runTest {
+            // The exact dead end the backend's takeover ruling removes, driven from this side.
+            // The commonest logout is a terminal refresh failure, so the token is dead and the
+            // DELETE cannot land — the previous account's row survives on the server. The client
+            // must still forget it locally and POST again, and the server must answer 200 by
+            // reassigning that row rather than 409. Before the ruling this sequence was a
+            // permanent dead end for the person holding the phone.
+            val api = FakeApi().apply { deleteFailure = IllegalStateException("401 — the token is already dead") }
+            val store = FakeStore()
+            val push = repository(api, store)
+            push.register(ENDPOINT) // user A
+            api.nextId = "target-2" // the server hands back the SAME row, now owned by B
+
+            push.onLoggedOut()
+            push.register(ENDPOINT) // user B, same device, same endpoint
+
+            assertTrue("the failed DELETE must not stop the local record being cleared", api.deletions.isEmpty())
+            assertEquals(2, api.registrations.size)
+            assertEquals("target-2", store.record?.targetId)
+        }
+
+    @Test
     fun `logging out with nothing registered is a no-op`() =
         runTest {
             val api = FakeApi()

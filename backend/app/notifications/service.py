@@ -83,15 +83,6 @@ async def create_target(session: AsyncSession, *, user_id: uuid.UUID, label: str
     return target
 
 
-class TargetOwnedByAnotherUser(Exception):
-    """This endpoint is already registered to a different account.
-
-    A distinct outcome from "created" and from "already yours", and it cannot be papered over by
-    inserting anyway: `uq_push_targets_transport_target` is GLOBAL (6-D), so the insert would come
-    back as an IntegrityError and a 500. Raising here turns a crash into a 409.
-    """
-
-
 async def create_unifiedpush_target(
     session: AsyncSession, *, user_id: uuid.UUID, endpoint: str, label: str | None
 ) -> tuple[PushTarget, bool]:
@@ -105,14 +96,32 @@ async def create_unifiedpush_target(
     The user's only remedy would be deleting rows they never knowingly created (decision A-O).
 
     Scoped by (transport, target) and NOT by user_id, matching the unique constraint exactly. A
-    user-scoped lookup would miss another account's row, fall through to the insert, and hit that
-    constraint as a 500 instead of the 409 below.
+    user-scoped lookup would miss another account's row and fall through to the insert, where the
+    global constraint would turn a device handover into a 500.
 
-    NOT a Core `ON CONFLICT DO NOTHING` upsert, which is the usual answer to a check-then-insert
+    **A DIFFERENT OWNER TAKES THE ROW OVER — it is not refused.** A-O originally specified 409
+    here, and that was wrong for a reason worth stating plainly, because otherwise someone will
+    restore it as a hardening measure and reintroduce a dead end:
+
+    **Possession of the endpoint IS the device credential.** The distributor mints it per app per
+    device, and ntfy delivers by topic to whoever subscribes — so anyone holding this string
+    already receives everything sent to it. A 409 does not take that away from an attacker; it
+    only refuses the person standing in front of the phone. Meanwhile it PERMANENTLY breaks
+    legitimate handover in the common case: the app learns it is logged out from a terminal
+    refresh failure, so the logout DELETE cannot authenticate, the previous owner's row survives,
+    and the next user on that device can never register — with no recovery path they can reach.
+    Refusing protects nothing an attacker does not already have and guarantees a dead end for a
+    real user. That asymmetry is what decides it.
+
+    What takeover changes is WHO OWNS the row, never HOW MANY rows exist. The global
+    `UniqueConstraint("transport", "target")` (6-D) is untouched and still doing its job — one row
+    per endpoint — which is also why the reassignment below is an UPDATE and never an insert.
+
+    NOT a Core `ON CONFLICT DO UPDATE` upsert, which is the usual answer to a check-then-write
     race. Architecture rule 8 is why: a Core write does not invalidate this session's identity
-    map, so the returned row would have to be re-read with populate_existing to be trusted, and
-    the three outcomes here (created / already yours / someone else's) are not expressible as one
-    conflict action anyway. The residual race is two simultaneous registrations of the same
+    map, so the returned row would have to be re-read with `populate_existing=True` to be trusted
+    at all. Assigning through the ORM keeps the returned object and the database in agreement
+    without a second query. The residual race is two simultaneous registrations of the same
     endpoint, which resolves as an IntegrityError on the loser — the constraint still holds the
     line, which is the property that matters.
     """
@@ -128,8 +137,22 @@ async def create_unifiedpush_target(
         select(PushTarget).where(PushTarget.transport == PushTransport.UNIFIEDPUSH, PushTarget.target == endpoint)
     )
     if existing is not None:
-        if existing.user_id != user_id:
-            raise TargetOwnedByAnotherUser
+        # An ORM assignment on a loaded instance, deliberately, and not a Core UPDATE: this
+        # session's identity map holds `existing`, and only its OWN ORM writes invalidate it
+        # (architecture rule 8). A Core UPDATE here would leave the object the route then
+        # serialises still carrying the PREVIOUS owner's user_id — invisible, and exactly the
+        # kind of stale read rule 8 exists for.
+        #
+        # An UPDATE and never an INSERT — one row per endpoint is 6-D's invariant and takeover
+        # changes only who owns it. MEASURED, so the next reader does not re-derive it: mutating
+        # this into an insert, and mutating it to update-then-also-insert, both die as an
+        # IntegrityError on `uq_push_targets_transport_target` rather than as a duplicate row.
+        # While that constraint is global there is no reachable path here that produces a silent
+        # second row.
+        existing.user_id = user_id
+        await session.flush()
+        # `created` is False for a takeover exactly as for a re-registration by the same user: no
+        # row was created, and the client cannot act differently on the difference anyway.
         return existing, False
 
     target = PushTarget(

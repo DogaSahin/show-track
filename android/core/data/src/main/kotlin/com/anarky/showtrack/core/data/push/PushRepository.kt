@@ -33,9 +33,11 @@ interface PushRepository {
      * Distinct from [unregister], and the difference is the whole point. Without it, a shared
      * device leaks notifications across accounts: A logs out, B logs in, `onNewEndpoint` delivers
      * the SAME endpoint, [register]'s local skip sees it unchanged and posts nothing — so A's row
-     * still points at that device and **B receives A's notifications**. Even with the skip gone,
-     * B's POST would hit the global `(transport, target)` constraint as a 409 and fail, so the
-     * handover is broken in both directions until the row is cleared.
+     * still points at that device and **B receives A's notifications**.
+     *
+     * This is the client half of a two-sided fix. The server half is that a registration for an
+     * endpoint owned by someone else now REASSIGNS that row and answers 200, rather than
+     * refusing it — so B's POST succeeds even when A's row was never deleted.
      *
      * "Always forgets it locally" is the part that must not be conditional. The commonest logout
      * here is a TERMINAL REFRESH FAILURE, i.e. the token is already dead — so the DELETE will

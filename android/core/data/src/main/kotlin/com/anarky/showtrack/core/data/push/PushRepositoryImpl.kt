@@ -62,12 +62,17 @@ class PushRepositoryImpl
          * how the app learns it is logged out and the token is dead by then. Letting that abort
          * the local clear is exactly the bug this method exists to fix.
          *
-         * The residual, stated rather than hidden: when the DELETE does fail, the server row
-         * survives and points at an endpoint that still reaches this device. The next user's
-         * registration then gets a 409 and this device receives the previous user's notifications
-         * until that row is deleted or the distributor rotates the endpoint. Closing it properly
-         * is a server-side question (whether a second user presenting the same endpoint should
-         * TAKE OVER the row rather than be refused) and is flagged, not decided here.
+         * When the DELETE does fail the server row survives, and the server is what closes that
+         * gap: a registration for an endpoint owned by someone else REASSIGNS the row and answers
+         * 200 rather than refusing it. So this method only has to guarantee that the next
+         * `register()` actually goes out — which is exactly what the unconditional `clear()`
+         * buys, since [register] skips a POST whose endpoint is unchanged.
+         *
+         * Why the server allows that takeover, because it looks like a hole and is not:
+         * possession of the endpoint IS the device credential. The distributor mints it per app
+         * per device and ntfy delivers by topic to whoever subscribes, so anyone holding it
+         * already receives everything sent to it. Refusing protects nothing and strands the
+         * person holding the phone.
          */
         @Suppress("TooGenericExceptionCaught")
         override suspend fun onLoggedOut() {

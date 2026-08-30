@@ -955,11 +955,23 @@ curl -s -X POST localhost:8000/v1/notifications/targets \
   -d '{"transport":"unifiedpush","target":"http://localhost:8080/upSomeTopic"}'
 ```
 
-**200 rather than 409 on a repeat is the contract, not a shrug.** The distributor re-delivers the
+**200 rather than 201 on a repeat is the contract, not a shrug.** The distributor re-delivers the
 endpoint through `onNewEndpoint` on *every app start*, so the app cannot avoid re-registering;
 without server-side idempotency on the endpoint, one cold start per day would add one push target
-per day and a single episode would arrive N times on one phone. An endpoint already registered to
-a *different* account is a 409, and one that is not on `NTFY_BASE_URL` is a 422.
+per day and a single episode would arrive N times on one phone.
+
+An endpoint already registered to a **different** account is also a 200 — that account's row is
+**taken over**, not refused. The reason is the sentence to keep: **possession of the endpoint is
+the device credential.** The distributor mints it per app per device and ntfy delivers by topic to
+whoever subscribes, so anyone holding the string already receives everything sent to it and a
+refusal takes nothing away from them. What a refusal *would* do is strand the next real user of a
+shared phone: the app learns it is logged out from a failed token refresh, so the logout `DELETE`
+cannot authenticate, the old row survives, and a 409 leaves that device unable to register while
+the previous owner's notifications keep arriving on it. Do not "harden" this back into a 409.
+
+One row per endpoint still holds — the global unique constraint is untouched; takeover changes who
+owns the row, never how many exist. An endpoint that is not on `NTFY_BASE_URL`, or not a `/up…`
+topic on it, is a 422.
 
 What arrives on the wire is the whole notification as JSON, not ntfy's title/message format:
 
@@ -978,9 +990,10 @@ it, and it never appears in a log line. It is also checked by **path**, not just
 and an origin-only check would admit `/v1/account/…` — ntfy's own account API — as a callback the
 dispatcher would then POST to bearing that credential.
 
-**Logging out clears the registration.** On a shared device the distributor hands the *same*
-endpoint to whoever logs in next, so without that clear the previous account's target row still
-points at the phone and the new user receives their notifications.
+**Logging out clears the registration**, best effort on the wire and unconditionally on the
+device: the commonest logout is a dead token, so the `DELETE` often cannot land, and keeping the
+local record on failure would block the next user behind the app's own "already registered" skip.
+The server-side takeover above is what closes the other half.
 
 ##### Push requires the VPN
 

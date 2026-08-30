@@ -263,19 +263,81 @@ async def test_registering_the_same_endpoint_twice_creates_one_row(db_session, c
     assert count == 1
 
 
-async def test_another_users_endpoint_is_refused_rather_than_stolen(db_session, configured_push):
-    """`uq_push_targets_transport_target` is GLOBAL (6-D), so inserting anyway is an IntegrityError
-    and a 500. Refusing explicitly is what turns that into a 409 — and the global scope is itself
-    the guard against account A registering account B's endpoint and receiving B's notifications.
-    """
-    owner = make_user(username="owner", email="owner@example.com")
-    thief = make_user(username="thief", email="thief@example.com")
-    db_session.add_all([owner, thief])
-    await db_session.flush()
-    await service.create_unifiedpush_target(db_session, user_id=owner.id, endpoint=ENDPOINT, label=None)
+async def test_a_second_user_takes_the_endpoint_over_rather_than_being_refused(db_session, configured_push):
+    """Possession of the endpoint IS the device credential (decision A-O, revised).
 
-    with pytest.raises(service.TargetOwnedByAnotherUser):
-        await service.create_unifiedpush_target(db_session, user_id=thief.id, endpoint=ENDPOINT, label=None)
+    The distributor mints it per app per device and ntfy delivers by topic to whoever subscribes,
+    so anyone holding this string already receives everything sent to it — a refusal takes nothing
+    away from an attacker. What it does take away is the next real user of a shared phone: the
+    logout DELETE cannot authenticate after a terminal refresh failure, so the previous owner's
+    row survives and a 409 strands them permanently.
+    """
+    first = make_user(username="first", email="first@example.com")
+    second = make_user(username="second", email="second@example.com")
+    db_session.add_all([first, second])
+    await db_session.flush()
+    original, created = await service.create_unifiedpush_target(
+        db_session, user_id=first.id, endpoint=ENDPOINT, label=None
+    )
+    assert created is True
+
+    taken, created_again = await service.create_unifiedpush_target(
+        db_session, user_id=second.id, endpoint=ENDPOINT, label=None
+    )
+
+    assert created_again is False
+    assert taken.id == original.id
+    assert taken.user_id == second.id
+    # ARCHITECTURE RULE 8: through Core, never session.get() — the identity map is invalidated
+    # only by this session's own ORM writes.
+    #
+    # And it is STILL hygiene rather than a live guard, which was worth measuring rather than
+    # assuming. Takeover looked like the first path where a plausible bug (reassigning by
+    # INSERTING instead of updating) would produce a silent duplicate. It does not: that mutation
+    # dies on `uq_push_targets_transport_target` as an IntegrityError, and with the constraint
+    # dropped it dies on the `taken.id == original.id` assertion two lines up — which is the
+    # stronger check anyway, since it pins the SAME row rather than merely one row. Keep this
+    # assertion for the day 6-D's constraint is narrowed to per-user; do not claim it is load
+    # bearing today.
+    count = await db_session.scalar(select(func.count()).select_from(PushTarget))
+    assert count == 1
+
+
+async def test_after_a_takeover_the_previous_owner_stops_receiving(db_session, configured_push):
+    """The half a status-code assertion cannot see. A takeover that changed `user_id` but left the
+    old owner reachable would be worse than the 409 it replaced — the endpoint would then serve
+    both accounts at once, which is the exact privacy leak this whole change exists to close.
+    """
+    tag = uuid.uuid4().hex[:8]
+    previous = make_user(username=f"prev{tag}", email=f"prev{tag}@example.com")
+    current = make_user(username=f"curr{tag}", email=f"curr{tag}@example.com")
+    airs_at = NOW + timedelta(hours=20)
+    media = make_media(external_id=tag, status=MediaStatus.AIRING, next_episode_number=12, next_episode_date=airs_at)
+    db_session.add_all([previous, current, media])
+    await db_session.flush()
+    db_session.add_all(
+        [
+            make_user_media(previous.id, media.id),
+            make_notification_prefs(previous.id, push_enabled=True),
+            make_notification_task(
+                previous.id,
+                media.id,
+                episode_number=12,
+                threshold=NotificationThreshold.TWENTY_FOUR_HOURS,
+                airs_on=airs_on_for(airs_at),
+            ),
+        ]
+    )
+    await service.create_unifiedpush_target(db_session, user_id=previous.id, endpoint=ENDPOINT, label=None)
+    await db_session.flush()
+
+    await service.create_unifiedpush_target(db_session, user_id=current.id, endpoint=ENDPOINT, label=None)
+    up_stub = RecordingTransport("unifiedpush")
+    summary = await service.dispatch_once(db_session, {PushTransport.UNIFIEDPUSH: up_stub}, now=NOW)
+
+    assert up_stub.sent == [], "the previous owner's notification still reached the handed-over device"
+    # Nowhere to send is SKIPPED, not failed — the previous owner now has no registered target.
+    assert (summary.sent, summary.skipped) == (0, 1)
 
 
 async def test_an_off_server_endpoint_is_refused_before_the_lookup(db_session, configured_push):
