@@ -5,11 +5,12 @@ from collections import defaultdict
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import Select, delete, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db import get_sessionmaker
+from app.db import UNIQUE_VIOLATION, get_sessionmaker
 from app.library.models import UserMedia
 from app.media.models import Media
 from app.notifications.models import (
@@ -83,6 +84,51 @@ async def create_target(session: AsyncSession, *, user_id: uuid.UUID, label: str
     return target
 
 
+def _unifiedpush_row(endpoint: str) -> Select[tuple[PushTarget]]:
+    """One definition of "the row for this endpoint", used by the lookup and by the race recovery.
+
+    Scoped by (transport, target) and NOT by user_id, matching the unique constraint exactly. A
+    user-scoped lookup would miss another account's row and fall through to the insert, where the
+    global constraint would turn a device handover into a 500.
+    """
+    return select(PushTarget).where(PushTarget.transport == PushTransport.UNIFIEDPUSH, PushTarget.target == endpoint)
+
+
+def _adopt(target: PushTarget, *, user_id: uuid.UUID, label: str | None) -> None:
+    """Point an existing endpoint row at `user_id`, clearing what belonged to the last owner.
+
+    ORM assignment on a loaded instance, deliberately, and not a Core UPDATE: this session's
+    identity map holds `target`, and only its OWN ORM writes invalidate it (architecture rule 8).
+    A Core UPDATE here would leave the object the route then serialises still carrying the
+    PREVIOUS owner's user_id — invisible, and exactly the kind of stale read rule 8 exists for.
+
+    An UPDATE and never an INSERT — one row per endpoint is 6-D's invariant and takeover changes
+    only who owns it. MEASURED, so the next reader does not re-derive it: mutating this into an
+    insert, and mutating it to update-then-also-insert, both die as an IntegrityError on
+    `uq_push_targets_transport_target` rather than as a duplicate row.
+
+    `label` and `created_at` MOVE WITH THE OWNER, and that is the part that was previously missed:
+    reassigning user_id alone left the new owner's device list showing a name the previous owner
+    chose ("Dad's Pixel") for a phone they now hold, and a registration date months before they
+    ever saw it. `list_targets` also orders by created_at, so a stale one files the newest device
+    at the top of the list. Both are the previous owner's data surfacing in someone else's UI.
+
+    Only on a genuine OWNER CHANGE. A re-registration by the same user runs through here too —
+    `onNewEndpoint` fires on every app start — and must be inert, or every cold start would reset
+    a label the user had chosen and bump the created_at of a device that did not change hands.
+
+    The app clock rather than `func.now()`: a server-side default on an UPDATE leaves the
+    attribute expired, and refreshing it would be a lazy load, which raises MissingGreenlet in
+    async code. `dispatch_once` already writes `sent_at`/`last_seen_at` from the app clock for the
+    same reason, so this is the established convention and not a new one.
+    """
+    if target.user_id == user_id:
+        return
+    target.user_id = user_id
+    target.label = label
+    target.created_at = datetime.now(tz=UTC)
+
+
 async def create_unifiedpush_target(
     session: AsyncSession, *, user_id: uuid.UUID, endpoint: str, label: str | None
 ) -> tuple[PushTarget, bool]:
@@ -94,10 +140,6 @@ async def create_unifiedpush_target(
     it through `onNewEndpoint` on EVERY app start, not once — so without this lookup one cold
     start per day silently adds a row, and one episode then yields N notifications on one device.
     The user's only remedy would be deleting rows they never knowingly created (decision A-O).
-
-    Scoped by (transport, target) and NOT by user_id, matching the unique constraint exactly. A
-    user-scoped lookup would miss another account's row and fall through to the insert, where the
-    global constraint would turn a device handover into a 500.
 
     **A DIFFERENT OWNER TAKES THE ROW OVER — it is not refused.** A-O originally specified 409
     here, and that was wrong for a reason worth stating plainly, because otherwise someone will
@@ -121,9 +163,14 @@ async def create_unifiedpush_target(
     race. Architecture rule 8 is why: a Core write does not invalidate this session's identity
     map, so the returned row would have to be re-read with `populate_existing=True` to be trusted
     at all. Assigning through the ORM keeps the returned object and the database in agreement
-    without a second query. The residual race is two simultaneous registrations of the same
-    endpoint, which resolves as an IntegrityError on the loser — the constraint still holds the
-    line, which is the property that matters.
+    without a second query.
+
+    The residual race — two simultaneous FIRST registrations of the same endpoint — is HANDLED
+    below rather than merely acknowledged. It used to reach the client as a 500: the constraint
+    held the line in the database, which is the property that matters, but the loser got an
+    unhandled IntegrityError for a request that is supposed to be idempotent. The insert is
+    wrapped in a savepoint and the loser re-looks-up the winner's row and takes it over, so both
+    callers get the same 200 they would have got a millisecond apart.
     """
     # Origin-checked FIRST, ahead of the lookup, and the order is the point (decision A-L). Check
     # after the lookup and an endpoint that was legal when it was stored — but is off-server now,
@@ -133,23 +180,9 @@ async def create_unifiedpush_target(
     # dispatcher will later POST the ntfy credential to.
     validate_endpoint(endpoint)
 
-    existing = await session.scalar(
-        select(PushTarget).where(PushTarget.transport == PushTransport.UNIFIEDPUSH, PushTarget.target == endpoint)
-    )
+    existing = await session.scalar(_unifiedpush_row(endpoint))
     if existing is not None:
-        # An ORM assignment on a loaded instance, deliberately, and not a Core UPDATE: this
-        # session's identity map holds `existing`, and only its OWN ORM writes invalidate it
-        # (architecture rule 8). A Core UPDATE here would leave the object the route then
-        # serialises still carrying the PREVIOUS owner's user_id — invisible, and exactly the
-        # kind of stale read rule 8 exists for.
-        #
-        # An UPDATE and never an INSERT — one row per endpoint is 6-D's invariant and takeover
-        # changes only who owns it. MEASURED, so the next reader does not re-derive it: mutating
-        # this into an insert, and mutating it to update-then-also-insert, both die as an
-        # IntegrityError on `uq_push_targets_transport_target` rather than as a duplicate row.
-        # While that constraint is global there is no reachable path here that produces a silent
-        # second row.
-        existing.user_id = user_id
+        _adopt(existing, user_id=user_id, label=label)
         await session.flush()
         # `created` is False for a takeover exactly as for a re-registration by the same user: no
         # row was created, and the client cannot act differently on the difference anyway.
@@ -161,8 +194,40 @@ async def create_unifiedpush_target(
         target=endpoint,
         label=label,
     )
-    session.add(target)
-    await session.flush()
+    try:
+        # The savepoint, and the `add` INSIDE it, are both load-bearing — the same shape, and for
+        # the same measured reason, as `library.create_review`. Adding before the nested block
+        # puts the pending object in the snapshot the savepoint was opened on, so rolling back
+        # does not expunge it and the session is left needing a full rollback: the caller's next
+        # statement then raises PendingRollbackError instead of proceeding.
+        async with session.begin_nested():
+            session.add(target)
+            await session.flush()
+    except IntegrityError as exc:
+        # SQLSTATE, not the constraint name — app/db.py explains why, and this is the third call
+        # site to need the discrimination. `except IntegrityError` alone would also swallow the
+        # user_id FK violation, and reporting a deleted account as "someone else registered this
+        # endpoint first" is the misclassification that pattern exists to prevent.
+        if getattr(exc.orig, "sqlstate", None) != UNIQUE_VIOLATION:
+            raise
+        # THE LOSER OF A FIRST-REGISTRATION RACE. Two devices — realistically one device retrying
+        # while the first attempt is still in flight — passed the lookup above before either
+        # inserted, and `uq_push_targets_transport_target` let exactly one through. Postgres
+        # blocks the second INSERT on the unique index until the first COMMITS, so by the time
+        # 23505 is raised the winner's row is committed and visible to this READ COMMITTED
+        # transaction's next statement.
+        #
+        # Rule 8 does not bite here: this session never loaded the winner's row, so there is no
+        # identity-map entry to be stale and the select below really does emit SQL.
+        winner = await session.scalar(_unifiedpush_row(endpoint))
+        if winner is None:
+            # Not reachable under READ COMMITTED, and re-raised rather than papered over: a None
+            # here means the unique violation was about something this function does not model,
+            # and inventing an answer would hide it.
+            raise
+        _adopt(winner, user_id=user_id, label=label)
+        await session.flush()
+        return winner, False
     return target, True
 
 

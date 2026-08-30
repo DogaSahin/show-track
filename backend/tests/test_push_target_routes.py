@@ -1,8 +1,10 @@
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import func, select
 
+from app.notifications import service
 from app.notifications.models import PushTarget
 from tests.conftest import PUSH_ENDPOINT
 from tests.factories import make_push_target, make_user
@@ -197,6 +199,149 @@ async def test_a_previous_users_endpoint_is_taken_over_not_refused(auth_client, 
     # The row is genuinely the caller's now, not merely returned to them.
     owner = await db_session.scalar(select(PushTarget.user_id).where(PushTarget.id == stranded.id))
     assert owner == auth_user.id
+
+
+async def test_takeover_does_not_inherit_the_previous_owners_label_and_date(
+    auth_client, auth_user, db_session, configured_push
+):
+    """The other half of the handover, and the half that reassigning `user_id` alone left behind.
+
+    A device changes hands with a row already on it. Move only the owner and the new user's device
+    list shows a name the PREVIOUS user typed and a registration date from before they owned the
+    phone — and since `list_targets` orders by `created_at`, the newest device also sorts as the
+    oldest. That is one person's data rendered in another person's UI, which is the same class of
+    leak the endpoint itself is withheld for, just quieter.
+
+    Asserted through Core rather than off the response body, per architecture rule 8: the route's
+    session wrote these values, so a read routed through its identity map would be answered from
+    memory and pass even if nothing reached the database.
+    """
+    other = make_user(username="handover", email="handover@example.com")
+    db_session.add(other)
+    await db_session.flush()
+    stranded = make_push_target(
+        other.id,
+        transport="unifiedpush",
+        target=PUSH_ENDPOINT,
+        label="Dad's Pixel",
+        created_at=datetime(2020, 1, 1, tzinfo=UTC),
+    )
+    db_session.add(stranded)
+    await db_session.flush()
+
+    response = await auth_client.post(
+        "/v1/notifications/targets", json={"transport": "unifiedpush", "target": PUSH_ENDPOINT}
+    )
+
+    assert response.status_code == 200
+    row = (
+        await db_session.execute(
+            select(PushTarget.user_id, PushTarget.label, PushTarget.created_at).where(PushTarget.id == stranded.id)
+        )
+    ).one()
+    assert row.user_id == auth_user.id
+    assert row.label is None, "the previous owner's name must not survive the handover"
+    assert row.created_at > datetime(2020, 1, 2, tzinfo=UTC), "created_at must date the new owner's registration"
+
+
+async def test_re_registering_does_not_reset_your_own_label_or_date(auth_client, db_session, configured_push):
+    """The guard on the clearing above, and the reason it is conditional on the owner CHANGING.
+
+    `onNewEndpoint` fires on every app start and the client sends `label = null`, so an
+    unconditional reset would wipe a name the user had chosen and bump `created_at` on every cold
+    start — turning a fix for one user's stale data into a bug for every user's live data.
+    """
+    created = await auth_client.post(
+        "/v1/notifications/targets",
+        json={"transport": "unifiedpush", "target": PUSH_ENDPOINT, "label": "Pixel 8"},
+    )
+    assert created.status_code == 201
+    target_id = uuid.UUID(created.json()["id"])
+    first = (await db_session.execute(select(PushTarget.created_at).where(PushTarget.id == target_id))).scalar_one()
+
+    again = await auth_client.post(
+        "/v1/notifications/targets", json={"transport": "unifiedpush", "target": PUSH_ENDPOINT}
+    )
+
+    assert again.status_code == 200
+    row = (
+        await db_session.execute(select(PushTarget.label, PushTarget.created_at).where(PushTarget.id == target_id))
+    ).one()
+    assert row.label == "Pixel 8"
+    assert row.created_at == first
+
+
+async def test_losing_a_first_registration_race_returns_the_winner_not_a_500(
+    auth_client, auth_user, db_session, configured_push, monkeypatch
+):
+    """The race the docstring used to merely acknowledge: two FIRST registrations of one endpoint.
+
+    Both callers pass the "is it already registered?" lookup before either inserts, and
+    `uq_push_targets_transport_target` then lets exactly one through. The constraint was always
+    doing its job — one row per endpoint — but the loser received the raw IntegrityError as a 500,
+    on the one endpoint whose whole contract is that calling it twice is fine.
+
+    The race is FORCED rather than hoped for. Two real concurrent requests would need two
+    connections outside the test's savepoint-joined session, and would deadlock against it on the
+    unique index; instead the losing caller's lookup is stubbed to answer None ONCE, which puts it
+    in exactly the state the winner leaves it in — past the guard, about to insert a duplicate.
+    Racing by timing would make this test's failure mode "sometimes".
+    """
+    winner = make_push_target(auth_user.id, transport="unifiedpush", target=PUSH_ENDPOINT, label="the winner")
+    db_session.add(winner)
+    await db_session.flush()
+
+    real_row = service._unifiedpush_row
+    blinded = {"done": False}
+
+    def once_blind(endpoint: str):
+        if blinded["done"]:
+            return real_row(endpoint)
+        blinded["done"] = True
+        # A predicate that matches nothing: the lookup runs, sees no row, and falls through to
+        # the insert — the loser's exact position. Patching the QUERY rather than the service
+        # function keeps the recovery path under test genuinely unstubbed.
+        return real_row(endpoint).where(PushTarget.id == uuid.uuid4())
+
+    monkeypatch.setattr(service, "_unifiedpush_row", once_blind)
+
+    response = await auth_client.post(
+        "/v1/notifications/targets", json={"transport": "unifiedpush", "target": PUSH_ENDPOINT}
+    )
+
+    assert response.status_code == 200, "the loser of the race is idempotent, not a 500"
+    assert response.json()["id"] == str(winner.id), "and is handed the winner's row"
+    assert blinded["done"], "the blinded lookup must actually have been the one that ran"
+    # Through Core (rule 8): the savepoint rollback must have expunged the loser's pending INSERT,
+    # not left it to be flushed later as a second row.
+    assert await db_session.scalar(select(func.count()).select_from(PushTarget)) == 1
+
+
+async def test_a_non_unique_integrity_error_is_not_swallowed_as_a_race(
+    auth_client, db_session, configured_push, monkeypatch
+):
+    """The recovery path must not turn every integrity error into a cheerful 200.
+
+    A FOREIGN KEY violation — a user row deleted between authentication and the insert — is not
+    "someone else registered this endpoint first", and answering it with the winner's row would
+    report a registration that does not exist.
+
+    MEASURED, so the next reader does not overstate what this covers: it does NOT die to removing
+    the SQLSTATE check alone. Two guards stand behind it and either one suffices — the 23505 test,
+    and the `winner is None` re-raise — because a non-unique violation implies no duplicate row,
+    so the re-look-up finds nothing to hand back. Removing BOTH is what fails it. The SQLSTATE
+    check is kept anyway: it is app/db.py's documented discrimination (`library.create_review`
+    and `groups.propose_title` take the same one), and it states the intent that the second guard
+    only happens to enforce. Narrow this test the day a constraint is added that could fire while
+    a duplicate row exists.
+    """
+    ghost = uuid.uuid4()
+    monkeypatch.setattr(service, "_unifiedpush_row", lambda endpoint: select(PushTarget).where(PushTarget.id == ghost))
+
+    with pytest.raises(Exception) as raised:  # noqa: B017 - the point is that it is NOT contained
+        await service.create_unifiedpush_target(db_session, user_id=ghost, endpoint=PUSH_ENDPOINT, label=None)
+
+    assert "23503" in str(raised.value) or "foreign key" in str(raised.value).lower()
 
 
 async def test_listing_still_withholds_a_unifiedpush_endpoint(auth_client, configured_push):

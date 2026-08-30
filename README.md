@@ -1133,6 +1133,14 @@ One row per endpoint still holds — the global unique constraint is untouched; 
 owns the row, never how many exist. An endpoint that is not on `NTFY_BASE_URL`, or not a `/up…`
 topic on it, is a 422.
 
+A takeover also clears the **label** and refreshes **`created_at`**, because both belong to the
+owner rather than to the endpoint: leaving them would show the new user a device name the previous
+one typed and a registration date from before they owned the phone — and `GET
+/v1/notifications/targets` orders by `created_at`, so the newest device would sort as the oldest.
+Re-registering your *own* endpoint changes neither, or every cold start would reset a name you
+chose. Two clients racing to register the same endpoint for the first time both get the 200: the
+loser of the unique-constraint race re-reads the winner's row instead of surfacing a 500.
+
 What arrives on the wire is the whole notification as JSON, not ntfy's title/message format:
 
 ```json
@@ -1149,6 +1157,15 @@ it, and it never appears in a log line. It is also checked by **path**, not just
 `/up…` is accepted, because the configured ntfy host is exactly where `NTFY_TOKEN` is privileged
 and an origin-only check would admit `/v1/account/…` — ntfy's own account API — as a callback the
 dispatcher would then POST to bearing that credential.
+
+That path check reads the URL **as `httpx` resolves it**, and rejects any `..` segment in it. Both
+halves are needed and neither is decoration. `https://<ntfy>/up/../v1/account/token` has a raw path
+that genuinely begins `/up`, so a check on the un-normalized string admits it — and `httpx`
+collapses the dot-segment when it builds the request, so the dispatcher POSTs to
+`/v1/account/token` with `NTFY_TOKEN` attached. Percent-encoded variants (`/up/%2e%2e/…`,
+`/up%2f..%2fv1/…`) go the other way: `httpx` leaves them on the wire for the server to decode, so
+only the decoded `..` segment catches them. The general name for the bug is a **parser
+differential** — validating a parse of the string that nobody ends up requesting.
 
 **Logging out clears the registration**, best effort on the wire and unconditionally on the
 device: the commonest logout is a dead token, so the `DELETE` often cannot land, and keeping the
