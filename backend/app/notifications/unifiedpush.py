@@ -47,6 +47,27 @@ class EndpointNotAllowed(Exception):
 # "the host is our own" was doing all the work on the one host where that is least sufficient.
 UNIFIEDPUSH_PATH_PREFIX = "/up"
 
+# The prefix above is checked against the path HTTPX WILL RESOLVE, never against the raw string,
+# and this constant is the second half of that. MEASURED, because it is the bug that made the
+# check ornamental: `https://<ntfy>/up/../v1/account/token` passed `urlparse(...).path.startswith`
+# — the un-normalized path really does begin `/up` — and httpx then collapsed the dot-segment when
+# it built the request, so the dispatcher POSTed to `/v1/account/token` with NTFY_TOKEN attached.
+# `/upx/../../v1/...` did the same.
+#
+# The general name for it is a PARSER DIFFERENTIAL: two parses of one string disagree, and the
+# check ran on the parse that was never sent. So the primary fix is to validate `httpx.URL(...)`,
+# which is the parse the client resolves — not to blocklist `..`.
+#
+# The blocklist is still needed for the residue httpx does NOT normalize. Percent-encoded
+# separators (`/up/%2e%2e/v1/...`, `/up%2f..%2fv1/...`) are left on the wire verbatim for the
+# SERVER to decode, so httpx's resolved path still begins `/up` and only the recipient collapses
+# them. httpx.URL.path is percent-DECODED, which is what exposes them here.
+#
+# `startswith("..")` and not `== ".."`: `/up/..%00/v1/x` decodes to a `..\x00` segment, which an
+# equality test waves through. No legitimate ntfy topic segment can begin `..` — the prefix check
+# already pins the first segment to `up*` — so widening costs nothing.
+FORBIDDEN_PATH_SEGMENT_PREFIX = ".."
+
 
 def validate_endpoint(endpoint: str) -> None:
     """The origin check (decision A-L), and the reason it is not optional.
@@ -63,6 +84,10 @@ def validate_endpoint(endpoint: str) -> None:
 
     Path, not just origin: see [UNIFIEDPUSH_PATH_PREFIX]. `/v1/...` — ntfy's own account and admin
     API — is the thing the prefix has to exclude, and it lives on the same host.
+
+    And the path is checked on `httpx.URL`, not on urlparse's output, because the dispatcher sends
+    httpx's resolution and not the raw string. [FORBIDDEN_PATH_SEGMENT_PREFIX] has the measurement
+    and the reasoning; the short version is that validating a parse nobody requests is not a check.
     """
     base = get_settings().ntfy_base_url
     if base is None:
@@ -83,7 +108,25 @@ def validate_endpoint(endpoint: str) -> None:
         raise EndpointNotAllowed("endpoint is not a parseable URL") from exc
     if parsed.scheme != expected.scheme or parsed.netloc != expected.netloc:
         raise EndpointNotAllowed("endpoint is not on the configured push server")
-    if not parsed.path.startswith(UNIFIEDPUSH_PATH_PREFIX):
+    try:
+        # THE SAME PARSE THE DISPATCHER WILL SEND, deliberately not urlparse's. See
+        # UNIFIEDPUSH_PATH_PREFIX: httpx resolves dot-segments while building the request, so a
+        # path check on urlparse's output validates a URL that is never requested.
+        #
+        # httpx.URL for the PATH only, never for scheme/netloc: it lifts userinfo out into
+        # `.userinfo` and drops it from `.netloc`, so `https://evil.example@<ntfy>/upX` would
+        # compare EQUAL on netloc. urlparse keeps userinfo in netloc, which is why the origin
+        # comparison above stays with it. Two parsers, each used for the half it gets right.
+        resolved = httpx.URL(endpoint).path
+    except httpx.InvalidURL as exc:
+        # httpx.InvalidURL derives from Exception, NOT from ValueError, so the clause above cannot
+        # catch it and it would escape as a 500. It rejects inputs urlparse accepts and vice
+        # versa (an IDNA-invalid host here, an unclosed IPv6 literal there) — which is the same
+        # parser differential, showing up as an error rather than as a bypass.
+        raise EndpointNotAllowed("endpoint is not a parseable URL") from exc
+    if not resolved.startswith(UNIFIEDPUSH_PATH_PREFIX):
+        raise EndpointNotAllowed("endpoint is not a UnifiedPush topic on the configured push server")
+    if any(segment.startswith(FORBIDDEN_PATH_SEGMENT_PREFIX) for segment in resolved.split("/")):
         raise EndpointNotAllowed("endpoint is not a UnifiedPush topic on the configured push server")
 
 

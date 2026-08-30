@@ -91,6 +91,39 @@ def test_the_path_check_does_not_reject_a_real_unifiedpush_topic(configured_push
         # 500 for what is plainly a bad request.
         ("https://[evil/x", "an unclosed IPv6 literal: urlparse raises ValueError('Invalid IPv6 URL')"),
         ("https://push.example\u2100test/upTopic", "an NFKC-unsafe netloc, which urlparse also refuses"),
+        # THE PARSER-DIFFERENTIAL CASES, and the reason the path check reads httpx.URL rather than
+        # urlparse. Every one of these has a raw path that literally begins `/up`, so the original
+        # `urlparse(endpoint).path.startswith("/up")` admitted it — and httpx then resolved it to
+        # ntfy's account API, which is where NTFY_TOKEN is privileged. MEASURED against the real
+        # dispatcher before the fix: `POST https://<ntfy>/v1/account/token` with
+        # `Authorization: Bearer <NTFY_TOKEN>`.
+        (
+            "https://push.example.test/up/../v1/account/token",
+            "a dot-segment httpx collapses when it builds the request: validated as /up/..., sent as /v1/account/token",
+        ),
+        (
+            "https://push.example.test/upx/../../v1/account/token",
+            "the same, from a topic-shaped first segment — the prefix check does not even need a real `/up` directory",
+        ),
+        (
+            "https://push.example.test/up/%2e%2e/v1/account/token",
+            "percent-encoded dot-segments, which httpx leaves on the wire for the SERVER to "
+            "normalize — so httpx.URL.path still begins /up and only the decoded `..` segment "
+            "catches it",
+        ),
+        (
+            "https://push.example.test/up%2f..%2fv1/account/token",
+            "the %2f variant of the same: the separator itself is encoded",
+        ),
+        (
+            "https://push.example.test/up/..%00/v1/account/token",
+            "a NUL-suffixed traversal segment — why the segment test is startswith('..') and not == '..'",
+        ),
+        (
+            "https://push.example.test/%75p/../v1/account/token",
+            "the first segment is not even spelled `up` in the raw string; httpx decodes AND "
+            "collapses, which is precisely the parse the check now runs on",
+        ),
     ],
 )
 def test_an_endpoint_off_the_configured_server_is_rejected(configured_push, endpoint, why):
