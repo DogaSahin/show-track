@@ -25,6 +25,12 @@ import kotlin.reflect.KClass
  * `AppRoute` is a sealed interface: a hand-written list has to be updated by the same person who
  * forgot to wire the route, on the same day.
  *
+ * Enumerated to the LEAVES, not to `sealedSubclasses` — see [leafRoutes]. `sealedSubclasses` is
+ * one level deep, so the first nested sub-graph would make this suite demand a destination for an
+ * abstract interface that can never have one, while saying nothing about the concrete unwired
+ * route underneath it that would actually crash. A misleading diagnosis and a coverage hole in
+ * the same move.
+ *
  * `kotlin-reflect` is a `testImplementation` for `sealedSubclasses` alone — without it this fails
  * with `KotlinReflectionNotSupportedError`, not with a wrong answer.
  *
@@ -37,13 +43,13 @@ import kotlin.reflect.KClass
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], application = Application::class)
 class NavGraphRegistrationTest {
-    private val declaredRoutes: Set<KClass<out AppRoute>> = AppRoute::class.sealedSubclasses.toSet()
+    private val declaredRoutes: Set<KClass<*>> = AppRoute::class.leafRoutes()
 
     /**
-     * The positive control. Both assertions below compare the graph against `sealedSubclasses`,
-     * so if reflection ever came back empty — kotlin-reflect dropped from the test classpath, or
-     * a refactor that stopped the routes being subtypes of [AppRoute] — they would compare two
-     * empty sets and pass while checking nothing at all.
+     * The positive control. Both assertions below compare the graph against the reflected route
+     * set, so if reflection ever came back empty — kotlin-reflect dropped from the test
+     * classpath, or a refactor that stopped the routes being subtypes of [AppRoute] — they would
+     * compare two empty sets and pass while checking nothing at all.
      *
      * Deliberately not `assertEquals(9, ...)`: pinning the count would fail every legitimate
      * route addition in Phase 9 with a message about reflection, which is the wrong diagnosis
@@ -53,7 +59,7 @@ class NavGraphRegistrationTest {
     @Test
     fun `the route hierarchy is enumerable`() {
         assertTrue(
-            "AppRoute::class.sealedSubclasses returned ${declaredRoutes.size} subclasses. " +
+            "AppRoute::class.leafRoutes() returned ${declaredRoutes.size} routes. " +
                 "Either kotlin-reflect is off the test classpath or the routes are no longer " +
                 "subtypes of AppRoute — every other assertion here would compare empty sets.",
             declaredRoutes.size > 1,
@@ -93,7 +99,13 @@ class NavGraphRegistrationTest {
     fun `the built nav graph holds one destination per declared route`() {
         val graph = buildGraph()
 
-        val graphRoutes = graph.map { destination -> destination.route?.substringBefore("/") }
+        // Strip BOTH argument forms: a required argument renders as `…DetailRoute/{mediaId}`
+        // and an optional one as `…FooRoute?x={x}`, and comparing either against a class name
+        // would fail about the wrong thing.
+        val graphRoutes =
+            graph.map { destination ->
+                destination.route?.substringBefore('/')?.substringBefore('?')
+            }
 
         assertEquals(
             "the NavHost's graph must contain exactly one destination per registration call; " +
@@ -121,4 +133,43 @@ class NavGraphRegistrationTest {
         NavHostController(ApplicationProvider.getApplicationContext<Context>())
             .apply { navigatorProvider.addNavigator(ComposeNavigator()) }
             .createGraph(startDestination = LibraryRoute) { showTrackDestinations(onNavigate = { }) }
+
+    /**
+     * Proves [leafRoutes] recurses, using a hierarchy shaped like the one Phase 9 will introduce
+     * the first time a feature nests: a sealed sub-interface with a concrete route under it.
+     *
+     * Written because the flat hierarchy in `:core:navigation` cannot distinguish a recursive
+     * implementation from `sealedSubclasses` today — the two agree on every input that currently
+     * exists, so the recursion would be untested until the day it mattered.
+     */
+    @Test
+    fun `leafRoutes descends through a nested sealed route`() {
+        assertEquals(
+            setOf(FlatLeaf::class, NestedLeaf::class, DeeperLeaf::class),
+            Nestable::class.leafRoutes(),
+        )
+    }
+
+    private sealed interface Nestable
+
+    private data object FlatLeaf : Nestable
+
+    private sealed interface NestedGroup : Nestable
+
+    private data object NestedLeaf : NestedGroup
+
+    private sealed interface DeeperGroup : NestedGroup
+
+    private data object DeeperLeaf : DeeperGroup
 }
+
+/**
+ * Every concrete route in a sealed hierarchy, however deeply nested.
+ *
+ * `sealedSubclasses` alone stops at the first level. A `sealed interface GroupsSubRoute :
+ * AppRoute` would come back as a "route" needing a destination — which it can never have, since
+ * only a concrete class is `@Serializable` and registrable — while the concrete leaf beneath it,
+ * the one whose absence actually crashes, would not be checked at all.
+ */
+private fun KClass<*>.leafRoutes(): Set<KClass<*>> =
+    if (isSealed) sealedSubclasses.flatMap { it.leafRoutes() }.toSet() else setOf(this)
