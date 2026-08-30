@@ -73,7 +73,7 @@ class TokenStoreInstrumentationTest {
             val token = "a-very-recognisable-access-token"
             store.save(access = token, refresh = "refresh-1")
 
-            val file = File(context.filesDir, "datastore/showtrack_tokens.preferences_pb")
+            val file = File(context.filesDir, "datastore/$TOKEN_DATASTORE_NAME.preferences_pb")
             assertTrue("expected DataStore to have written $file", file.exists())
             val contents = file.readBytes().toString(Charsets.ISO_8859_1)
 

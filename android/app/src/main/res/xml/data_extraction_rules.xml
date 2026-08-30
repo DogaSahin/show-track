@@ -1,19 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?><!--
-   Sample data extraction rules file; uncomment and customize as necessary.
-   See https://developer.android.com/about/versions/12/backup-restore#xml-changes
-   for details.
+    API 31+ backup/transfer rules. cloud-backup and device-transfer are configured SEPARATELY and
+    neither inherits from the other, so the token store is excluded from both.
+
+    https://developer.android.com/about/versions/12/backup-restore#xml-changes
 -->
 <data-extraction-rules>
     <cloud-backup>
-        <!-- TODO: Use <include> and <exclude> to control what is backed up.
-        <include .../>
-        <exclude .../>
-        -->
+        <!-- See backup_rules.xml: the Keystore key never leaves the device, so a restored copy of
+             this file is permanently undecryptable. -->
+        <exclude domain="file" path="datastore/showtrack_tokens.preferences_pb" />
     </cloud-backup>
-    <!--
     <device-transfer>
-        <include .../>
-        <exclude .../>
+        <!-- Excluded here too. A device-to-device transfer moves app data but not another
+             device's hardware-backed Keystore entry, so the same reasoning applies unchanged. -->
+        <exclude domain="file" path="datastore/showtrack_tokens.preferences_pb" />
     </device-transfer>
-    -->
 </data-extraction-rules>

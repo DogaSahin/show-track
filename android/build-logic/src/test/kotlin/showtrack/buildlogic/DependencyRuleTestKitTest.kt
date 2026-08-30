@@ -41,6 +41,7 @@ class DependencyRuleTestKitTest {
             """.trimIndent(),
         )
         TestFixtures.writeLocalProperties(projectDir)
+        TestFixtures.writeGradleProperties(projectDir)
         modules.forEach { path -> module(projectDir, path).resolve("build.gradle.kts").writeText("") }
     }
 

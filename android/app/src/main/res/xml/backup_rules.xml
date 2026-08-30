@@ -1,13 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?><!--
-   Sample backup rules file; uncomment and customize as necessary.
-   See https://developer.android.com/guide/topics/data/autobackup
-   for details.
-   Note: This file is ignored for devices older than API 31
-   See https://developer.android.com/about/versions/12/backup-restore
+    Auto Backup rules for API 30 and BELOW. API 31+ reads data_extraction_rules.xml instead, so
+    both files must carry the same exclusion or the gap is silent — minSdk here is 29, so this
+    file is live, not legacy.
+
+    https://developer.android.com/guide/topics/data/autobackup
 -->
 <full-backup-content>
     <!--
-   <include domain="sharedpref" path="."/>
-   <exclude domain="sharedpref" path="device.xml"/>
--->
+        The encrypted token store. Its AES-256/GCM key lives in the Android Keystore and does NOT
+        travel with a backup by design, so a restored copy of this file can never be decrypted.
+        Backing it up therefore buys nothing and costs two things: a credential-shaped blob in the
+        user's cloud, and an undecryptable file that the app reads on every launch after a restore.
+
+        The path is Context.preferencesDataStoreFile(name), i.e. filesDir/datastore/<name>.preferences_pb.
+        TokenBackupExclusionTest asserts it against the name constant in :core:network.
+    -->
+    <exclude domain="file" path="datastore/showtrack_tokens.preferences_pb" />
 </full-backup-content>

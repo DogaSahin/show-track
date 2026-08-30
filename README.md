@@ -74,6 +74,16 @@ data access goes through `:core:data`, which is the only module that knows Retro
 That is what keeps "Room is a cache, never the source of truth" structural rather than a convention
 that erodes.
 
+`:app` is the composition root and the only module that sees all of it. `@HiltAndroidApp` on
+`ShowTrackApplication` is what makes Hilt build the singleton component, by aggregating every
+`@InstallIn(SingletonComponent::class)` module on the app's runtime classpath — `NetworkModule`,
+`NetworkConfigModule`, `TokenStoreModule`, `DatabaseModule` and `DataModule` all arrive
+transitively, none of them named by hand. An unsatisfied binding anywhere in the app is therefore a
+`:app` **compile** error, not a runtime one. `:app` is also where feature modules are pulled
+together, which is what makes "features never depend on each other" possible at all, and it is
+allowed to depend on `:core:network` — the rule that forbids that constrains `:feature:*` modules
+only.
+
 `:core:network` owns the HTTP stack: Retrofit over OkHttp with kotlinx.serialization, DTOs that match
 the wire and are mapped to domain models further out, and the token lifecycle. Two clients share one
 connection pool but not a dispatcher — the token endpoints are served by a client carrying neither the
@@ -86,7 +96,18 @@ Keystore; a terminal refresh failure clears them and emits `AuthEvent.LoggedOut`
 replayed request that 401s again — dead credentials are cleared rather than left to be refreshed
 forever. Neither the interceptor nor the authenticator will attach a credential to a host that is
 not the API's, so the authenticated client stays safe to share with something that fetches images
-from a third-party CDN.
+from a third-party CDN — a backstop, not a licence: `:app` still gives Coil the *unauthenticated*
+client rather than relying on it.
+
+The token file is excluded from Auto Backup and from device transfer, in both `backup_rules.xml`
+(API 30 and below) and `data_extraction_rules.xml` (31+, where cloud backup and device transfer are
+configured separately). The contents are ciphertext, but the key lives in the Keystore and does not
+travel, so a restored copy can never be decrypted — backing it up puts a credential-shaped blob in
+the user's cloud and buys nothing. Because a Keystore reset can strand a file that is already on
+disk, the store also *self-heals*: ciphertext that will not decrypt is cleared rather than left to
+be re-read and re-fail on every launch, which is what "silently logged out forever" actually looks
+like. The exclusion path and the DataStore file name live in different modules and different
+languages, so a test in `:app` asserts they still match.
 
 `:core:database` is the Room cache the module-dependency rule above exists to protect: one table,
 `library_entries`, holding exactly what the library list screen renders — never the full
@@ -170,7 +191,12 @@ the first check is unreachable there by construction, not disabled.)
 
 The rules themselves are pure functions (`build-logic/.../ModuleRules.kt`) with unit tests, and
 Gradle TestKit tests drive a real build into each violation to prove the guards are actually reached
-— a guard nobody has watched fail is indistinguishable from one that is never invoked.
+— a guard nobody has watched fail is indistinguishable from one that is never invoked. That scaffold
+is a *separate* Gradle build, so it needs its own copy of anything the convention plugins depend on:
+an SDK location, and `android.disallowKotlinSourceSets=false`. The second only became load-bearing
+when `showtrack.android.feature` started applying KSP, and it hid well — two of the three affected
+tests failed on the same defect without showing it, because the dependency-rule check aborts
+configuration before AGP validates source sets.
 
 Shared build configuration lives in the `build-logic` **included build** rather than `buildSrc`,
 which would invalidate every build script on any change to it. It publishes six plugin ids:
@@ -178,6 +204,15 @@ which would invalidate every build script on any change to it. It publishes six 
 `showtrack.jvm.library`. Test dependencies are declared there, once, instead of per module —
 `showtrack.jvm.library` ships its own JVM-appropriate junit/coroutines-test/turbine set for the same
 reason.
+
+`showtrack.android.feature` composes `.library`, `.compose` and `.hilt`, and adds the presentation
+harness every screen needs: `hilt-navigation-compose` for `hiltViewModel()`, plus lifecycle's
+Compose bindings. It deliberately declares **no `project(":core:...")` dependencies**, matching
+every other plugin in `build-logic` — an included build that names this repository's module paths
+can no longer be applied anywhere else, and the TestKit scaffold (which contains only
+`:feature:a`, `:feature:b`, `:core:network` and `:core:data`) fails outright with *"Project with
+path ':core:designsystem' could not be found"*. Each feature declares its own module dependencies,
+which also keeps them readable in the one file a reviewer looks at.
 
 `showtrack.android.hilt` carries the whole annotation-processing setup — KSP, the Hilt Gradle plugin,
 `hilt-android` and the Hilt compiler — for the modules that need a dependency graph. Two constraints
@@ -1067,7 +1102,7 @@ and both get worse the longer they wait.
 | 7 | Recommendations — content-based over provider similarity, ranked by your genre profile | done |
 | 7.5a | Groups — create, invite, join, leave, roles, ownership transfer | done |
 | 7.5b | Groups — shared feed, reviews, shared watchlist, progress comparison | done |
-| 8–9 | Android foundations and feature modules | |
+| 8–9 | Android foundations and feature modules | in progress |
 | 10 | Polish and deployment | |
 
 Architecture documentation lives outside this repository, alongside the working copy: a design doc, a

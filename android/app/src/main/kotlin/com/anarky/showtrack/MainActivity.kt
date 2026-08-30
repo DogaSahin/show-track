@@ -17,10 +17,18 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.tooling.preview.Preview
-import androidx.compose.ui.tooling.preview.PreviewScreenSizes
 import com.anarky.showtrack.core.designsystem.theme.ShowTrackTheme
+import com.anarky.showtrack.feature.library.LibraryScreen
+import dagger.hilt.android.AndroidEntryPoint
 
+/**
+ * `@AndroidEntryPoint` is not decoration: it is what gives this activity a Hilt-backed
+ * `defaultViewModelProviderFactory`, and therefore what makes `hiltViewModel()` inside its
+ * content resolve a `@HiltViewModel` at all. Without it the first composable that calls it
+ * fails at runtime with "Given component holder class ... does not implement interface
+ * GeneratedComponentManager".
+ */
+@AndroidEntryPoint
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -33,7 +41,11 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@PreviewScreenSizes
+/**
+ * The composition root's UI half. Deliberately NOT `@Preview`-annotated any more: it now hosts a
+ * screen that calls `hiltViewModel()`, and a preview has no `@AndroidEntryPoint` activity to
+ * resolve one from — the annotation would render a permanently broken preview.
+ */
 @Composable
 fun ShowTrackApp() {
     var currentDestination by rememberSaveable { mutableStateOf(AppDestinations.HOME) }
@@ -56,8 +68,11 @@ fun ShowTrackApp() {
         },
     ) {
         Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-            Greeting(
-                name = "Android",
+            // A single screen, not a NavHost: Task 9 owns navigation. What this proves today is
+            // the end of the graph — a feature composable obtaining a @HiltViewModel whose
+            // repository came from the singleton component.
+            LibraryScreen(
+                onEntryClick = { },
                 modifier = Modifier.padding(innerPadding),
             )
         }
@@ -71,23 +86,4 @@ enum class AppDestinations(
     HOME("Home", R.drawable.ic_home),
     FAVORITES("Favorites", R.drawable.ic_favorite),
     PROFILE("Profile", R.drawable.ic_account_box),
-}
-
-@Composable
-fun Greeting(
-    name: String,
-    modifier: Modifier = Modifier,
-) {
-    Text(
-        text = "Hello $name!",
-        modifier = modifier,
-    )
-}
-
-@Preview(showBackground = true)
-@Composable
-fun GreetingPreview() {
-    ShowTrackTheme {
-        Greeting("Android")
-    }
 }

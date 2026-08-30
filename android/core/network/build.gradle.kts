@@ -12,6 +12,15 @@ android {
         buildConfig = true
     }
 
+    testOptions {
+        // DataStoreTokenStoreTest stands up a REAL DataStore on the JVM via Robolectric, which
+        // cannot load the merged manifest/resources it shadows without this. Per-module: the
+        // other modules setting it says nothing about this one.
+        unitTests {
+            isIncludeAndroidResources = true
+        }
+    }
+
     defaultConfig {
         // A Gradle property, not local.properties: `-Pshowtrack.apiBaseUrl=...` or a line in
         // gradle.properties overrides it without touching a committed file. The default is the
@@ -37,6 +46,11 @@ dependencies {
     implementation(libs.androidx.datastore.preferences)
 
     testImplementation(libs.okhttp.mockwebserver)
+    // The token store's self-heal is JVM-runnable — it needs a Context and a file, not the
+    // Keystore — so it belongs in the gate rather than in an androidTest the gate can only
+    // compile. Same call :core:data and :core:database already made for their Room tests.
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
     // Dagger's own @Component processor, for unit tests only. It is what lets NetworkModuleTest
     // assemble the REAL module into a graph instead of hand-copying what the module provides —
     // the qualifier on a @Provides parameter is invisible to a direct function call, so without a
