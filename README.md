@@ -84,6 +84,33 @@ together, which is what makes "features never depend on each other" possible at 
 allowed to depend on `:core:network` — the rule that forbids that constrains `:feature:*` modules
 only.
 
+Navigation is that stitching made concrete. `:core:navigation` declares nine `@Serializable` routes
+on a `sealed interface AppRoute` — type-safe destinations, so `DetailRoute("abc")` is checked by the
+compiler where a `"detail/{mediaId}"` string route is checked by the user's crash report. Each
+`:feature:*` module contributes one `NavGraphBuilder.xEntry()` extension that registers its own
+destination and names, at most, another feature's *route*; `:app` is the only module that calls all
+nine. A feature that needs to reach another screen is handed an `onNavigate: (AppRoute) -> Unit` —
+not `(Any) -> Unit`, which would accept the string route back one module up from where it was
+removed.
+
+`:app` keeps that wiring as a list rather than as nine calls inline in the `NavHost`, because a list
+is inspectable: a JVM test enumerates `AppRoute::class.sealedSubclasses` by reflection and asserts
+every declared route has exactly one destination, and that the graph the entry functions actually
+build has one node per registration call. A route declared and never wired is otherwise a runtime
+crash on a screen nobody opened during development. (`NavGraph.addDestination` silently *replaces* a
+same-id destination rather than failing, so counting nodes alone would not notice a route registered
+twice — hence the comparison against the number of registration calls.)
+
+The auth gate sits above the `NavHost` and outside it, collecting `AuthEvent` from `:core:data`. A
+collector inside a destination would be cancelled exactly when the user navigated away from it,
+which is when the request that 401s tends to happen. On `LoggedOut` it navigates to the auth route
+with `popUpTo(0) { inclusive = true }`: without clearing the whole back stack, *back* from the login
+screen returns to a screen whose every request 401s, and the app looks broken rather than logged
+out. `:app` takes that flow from `:core:data`, which re-exposes `:core:network`'s `AuthEventBus` as
+one delegating property — the build would permit the composition root to reach past it, but "`:core:data`
+is the only module aware of Retrofit and Room" stops being a rule and becomes a habit the moment the
+app shell names a network type.
+
 `:core:network` owns the HTTP stack: Retrofit over OkHttp with kotlinx.serialization, DTOs that match
 the wire and are mapped to domain models further out, and the token lifecycle. Two clients share one
 connection pool but not a dispatcher — the token endpoints are served by a client carrying neither the
@@ -212,8 +239,9 @@ which would invalidate every build script on any change to it. It publishes six 
 reason.
 
 `showtrack.android.feature` composes `.library`, `.compose` and `.hilt`, and adds the presentation
-harness every screen needs: `hilt-navigation-compose` for `hiltViewModel()`, plus lifecycle's
-Compose bindings. It deliberately declares **no `project(":core:...")` dependencies**, matching
+harness every screen needs: `hilt-navigation-compose` for `hiltViewModel()`, `navigation-compose`
+for the `NavGraphBuilder.xEntry()` extension every feature declares, plus lifecycle's Compose
+bindings. It deliberately declares **no `project(":core:...")` dependencies**, matching
 every other plugin in `build-logic` — an included build that names this repository's module paths
 can no longer be applied anywhere else, and the TestKit scaffold (which contains only
 `:feature:a`, `:feature:b`, `:core:network` and `:core:data`) fails outright with *"Project with

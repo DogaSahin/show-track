@@ -28,6 +28,13 @@ val libs = extensions.getByType<VersionCatalogsExtension>().named("libs")
 //    of the acceptance check on :feature:library — you can see what it reaches for, and see that
 //    Retrofit and Room are not among them.
 dependencies {
+    // Every feature now registers its own destination through a `NavGraphBuilder.xEntry()`
+    // extension (Task 9), so `NavGraphBuilder` and `composable<T>` are part of the feature
+    // harness rather than a per-module dependency repeated nine times. Declared explicitly and
+    // not leaned on transitively: hilt-navigation-compose happens to drag navigation-compose in
+    // today, but that is its implementation detail and a patch release could drop it.
+    add("implementation", libs.findLibrary("androidx-navigation-compose").get())
+
     // hiltViewModel(), which is how a @HiltViewModel is obtained inside a composable. It scopes
     // the ViewModel to the enclosing NavBackStackEntry when there is one, so a screen popped off
     // the back stack clears its ViewModel instead of leaking it to the activity's store.

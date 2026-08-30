@@ -1,5 +1,7 @@
 package com.anarky.showtrack.core.data.di
 
+import com.anarky.showtrack.core.data.auth.AuthEventSource
+import com.anarky.showtrack.core.data.auth.AuthEventSourceImpl
 import com.anarky.showtrack.core.data.repository.LibraryRepository
 import com.anarky.showtrack.core.data.repository.LibraryRepositoryImpl
 import dagger.Binds
@@ -39,4 +41,13 @@ abstract class DataModule {
      */
     @Binds
     abstract fun libraryRepository(impl: LibraryRepositoryImpl): LibraryRepository
+
+    /**
+     * No `@Singleton` on the method, same reasoning as above: the scope sits on
+     * [AuthEventSourceImpl]. It is a pass-through with no state of its own, but `AuthEventBus`
+     * is `@Singleton` and an unscoped wrapper around a scoped singleton is one allocation per
+     * injection point for no benefit.
+     */
+    @Binds
+    abstract fun authEventSource(impl: AuthEventSourceImpl): AuthEventSource
 }
