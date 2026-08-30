@@ -15,7 +15,15 @@ import, the background sync that keeps airing dates fresh, self-hosted push noti
 content-based recommendations, and **closed groups** — create, invite, join, leave, with ownership
 that survives the owner walking out — are in place, and so is what a group is ultimately *for*: a
 shared activity feed, reviews, a shared "we should watch this" watchlist, and side-by-side progress
-on a title. The Android client is not built yet. See [Project status](#project-status).
+on a title.
+
+The **Android client now exists as a 16-module foundation** — a design system, the HTTP stack with
+encrypted token storage and refresh, a Room cache, the repository layer, type-safe navigation, Hilt
+across the whole graph, and push over UnifiedPush. What it is not yet is a finished app: **seven of
+its nine feature screens are one-line placeholders**, and **nothing in it has been run on a phone or
+an emulator** — there is neither in this environment. Everything below distinguishes what is
+executed from what is merely compiled; see [What is proven, and what is
+not](#what-is-proven-and-what-is-not) and [Project status](#project-status).
 
 ## What it does
 
@@ -67,9 +75,15 @@ with a version-skew problem.
 `groups`. All routes mount under `/v1`; `/health` stays unversioned, because it is an infrastructure
 probe rather than client contract.
 
-**Android module pattern.** Feature-first and multi-module: `:app`, six `:core:*` (`model`,
-`designsystem`, `navigation`, `network`, `database`, `data`) and one `:feature:*` per screen
-(`auth`, `library`, `detail`, `discover`, `favorites`, `profile`, `search`, `groups`, `feed`).
+**Android module pattern.** Feature-first and multi-module — **16 Gradle modules**: `:app`, six
+`:core:*` (`model`, `designsystem`, `navigation`, `network`, `database`, `data`) and nine
+`:feature:*`, one per screen (`auth`, `library`, `detail`, `discover`, `favorites`, `profile`,
+`search`, `groups`, `feed`). Two of the core modules — `:core:model` and `:core:navigation` — are
+**pure Kotlin/JVM**, with no AGP and no Android dependency at all; the other four are Android
+libraries. Only `:feature:library` and `:feature:profile` carry a real screen today (Phase 8's
+brief was the foundation, not the features); the other seven render a single `Text` and exist so
+the navigation graph, the dependency rules and the DI wiring are exercised against the shape the
+finished app will have.
 Feature modules never depend on each other, and never on `:core:network` or `:core:database` — all
 data access goes through `:core:data`, which is the only module that knows Retrofit and Room exist.
 That is what keeps "Room is a cache, never the source of truth" structural rather than a convention
@@ -97,7 +111,11 @@ removed.
 `:app` keeps that wiring as a list rather than as nine calls inline in the `NavHost`, because a list
 is inspectable: a JVM test enumerates `AppRoute::class.sealedSubclasses` by reflection and asserts
 every declared route has exactly one destination, and that the graph the entry functions actually
-build has one node per registration call. A route declared and never wired is otherwise a runtime
+build has one node per registration call. (`sealedSubclasses` throws
+`KotlinReflectionNotSupportedError` without `kotlin-reflect` on the classpath, and nothing here
+pulls it in transitively — so it is a `testImplementation` in `:app`, deliberately test-only: the
+route set is enumerated to *check* the graph, never to build it, and the dependency never reaches
+`:app`'s runtime classpath.) A route declared and never wired is otherwise a runtime
 crash on a screen nobody opened during development. (`NavGraph.addDestination` silently *replaces* a
 same-id destination rather than failing, so counting nodes alone would not notice a route registered
 twice — hence the comparison against the number of registration calls.)
@@ -125,6 +143,19 @@ out. `:app` takes that flow from `:core:data`, which re-exposes `:core:network`'
 one delegating property — the build would permit the composition root to reach past it, but "`:core:data`
 is the only module aware of Retrofit and Room" stops being a rule and becomes a habit the moment the
 app shell names a network type.
+
+`:core:designsystem` is the theme (colour scheme, typography, shapes) plus the shared component set
+every screen styles through instead of one-off Compose styling: `MediaCard`, `CountdownBadge`,
+`ScoreChip`, `StatusTab`, `EmptyState`, `LoadingState`, `ErrorState`. `MediaCard` renders cover art
+with **Coil 3.2.0** (`coil-compose` + `coil-network-okhttp`, so the OkHttp engine Retrofit already
+brings in is shared rather than duplicated by a second HTTP client), and that is why this module —
+not `:app` — declares **`android.permission.INTERNET`** in its own manifest. If you are auditing
+what the app requests, that is the whole story for that permission: the module that needs it owns
+it, and the manifest merger carries it up to any app depending on it. `:core:network` declares the
+same permission for the same reason. Coil's singleton loader is configured once in
+`ShowTrackApplication`, which hands it the **unauthenticated** OkHttp client — no bearer token ever
+travels to a third-party image CDN, and that is a deliberate choice at the composition root rather
+than a reliance on the interceptor's host guard.
 
 `:core:network` owns the HTTP stack: Retrofit over OkHttp with kotlinx.serialization, DTOs that match
 the wire and are mapped to domain models further out, and the token lifecycle. Two clients share one
@@ -218,8 +249,8 @@ guarantee deleted. The mapper tests use `8.1`.
 
 Both rules are **enforced by the build**, not by review. Both checks live in one of two "library"
 convention plugins — `showtrack.android.library` for Android modules, or the pure-Kotlin/JVM
-`showtrack.jvm.library` for a module like `:core:model` that must stay importable without pulling in
-Retrofit or Room — which every module applies except `:app`, which uses
+`showtrack.jvm.library` for `:core:model` and `:core:navigation`, which must stay importable without
+pulling in Retrofit, Room or AGP — which every module applies except `:app`, which uses
 `showtrack.android.application` and needs neither check: both rules return `null` for it, since it
 can never be a `:feature:*` consumer or a `:core:*` producer. Everywhere the checks do apply,
 `library`/`jvm.library` carry the identical two of them, so applying `library`/`jvm.library` (plus
@@ -227,9 +258,12 @@ can never be a `:feature:*` consumer or a `:core:*` producer. Everywhere the che
 project's project-dependencies and fails configuration on a violation, naming the two modules and the
 reason. A third check closes the same rule from the export side: a `:core:*` module may not put
 `:core:network` or `:core:database` on its `api` configuration, since one `api` edge would re-export
-Retrofit or Room to every feature while every declared dependency in the build stayed legal. (For
-`:core:model`, only the export-side check can ever fire — it can never be a `:feature:*` consumer, so
-the first check is unreachable there by construction, not disabled.)
+Retrofit or Room to every feature while every declared dependency in the build stayed legal. (For a
+`:core:*` module, only the export-side check can ever fire — it can never be a `:feature:*` consumer,
+so the first check is unreachable there by construction, not disabled. That is the half of
+`showtrack.jvm.library` that stays live: the Kotlin JVM plugin brings java-library's `api`
+configuration with it, so `api(project(":core:network"))` from `:core:model` would leak Retrofit
+exactly as it would from an Android module.)
 
 The rules themselves are pure functions (`build-logic/.../ModuleRules.kt`) with unit tests, and
 Gradle TestKit tests drive a real build into each violation to prove the guards are actually reached
@@ -264,16 +298,25 @@ path ':core:designsystem' could not be found"*. Each feature declares its own mo
 which also keeps them readable in the one file a reviewer looks at.
 
 `showtrack.android.hilt` carries the whole annotation-processing setup — KSP, the Hilt Gradle plugin,
-`hilt-android` and the Hilt compiler — for the modules that need a dependency graph. Two constraints
-on this toolchain are worth knowing before adding a seventh module to it. KSP needs
+`hilt-android` and the Hilt compiler — for the modules that need a dependency graph. **Thirteen of
+the sixteen apply it**: `:app`, `:core:network`, `:core:data` and `:core:database` name it directly,
+and all nine features get it through `showtrack.android.feature`, which composes it. Three
+constraints on this toolchain are worth knowing before adding a fourteenth. KSP needs
 **`android.disallowKotlinSourceSets=false`** in `android/gradle.properties`: AGP 9 owns Kotlin and
 otherwise rejects the `kotlin.sourceSets` DSL that KSP registers its generated sources through
-(there is no AGP built-in KSP to use instead). And the Hilt Gradle plugin must be **2.60 or newer** —
-2.57 looks up AGP's `BaseExtension`, which AGP 9 removed, and fails to apply at all.
+(there is no AGP built-in KSP to use instead). And the Hilt Gradle plugin must be **2.60 or newer**
+— pinned at **2.60.1** in `gradle/libs.versions.toml` — because 2.57 looks up AGP's `BaseExtension`,
+which AGP 9 removed, and fails to apply at all.
 
-One sharp edge lives there too, and it is Android-only. AGP 9 provides Kotlin itself and refuses to
-run alongside the Kotlin Android Gradle plugin, and `ktlint-gradle` registers its source-set tasks
-only when *that* plugin is applied — so out of the box `ktlintCheck` lints build scripts and not one
+The third catches people adding a module by copying another project's build file: **never apply
+`org.jetbrains.kotlin.android`.** AGP 9 provides Kotlin itself and hard-fails with *"no longer
+required for Kotlin support since AGP 9.0"* — `kotlin { compilerOptions { } }` comes from AGP. The
+version catalog still carries the alias, with a comment saying exactly this, so that a pure-JVM or
+KMP module could reference it; nothing in this build does.
+
+That last constraint has a sharp edge behind it, and it is Android-only. AGP 9 refuses to run
+alongside the Kotlin Android Gradle plugin, and `ktlint-gradle` registers its source-set tasks only
+when *that* plugin is applied — so out of the box `ktlintCheck` lints build scripts and not one
 line of Kotlin. `showtrack.android.library`/`.application` widen the tasks it does register to cover
 `src/**/*.kt`, and a TestKit test drives a malformed Kotlin file through a real build so the check
 cannot go quietly inert again. `showtrack.jvm.library` needs none of this: a pure-Kotlin/JVM module
@@ -287,7 +330,9 @@ A Kotlin JVM module also needs one more line that an Android module gets for fre
 plain `kotlin.jvm` module's test task `test`, not `testDebugUnitTest`, so the root
 `testDebugUnitTest` lifecycle task's name-matching would silently skip it without an explicit
 `testDebugUnitTest { dependsOn(test) }` alias — added in `showtrack.jvm.library`, and it is the
-reason `:core:model`'s tests run in the same gate command as every other module's.
+reason a JVM module's tests run in the same gate command as every other module's. (`:core:model`
+and `:core:navigation` carry no test sources of their own today; the alias is what stops the first
+one added there from being silently skipped.)
 
 ## Getting started
 
@@ -651,9 +696,23 @@ cd android
 ./gradlew build      # or just open the folder in Android Studio
 ```
 
+**JDK 21**, not 17 — `gradle/gradle-daemon-jvm.properties` pins the daemon toolchain to 21, every
+convention plugin sets `JvmTarget.JVM_21`, and `build-logic` itself compiles at 21. Nothing to
+configure if `java -version` already says 21. That properties file also carries per-platform
+download URLs, so Gradle can provision a 21 daemon itself rather than failing on an older default
+JDK; the gate here has only ever been run on a system JDK that was already 21.
+
 The Android SDK location comes from `local.properties` (`sdk.dir=...`) or from `ANDROID_HOME` /
 `ANDROID_SDK_ROOT`, which is what CI sets. The `build-logic` TestKit tests need it too, because they
 configure a real Android build in a temp directory.
+
+`android/gradle.properties` carries **`android.disallowKotlinSourceSets=false`**, and it is
+load-bearing rather than legacy: KSP (Hilt in thirteen of the sixteen modules, Room in
+`:core:database`) registers its
+generated sources through the `kotlin.sourceSets` DSL, which AGP 9 rejects by default with *"Using
+kotlin.sourceSets DSL to add Kotlin sources is not allowed with built-in Kotlin"*. Removing that
+line breaks annotation processing across the build. Relatedly: **never add
+`org.jetbrains.kotlin.android` to a module** — see the convention-plugin notes above.
 
 Local secrets — the TMDB API key, the ntfy server URL and credentials — go in `local.properties` or
 a gitignored config file. Never in a committed Gradle file.
@@ -669,6 +728,25 @@ property, either on the command line or in `android/gradle.properties`:
 Cleartext HTTP has been blocked by default since API 28, so `:core:network` ships a network-security
 config permitting it for `10.0.2.2`, `localhost` and `127.0.0.1` — in its **debug** source set only,
 where it cannot reach a release build.
+
+#### Push needs a second app installed — read this before concluding push is broken
+
+**ShowTrack contains no push transport of its own.** It receives over
+[UnifiedPush](https://unifiedpush.org), which means a separate app — a *distributor* — has to be
+installed on the device and pointed at your ntfy server. **[ntfy](https://ntfy.sh) is the
+distributor this deployment is built around.** Without one installed there is no push at all, and
+the interesting part is what that failure looks like: nothing errors, nothing appears in logcat, and
+the server has no device to send to.
+
+ShowTrack does not leave you there — Profile detects that no distributor is installed, says so, and
+names ntfy — but the ordering matters, so the full sequence is in
+[UnifiedPush](#unifiedpush--how-the-showtrack-app-itself-receives) below and is worth following
+rather than reconstructing. Two ways to lose a notification silently are in it: no distributor, and
+`POST_NOTIFICATIONS` denied on API 33+ (a notification posted without it is dropped with no error
+whatsoever).
+
+The phone also has to be able to **reach your ntfy server** — see [Push requires the
+VPN](#push-requires-the-vpn). That is the accepted cost of self-hosting instead of using Firebase.
 
 ### Git hooks
 
@@ -704,6 +782,29 @@ protection is not enabled.
 ./gradlew assembleDebug assembleDebugAndroidTest
 ```
 
+**All three commands do more than they look like they do**, and each one looks redundant until you
+know why it is there:
+
+- **`ktlintCheck` only sees Kotlin because the Android convention plugins make it.** `ktlint-gradle`
+  registers its source-set tasks from `plugins.withId` for the Kotlin Gradle Plugin's ids, and AGP 9
+  refuses KGP outright — so on an Android module here, out of the box, `ktlintCheck` lints `.kts`
+  build scripts and not one line of source while looking perfectly alive.
+  `showtrack.android.library`/`.application` widen it (see above), and a TestKit test drives a
+  malformed `.kt` file through a real build so it cannot go quietly inert again. The JVM modules
+  need none of that, because a `kotlin.jvm` module *does* apply KGP and ktlint hooks it natively —
+  the asymmetry is the plugin's, not a preference. One consequence surprises people: on an Android
+  module a `.kt` violation is reported by **`ktlintKotlinScriptCheck`**, because that is the only
+  task ktlint registered for the widening to attach to. On a JVM module the same violation comes
+  from `ktlintMainSourceSetCheck`. Confusing task name, working check — measured both ways on a
+  deliberately malformed file.
+- **`testDebugUnitTest` also runs `:build-logic:test`**, wired through a root lifecycle task of that
+  name. Those are the Gradle TestKit tests that drive a real build into each architecture-rule
+  violation. Without the wiring, the guard on the two dependency rules would have tests that neither
+  the documented gate nor CI ever executes — which is the same as not having them.
+- **`assembleDebugAndroidTest` compiles tests that cannot be run here**, deliberately. It is the only
+  thing that builds the `androidTest` source set at all, so without it an instrumentation test that
+  stops compiling rots unnoticed until someone next attaches a device.
+
 `assembleDebugAndroidTest` compiles the instrumentation tests but does not run them — there is no
 emulator in this environment or in CI. `:core:network` has one, because the Android Keystore has no
 off-device implementation: whether it accepts the app's key spec is only answerable on a device. Run
@@ -716,11 +817,16 @@ unit test doesn't have — but they run on [Robolectric](https://robolectric.org
 real native SQLite for the host JVM rather than a fake one. `sdk=35`, not these modules' `compileSdk`
 (36): Robolectric selects its Android platform shadow independently of `compileSdk`, and 35 is the
 newest level `robolectric:4.15.1` has a shadow for as of this writing — 36 fails immediately with
-`API level 36 is not available`. The pin lives in each module's `src/test/resources/robolectric.properties`
-rather than in a `@Config` annotation, so a test class added later inherits it instead of
-rediscovering the failure. Both `:core:database`'s `LibraryDaoTest` and `:core:data`'s
+`API level 36 is not available`. Both `:core:database`'s `LibraryDaoTest` and `:core:data`'s
 `LibraryRepositoryImplTest` are therefore genuine JVM unit tests, executed by `testDebugUnitTest`
-above, not instrumentation tests.
+above, not instrumentation tests — and so are `:app`'s nav-graph, deep-link and merged-manifest
+tests and `:feature:profile`'s push tests.
+
+The pin is written **two ways**, and both are in the tree: `:core:database`, `:core:data` and
+`:core:network` carry `src/test/resources/robolectric.properties` with `sdk=35`, which is the better
+form because a test class added later inherits it instead of rediscovering the failure; `:app` and
+`:feature:profile` write `@Config(sdk = [35])` per class. Whichever you copy, pin it — the default
+is `targetSdk`, which is 36, which fails.
 
 The repository test builds a real in-memory database rather than a fake DAO, and that is a deliberate
 choice: a fake cannot have transaction semantics, so `LibraryDao.replaceAll`'s `@Transaction` would be
@@ -730,6 +836,60 @@ the cache column is INTEGER epoch millis, so a round trip through SQLite truncat
 expectation written as `dto.toDomain().toEntity().toDomain()`, would assert the mappers against
 themselves and never show it. Robolectric needs `testOptions.unitTests.isIncludeAndroidResources =
 true`, which is per-module and fails without naming itself when missing.
+
+## What is proven, and what is not
+
+The Android client has never been run on a phone or an emulator, because there is neither in the
+environment it was built in. That is a real boundary rather than an oversight, and this section
+exists so nobody reads "done" in the table below as "seen working". Three tiers:
+
+**Executed.** The backend suite — **721 tests**, against a real PostgreSQL schema built by the
+migrations rather than by `create_all`. The Android JVM suite — **125 tests** under
+`./gradlew testDebugUnitTest`: 104 across the app and library modules, plus 21 in `build-logic`,
+including the Gradle TestKit runs that drive a real build into each architecture-rule violation and
+one **positive control** that must succeed, so a rule passing can be told apart from a build that
+never configured. The UnifiedPush transport was also driven against a real ntfy in `docker compose`
+and the message read back off ntfy's poll endpoint; those exact bytes are the fixture the Android
+decoder is tested against, so the two sides are pinned to one recording rather than to each other's
+assumptions.
+
+**Compiled but not executed.** `assembleDebugAndroidTest` builds `:core:network`'s
+`TokenStoreInstrumentationTest` — the Android Keystore has no off-device implementation, so whether
+it accepts the app's key spec is only answerable on a device, and CI can compile that test but not
+run it. `ShowTrackMessagingReceiver` is likewise compiled and never run: a `BroadcastReceiver` is
+instantiated by the system and cannot be constructed by a JVM test, which is exactly why
+`PushRegistrar` and `PushNotifier` were pulled out of it into classes that can be. Its `goAsync()` /
+`PendingResult.finish()` lifetime and its `EntryPointAccessors` lookup are untested. **Compose
+`@Preview`s render only in Android Studio** — they are a design aid, not a check, and nothing in the
+gate or CI executes one.
+
+One dependency skew belongs in this tier rather than the one above. `coil-network-okhttp:3.2.0` is
+compiled against **OkHttp 4.12.0**, and Retrofit drags the build onto **5.1.0**, which Gradle then
+unifies everything to — so Coil's networking runs on a version it never saw. That was checked
+statically: every `okhttp3.*` member the Coil artifact references resolves against 5.1.0, all 22 of
+them, with the 4.12.0 run as a control. It has **not** been checked at runtime, because no poster
+has ever actually been fetched — that needs a device.
+
+**Not verified at all — for the project owner, on a real device.** Every item below is
+device-only; none has been observed:
+
+1. A notification **arrives**, with ntfy installed as the distributor and pointed at the server.
+2. **Tapping it opens the right title.** Three things must agree — the URI `PushNotifier` builds,
+   `:app`'s manifest intent filter and `:feature:detail`'s `navDeepLink`. All three are individually
+   pinned by JVM tests (`PushNotifierTest`, `MergedManifestTest`, `NavGraphRegistrationTest`); the
+   end-to-end tap is not.
+3. The `POST_NOTIFICATIONS` prompt appears and is honoured. On API 33+ a notification posted without
+   it is dropped in silence — the one failure this feature cannot detect for itself.
+4. A cold start does **not** add a second push target. The distributor re-delivers the endpoint via
+   `onNewEndpoint` on every app start, so this is the server-side idempotency working end to end.
+5. `onUnregistered` deletes the row.
+6. The "no distributor" → install ntfy → return → **screen updates** path. The ViewModel half is
+   executed; that `LifecycleResumeEffect` fires on resume is compiled only.
+7. Logging out on the device and logging in as a second account: the second account registers and
+   the first stops receiving. This is the half of endpoint takeover that depends on the logout
+   `DELETE` landing.
+
+Nothing in this repository claims any of those seven has happened.
 
 ## Contributing
 
@@ -1230,9 +1390,16 @@ and both get worse the longer they wait.
 | 7 | Recommendations — content-based over provider similarity, ranked by your genre profile | done |
 | 7.5a | Groups — create, invite, join, leave, roles, ownership transfer | done |
 | 7.5b | Groups — shared feed, reviews, shared watchlist, progress comparison | done |
-| 8–9 | Android foundations and feature modules | in progress |
+| 8 | Android foundations — 16 modules, build-enforced dependency rules, design system, HTTP + token store, Room cache, repositories, navigation, Hilt | done |
 | 8.9 | Push over UnifiedPush — backend transport, Android receiver, deep-linked taps | in progress |
+| 9 | Feature modules — seven of nine screens are still placeholders | in progress |
 | 10 | Polish and deployment | |
+
+**8.9 is `in progress`, not `done`, and the distinction is the point.** Its acceptance criterion is
+"a test push notification is received and tapping it opens the correct title" — that has never been
+executed, because there is no device here. The code and its tests are complete and the gate is
+green; the criterion is unmet. See [What is proven, and what is
+not](#what-is-proven-and-what-is-not).
 
 Architecture documentation lives outside this repository, alongside the working copy: a design doc, a
 phased task breakdown, and a decision record. This README is the orientation a fresh clone gets.
