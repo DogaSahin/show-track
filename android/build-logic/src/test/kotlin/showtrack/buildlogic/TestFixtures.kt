@@ -8,17 +8,20 @@ import java.io.File
  * plugins read, and an SDK location.
  */
 internal object TestFixtures {
-
     val versionCatalog: File =
-        File(requireNotNull(System.getProperty("showtrack.versionCatalog")) {
-            "showtrack.versionCatalog system property is not set; see build-logic/build.gradle.kts"
-        })
+        File(
+            requireNotNull(System.getProperty("showtrack.versionCatalog")) {
+                "showtrack.versionCatalog system property is not set; see build-logic/build.gradle.kts"
+            },
+        )
 
     /** Shared with the outer build so TestKit reuses its downloads instead of starting cold. */
     val gradleUserHome: File =
-        File(requireNotNull(System.getProperty("showtrack.gradleUserHome")) {
-            "showtrack.gradleUserHome system property is not set; see build-logic/build.gradle.kts"
-        })
+        File(
+            requireNotNull(System.getProperty("showtrack.gradleUserHome")) {
+                "showtrack.gradleUserHome system property is not set; see build-logic/build.gradle.kts"
+            },
+        )
 
     private val androidSdk: String? = System.getProperty("showtrack.androidSdk")?.takeIf { it.isNotBlank() }
 

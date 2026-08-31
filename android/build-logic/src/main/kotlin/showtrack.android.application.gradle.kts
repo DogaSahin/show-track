@@ -1,7 +1,7 @@
 import io.gitlab.arturbosch.detekt.Detekt
-import org.jlleitschuh.gradle.ktlint.tasks.BaseKtLintCheckTask
 import org.gradle.api.artifacts.VersionCatalogsExtension
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import org.jlleitschuh.gradle.ktlint.tasks.BaseKtLintCheckTask
 
 plugins {
     id("com.android.application")
@@ -13,9 +13,10 @@ val libs = extensions.getByType<VersionCatalogsExtension>().named("libs")
 
 android {
     compileSdk {
-        version = release(36) {
-            minorApiLevel = 1
-        }
+        version =
+            release(36) {
+                minorApiLevel = 1
+            }
     }
 
     defaultConfig {
@@ -55,7 +56,12 @@ tasks.withType<Detekt>().configureEach {
 // its own report-and-fail pipeline instead of reimplementing task creation against internal API.
 // DependencyRuleTestKitTest drives a malformed .kt file through a real build to keep this honest.
 tasks.withType<BaseKtLintCheckTask>().configureEach {
-    source(layout.projectDirectory.dir("src").asFileTree.matching { include("**/*.kt") })
+    source(
+        layout.projectDirectory
+            .dir("src")
+            .asFileTree
+            .matching { include("**/*.kt") },
+    )
 }
 
 dependencies {
