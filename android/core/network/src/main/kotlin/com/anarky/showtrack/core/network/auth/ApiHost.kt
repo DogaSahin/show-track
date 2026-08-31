@@ -21,7 +21,26 @@ class ApiHost
     constructor(
         @BaseUrl baseUrl: String,
     ) {
-        private val host = baseUrl.toHttpUrl().host
+        private val origin = baseUrl.toHttpUrl()
 
-        fun owns(url: HttpUrl): Boolean = url.host.equals(host, ignoreCase = true)
+        /**
+         * The whole ORIGIN — scheme, host and port — not the host alone.
+         *
+         * This is the check that decides whether the Bearer token goes out, so every part of the
+         * origin has to be pinned or the guard admits something it was written to refuse. A
+         * host-only comparison sent the token to `http://<api-host>/...` when the API is https
+         * (a downgrade that puts the credential on the wire in clear, and one an attacker on the
+         * network can force by answering the plaintext request), and to `https://<api-host>:8443/`
+         * — a different service on the same machine is a different trust boundary, which is
+         * exactly the reasoning the backend's own endpoint check uses when it compares netloc
+         * rather than hostname.
+         *
+         * `HttpUrl.port` is the explicit port or the scheme's default, so `https://h/` and
+         * `https://h:443/` compare equal without a special case. Host is compared case-insensitively
+         * for belt and braces; OkHttp has already canonicalised it.
+         */
+        fun owns(url: HttpUrl): Boolean =
+            url.scheme == origin.scheme &&
+                url.port == origin.port &&
+                url.host.equals(origin.host, ignoreCase = true)
     }
