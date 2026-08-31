@@ -167,12 +167,16 @@ refreshes would invalidate each other and log the user out mid-session) and give
 rather than retrying forever. Tokens live in DataStore under AES-GCM with a key from the Android
 Keystore; a terminal refresh failure clears them and emits `AuthEvent.LoggedOut`, and so does a
 replayed request that 401s again — dead credentials are cleared rather than left to be refreshed
-forever. Neither the interceptor nor the authenticator will attach a credential to a host that is
-not the API's, so the authenticated client stays safe to share with something that fetches images
-from a third-party CDN — a backstop, not a licence: `:app` still gives Coil the *unauthenticated*
-client rather than relying on it.
+forever. Neither the interceptor nor the authenticator will attach a credential to a request whose
+**origin** — scheme, host *and* port — is not the API's, so the authenticated client stays safe to
+share with something that fetches images from a third-party CDN — a backstop, not a licence: `:app`
+still gives Coil the *unauthenticated* client rather than relying on it. The whole origin and not
+just the host, because this is the check that decides whether the Bearer token leaves the device: a
+host-only comparison attached it to `http://<api-host>/…` — a downgrade an attacker on the network
+can force, putting the token on the wire in clear — and to a different port on the same machine,
+which is a different service and a different trust boundary.
 
-The token file is excluded from Auto Backup and from device transfer, in both `backup_rules.xml`
+Both DataStore files are excluded from Auto Backup and from device transfer, in both `backup_rules.xml`
 (API 30 and below) and `data_extraction_rules.xml` (31+, where cloud backup and device transfer are
 configured separately). The contents are ciphertext, but the key lives in the Keystore and does not
 travel, so a restored copy can never be decrypted — backing it up puts a credential-shaped blob in
@@ -181,6 +185,16 @@ disk, the store also *self-heals*: ciphertext that will not decrypt is cleared r
 be re-read and re-fail on every launch, which is what "silently logged out forever" actually looks
 like. The exclusion path and the DataStore file name live in different modules and different
 languages, so a test in `:app` asserts they still match.
+
+The **push registration** file (`showtrack_push`) is excluded by the same two files and for two
+separate reasons. Its `endpoint` is a bearer secret in exactly the sense the ntfy topic is — whoever
+holds it can post arbitrary notifications to that device — and it is withheld by the list endpoint,
+kept out of log lines, and kept out of logcat by `PushRegistrar`, so a cloud backup was the single
+route by which it left the phone in plaintext. Separately, and with nothing to do with secrecy, its
+`targetId` names a server row belonging to *the device that registered it*: restored onto a second
+phone, the next `unregister()` would delete the **old** device's target and silently stop its
+notifications. Nothing in the file survives a restore usefully — the distributor mints a fresh
+endpoint on first run — so excluding it costs nothing.
 
 `:core:database` is the Room cache the module-dependency rule above exists to protect: one table,
 `library_entries`, holding exactly what the library list screen renders — never the full
@@ -264,6 +278,28 @@ so the first check is unreachable there by construction, not disabled. That is t
 `showtrack.jvm.library` that stays live: the Kotlin JVM plugin brings java-library's `api`
 configuration with it, so `api(project(":core:network"))` from `:core:model` would leak Retrofit
 exactly as it would from an Android module.)
+
+**A fourth check, and the reason the third was not enough.** Everything above inspects *declared
+project dependencies*, which is a strictly smaller thing than what ends up on a classpath. Measured:
+adding `api(libs.retrofit.core)` — a library coordinate, not a project path — to `:core:data`
+configured **cleanly**, and put `com.squareup.retrofit2:retrofit` on `:feature:library`'s
+`debugCompileClasspath` with no diagnostic anywhere. One character (`implementation` → `api`) and a
+feature module could `import retrofit2.*`.
+
+So each `:feature:*` module also runs `verifyDebugArchitecture` / `verifyReleaseArchitecture`, which
+resolve that variant's compile classpath and fail if it carries anything owned by `:core:network` or
+`:core:database` (`com.squareup.retrofit2`, `com.squareup.okhttp3`, `com.jakewharton.retrofit`,
+`androidx.room`). They hang off `preBuild`, so they ride inside `assembleDebug` and
+`testDebugUnitTest` rather than needing a gate line of their own, and they read the resolution
+*result* — component identities, no artifacts — so nothing upstream has to be built to answer the
+question. Only the production classpaths: a feature's own unit tests may legitimately reach for Room.
+
+The resolved classpath is the ground truth, which buys more than the one hole it was written for.
+When the probe above was re-run against the check, it named **okhttp as well as retrofit** — nobody
+declares okhttp, it arrives underneath Retrofit, and no amount of inspecting declarations could have
+seen it. It also settles a question the declaration-side check only guesses at: `apiLeakOf` matches
+any configuration name ending in `Api`, including `testApi` and `androidTestApi`, which do not export
+to a consumer at all — those simply never appear in a resolved compile classpath.
 
 The rules themselves are pure functions (`build-logic/.../ModuleRules.kt`) with unit tests, and
 Gradle TestKit tests drive a real build into each violation to prove the guards are actually reached
@@ -778,12 +814,22 @@ protection is not enabled.
 
 ```bash
 ./gradlew ktlintCheck detekt
+./gradlew -p build-logic ktlintCheck detekt
 ./gradlew testDebugUnitTest       # also runs the build-logic convention-plugin tests
 ./gradlew assembleDebug assembleDebugAndroidTest
 ```
 
-**All three commands do more than they look like they do**, and each one looks redundant until you
+**All four commands do more than they look like they do**, and each one looks redundant until you
 know why it is there:
+
+- **`-p build-logic` is a separate command because it has to be.** `build-logic` is an *included
+  build*, and the root `ktlintCheck detekt` does not reach into one — so until this line existed,
+  the module holding both architecture rules, both TestKit suites and all six convention plugins
+  was the only module in the repository that nothing linted. Measured: a deliberately malformed
+  `build-logic/src/main/kotlin/.../Bad.kt` — double spaces, spaced parameters, 8-space indent, no
+  trailing newline — gave **BUILD SUCCESSFUL** under the root command, and under this one gives 15
+  ktlint violations and a detekt `NewLineAtEndOfFile`. `android-ci.yml` runs it as its own step for
+  the same reason.
 
 - **`ktlintCheck` only sees Kotlin because the Android convention plugins make it.** `ktlint-gradle`
   registers its source-set tasks from `plugins.withId` for the Kotlin Gradle Plugin's ids, and AGP 9
@@ -888,6 +934,13 @@ device-only; none has been observed:
 7. Logging out on the device and logging in as a second account: the second account registers and
    the first stops receiving. This is the half of endpoint takeover that depends on the logout
    `DELETE` landing.
+
+   Read that one with a caveat, because it is a gap in the code and not only an unrun check:
+   **nothing calls `PushRepository.register()` on login.** The only caller is
+   `ShowTrackMessagingReceiver.onNewEndpoint`, and `PushSessionObserver` handles `LoggedOut` alone,
+   so the second account does not register when it signs in — it registers at the next
+   `onNewEndpoint`, i.e. the next app start. Logout is wired, login is not; the symmetric call is
+   Phase 9's.
 
 Nothing in this repository claims any of those seven has happened.
 
