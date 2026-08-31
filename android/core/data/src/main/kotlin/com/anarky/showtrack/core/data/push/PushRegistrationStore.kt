@@ -15,8 +15,17 @@ import java.io.IOException
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/** The DataStore file. Separate from the token store's: different lifetime, different secrecy. */
-internal const val PUSH_DATASTORE_NAME = "showtrack_push"
+/**
+ * The DataStore file. Separate from the token store's: different lifetime, different secrecy.
+ *
+ * PUBLIC rather than internal, for the one reason `TOKEN_DATASTORE_NAME` is: `:app`'s
+ * `TokenBackupExclusionTest` reads `res/xml/backup_rules.xml` and
+ * `res/xml/data_extraction_rules.xml` and asserts they exclude
+ * `datastore/$PUSH_DATASTORE_NAME.preferences_pb`. The exclusion is a path string in XML and the
+ * name is a constant in this module; nothing but that test connects the two, so renaming this
+ * would otherwise leave the exclusion matching nothing, silently.
+ */
+const val PUSH_DATASTORE_NAME = "showtrack_push"
 
 /**
  * What this device registered, and the ONE thing it cannot re-derive.
