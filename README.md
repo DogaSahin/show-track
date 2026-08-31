@@ -889,9 +889,9 @@ The Android client has never been run on a phone or an emulator, because there i
 environment it was built in. That is a real boundary rather than an oversight, and this section
 exists so nobody reads "done" in the table below as "seen working". Three tiers:
 
-**Executed.** The backend suite — **721 tests**, against a real PostgreSQL schema built by the
-migrations rather than by `create_all`. The Android JVM suite — **125 tests** under
-`./gradlew testDebugUnitTest`: 104 across the app and library modules, plus 21 in `build-logic`,
+**Executed.** The backend suite — **731 tests**, against a real PostgreSQL schema built by the
+migrations rather than by `create_all`. The Android JVM suite — **146 tests** under
+`./gradlew testDebugUnitTest`: 117 across the app and library modules, plus 29 in `build-logic`,
 including the Gradle TestKit runs that drive a real build into each architecture-rule violation and
 one **positive control** that must succeed, so a rule passing can be told apart from a build that
 never configured. The UnifiedPush transport was also driven against a real ntfy in `docker compose`
