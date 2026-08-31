@@ -68,6 +68,78 @@ class ModuleRulesTest {
     }
 
     @Test
+    fun `a retrofit artifact on a feature classpath is a violation naming the owning module`() {
+        val message =
+            ModuleRules.forbiddenOnFeatureClasspath(
+                ":feature:library",
+                "debugCompileClasspath",
+                "com.squareup.retrofit2:retrofit",
+            )
+        assertTrue(message != null && message.contains(":feature:library") && message.contains(":core:network"))
+    }
+
+    @Test
+    fun `a room artifact on a feature classpath is a violation naming core database`() {
+        val message =
+            ModuleRules.forbiddenOnFeatureClasspath(
+                ":feature:detail",
+                "releaseCompileClasspath",
+                "androidx.room:room-ktx",
+            )
+        assertTrue(message != null && message.contains(":core:database"))
+    }
+
+    @Test
+    fun `an okhttp artifact on a feature classpath is a violation, since it arrives transitively`() {
+        // The case a declaration-side denylist could not reach at all: nobody DECLARES okhttp, it
+        // comes in under Retrofit. Measured on the real build — one `api(libs.retrofit.core)` in
+        // :core:data put both retrofit AND okhttp on :feature:library's classpath.
+        assertTrue(
+            ModuleRules.forbiddenOnFeatureClasspath(
+                ":feature:library",
+                "debugCompileClasspath",
+                "com.squareup.okhttp3:okhttp",
+            ) != null,
+        )
+    }
+
+    @Test
+    fun `an ordinary artifact on a feature classpath is allowed`() {
+        assertNull(
+            ModuleRules.forbiddenOnFeatureClasspath(
+                ":feature:library",
+                "debugCompileClasspath",
+                "androidx.compose.ui:ui",
+            ),
+        )
+    }
+
+    @Test
+    fun `a retrofit artifact on a core module's own classpath is not this rule's business`() {
+        // :core:network is WHERE Retrofit is supposed to be. The rule is about feature modules
+        // only, which is also what keeps it from firing on :core:data's runtime classpath.
+        assertNull(
+            ModuleRules.forbiddenOnFeatureClasspath(
+                ":core:network",
+                "debugCompileClasspath",
+                "com.squareup.retrofit2:retrofit",
+            ),
+        )
+    }
+
+    @Test
+    fun `a group that merely starts like a forbidden one is allowed`() {
+        // Exact group match, not a prefix: `androidx.roomba` is nobody's Room.
+        assertNull(
+            ModuleRules.forbiddenOnFeatureClasspath(
+                ":feature:library",
+                "debugCompileClasspath",
+                "androidx.roomba:core",
+            ),
+        )
+    }
+
+    @Test
     fun `core network re-exporting itself is allowed`() {
         assertNull(ModuleRules.apiLeakOf(":core:network", "api", ":core:network"))
     }

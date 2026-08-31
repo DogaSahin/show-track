@@ -20,7 +20,6 @@ import kotlin.test.assertTrue
  * true instead of merely believed.
  */
 class DependencyRuleTestKitTest {
-
     private val modules = listOf(":feature:a", ":feature:b", ":core:network", ":core:data")
 
     // A pure-Kotlin/JVM scaffold, kept separate from `scaffold` rather than folded into it: it
@@ -64,21 +63,31 @@ class DependencyRuleTestKitTest {
         jvmModules.forEach { path -> module(projectDir, path).resolve("build.gradle.kts").writeText("") }
     }
 
-    private fun module(projectDir: File, path: String): File =
-        projectDir.resolve(path.removePrefix(":").replace(':', '/')).apply { mkdirs() }
+    private fun module(
+        projectDir: File,
+        path: String,
+    ): File = projectDir.resolve(path.removePrefix(":").replace(':', '/')).apply { mkdirs() }
 
-    private fun runner(projectDir: File, task: String): GradleRunner =
-        GradleRunner.create()
+    private fun runner(
+        projectDir: File,
+        task: String,
+    ): GradleRunner =
+        GradleRunner
+            .create()
             .withProjectDir(projectDir)
             .withTestKitDir(TestFixtures.gradleUserHome)
             .withPluginClasspath()
             .withArguments(task)
 
-    private fun buildAndFail(projectDir: File, task: String): String =
-        runner(projectDir, task).buildAndFail().output
+    private fun buildAndFail(
+        projectDir: File,
+        task: String,
+    ): String = runner(projectDir, task).buildAndFail().output
 
-    private fun build(projectDir: File, task: String): String =
-        runner(projectDir, task).build().output
+    private fun build(
+        projectDir: File,
+        task: String,
+    ): String = runner(projectDir, task).build().output
 
     /**
      * The POSITIVE control, and the only assertion in this class that can catch a broken scaffold.
@@ -91,7 +100,9 @@ class DependencyRuleTestKitTest {
      * distinguishes "the rule fired" from "nothing worked".
      */
     @Test
-    fun `a compliant feature module configures cleanly`(@TempDir projectDir: File) {
+    fun `a compliant feature module configures cleanly`(
+        @TempDir projectDir: File,
+    ) {
         scaffold(projectDir)
         module(projectDir, ":feature:b").resolve("build.gradle.kts").writeText(
             """plugins { id("showtrack.android.feature") }""" + "\n",
@@ -118,7 +129,9 @@ class DependencyRuleTestKitTest {
     }
 
     @Test
-    fun `a feature depending on core network fails the build`(@TempDir projectDir: File) {
+    fun `a feature depending on core network fails the build`(
+        @TempDir projectDir: File,
+    ) {
         scaffold(projectDir)
         module(projectDir, ":feature:a").resolve("build.gradle.kts").writeText(
             """
@@ -130,7 +143,9 @@ class DependencyRuleTestKitTest {
     }
 
     @Test
-    fun `applying library and compose by hand does not opt out of the rules`(@TempDir projectDir: File) {
+    fun `applying library and compose by hand does not opt out of the rules`(
+        @TempDir projectDir: File,
+    ) {
         scaffold(projectDir)
         // Character-for-character what :core:designsystem declares, which is the copy-paste a new
         // feature module is most likely to start from.
@@ -147,7 +162,9 @@ class DependencyRuleTestKitTest {
     }
 
     @Test
-    fun `a core module re-exporting core network on api fails the build`(@TempDir projectDir: File) {
+    fun `a core module re-exporting core network on api fails the build`(
+        @TempDir projectDir: File,
+    ) {
         scaffold(projectDir)
         module(projectDir, ":core:data").resolve("build.gradle.kts").writeText(
             """
@@ -160,8 +177,70 @@ class DependencyRuleTestKitTest {
         assertTrue(output.contains(":core:network"), "message must name the leaked module")
     }
 
+    /**
+     * The measured hole [VerifyArchitectureClasspath] exists for, driven end to end.
+     *
+     * `api(project(...))` is caught by `ModuleRules.apiLeakOf` at configuration time — the test
+     * above proves it. `api(<library coordinate>)` is not: apiLeakOf returns early on anything that
+     * is not a ProjectDependency, so before this task the build below configured cleanly and put
+     * Retrofit on the feature's compile classpath with no diagnostic anywhere.
+     *
+     * Note which artifacts the message names. Retrofit is the one DECLARED; okhttp arrives under
+     * it, and a denylist applied to declarations could not have seen it at any price.
+     */
     @Test
-    fun `ktlintCheck fails on a malformed Kotlin source file`(@TempDir projectDir: File) {
+    fun `a core module re-exporting a forbidden library on api fails a feature's build`(
+        @TempDir projectDir: File,
+    ) {
+        scaffold(projectDir)
+        module(projectDir, ":core:data").resolve("build.gradle.kts").writeText(
+            """
+            plugins { id("showtrack.android.library") }
+            dependencies { api(libs.retrofit.core) }
+            """.trimIndent(),
+        )
+        module(projectDir, ":feature:a").resolve("build.gradle.kts").writeText(
+            """
+            plugins { id("showtrack.android.feature") }
+            dependencies { implementation(project(":core:data")) }
+            """.trimIndent(),
+        )
+        val output = buildAndFail(projectDir, ":feature:a:verifyDebugArchitecture")
+        assertTrue(output.contains(":feature:a"), "message must name the module whose classpath it is")
+        assertTrue(output.contains("com.squareup.retrofit2:retrofit"), "message must name the declared artifact")
+        assertTrue(output.contains(":core:network"), "message must name the module the artifact belongs to")
+    }
+
+    /**
+     * The positive control for the task above, and it guards a specific false green rather than
+     * being ceremony: every classpath assertion passes trivially if it is handed an EMPTY set, so a
+     * broken `flattenModuleCoordinates` — or a configuration resolved before AGP populated it —
+     * would make the failing test above the only thing keeping it honest, and that test would still
+     * pass for the wrong reason if the task simply never ran. This one must SUCCEED, and the run
+     * must be a real one.
+     */
+    @Test
+    fun `a compliant feature module passes the classpath assertion`(
+        @TempDir projectDir: File,
+    ) {
+        scaffold(projectDir)
+        module(projectDir, ":feature:b").resolve("build.gradle.kts").writeText(
+            """
+            plugins { id("showtrack.android.feature") }
+            dependencies { implementation(project(":core:data")) }
+            """.trimIndent(),
+        )
+        module(projectDir, ":core:data").resolve("build.gradle.kts").writeText(
+            """plugins { id("showtrack.android.library") }""" + "\n",
+        )
+        val output = build(projectDir, ":feature:b:verifyDebugArchitecture")
+        assertTrue(output.contains("BUILD SUCCESSFUL"))
+    }
+
+    @Test
+    fun `ktlintCheck fails on a malformed Kotlin source file`(
+        @TempDir projectDir: File,
+    ) {
         scaffold(projectDir)
         val a = module(projectDir, ":feature:a")
         // Trailing newline matters here: without one this file itself trips
@@ -183,7 +262,9 @@ class DependencyRuleTestKitTest {
     }
 
     @Test
-    fun `a jvm-library module re-exporting core network on api fails the build`(@TempDir projectDir: File) {
+    fun `a jvm-library module re-exporting core network on api fails the build`(
+        @TempDir projectDir: File,
+    ) {
         scaffoldJvm(projectDir)
         module(projectDir, ":core:model").resolve("build.gradle.kts").writeText(
             """
@@ -197,7 +278,9 @@ class DependencyRuleTestKitTest {
     }
 
     @Test
-    fun `ktlintCheck fails on a malformed Kotlin source file in a jvm-library module`(@TempDir projectDir: File) {
+    fun `ktlintCheck fails on a malformed Kotlin source file in a jvm-library module`(
+        @TempDir projectDir: File,
+    ) {
         scaffoldJvm(projectDir)
         val model = module(projectDir, ":core:model")
         // Trailing newline matters, causally: without one, this file itself trips

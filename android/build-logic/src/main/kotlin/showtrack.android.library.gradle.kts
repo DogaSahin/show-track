@@ -1,8 +1,10 @@
 import io.gitlab.arturbosch.detekt.Detekt
-import showtrack.buildlogic.ModuleRules
-import org.jlleitschuh.gradle.ktlint.tasks.BaseKtLintCheckTask
 import org.gradle.api.artifacts.VersionCatalogsExtension
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import org.jlleitschuh.gradle.ktlint.tasks.BaseKtLintCheckTask
+import showtrack.buildlogic.ModuleRules
+import showtrack.buildlogic.VerifyArchitectureClasspath
+import showtrack.buildlogic.flattenModuleCoordinates
 
 plugins {
     id("com.android.library")
@@ -20,9 +22,10 @@ android {
     namespace = moduleNamespace
 
     compileSdk {
-        version = release(36) {
-            minorApiLevel = 1
-        }
+        version =
+            release(36) {
+                minorApiLevel = 1
+            }
     }
 
     defaultConfig {
@@ -61,7 +64,12 @@ tasks.withType<Detekt>().configureEach {
 // its own report-and-fail pipeline instead of reimplementing task creation against internal API.
 // DependencyRuleTestKitTest drives a malformed .kt file through a real build to keep this honest.
 tasks.withType<BaseKtLintCheckTask>().configureEach {
-    source(layout.projectDirectory.dir("src").asFileTree.matching { include("**/*.kt") })
+    source(
+        layout.projectDirectory
+            .dir("src")
+            .asFileTree
+            .matching { include("**/*.kt") },
+    )
 }
 
 dependencies {
@@ -88,5 +96,54 @@ configurations.configureEach {
         val dependencyPath = (this as? ProjectDependency)?.path ?: return@configureEach
         ModuleRules.violationOf(consumerPath, dependencyPath)?.let { error(it) }
         ModuleRules.apiLeakOf(consumerPath, configurationName, dependencyPath)?.let { error(it) }
+    }
+}
+
+// The same rule 2, asserted against the RESOLVED classpath rather than against declarations, and
+// the reason both checks exist is measured: `api(libs.retrofit.core)` in :core:data configured
+// cleanly past the block above — which returns early on anything that is not a ProjectDependency —
+// and put com.squareup.retrofit2:retrofit on :feature:library's debugCompileClasspath. See
+// VerifyArchitectureClasspath for the full argument.
+//
+// Registered from `androidComponents.onVariants` and not at the top level, because
+// `<variant>CompileClasspath` does not exist yet when this script body runs: `configurations.named`
+// on it would throw UnknownConfigurationException. onVariants runs once AGP has created them.
+//
+// Only for :feature: modules. The rule function returns null for every other consumer anyway, but
+// registering the task at all would make a core module resolve two dependency graphs to be told
+// nothing.
+if (consumerPath.startsWith(":feature:")) {
+    // Captured under a different name on purpose. Inside the task-configuration lambda below,
+    // `consumerPath` and `configurationName` both resolve to the TASK's properties and shadow the
+    // script's vals — `consumerPath.set(consumerPath)` compiles and fails at execution with
+    // "Circular evaluation detected", which is a confusing way to learn about shadowing.
+    val modulePath = consumerPath
+    androidComponents {
+        onVariants { variant ->
+            val classpathName = "${variant.name}CompileClasspath"
+            val verify =
+                tasks.register<VerifyArchitectureClasspath>(
+                    "verify${variant.name.replaceFirstChar(Char::titlecase)}Architecture",
+                ) {
+                    group = "verification"
+                    description = "Fails if $classpathName carries a :core:network or :core:database artifact."
+                    consumerPath.set(modulePath)
+                    configurationName.set(classpathName)
+                    // The resolution RESULT, so no upstream artifact has to be built to answer
+                    // the question. `rootComponent` is the configuration-cache-safe entry point;
+                    // `allComponents` is an eager callback API and would not survive it.
+                    coordinates.set(
+                        configurations
+                            .named(classpathName)
+                            .flatMap { it.incoming.resolutionResult.rootComponent }
+                            .map(::flattenModuleCoordinates),
+                    )
+                    stamp.set(layout.buildDirectory.file("architecture/$classpathName.txt"))
+                }
+            // preBuild, so this rides inside assembleDebug and testDebugUnitTest — both already in
+            // the documented gate and in android-ci.yml. Wiring it to `check` instead would put it
+            // behind a command nothing runs.
+            tasks.named("preBuild") { dependsOn(verify) }
+        }
     }
 }

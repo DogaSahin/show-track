@@ -24,8 +24,16 @@ dependencies {
     api(project(":core:model"))
 
     // `implementation`, NEVER `api`. An `api` edge here would put Retrofit and Room on the
-    // compile classpath of every feature module and defeat architecture rule 2 transitively;
-    // ModuleRules.apiLeakOf fails the build for exactly that, from this side of the edge.
+    // compile classpath of every feature module and defeat architecture rule 2 transitively.
+    //
+    // TWO checks stand behind that, and it is worth knowing which one covers which, because the
+    // comment that used to sit here named only the first and claimed it covered both:
+    // `ModuleRules.apiLeakOf` fails the build on an `api(project(...))` edge — these two lines,
+    // from this side — and it sees NOTHING ELSE, because it inspects declared PROJECT
+    // dependencies. `api(libs.retrofit.core)` four lines below would have configured cleanly.
+    // `VerifyArchitectureClasspath` is what covers the artifacts: it runs inside every feature
+    // module's `preBuild` and fails if anything owned by :core:network or :core:database has
+    // reached that module's compile classpath, by whatever route.
     implementation(project(":core:network"))
     implementation(project(":core:database"))
 
