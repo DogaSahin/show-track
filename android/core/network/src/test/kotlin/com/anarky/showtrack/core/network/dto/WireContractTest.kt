@@ -16,6 +16,14 @@ import org.junit.Test
  * `GET /v1/library` — with only the credentials in `token_pair.json` replaced. A MockWebServer
  * body written by hand proves the DTOs match the author's assumptions; this proves they match
  * the server. Re-record them whenever the API contract moves.
+ *
+ * `push_target_created.json` and `push_target_existing.json` were recorded the same way on
+ * 2026-08-31, against a backend run with `NTFY_BASE_URL=http://localhost:8080`: register, log in,
+ * then POST the same endpoint twice. They were the LAST endpoints to get fixtures and the FIRST
+ * that should have — `POST /v1/notifications/targets` is the one contract this phase actually
+ * changed, and it was the only one pinned to nothing but the author's reading of the server.
+ * The endpoint in them is a made-up topic pointing at localhost; a real one is a bearer secret
+ * and would not belong in the repository.
  */
 class WireContractTest {
     // THE instance production uses, taken from the module rather than reconstructed. A private
@@ -91,6 +99,38 @@ class WireContractTest {
     }
 
     @Test
+    fun `a real push target creation decodes`() {
+        val created = json.decodeFromString<PushTargetDto>(fixture("push_target_created.json"))
+
+        assertEquals("efc74ca0-0359-4cea-9674-449737947621", created.id)
+        // A plain String and not an enum, deliberately — the backend's PushTransport is a VARCHAR
+        // + CHECK it can widen in a migration, and it just did to add this very value.
+        assertEquals("unifiedpush", created.transport)
+        // THE field that makes this response different from every other one on this API: the
+        // creation response is the only place `target` is ever returned. `id` is what the client
+        // stores, because DELETE takes an id and the list shape withholds `target`.
+        assertEquals("http://localhost:8080/upFixtureTopicAbC123", created.target)
+        // Present and null, not absent — the client sends no label.
+        assertNull(created.label)
+        assertEquals("2026-08-30T23:21:37.082496Z", created.createdAt)
+        // Null until the first successful send, which is how a UI can say "registered, never used".
+        assertNull(created.lastSeenAt)
+    }
+
+    @Test
+    fun `a repeat registration returns the same body as the creation`() {
+        // Decision A-O: `onNewEndpoint` fires on every app start, so the second POST is a 200 and
+        // not a 409. The STATUS differs and the BODY does not — Retrofit hands the client the same
+        // shape either way, which is why `PushRepositoryImpl` reads `created.id` without caring
+        // which of the two it got. A server that started returning a different shape on the 200
+        // would break that silently; this is what notices.
+        val created = json.decodeFromString<PushTargetDto>(fixture("push_target_created.json"))
+        val existing = json.decodeFromString<PushTargetDto>(fixture("push_target_existing.json"))
+
+        assertEquals(created, existing)
+    }
+
+    @Test
     fun `request bodies encode the snake_case keys the server requires`() {
         // The failure this catches is silent: a missing @SerialName sends `refreshToken`, the
         // server 422s, and nothing in the client says why.
@@ -101,6 +141,37 @@ class WireContractTest {
         assertEquals(
             """{"email":"a@b.example","password":"p"}""",
             json.encodeToString(LoginRequest(email = "a@b.example", password = "p")),
+        )
+    }
+
+    @Test
+    fun `the push registration body is byte-identical to the one the server accepted`() {
+        // The exact bytes curl sent to get push_target_created.json back. Encoding the DTO and
+        // comparing to that string is what makes this a CONTRACT test rather than a restatement
+        // of the DTO: it pins the field names, their order, and the two omissions below.
+        assertEquals(
+            """{"transport":"unifiedpush","target":"http://localhost:8080/upFixtureTopicAbC123"}""",
+            json.encodeToString(
+                RegisterTargetRequest(
+                    transport = "unifiedpush",
+                    target = "http://localhost:8080/upFixtureTopicAbC123",
+                    label = null,
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun `an ntfy registration omits target rather than sending null`() {
+        // NOT cosmetic. The server REJECTS an ntfy registration that supplies a target with a 422
+        // (6-L: it mints the topic itself), and `encodeDefaults` is false, so a null-valued
+        // default is dropped. Turn `encodeDefaults` on in NetworkModule.json and this body becomes
+        // `{"transport":"ntfy","target":null,"label":null}` — which is a different request. This
+        // test is the tripwire on that config, the way the token-pair test is on
+        // `ignoreUnknownKeys`.
+        assertEquals(
+            """{"transport":"ntfy"}""",
+            json.encodeToString(RegisterTargetRequest(transport = "ntfy")),
         )
     }
 }
