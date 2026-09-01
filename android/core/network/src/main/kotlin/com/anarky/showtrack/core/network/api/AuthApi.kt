@@ -38,8 +38,9 @@ interface AuthApi {
 
     /**
      * 201 with a [UserDto] — NOT a token pair. The caller must log in afterwards to get tokens
-     * (decision C-M). A 400/409 arrives as an `HttpException`: a bad invite code and a taken
-     * email are both refusals this client cannot tell apart from the status alone.
+     * (decision C-M). A non-2xx arrives as an `HttpException`, and the status distinguishes the
+     * server's two refusals — 400 for an invalid invite code, 409 for a username or email that
+     * is already registered.
      */
     @POST("v1/auth/register")
     suspend fun register(

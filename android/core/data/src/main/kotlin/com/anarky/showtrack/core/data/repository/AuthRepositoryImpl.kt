@@ -143,7 +143,11 @@ class AuthRepositoryImpl
                 else -> AuthFailure.Unexpected(failure)
             }
 
-        /** Any HTTP status from register is a refusal — bad invite code, taken email; the status is all there is. */
+        /**
+         * Any HTTP status from register is a refusal. The code is kept as-is — 400 vs. 409 vs.
+         * anything else — and left for the caller to interpret; this boundary only translates
+         * the exception type.
+         */
         private fun mapRegisterFailure(failure: Throwable): AuthFailure =
             when {
                 failure is HttpException -> AuthFailure.Refused(failure.code(), failure)

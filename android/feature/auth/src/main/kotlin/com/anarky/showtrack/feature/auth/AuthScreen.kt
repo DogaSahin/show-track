@@ -10,15 +10,18 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -92,13 +95,25 @@ internal fun AuthScreen(
         // `failure.message` — AuthFailure derives its Exception message from `cause.toString()`,
         // which would print a Retrofit/OkHttp class name onto a login screen.
         state.error?.let { error ->
-            ErrorState(
-                message = stringResource(error.messageRes()),
-                // "Retry" here means "clear this error and let me try again" — calling
-                // setMode(state.mode) rebuilds a fresh Form with error = null without
-                // resubmitting stale credentials the user has not had a chance to correct.
-                onRetry = { onModeChange(state.mode) },
-            )
+            if (error.pointsAtSigningIn) {
+                // EmailOrUsernameTaken and AccountCreatedNotSignedIn both tell the user to sign
+                // in — ErrorState's action is always "Retry" and only clears the error, which is
+                // the one thing that cannot help either case. A caller-supplied label isn't part
+                // of ErrorState's signature today, and widening it is a design-system change out
+                // of scope for this fix, so these two render their own action instead.
+                AuthSignInAction(
+                    message = stringResource(error.messageRes()),
+                    onSignIn = { onModeChange(AuthMode.LOGIN) },
+                )
+            } else {
+                ErrorState(
+                    message = stringResource(error.messageRes()),
+                    // "Retry" here means "clear this error and let me try again" — calling
+                    // setMode(state.mode) rebuilds a fresh Form with error = null without
+                    // resubmitting stale credentials the user has not had a chance to correct.
+                    onRetry = { onModeChange(state.mode) },
+                )
+            }
         }
 
         AuthSubmitButton(
@@ -210,6 +225,38 @@ private fun AuthSubmitButton(
         )
     }
 }
+
+/**
+ * Same message-plus-action shape as [ErrorState], for the two cases whose fix is "sign in", not
+ * "retry": [AuthError.EmailOrUsernameTaken] and [AuthError.AccountCreatedNotSignedIn]. Mirrors
+ * ErrorState's layout rather than reusing it, since ErrorState's action is fixed to "Retry".
+ */
+@Composable
+private fun AuthSignInAction(
+    message: String,
+    onSignIn: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(space = 12.dp),
+    ) {
+        Text(
+            text = message,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.error,
+            textAlign = TextAlign.Center,
+        )
+        TextButton(onClick = onSignIn) {
+            Text(text = stringResource(R.string.auth_mode_login))
+        }
+    }
+}
+
+/** [AuthError.EmailOrUsernameTaken] and [AuthError.AccountCreatedNotSignedIn] only — see [AuthSignInAction]. */
+private val AuthError.pointsAtSigningIn: Boolean
+    get() = this == AuthError.EmailOrUsernameTaken || this == AuthError.AccountCreatedNotSignedIn
 
 /**
  * Avoids a pointless round trip the server would refuse anyway (decision, task brief). Never a

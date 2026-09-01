@@ -19,9 +19,11 @@ sealed class AuthFailure(
     ) : AuthFailure(cause)
 
     /**
-     * A 4xx from `POST /v1/auth/register`. [statusCode] only, deliberately: the backend does not
-     * let the client tell a bad invite code from a taken email apart from the status alone, so
-     * this does not invent a distinction the server itself doesn't make.
+     * A 4xx from `POST /v1/auth/register`. Carries [statusCode] because the status is what
+     * distinguishes the server's two refusals — 400 for an invalid invite code, 409 for a
+     * username or email that is already registered (`backend/app/users/service.py`'s
+     * `RegistrationError`). Mapping a status to what it means for the user is the UI layer's
+     * job, not this type's — this class only carries the fact the server reported.
      */
     class Refused(
         val statusCode: Int,

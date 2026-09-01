@@ -151,8 +151,9 @@ class AuthRepositoryTest {
     @Test
     fun `a taken email or bad invite code surfaces as a refusal`() =
         runTest {
-            // The backend does not let the client tell these apart from the status alone —
-            // Refused carries only the status code, not an invented distinction.
+            // This boundary does not interpret the status — 400 (bad invite code) and 409
+            // (taken email/username) both arrive as Refused, carrying whichever code the
+            // server sent. Telling them apart is :feature:auth's job, done from the code.
             val api = FakeAuthApi(registerFailure = httpError(409))
             val repository = AuthRepositoryImpl(api, FakeTokenStore(), FakePush())
 

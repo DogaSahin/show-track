@@ -9,7 +9,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.adaptive.currentWindowAdaptiveInfo
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
+import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffoldDefaults
+import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteType
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -95,33 +98,47 @@ fun ShowTrackApp(authEvents: Flow<AuthEvent>) {
         start == AppStart.Library && currentBackStackEntry?.destination?.hasRoute(AuthRoute::class) != true
 
     NavigationSuiteScaffold(
-        navigationSuiteItems = {
+        // An empty navigationSuiteItems block does not remove the bar: NavigationSuiteScaffold
+        // (material3-adaptive-navigation-suite 1.4.0) emits its container unconditionally for
+        // every NavigationSuiteType except None — verified against NavigationSuiteScaffoldKt's
+        // bytecode, which has no item-count check anywhere. `if (showNavigationTabs) { forEach }`
+        // alone leaves an empty NavigationBar (defaultMinSize(minHeight = 80.dp)) pinned under
+        // the login screen. NavigationSuiteType.None is the library's own way to remove the
+        // container entirely, so that is what's gated here instead. Signed in, this reproduces
+        // NavigationSuiteScaffold's own default `layoutType` expression exactly (confirmed from
+        // the same bytecode), so the adaptive rail/bar/drawer choice is unchanged from before
+        // this parameter was ever passed explicitly.
+        layoutType =
             if (showNavigationTabs) {
-                TopLevelDestination.entries.forEach { destination ->
-                    item(
-                        icon = {
-                            Icon(
-                                painterResource(destination.icon),
-                                contentDescription = destination.label,
-                            )
-                        },
-                        label = { Text(destination.label) },
-                        selected =
-                            currentBackStackEntry?.destination?.hasRoute(destination.route::class) == true,
-                        onClick = {
-                            navController.navigate(destination.route) {
-                                // The standard top-level-destination options. saveState/restoreState
-                                // keep each tab's scroll position and back stack; launchSingleTop
-                                // stops re-tapping a tab stacking duplicates of the same screen.
-                                popUpTo(navController.graph.findStartDestination().id) {
-                                    saveState = true
-                                }
-                                launchSingleTop = true
-                                restoreState = true
+                NavigationSuiteScaffoldDefaults.calculateFromAdaptiveInfo(currentWindowAdaptiveInfo())
+            } else {
+                NavigationSuiteType.None
+            },
+        navigationSuiteItems = {
+            TopLevelDestination.entries.forEach { destination ->
+                item(
+                    icon = {
+                        Icon(
+                            painterResource(destination.icon),
+                            contentDescription = destination.label,
+                        )
+                    },
+                    label = { Text(destination.label) },
+                    selected =
+                        currentBackStackEntry?.destination?.hasRoute(destination.route::class) == true,
+                    onClick = {
+                        navController.navigate(destination.route) {
+                            // The standard top-level-destination options. saveState/restoreState
+                            // keep each tab's scroll position and back stack; launchSingleTop
+                            // stops re-tapping a tab stacking duplicates of the same screen.
+                            popUpTo(navController.graph.findStartDestination().id) {
+                                saveState = true
                             }
-                        },
-                    )
-                }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    },
+                )
             }
         },
     ) {
