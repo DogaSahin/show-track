@@ -95,6 +95,10 @@ async def list_library(
     # Named status_filter because `status` is already the imported fastapi.status module here.
     # The alias is what the client actually sends.
     status_filter: Annotated[UserMediaStatus | None, Query(alias="status")] = None,
+    # Answers "is this title in my library?" in one request (decision C-C). Reuses this endpoint
+    # rather than adding GET /library/by-media/{id}: same response envelope, same cursor, same
+    # sort, and no new 404 semantics — a title you do not track is an empty page, not an error.
+    media_id: uuid.UUID | None = None,
     sort: LibrarySort = LibrarySort.TITLE,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     # Capped: decode_cursor contains RecursionError, but not paying for a megabyte of nesting in
@@ -120,6 +124,7 @@ async def list_library(
         status=status_filter,
         cursor=decoded,
         now=datetime.now(tz=UTC),
+        media_id=media_id,
     )
     return LibraryPage(items=items, next_cursor=next_cursor)
 

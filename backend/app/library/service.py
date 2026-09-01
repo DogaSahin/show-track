@@ -260,6 +260,7 @@ async def list_entries(
     status: UserMediaStatus | None,
     cursor: Cursor | None,
     now: datetime,
+    media_id: uuid.UUID | None = None,
 ) -> tuple[list[LibraryEntry], str | None]:
     """Keyset pagination over a composite (sort_value, id).
 
@@ -289,6 +290,8 @@ async def list_entries(
     )
     if status is not None:
         statement = statement.where(UserMedia.status == status)
+    if media_id is not None:
+        statement = statement.where(UserMedia.media_id == media_id)
     if cursor is not None:
         key = tuple_(expression, UserMedia.id)
         position = (cursor.value, cursor.id)

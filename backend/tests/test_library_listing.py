@@ -247,3 +247,47 @@ async def test_invalid_query_parameters_are_422(auth_client, params):
 
 # No hand-written 401 test: /v1/library carries no "{" in its path, so
 # tests/test_auth_protection.py already parametrizes over it.
+
+
+async def test_the_media_id_filter_returns_only_that_entry(auth_client, db_session, auth_user):
+    """The detail screen's only way to ask "is this title in my library?" (decision C-C)."""
+    wanted = make_media(external_id="1", title="Wanted")
+    other = make_media(external_id="2", title="Other")
+    db_session.add_all([wanted, other])
+    await db_session.flush()
+    db_session.add_all([make_user_media(auth_user.id, wanted.id), make_user_media(auth_user.id, other.id)])
+    await db_session.flush()
+
+    body = (await auth_client.get("/v1/library", params={"media_id": str(wanted.id)})).json()
+
+    assert [item["media"]["title"] for item in body["items"]] == ["Wanted"]
+    assert body["next_cursor"] is None
+
+
+async def test_the_media_id_filter_answers_empty_for_a_title_not_in_the_library(auth_client, db_session, auth_user):
+    """Not an error. "Not in your library" is the answer the Add button is drawn from."""
+    stranger = make_media(external_id="3", title="Never added")
+    db_session.add(stranger)
+    await db_session.flush()
+
+    body = (await auth_client.get("/v1/library", params={"media_id": str(stranger.id)})).json()
+
+    assert body == {"items": [], "next_cursor": None}
+
+
+async def test_the_media_id_filter_does_not_replace_the_caller_scope(auth_client, db_session, auth_user):
+    """The failure this pins: a filter written as `WHERE media_id = ...` that drops the
+    user_id predicate would answer with SOMEONE ELSE'S entry for a shared title — and every
+    other test in this file would still pass, because they never ask for a media the caller
+    does not own.
+    """
+    shared = make_media(external_id="4", title="Shared title")
+    other_user = make_user(username="someone-else", email="else@example.com")
+    db_session.add_all([shared, other_user])
+    await db_session.flush()
+    db_session.add(make_user_media(other_user.id, shared.id))
+    await db_session.flush()
+
+    body = (await auth_client.get("/v1/library", params={"media_id": str(shared.id)})).json()
+
+    assert body["items"] == []
