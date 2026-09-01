@@ -57,44 +57,51 @@ class LibraryViewModel
         // rather than a fourth branch of `mutableLoading`.
         private val mutableLoadingMore = MutableStateFlow(false)
 
-        // The last failure from a full reload or a `loadMore()`, or null. See `guard` below for
-        // why an exception can never be allowed to just propagate out of `viewModelScope.launch`.
+        // The last failure from a full reload (init, a tab/sort change, or a retry), or null.
+        // Deliberately a SEPARATE slot from `mutableLoadMoreError` below — see `guard`'s KDoc for
+        // why sharing one slot between the two was the actual bug a previous version of this
+        // class had: a full reload's failure and a page fetch's failure have very different
+        // blast radii (one replaces the whole screen, the other survives underneath a footer),
+        // and each one's SUCCESS must only ever clear its own failure, never the other one's.
         private val mutableError = MutableStateFlow<Throwable?>(null)
 
+        // The last failure from a `loadMore()` page fetch, or null. Feeds `Success.pageError`
+        // only — it never promotes `state` to `Error`, because the entries a failed page fetch
+        // left behind are still valid and still on screen (`LibraryRepository.loadMore` leaves
+        // `paginator.items` untouched on a throw; see `LibraryUiState.Success.pageError`'s KDoc).
+        private val mutableLoadMoreError = MutableStateFlow<Throwable?>(null)
+
         /**
-         * `SharingStarted.Eagerly`, not `WhileSubscribed` — a deliberate departure from the
-         * previous `entries` field this replaces, and worth spelling out since it is a real
-         * behaviour change, not a formatting choice.
+         * `WhileSubscribed(5_000)`, matching the `entries` field this replaced in an earlier
+         * revision of this class: [LibraryRepository.observeLibrary] combines a Room-backed flow,
+         * and holding that open for this ViewModel's entire lifetime — rather than only while
+         * something is actually watching — means Room's `InvalidationTracker` keeps re-running the
+         * query, re-mapping every row and rebuilding this whole `combine` on every write to the
+         * library table (the sync and airing jobs both do this), for a screen nobody is looking
+         * at. `WhileSubscribed(5_000)` still bridges a configuration change — which would
+         * otherwise restart the combine and blink the list — without paying that cost once the
+         * screen is genuinely gone. `mutableLoading`, `mutableLoadingMore`, `mutableError` and
+         * `mutableLoadMoreError` are cheap, subscription-less `MutableStateFlow`s with no upstream
+         * of their own; only the Room-backed source actually benefits from — and needs — the gate.
          *
-         * [mutableLoading], [mutableLoadingMore] and [mutableError] are all written
-         * unconditionally by [guard]'s `viewModelScope.launch`, regardless of whether anything is
-         * collecting [state] — a background refresh still resolves to a captured error even with
-         * no screen watching. Gating only the [LibraryRepository.observeLibrary] slice of this
-         * `combine` behind `WhileSubscribed` would make three of its four inputs live at all
-         * times and the fourth freeze the moment the last collector goes away — and, worse, would
-         * leave [state] itself unusable via a bare `.value` read (its own subscription is what
-         * would start the upstream), unlike [filter] and every other `StateFlow` on this class.
-         * `Eagerly` keeps all four inputs on the same footing.
-         *
-         * The trade-off this gives up: the ORIGINAL `entries` field stopped the Room+paginator
-         * observer a few seconds after the screen left composition, specifically so a backgrounded
-         * screen was not holding a live DB cursor open indefinitely. With `Eagerly`, this
-         * ViewModel's observer runs for [viewModelScope]'s whole lifetime — bounded by the screen
-         * leaving the back stack (Hilt scopes a `hiltViewModel()` instance to its
-         * `NavBackStackEntry`), not by the screen merely being backgrounded. Room's `Flow` is a
-         * change-notification callback rather than a poll, so the ongoing cost while backgrounded
-         * is small, but it is not zero, and this is the reason: correctness and testability of
-         * [state] as a single source of truth won out over that saving.
+         * A consequence worth knowing when testing (or otherwise reading) this class: [state]'s
+         * `.value` will not advance past `initialValue` unless something is actively collecting
+         * it — `collectAsStateWithLifecycle` in production, `Turbine`'s `.test { }` or
+         * `backgroundScope.launch { state.collect {} }` in a test. That is a property of
+         * `WhileSubscribed` itself, not a reason to abandon it for something that is always live —
+         * every other `StateFlow` on this ViewModel (`filter` included) is a plain, subscription-
+         * less `MutableStateFlow`, so this is the one exception, and it is the one exception on
+         * purpose.
          *
          * [mutableError] takes priority over [mutableLoading] in the `when` below on purpose: a
          * reload that just failed always finishes by flipping `mutableLoading` back to `false`
          * (see [guard]), and if a stale `Error` outranked a fresh `false` loading flag the screen
          * would flash back to the OLD error for one frame before the new attempt's `Loading` (or
-         * a genuine failure) took over. `guard` clears [mutableError] before it ever clears
-         * [mutableLoading], so the two flags are never simultaneously "just failed" and "not
-         * loading" in a way this ordering could expose — but relying on write order across two
-         * independent `StateFlow`s is fragile, so the `when` below hard-codes the same priority
-         * as a second line of defence.
+         * a genuine failure) took over. [applyCurrentFilter] clears [mutableError] itself, before
+         * it ever launches a coroutine, which is what actually prevents that flash (a retry no
+         * longer shows the stale error for the round trip's whole duration — see
+         * [applyCurrentFilter]'s KDoc) — the ordering in `guard` is a second line of defence, not
+         * the fix.
          */
         val state: StateFlow<LibraryUiState> =
             combine(
@@ -102,15 +109,16 @@ class LibraryViewModel
                 mutableLoading,
                 mutableLoadingMore,
                 mutableError,
-            ) { entries, loading, loadingMore, error ->
+                mutableLoadMoreError,
+            ) { entries, loading, loadingMore, error, pageError ->
                 when {
                     error != null -> LibraryUiState.Error(error)
                     loading -> LibraryUiState.Loading
-                    else -> LibraryUiState.Success(entries = entries, loadingMore = loadingMore)
+                    else -> LibraryUiState.Success(entries = entries, loadingMore = loadingMore, pageError = pageError)
                 }
             }.stateIn(
                 scope = viewModelScope,
-                started = SharingStarted.Eagerly,
+                started = SharingStarted.WhileSubscribed(SUBSCRIPTION_TIMEOUT_MS),
                 initialValue = LibraryUiState.Loading,
             )
 
@@ -139,11 +147,15 @@ class LibraryViewModel
          * backlog of no-op requests that delays the next PAGE the user actually scrolls to. The
          * flag is set synchronously, before `guard` even schedules a coroutine, so two calls made
          * back to back on the same frame cannot both pass the check before either one flips it.
+         *
+         * Routed through [mutableLoadMoreError], never [mutableError]: a failed page fetch must
+         * leave the currently-loaded [LibraryUiState.Success] standing, not blow the screen away
+         * — see [LibraryUiState.Success.pageError]'s KDoc.
          */
         fun loadMore() {
             if (mutableLoadingMore.value) return
             mutableLoadingMore.value = true
-            guard(trackLoading = false) {
+            guard(errorSink = mutableLoadMoreError) {
                 try {
                     repository.loadMore()
                 } finally {
@@ -163,10 +175,23 @@ class LibraryViewModel
          * indistinguishable from the tap being silently ignored. So a failed switch leaves the
          * user's chosen tab selected and an [LibraryUiState.Error] underneath it; retrying calls
          * this again with the SAME [mutableFilter] value, which is exactly what should happen.
+         *
+         * [mutableError] and [mutableLoadMoreError] are both cleared HERE, synchronously, before
+         * [mutableLoading] is even set — not left to `guard`'s success path to clear later. A
+         * previous version of this function only set `mutableLoading = true` and left the stale
+         * `mutableError` in place until the fetch resolved; since `error != null` outranks
+         * `loading` in [state]'s `when`, that meant a retry (or a tab switch made while already
+         * showing an error) displayed the IDENTICAL, now-stale `ErrorState` for the entire round
+         * trip instead of `Loading` — worse than doing nothing, since it looked like the retry had
+         * been silently ignored. [mutableLoadMoreError] is cleared too: it describes a page-fetch
+         * failure on the list this call is about to REPLACE, and would otherwise survive as a
+         * stale footer message on a list it was never about.
          */
         private fun applyCurrentFilter() {
+            mutableError.value = null
+            mutableLoadMoreError.value = null
             mutableLoading.value = true
-            guard(trackLoading = true) { repository.applyFilter(mutableFilter.value) }
+            guard(errorSink = mutableError, trackLoading = true) { repository.applyFilter(mutableFilter.value) }
         }
 
         /**
@@ -176,10 +201,15 @@ class LibraryViewModel
          * Catching Exception rather than Throwable leaves Errors (OOM, StackOverflow) alone,
          * which are not something a screen can recover from.
          *
-         * [mutableError] is resolved to its final value (cleared on success, set on failure)
-         * BEFORE [mutableLoading] is flipped back to `false` in `finally` — see [state]'s KDoc for
-         * why that ordering, not just the values themselves, is what keeps a retry from flashing
-         * the previous failure for a frame.
+         * [errorSink] is which of [mutableError] / [mutableLoadMoreError] this particular call
+         * writes to — a full reload ([applyCurrentFilter]) and a page fetch ([loadMore]) share
+         * this function's try/catch shape but must NEVER share a slot: a slot shared between them
+         * means a page fetch's SUCCESS silently clears a full reload's error (the inverse of the
+         * bug above — a stale `ErrorState` disappearing behind the user's back for a reason
+         * unrelated to what actually failed), and a page fetch's FAILURE promotes `state` all the
+         * way to `Error`, discarding a fully-loaded list over one failed next page. Passing the
+         * sink in per call, rather than writing to a hard-coded field, is what keeps the two
+         * failure channels genuinely independent instead of merely "usually fine".
          *
          * [trackLoading] is per-CALL, not a class-wide flag: [loadMore] also runs through this
          * function but must never touch [mutableLoading]. Both a filter change and a page fetch
@@ -191,20 +221,25 @@ class LibraryViewModel
          */
         @Suppress("TooGenericExceptionCaught")
         private fun guard(
+            errorSink: MutableStateFlow<Throwable?>,
             trackLoading: Boolean = false,
             block: suspend () -> Unit,
         ) {
             viewModelScope.launch {
                 try {
                     block()
-                    mutableError.value = null
+                    errorSink.value = null
                 } catch (cancellation: CancellationException) {
                     throw cancellation
                 } catch (failure: Exception) {
-                    mutableError.value = failure
+                    errorSink.value = failure
                 } finally {
                     if (trackLoading) mutableLoading.value = false
                 }
             }
+        }
+
+        private companion object {
+            const val SUBSCRIPTION_TIMEOUT_MS = 5_000L
         }
     }

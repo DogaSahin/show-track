@@ -11,6 +11,11 @@
 
     <string name="library_error_message">Couldn\'t load your library. Check your connection and try again.</string>
 
+    <!-- A failed loadMore() (LibraryUiState.Success.pageError) — the already-loaded list stays on
+         screen underneath this footer, so the copy is a small, tap-to-retry note rather than the
+         full-screen library_error_message above. -->
+    <string name="library_page_error">Couldn\'t load more. Tap to retry.</string>
+
     <!-- %1$s is the CURRENT sort's own label (e.g. "Sort: Score"), so the button always shows
          what's active rather than a static "Sort" that leaves the DropdownMenu as the only way
          to tell. -->

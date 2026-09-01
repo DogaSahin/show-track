@@ -1,5 +1,6 @@
 package com.anarky.showtrack.feature.library
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -57,10 +59,9 @@ fun LibraryScreen(
     modifier: Modifier = Modifier,
     viewModel: LibraryViewModel = hiltViewModel(),
 ) {
-    // collectAsStateWithLifecycle, not collectAsState: the latter keeps recomposing this screen
-    // from background updates. (LibraryViewModel.state itself is SharingStarted.Eagerly, so —
-    // unlike a WhileSubscribed upstream — this choice does not gate whether the ViewModel keeps
-    // observing the repository; it only gates whether a backgrounded screen keeps recomposing.)
+    // collectAsStateWithLifecycle, not collectAsState: the latter keeps collecting while the
+    // screen is in the background, which is what makes the ViewModel's WhileSubscribed(5s)
+    // upstream never stop.
     val state by viewModel.state.collectAsStateWithLifecycle()
     val filter by viewModel.filter.collectAsStateWithLifecycle()
     LibraryScreen(
@@ -127,8 +128,7 @@ internal fun LibraryScreen(
                         )
                     } else {
                         LibraryList(
-                            entries = state.entries,
-                            loadingMore = state.loadingMore,
+                            success = state,
                             onLoadMore = onLoadMore,
                             onEntryClick = onEntryClick,
                         )
@@ -191,20 +191,31 @@ private fun LibrarySort.labelRes(): Int =
     }
 
 /**
- * The list itself, plus paging. [onLoadMore] is called every time the last visible row reaches
- * the end of [entries] while scrolling — deliberately naively, on every such recomposition, the
- * same way a real `LazyColumn` fires its end-reached signal on every frame near the bottom.
- * [LibraryViewModel.loadMore]'s re-entry guard is what makes that safe; this composable does not
- * attempt to debounce it a second time.
+ * The list itself, plus paging. [success] is the whole [LibraryUiState.Success] rather than its
+ * fields exploded into parallel parameters — that keeps `entries`/`loadingMore`/`pageError`
+ * together as the one cohesive value they already are upstream, and keeps this composable's
+ * parameter count under detekt's `LongParameterList` threshold without a suppression.
+ *
+ * [onLoadMore] is called once each time the last visible row reaches the end of the list:
+ * `shouldLoadMore` below only flips `false` → `true` at that moment, and
+ * `LaunchedEffect(shouldLoadMore)` only re-runs its block when the KEY it is given actually
+ * changes value — so scrolling that merely holds the last row on screen does not keep re-calling
+ * [onLoadMore] every frame. [LibraryViewModel.loadMore]'s own re-entry guard is still the thing
+ * this composable relies on for correctness, though: it is what makes it SAFE, rather than merely
+ * unlikely, for this call site to invoke [onLoadMore] without first checking whether a fetch is
+ * already in flight.
+ *
+ * [LibraryUiState.Success.pageError] renders as a small footer row rather than replacing the list
+ * (see its KDoc for why it must never do that) — tapping it retries by calling [onLoadMore] again.
  */
 @Composable
 private fun LibraryList(
-    entries: List<LibraryEntry>,
-    loadingMore: Boolean,
+    success: LibraryUiState.Success,
     onLoadMore: () -> Unit,
     onEntryClick: (LibraryEntry) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val entries = success.entries
     val listState = rememberLazyListState()
 
     // `remember(entries)`, not a bare `remember { }`: entries is a new List reference every time
@@ -243,8 +254,25 @@ private fun LibraryList(
                 CountdownBadge(daysUntil = entry.media.daysUntilNextEpisode)
             }
         }
-        if (loadingMore) {
+        if (success.loadingMore) {
             item { LoadingState() }
+        } else if (success.pageError != null) {
+            // Not loading AND pageError != null: the previous page fetch already finished and
+            // failed. Shown as a tap-to-retry row rather than a spinner — nothing is in flight
+            // for the user to wait on.
+            item {
+                Text(
+                    text = stringResource(R.string.library_page_error),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    textAlign = TextAlign.Center,
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable(onClick = onLoadMore)
+                            .padding(all = 12.dp),
+                )
+            }
         }
     }
 }

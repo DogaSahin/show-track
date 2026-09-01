@@ -15,6 +15,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -71,6 +72,10 @@ class LibraryViewModelTest {
             val failure = IOException("offline")
             val repository = FakeLibraryRepository(applyFilterFailure = failure)
             val viewModel = LibraryViewModel(repository)
+            // `state` is WhileSubscribed(5s): a bare `.value` read never advances past the seeded
+            // `initialValue` unless something is actively collecting. `backgroundScope` (a TestScope
+            // facility) keeps a collector alive for the rest of this test without blocking it.
+            backgroundScope.launch { viewModel.state.collect {} }
 
             advanceUntilIdle()
 
@@ -85,6 +90,7 @@ class LibraryViewModelTest {
         runTest(dispatcher) {
             val repository = FakeLibraryRepository(applyFilterFailure = IOException("offline"))
             val viewModel = LibraryViewModel(repository)
+            backgroundScope.launch { viewModel.state.collect {} }
             advanceUntilIdle()
 
             repository.applyFilterFailure = null
@@ -92,6 +98,32 @@ class LibraryViewModelTest {
             advanceUntilIdle()
 
             assertEquals(LibraryUiState.Success(entries = emptyList(), loadingMore = false), viewModel.state.value)
+        }
+
+    @Test
+    fun `retrying after a failure shows loading immediately, not the stale error`() =
+        runTest(dispatcher) {
+            // applyCurrentFilter() must clear mutableError BEFORE launching the retry's fetch —
+            // clearing it only on success (the previous version of this ViewModel) left the OLD
+            // error on screen, unchanged, for the entire round trip: `error != null` outranks
+            // `loading` in `state`'s `when`, so a lingering stale error blocks `Loading` from ever
+            // showing until the retry resolves.
+            val failure = IOException("offline")
+            val repository = FakeLibraryRepository(applyFilterFailure = failure)
+            val viewModel = LibraryViewModel(repository)
+
+            viewModel.state.test {
+                assertEquals(LibraryUiState.Loading, awaitItem())
+                advanceUntilIdle()
+                assertEquals(LibraryUiState.Error(failure), awaitItem())
+
+                repository.applyFilterFailure = null
+                viewModel.refresh()
+                assertEquals(LibraryUiState.Loading, awaitItem())
+                advanceUntilIdle()
+                assertEquals(LibraryUiState.Success(entries = emptyList(), loadingMore = false), awaitItem())
+                cancelAndIgnoreRemainingEvents()
+            }
         }
 
     @Test
@@ -128,6 +160,7 @@ class LibraryViewModelTest {
             val failure = IOException("offline")
             val repository = FakeLibraryRepository()
             val viewModel = LibraryViewModel(repository)
+            backgroundScope.launch { viewModel.state.collect {} }
             advanceUntilIdle() // let init's load settle before the filter under test fails
 
             repository.applyFilterFailure = failure
@@ -177,11 +210,16 @@ class LibraryViewModelTest {
     @Test
     fun `loadingMore reflects an in-flight page fetch`() =
         runTest(dispatcher) {
+            // Subscribe via `.test { }` BEFORE calling `advanceUntilIdle()`, not after: `state` is
+            // WhileSubscribed(5s), so advancing time with no collector yet does not start the
+            // upstream combine at all, and a `.test { }` opened afterwards would see the seeded
+            // `Loading` as its first item regardless of how settled the ViewModel already is.
             val repository = FakeLibraryRepository()
             val viewModel = LibraryViewModel(repository)
-            advanceUntilIdle()
 
             viewModel.state.test {
+                assertEquals(LibraryUiState.Loading, awaitItem())
+                advanceUntilIdle()
                 assertEquals(LibraryUiState.Success(entries = emptyList(), loadingMore = false), awaitItem())
                 viewModel.loadMore()
                 assertEquals(LibraryUiState.Success(entries = emptyList(), loadingMore = true), awaitItem())
@@ -192,8 +230,71 @@ class LibraryViewModelTest {
             }
         }
 
+    @Test
+    fun `a failed loadMore leaves Success standing with a page error`() =
+        runTest(dispatcher) {
+            // The entries a failed page-2 fetch left behind are still valid — LibraryRepository
+            // leaves `paginator.items` untouched on a throw — so this must never promote `state`
+            // to a full-screen Error, which would discard a fully-populated list over one failed
+            // next page.
+            val failure = IOException("offline")
+            val repository = FakeLibraryRepository(loadMoreFailure = failure)
+            val viewModel = LibraryViewModel(repository)
+            backgroundScope.launch { viewModel.state.collect {} }
+            advanceUntilIdle() // let init's load settle into Success
+
+            viewModel.loadMore()
+            advanceUntilIdle()
+
+            assertEquals(
+                LibraryUiState.Success(entries = emptyList(), loadingMore = false, pageError = failure),
+                viewModel.state.value,
+            )
+        }
+
+    @Test
+    fun `a successful loadMore clears a previous page error`() =
+        runTest(dispatcher) {
+            val failure = IOException("offline")
+            val repository = FakeLibraryRepository(loadMoreFailure = failure)
+            val viewModel = LibraryViewModel(repository)
+            backgroundScope.launch { viewModel.state.collect {} }
+            advanceUntilIdle()
+
+            viewModel.loadMore()
+            advanceUntilIdle()
+            repository.loadMoreFailure = null
+            viewModel.loadMore()
+            advanceUntilIdle()
+
+            assertEquals(
+                LibraryUiState.Success(entries = emptyList(), loadingMore = false, pageError = null),
+                viewModel.state.value,
+            )
+        }
+
+    @Test
+    fun `a successful loadMore does not clear a filter-load error`() =
+        runTest(dispatcher) {
+            // The inverse of the bug above: a single error slot shared by both operations meant
+            // ANY success — even a loadMore's, which has nothing to do with the failed filter
+            // load — silently cleared the full-screen Error underneath it.
+            val failure = IOException("offline")
+            val repository = FakeLibraryRepository(applyFilterFailure = failure)
+            val viewModel = LibraryViewModel(repository)
+            backgroundScope.launch { viewModel.state.collect {} }
+            advanceUntilIdle() // init's load fails -> Error
+            assertEquals(LibraryUiState.Error(failure), viewModel.state.value)
+
+            viewModel.loadMore() // unaffected by applyFilterFailure; succeeds
+            advanceUntilIdle()
+
+            assertEquals(LibraryUiState.Error(failure), viewModel.state.value)
+        }
+
     private class FakeLibraryRepository(
         var applyFilterFailure: Throwable? = null,
+        var loadMoreFailure: Throwable? = null,
     ) : LibraryRepository {
         val entries = MutableStateFlow(emptyList<LibraryEntry>())
 
@@ -213,6 +314,7 @@ class LibraryViewModelTest {
         override suspend fun refresh(): Unit = error("not exercised by LibraryViewModel; it always calls applyFilter")
 
         override suspend fun loadMore() {
+            loadMoreFailure?.let { throw it }
             loadMoreCalls++
         }
 
