@@ -177,6 +177,12 @@ class SearchViewModel
                     // disabling this row's add affordance for the rest of the ViewModel's life with
                     // no error shown. `finally` runs on every exit path, cancellation included.
                     addInFlight = null
+                    // Symmetric with addInFlight above: the success/failure branches already clear
+                    // Success.adding themselves, so this is a no-op there. On the cancellation path
+                    // neither branch runs, and without this the row would keep its spinner and stay
+                    // `enabled = false` forever with no error shown — the guard released but the
+                    // state never caught up to it.
+                    replaceSuccess { it.copy(adding = null) }
                 }
             }
         }
