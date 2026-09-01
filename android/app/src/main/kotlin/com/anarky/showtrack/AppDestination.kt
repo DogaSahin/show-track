@@ -52,7 +52,7 @@ internal class AppDestination(
  */
 internal val appDestinations: List<AppDestination> =
     listOf(
-        AppDestination(AuthRoute::class) { authEntry() },
+        AppDestination(AuthRoute::class) { onNavigate -> authEntry(onNavigate) },
         AppDestination(LibraryRoute::class) { onNavigate -> libraryEntry(onNavigate) },
         AppDestination(DetailRoute::class) { detailEntry() },
         AppDestination(DiscoverRoute::class) { discoverEntry() },
