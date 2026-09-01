@@ -232,6 +232,8 @@ private fun validate(
 private fun AuthError.messageRes(): Int =
     when (this) {
         AuthError.InvalidCredentials -> R.string.auth_error_invalid_credentials
+        AuthError.InviteCodeRejected -> R.string.auth_error_invite_code_rejected
+        AuthError.EmailOrUsernameTaken -> R.string.auth_error_email_or_username_taken
         AuthError.RegistrationRefused -> R.string.auth_error_registration_refused
         AuthError.AccountCreatedNotSignedIn -> R.string.auth_error_account_created_not_signed_in
         AuthError.Offline -> R.string.auth_error_offline

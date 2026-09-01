@@ -2,6 +2,7 @@ package com.anarky.showtrack.feature.auth
 
 import com.anarky.showtrack.core.data.repository.AuthRepository
 import com.anarky.showtrack.core.data.repository.RegisteredButNotLoggedIn
+import com.anarky.showtrack.core.model.AuthFailure
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -75,6 +76,62 @@ class AuthViewModelTest {
         }
 
     @Test
+    fun `a rejected invite code says exactly that, not that the email is taken`() =
+        runTest(dispatcher) {
+            // 400 from POST /v1/auth/register — backend/app/users/service.py's
+            // RegistrationError(400, "invalid invite code"). The advice is "get a working
+            // code", the opposite of the 409 case below.
+            val repository =
+                FakeAuthRepository(registerOutcome = AuthFailure.Refused(HTTP_INVITE_CODE_REJECTED, IOException()))
+            val viewModel = AuthViewModel(repository)
+
+            viewModel.submitRegister("someone", "a@example.com", "hunter2hunter2", "BADCODE")
+            advanceUntilIdle()
+
+            assertEquals(
+                AuthUiState.Form(mode = AuthMode.REGISTER, error = AuthError.InviteCodeRejected),
+                viewModel.state.value,
+            )
+        }
+
+    @Test
+    fun `a taken email or username points at signing in, not at the invite code`() =
+        runTest(dispatcher) {
+            // 409 from POST /v1/auth/register — backend/app/users/service.py's
+            // RegistrationError(409, "username or email already registered"). Collapsing this
+            // into InviteCodeRejected would send a user with a perfectly valid code hunting for
+            // a new one that can never fix the actual problem.
+            val repository =
+                FakeAuthRepository(registerOutcome = AuthFailure.Refused(HTTP_EMAIL_OR_USERNAME_TAKEN, IOException()))
+            val viewModel = AuthViewModel(repository)
+
+            viewModel.submitRegister("someone", "a@example.com", "hunter2hunter2", "CODE")
+            advanceUntilIdle()
+
+            assertEquals(
+                AuthUiState.Form(mode = AuthMode.REGISTER, error = AuthError.EmailOrUsernameTaken),
+                viewModel.state.value,
+            )
+        }
+
+    @Test
+    fun `any other refusal status falls back to the generic case`() =
+        runTest(dispatcher) {
+            // The server defines only 400 and 409 for register. Anything else (a stray 422,
+            // say) must not be silently mistaken for one of the two specific cases above.
+            val repository = FakeAuthRepository(registerOutcome = AuthFailure.Refused(422, IOException()))
+            val viewModel = AuthViewModel(repository)
+
+            viewModel.submitRegister("someone", "a@example.com", "hunter2hunter2", "CODE")
+            advanceUntilIdle()
+
+            assertEquals(
+                AuthUiState.Form(mode = AuthMode.REGISTER, error = AuthError.RegistrationRefused),
+                viewModel.state.value,
+            )
+        }
+
+    @Test
     fun `switching mode clears the previous error`() =
         runTest(dispatcher) {
             // An error surfaced while logging in must not haunt the register form once the user
@@ -114,5 +171,10 @@ class AuthViewModelTest {
         }
 
         override suspend fun logout() = Unit
+    }
+
+    private companion object {
+        const val HTTP_INVITE_CODE_REJECTED = 400
+        const val HTTP_EMAIL_OR_USERNAME_TAKEN = 409
     }
 }

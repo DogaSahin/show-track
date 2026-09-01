@@ -70,6 +70,15 @@ class AuthViewModel
         }
     }
 
+// The two — and only two — refusals `POST /v1/auth/register` defines, per
+// `backend/app/users/service.py`'s `RegistrationError`: `register_user` raises 400 for a bad
+// invite code, `create_account`'s `IntegrityError` catch raises 409 for a taken username/email.
+// Any other 4xx (a malformed request, an unexpected validation failure) falls back to the
+// generic RegistrationRefused — the server does not define a third case, so this doesn't invent
+// one either.
+private const val HTTP_INVITE_CODE_REJECTED = 400
+private const val HTTP_EMAIL_OR_USERNAME_TAKEN = 409
+
 private fun Throwable.toAuthError(): AuthError =
     when (this) {
         // RegisteredButNotLoggedIn is a SIBLING of AuthFailure, not a subclass — it wraps one
@@ -80,16 +89,11 @@ private fun Throwable.toAuthError(): AuthError =
         is RegisteredButNotLoggedIn -> AuthError.AccountCreatedNotSignedIn
         is AuthFailure.InvalidCredentials -> AuthError.InvalidCredentials
         is AuthFailure.Offline -> AuthError.Offline
-        // Investigated per Step 1: backend/app/users/service.py's RegistrationError raises 400
-        // for a bad invite code (register_user) and 409 for a taken username/email
-        // (create_account's IntegrityError catch) — two DIFFERENT statuses, not a collision.
-        // RegisterRequest's password floor (schemas.py, min_length=8) is enforced by Pydantic
-        // before either code path runs, as a 422 the client-side length check makes unreachable
-        // in practice. So the three refusals ARE distinguishable by status.
-        // AuthFailure.Refused still carries only `statusCode` with no case split, and AuthError
-        // (Step 2, given verbatim) has one flat RegistrationRefused — both fixed, unmodifiable
-        // interfaces for this task. Adding a status-aware branch here would invent a distinction
-        // the given types cannot express, not honor one the server makes. One message covers all.
-        is AuthFailure.Refused -> AuthError.RegistrationRefused
+        is AuthFailure.Refused ->
+            when (statusCode) {
+                HTTP_INVITE_CODE_REJECTED -> AuthError.InviteCodeRejected
+                HTTP_EMAIL_OR_USERNAME_TAKEN -> AuthError.EmailOrUsernameTaken
+                else -> AuthError.RegistrationRefused
+            }
         else -> AuthError.Unknown
     }
