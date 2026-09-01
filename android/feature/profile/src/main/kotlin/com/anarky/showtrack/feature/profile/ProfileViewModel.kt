@@ -1,15 +1,19 @@
 package com.anarky.showtrack.feature.profile
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.anarky.showtrack.core.data.repository.AuthRepository
 import com.anarky.showtrack.feature.profile.push.DistributorSource
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+
+private const val TAG = "ShowTrackProfile"
 
 /**
  * What the profile screen shows about push, as a closed set of states.
@@ -63,6 +67,11 @@ class ProfileViewModel
         private val mutableSignedOut = MutableStateFlow(false)
         val signedOut: StateFlow<Boolean> = mutableSignedOut.asStateFlow()
 
+        // Set on a failed signOut() only — see its KDoc. Cleared at the start of the next attempt
+        // so a stale error does not linger under a retry that is still in flight.
+        private val mutableSignOutError = MutableStateFlow(false)
+        val signOutError: StateFlow<Boolean> = mutableSignOutError.asStateFlow()
+
         init {
             refresh()
         }
@@ -101,11 +110,33 @@ class ProfileViewModel
          * out" with a perfectly valid session. Because of that, `:app`'s reactive `AuthGate` never
          * fires for this path — [signedOut] is what `ProfileScreen` watches instead, to navigate
          * back to auth explicitly rather than relying on a gate that was never going to open.
+         *
+         * Guarded the way `AuthViewModel.submit` and `LibraryViewModel.guard` are: `logout()` can
+         * throw — `tokenStore.tokens()`/`tokenStore.clear()` sit outside its own internal
+         * try/catches, and a corrupt or unwritable DataStore throws `IOException` from `clear()`.
+         * `viewModelScope` carries no `CoroutineExceptionHandler`, so an unguarded throw here would
+         * escape to the thread's default handler and kill the process — silently, on a tap that
+         * looks like nothing more than "sign out".
+         *
+         * [signedOut] is flipped only on SUCCESS, not in a `finally`: a thrown `clear()` means
+         * DataStore's `edit` transaction did not commit, so the session was NOT actually cleared —
+         * navigating the user back to the login screen at that point would be a lie (a relaunch
+         * would find a valid token and land them right back in the library), worse than leaving
+         * them on Profile with a chance to retry. [signOutError] is what tells them that, instead.
          */
+        @Suppress("TooGenericExceptionCaught")
         fun signOut() {
+            mutableSignOutError.value = false
             viewModelScope.launch {
-                authRepository.logout()
-                mutableSignedOut.value = true
+                try {
+                    authRepository.logout()
+                    mutableSignedOut.value = true
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (failure: Exception) {
+                    Log.w(TAG, "sign-out failed: ${failure.javaClass.simpleName}")
+                    mutableSignOutError.value = true
+                }
             }
         }
     }

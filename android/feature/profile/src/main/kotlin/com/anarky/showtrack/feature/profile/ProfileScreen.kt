@@ -47,6 +47,7 @@ fun ProfileScreen(
 ) {
     val pushState by viewModel.pushState.collectAsStateWithLifecycle()
     val signedOut by viewModel.signedOut.collectAsStateWithLifecycle()
+    val signOutError by viewModel.signOutError.collectAsStateWithLifecycle()
     LaunchedEffect(signedOut) {
         if (signedOut) onSignedOut()
     }
@@ -80,6 +81,16 @@ fun ProfileScreen(
         )
         TextButton(onClick = { showSignOutConfirmation = true }) {
             Text(text = stringResource(R.string.profile_sign_out))
+        }
+        // signOut() only ever sets this on a caught failure — see its KDoc for why signedOut is
+        // NOT flipped in that case, which is what makes leaving the user here, able to retry,
+        // the correct response rather than a dead end.
+        if (signOutError) {
+            Text(
+                text = stringResource(R.string.profile_sign_out_error),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
         }
     }
 

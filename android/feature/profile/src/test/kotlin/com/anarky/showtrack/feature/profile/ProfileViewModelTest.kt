@@ -2,6 +2,7 @@ package com.anarky.showtrack.feature.profile
 
 import com.anarky.showtrack.core.data.repository.AuthRepository
 import com.anarky.showtrack.feature.profile.push.DistributorSource
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -15,6 +16,10 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+import java.io.IOException
 
 private const val NTFY = "io.heckel.ntfy"
 
@@ -38,8 +43,14 @@ private class FakeDistributors(
     }
 }
 
-/** Exercised against a fake, the same way `AuthViewModelTest`'s `FakeAuthRepository` is used. */
-private class FakeAuthRepository : AuthRepository {
+/**
+ * Exercised against a fake, the same way `AuthViewModelTest`'s `FakeAuthRepository` is used.
+ * [onLogout] runs AFTER [logoutCalled] is recorded but BEFORE `logout()` returns, so a test can
+ * make it suspend (to observe `signOut()` mid-flight) or throw (to exercise the failure guard).
+ */
+private class FakeAuthRepository(
+    private val onLogout: suspend () -> Unit = {},
+) : AuthRepository {
     var logoutCalled: Boolean = false
 
     override suspend fun hasSession(): Boolean = true
@@ -58,10 +69,20 @@ private class FakeAuthRepository : AuthRepository {
 
     override suspend fun logout() {
         logoutCalled = true
+        onLogout()
     }
 }
 
+/**
+ * Robolectric for the same reason `core/data`'s `AuthRepositoryTest` needs it: `signOut()`'s
+ * caught-failure path now logs through `android.util.Log`, which a plain JVM test answers with
+ * "not mocked" — and THROWS, which would fail `a failed sign-out does not flip signedOut ...` for
+ * the opposite of the reason it exists (the throw happens inside the very `catch` block that test
+ * is checking, before `mutableSignOutError` is ever set).
+ */
 @OptIn(ExperimentalCoroutinesApi::class)
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [35])
 class ProfileViewModelTest {
     // viewModelScope is hard-wired to Dispatchers.Main, which has no implementation on a plain
     // JVM. Substituting a TestDispatcher is what makes the launch inside `signOut` run at all —
@@ -178,13 +199,59 @@ class ProfileViewModelTest {
             // ProfileScreen's LaunchedEffect navigates away the moment this flips — if it flipped
             // BEFORE logout ran, a slow or failing logout call would never get the chance to run
             // at all, because the screen (and this ViewModel with it) would already be gone.
-            val authRepository = FakeAuthRepository()
+            //
+            // A gate `logout()` suspends on, not a plain fake: with only StandardTestDispatcher +
+            // advanceUntilIdle() a test can observe just the END state, and `mutableSignedOut.value
+            // = true` moved to BEFORE `authRepository.logout()` would still make that assertion
+            // pass. Suspending mid-`logout()` and asserting `signedOut` is still false at that
+            // point is what actually falsifies the wrong ordering.
+            val gate = CompletableDeferred<Unit>()
+            val authRepository = FakeAuthRepository(onLogout = { gate.await() })
             val viewModel = ProfileViewModel(FakeDistributors(), authRepository)
+
+            viewModel.signOut()
+            advanceUntilIdle()
+            assertTrue(authRepository.logoutCalled)
             assertFalse(viewModel.signedOut.value)
+
+            gate.complete(Unit)
+            advanceUntilIdle()
+
+            assertTrue(viewModel.signedOut.value)
+        }
+
+    @Test
+    fun `a failed sign-out does not flip signedOut and surfaces an error instead`() =
+        runTest(dispatcher) {
+            // logout() can throw for real: tokenStore.clear() sits outside AuthRepositoryImpl's
+            // own guards, and a corrupt/unwritable DataStore throws IOException from it. Flipping
+            // signedOut anyway would send the user back to the login screen while a valid session
+            // is still on the device — a lie a relaunch would immediately expose.
+            val authRepository = FakeAuthRepository(onLogout = { throw IOException("offline") })
+            val viewModel = ProfileViewModel(FakeDistributors(), authRepository)
 
             viewModel.signOut()
             advanceUntilIdle()
 
+            assertFalse(viewModel.signedOut.value)
+            assertTrue(viewModel.signOutError.value)
+        }
+
+    @Test
+    fun `retrying a failed sign-out clears the previous error`() =
+        runTest(dispatcher) {
+            var shouldFail = true
+            val authRepository = FakeAuthRepository(onLogout = { if (shouldFail) throw IOException("offline") })
+            val viewModel = ProfileViewModel(FakeDistributors(), authRepository)
+            viewModel.signOut()
+            advanceUntilIdle()
+            assertTrue(viewModel.signOutError.value)
+
+            shouldFail = false
+            viewModel.signOut()
+            advanceUntilIdle()
+
             assertTrue(viewModel.signedOut.value)
+            assertFalse(viewModel.signOutError.value)
         }
 }
