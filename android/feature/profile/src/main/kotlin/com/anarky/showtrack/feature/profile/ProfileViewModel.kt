@@ -1,11 +1,14 @@
 package com.anarky.showtrack.feature.profile
 
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.anarky.showtrack.core.data.repository.AuthRepository
 import com.anarky.showtrack.feature.profile.push.DistributorSource
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 /**
@@ -46,9 +49,19 @@ class ProfileViewModel
     @Inject
     constructor(
         private val distributors: DistributorSource,
+        private val authRepository: AuthRepository,
     ) : ViewModel() {
         private val mutablePushState = MutableStateFlow<PushState>(PushState.NoDistributor)
         val pushState: StateFlow<PushState> = mutablePushState.asStateFlow()
+
+        // Separate from PushState on purpose, not a third field folded into it: PushState is
+        // "what push looks like right now" and sign-out is not a fact about push at all — folding
+        // it in would force every existing `when` over PushState to grow a branch that means
+        // nothing. `false` once and never reset: this ViewModel is scoped to the NavBackStackEntry
+        // and is torn down the moment ProfileScreen navigates away on `true`, so there is no second
+        // sign-out to observe.
+        private val mutableSignedOut = MutableStateFlow(false)
+        val signedOut: StateFlow<Boolean> = mutableSignedOut.asStateFlow()
 
         init {
             refresh()
@@ -78,5 +91,21 @@ class ProfileViewModel
         fun disablePush() {
             distributors.unregister()
             refresh()
+        }
+
+        /**
+         * `AuthRepository.logout()` deletes the server-side push target, revokes the refresh
+         * token, and clears the local session — but it does NOT emit `AuthEvent.LoggedOut`. That
+         * event is `AuthEventBus`'s signal for a token REFRESH failing (see
+         * `TokenRefreshAuthenticator`), which is a different situation from a user tapping "sign
+         * out" with a perfectly valid session. Because of that, `:app`'s reactive `AuthGate` never
+         * fires for this path — [signedOut] is what `ProfileScreen` watches instead, to navigate
+         * back to auth explicitly rather than relying on a gate that was never going to open.
+         */
+        fun signOut() {
+            viewModelScope.launch {
+                authRepository.logout()
+                mutableSignedOut.value = true
+            }
         }
     }

@@ -18,4 +18,12 @@
     <string name="push_permission_body">Android also needs permission to show notifications.</string>
     <string name="push_permission_grant">Allow notifications</string>
     <string name="profile_title">Profile</string>
+
+    <!-- Sign-out is destructive of local session state (Gap 2, Phase 9a device walkthroughs), so
+         the button opens a confirmation dialog rather than acting immediately. -->
+    <string name="profile_sign_out">Sign out</string>
+    <string name="profile_sign_out_confirm_title">Sign out?</string>
+    <string name="profile_sign_out_confirm_body">You\'ll need to sign in again to see your library and get episode alerts.</string>
+    <string name="profile_sign_out_confirm_action">Sign out</string>
+    <string name="profile_sign_out_cancel">Cancel</string>
 </resources>

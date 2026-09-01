@@ -57,7 +57,7 @@ internal val appDestinations: List<AppDestination> =
         AppDestination(DetailRoute::class) { detailEntry() },
         AppDestination(DiscoverRoute::class) { discoverEntry() },
         AppDestination(FavoritesRoute::class) { favoritesEntry() },
-        AppDestination(ProfileRoute::class) { profileEntry() },
+        AppDestination(ProfileRoute::class) { onNavigate -> profileEntry(onNavigate) },
         AppDestination(SearchRoute::class) { onNavigate -> searchEntry(onNavigate) },
         AppDestination(GroupsRoute::class) { groupsEntry() },
         AppDestination(FeedRoute::class) { onNavigate -> feedEntry(onNavigate) },

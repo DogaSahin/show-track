@@ -60,16 +60,27 @@ private fun ShowTrackGraph(
     ) {
         showTrackDestinations(
             onNavigate = { route ->
-                // Navigating TO LibraryRoute through this table only ever happens once, from
-                // AuthNavigation on a successful login/register — nothing else in the app reaches
-                // Library through onNavigate (it is a start destination, not a target other
-                // screens link to). popUpTo<AuthRoute> there is load-bearing, not incidental: a
-                // plain push leaves Auth on the back stack and Back returns to a login form that
-                // already succeeded.
-                if (route is LibraryRoute) {
-                    navController.navigateToLibraryClearingAuth()
-                } else {
-                    navController.navigate(route)
+                when (route) {
+                    // Navigating TO LibraryRoute through this table only ever happens once, from
+                    // AuthNavigation on a successful login/register — nothing else in the app
+                    // reaches Library through onNavigate (it is a start destination, not a target
+                    // other screens link to). popUpTo<AuthRoute> there is load-bearing, not
+                    // incidental: a plain push leaves Auth on the back stack and Back returns to a
+                    // login form that already succeeded.
+                    is LibraryRoute -> navController.navigateToLibraryClearingAuth()
+
+                    // Navigating TO AuthRoute through this table happens from ProfileNavigation on
+                    // sign-out (Gap 2, Phase 9a device walkthroughs). AuthRepository.logout()
+                    // clears the session without emitting AuthEvent.LoggedOut — that event is
+                    // reserved for a token REFRESH failing, not a user-initiated sign-out with a
+                    // perfectly valid session — so AuthGate's reactive collector above never fires
+                    // for this path. Reusing navigateToAuthClearingStack() here, rather than a
+                    // plain push, is what keeps Back from returning to a profile screen whose
+                    // session is already gone: the exact same failure mode AuthGate's own use of
+                    // it exists to prevent, reached by a second door.
+                    is AuthRoute -> navController.navigateToAuthClearingStack()
+
+                    else -> navController.navigate(route)
                 }
             },
         )

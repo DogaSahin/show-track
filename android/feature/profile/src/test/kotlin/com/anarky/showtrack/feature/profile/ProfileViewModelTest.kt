@@ -1,7 +1,19 @@
 package com.anarky.showtrack.feature.profile
 
+import com.anarky.showtrack.core.data.repository.AuthRepository
 import com.anarky.showtrack.feature.profile.push.DistributorSource
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.setMain
+import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 
 private const val NTFY = "io.heckel.ntfy"
@@ -26,27 +38,64 @@ private class FakeDistributors(
     }
 }
 
+/** Exercised against a fake, the same way `AuthViewModelTest`'s `FakeAuthRepository` is used. */
+private class FakeAuthRepository : AuthRepository {
+    var logoutCalled: Boolean = false
+
+    override suspend fun hasSession(): Boolean = true
+
+    override suspend fun login(
+        email: String,
+        password: String,
+    ) = Unit
+
+    override suspend fun register(
+        username: String,
+        email: String,
+        password: String,
+        inviteCode: String,
+    ) = Unit
+
+    override suspend fun logout() {
+        logoutCalled = true
+    }
+}
+
+@OptIn(ExperimentalCoroutinesApi::class)
 class ProfileViewModelTest {
+    // viewModelScope is hard-wired to Dispatchers.Main, which has no implementation on a plain
+    // JVM. Substituting a TestDispatcher is what makes the launch inside `signOut` run at all —
+    // the push tests below don't need it (enablePush/disablePush/refresh are synchronous), but
+    // setting it unconditionally costs nothing and keeps this class' setup uniform.
+    private val dispatcher = StandardTestDispatcher()
+
+    @Before
+    fun setUp() = Dispatchers.setMain(dispatcher)
+
+    @After
+    fun tearDown() = Dispatchers.resetMain()
+
     @Test
     fun `no installed distributor is reported as NoDistributor`() {
         // The state the whole prompt exists for. A user here receives nothing, forever, and the
         // only conclusion available without the prompt is "push is broken" rather than "push
         // needs one more app" (decision A-A).
-        val state = ProfileViewModel(FakeDistributors()).pushState.value
+        val state = ProfileViewModel(FakeDistributors(), FakeAuthRepository()).pushState.value
 
         assertEquals(PushState.NoDistributor, state)
     }
 
     @Test
     fun `an installed but unchosen distributor is offered`() {
-        val state = ProfileViewModel(FakeDistributors(installed = listOf(NTFY))).pushState.value
+        val state =
+            ProfileViewModel(FakeDistributors(installed = listOf(NTFY)), FakeAuthRepository()).pushState.value
 
         assertEquals(PushState.Available(listOf(NTFY)), state)
     }
 
     @Test
     fun `choosing a distributor moves to Registered`() {
-        val viewModel = ProfileViewModel(FakeDistributors(installed = listOf(NTFY)))
+        val viewModel = ProfileViewModel(FakeDistributors(installed = listOf(NTFY)), FakeAuthRepository())
 
         viewModel.enablePush(NTFY)
 
@@ -59,7 +108,10 @@ class ProfileViewModelTest {
         // show "episode alerts are on" for an app that is gone — the silent failure this state
         // machine exists to prevent, wearing a green tick.
         val state =
-            ProfileViewModel(FakeDistributors(installed = emptyList(), saved = NTFY)).pushState.value
+            ProfileViewModel(
+                FakeDistributors(installed = emptyList(), saved = NTFY),
+                FakeAuthRepository(),
+            ).pushState.value
 
         assertEquals(PushState.NoDistributor, state)
     }
@@ -69,6 +121,7 @@ class ProfileViewModelTest {
         val state =
             ProfileViewModel(
                 FakeDistributors(installed = listOf("org.other.distributor"), saved = NTFY),
+                FakeAuthRepository(),
             ).pushState.value
 
         assertEquals(PushState.Available(listOf("org.other.distributor")), state)
@@ -79,7 +132,7 @@ class ProfileViewModelTest {
         // The distinction matters to the user: the app is still installed, so the screen must
         // offer to turn it back on rather than tell them to go and install something.
         val distributors = FakeDistributors(installed = listOf(NTFY), saved = NTFY)
-        val viewModel = ProfileViewModel(distributors)
+        val viewModel = ProfileViewModel(distributors, FakeAuthRepository())
 
         viewModel.disablePush()
 
@@ -95,7 +148,7 @@ class ProfileViewModelTest {
         // re-reads on the way back, the screen still says "push needs one more app" after the
         // user did exactly what it asked — A-A's failure mode wearing its own prompt.
         val distributors = FakeDistributors()
-        val viewModel = ProfileViewModel(distributors)
+        val viewModel = ProfileViewModel(distributors, FakeAuthRepository())
         assertEquals(PushState.NoDistributor, viewModel.pushState.value)
 
         distributors.installed = listOf(NTFY)
@@ -103,4 +156,35 @@ class ProfileViewModelTest {
 
         assertEquals(PushState.Available(listOf(NTFY)), viewModel.pushState.value)
     }
+
+    @Test
+    fun `signing out calls AuthRepository logout`() =
+        runTest(dispatcher) {
+            // Gap 2, Phase 9a device walkthroughs: AuthRepository.logout() was hardened to delete
+            // the server-side push target BEFORE clearing tokens, and none of that was reachable
+            // from any screen. This is the regression guard for the door this task adds.
+            val authRepository = FakeAuthRepository()
+            val viewModel = ProfileViewModel(FakeDistributors(), authRepository)
+
+            viewModel.signOut()
+            advanceUntilIdle()
+
+            assertTrue(authRepository.logoutCalled)
+        }
+
+    @Test
+    fun `signedOut flips to true only after logout completes`() =
+        runTest(dispatcher) {
+            // ProfileScreen's LaunchedEffect navigates away the moment this flips — if it flipped
+            // BEFORE logout ran, a slow or failing logout call would never get the chance to run
+            // at all, because the screen (and this ViewModel with it) would already be gone.
+            val authRepository = FakeAuthRepository()
+            val viewModel = ProfileViewModel(FakeDistributors(), authRepository)
+            assertFalse(viewModel.signedOut.value)
+
+            viewModel.signOut()
+            advanceUntilIdle()
+
+            assertTrue(viewModel.signedOut.value)
+        }
 }
