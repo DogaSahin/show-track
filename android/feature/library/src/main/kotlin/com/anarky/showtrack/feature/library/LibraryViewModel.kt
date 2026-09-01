@@ -58,13 +58,20 @@ class LibraryViewModel
         // constructing, and a collector that subscribes to `state` before that completes must see
         // Loading, not a misleadingly empty Success.
         //
-        // `hasLoaded`: whether a full reload has ever SUCCEEDED for the CURRENTLY selected filter.
+        // `hasLoaded`: whether a full reload has ever SUCCEEDED, for ANY filter, this session.
         // Starts false, flips true only in `guard`'s success branch (never on failure — see its
-        // KDoc), and is reset back to false in `selectStatus`/`selectSort` because a genuinely new
-        // filter selection has not loaded anything yet either, even though some earlier selection
-        // may have. It is what lets [state] tell "never loaded" (fall back to cache) apart from
-        // "reload failed after a real load" (show the error, not a lie about freshness) — see
-        // [state]'s KDoc for the full precedence this drives.
+        // KDoc), and is NEVER reset back to false afterwards — not even by `selectStatus`/
+        // `selectSort`. A per-selection reset looks appealing ("a freshly picked filter hasn't
+        // loaded ANYTHING yet") but is wrong: `LibraryRepositoryImpl.applyFilter` reverts its OWN
+        // internal filter on a throw, so a FAILED switch back to the default tab, after some OTHER
+        // filter had already loaded successfully, leaves `observeLibrary()` still keyed to that
+        // other (reverted-to) filter — `entries` is that other filter's LIVE rows, not the cache.
+        // A reset here would clear `hasLoaded` for that switch and let those rows render as
+        // `Success(isStale = true)` under the wrong tab — the exact trap [state]'s KDoc describes,
+        // reached from the one direction `isDefault` alone cannot see. Session-scoped, `hasLoaded`
+        // is what lets [state] tell "never loaded, not even once, by anyone" (fall back to cache)
+        // apart from "reload failed after some real load" (show the error, not a lie about
+        // freshness) — see [state]'s KDoc for the full precedence this drives.
         private val mutableLoadState = MutableStateFlow(LoadState(loading = true, hasLoaded = false))
 
         // Whether a `loadMore()` page fetch is in flight — a footer spinner under an otherwise
@@ -123,17 +130,19 @@ class LibraryViewModel
          * show — in which case the cache renders as `Success(isStale = true)` instead. Both
          * conditions are load-bearing, not belt-and-braces:
          *
-         * - Dropping `hasLoaded` would mean a reload that fails AFTER a genuine success falls back
-         *   to the (now possibly outdated) rows instead of telling the user the refresh failed —
-         *   silently lying about freshness.
+         * - Dropping `hasLoaded` would mean a reload that fails AFTER a genuine success (for ANY
+         *   filter, this session — see [mutableLoadState]'s KDoc for why it is session-scoped, not
+         *   per-selection) falls back to whatever [entries] currently holds instead of telling the
+         *   user the refresh failed — silently lying about freshness, and (before the app has ever
+         *   had one success at all) potentially showing the WRONG filter's rows under the current
+         *   tab, not just outdated ones.
          * - Dropping the `isDefault` check (via [mutableFilter], read directly here rather than
          *   folded into the `combine` — a UI-facing selection with no upstream of its own, see
-         *   [filter]'s KDoc) would hit the stale-rows trap: `LibraryRepositoryImpl.applyFilter`
-         *   reverts its OWN internal filter on a throw but [mutableFilter] here does NOT (by
-         *   design — see [applyCurrentFilter]'s KDoc), so a FAILED switch away from the default
-         *   filter still has `entries` holding the default filter's rows and (if that switch was
-         *   the very first thing to fail) `hasLoaded` still false. Without this check those rows
-         *   would render, silently, under the new filter's tab.
+         *   [filter]'s KDoc) would hit the stale-rows trap on the app's very first load: a FAILED
+         *   switch away from the default filter, before anything has ever succeeded, still has
+         *   `entries` holding whatever `observeLibrary()` last emitted for the default view (the
+         *   cache, most likely) and `hasLoaded` still false. Without this check those rows would
+         *   render, silently, under the new filter's tab.
          *
          * Reading `mutableFilter.value` directly here (rather than as a sixth `combine` source) is
          * safe because every path that changes it — [selectStatus], [selectSort] — synchronously
@@ -171,19 +180,16 @@ class LibraryViewModel
             refresh()
         }
 
+        // Neither of these touches `mutableLoadState.hasLoaded` — see its KDoc for why resetting
+        // it per selection would re-open the stale-rows trap from the one direction `isDefault`
+        // cannot guard.
         fun selectStatus(status: UserMediaStatus?) {
             mutableFilter.value = mutableFilter.value.copy(status = status)
-            // A newly-selected filter has not loaded anything yet, even though the PREVIOUSLY
-            // selected one may have — see mutableLoadState's and `state`'s KDoc for why this is
-            // what makes the stale-rows trap (a failed switch showing the OLD filter's cached
-            // rows under the NEW filter's tab) actually impossible rather than merely unlikely.
-            mutableLoadState.value = mutableLoadState.value.copy(hasLoaded = false)
             applyCurrentFilter()
         }
 
         fun selectSort(sort: LibrarySort) {
             mutableFilter.value = mutableFilter.value.copy(sort = sort)
-            mutableLoadState.value = mutableLoadState.value.copy(hasLoaded = false)
             applyCurrentFilter()
         }
 

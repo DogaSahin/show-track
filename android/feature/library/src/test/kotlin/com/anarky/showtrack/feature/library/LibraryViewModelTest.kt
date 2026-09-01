@@ -342,8 +342,10 @@ class LibraryViewModelTest {
             // Default filter loads successfully, then applyFilter(PLANNED) throws. The fake's
             // `entries` (standing in for what LibraryRepositoryImpl.observeLibrary() would still
             // be emitting - CursorPaginator.restart() mutates nothing on a throw) still holds the
-            // default filter's rows here. Without the isDefault guard this renders as Success
-            // carrying them, silently, under the PLANNED tab; it must render as Error instead.
+            // default filter's rows here. `hasLoaded` (session-scoped: true from the earlier
+            // success and never reset per-selection) is what blocks this now, on its own — see
+            // `a failed switch away from the default filter before any load has ever succeeded...`
+            // below for the sequence where `isDefault` is the ONLY guard left standing.
             val failure = IOException("offline")
             val repository = FakeLibraryRepository()
             repository.entries.value = listOf(ENTRY)
@@ -353,6 +355,59 @@ class LibraryViewModelTest {
 
             repository.applyFilterFailure = failure
             viewModel.selectStatus(UserMediaStatus.PLANNED)
+            advanceUntilIdle()
+
+            assertEquals(LibraryUiState.Error(failure), viewModel.state.value)
+        }
+
+    @Test
+    fun `a failed switch away from the default filter before any load succeeds shows the error, not the cache`() =
+        runTest(dispatcher) {
+            // hasLoaded is false throughout this whole test - nothing has EVER succeeded this
+            // session - so it cannot block the cache fallback here on its own; `isDefault` is the
+            // ONLY guard standing between this and rendering the cache (still holding the DEFAULT
+            // filter's rows, from the cold-start failure below) under the PLANNED tab. This is
+            // what makes `isDefault` load-bearing by itself, not merely redundant with
+            // `hasLoaded` - see the mutation check that deletes it.
+            val failure = IOException("offline")
+            val repository = FakeLibraryRepository(applyFilterFailure = failure)
+            repository.entries.value = listOf(ENTRY) // a pre-existing Room cache
+            val viewModel = LibraryViewModel(repository)
+            backgroundScope.launch { viewModel.state.collect {} }
+            advanceUntilIdle() // cold start fails -> Success(isStale = true) from the cache; hasLoaded stays false
+
+            viewModel.selectStatus(UserMediaStatus.PLANNED)
+            advanceUntilIdle()
+
+            assertEquals(LibraryUiState.Error(failure), viewModel.state.value)
+        }
+
+    @Test
+    fun `a failed switch back to default after a successful non-default switch does not resurrect those rows`() =
+        runTest(dispatcher) {
+            // Finding 2's regression (review round 1): a `hasLoaded` reset on EVERY selection
+            // change - "a freshly picked filter hasn't loaded anything yet" - looked reasonable
+            // but is wrong. LibraryRepositoryImpl.applyFilter reverts its OWN internal filter on a
+            // throw, so when this last step's fetch fails, the repository's filter reverts to
+            // PLANNED (the last filter that actually succeeded) while THIS ViewModel's `filter`
+            // stays at the default tab the user just tapped. `entries` here stands in for what
+            // observeLibrary() would then still be emitting: PLANNED's LIVE rows, not the cache -
+            // a per-selection reset would clear `hasLoaded` for this switch and let those rows
+            // render as `Success(isStale = true)`, mislabelled "saved", under the default tab.
+            // Session-scoped `hasLoaded` (never reset after the first success) is what keeps this
+            // blocked, entirely independent of `isDefault`.
+            val failure = IOException("offline")
+            val repository = FakeLibraryRepository()
+            repository.entries.value = listOf(ENTRY)
+            val viewModel = LibraryViewModel(repository)
+            backgroundScope.launch { viewModel.state.collect {} }
+            advanceUntilIdle() // default filter loads successfully -> hasLoaded = true
+
+            viewModel.selectStatus(UserMediaStatus.PLANNED)
+            advanceUntilIdle() // PLANNED also loads successfully
+
+            repository.applyFilterFailure = failure
+            viewModel.selectStatus(null) // switch back to the default tab; this fetch fails
             advanceUntilIdle()
 
             assertEquals(LibraryUiState.Error(failure), viewModel.state.value)
