@@ -10,6 +10,8 @@ import com.anarky.showtrack.core.data.repository.AuthRepository
 import com.anarky.showtrack.core.data.repository.AuthRepositoryImpl
 import com.anarky.showtrack.core.data.repository.LibraryRepository
 import com.anarky.showtrack.core.data.repository.LibraryRepositoryImpl
+import com.anarky.showtrack.core.data.repository.MediaRepository
+import com.anarky.showtrack.core.data.repository.MediaRepositoryImpl
 import dagger.Binds
 import dagger.Module
 import dagger.hilt.InstallIn
@@ -82,4 +84,12 @@ abstract class DataModule {
      */
     @Binds
     abstract fun authRepository(impl: AuthRepositoryImpl): AuthRepository
+
+    /**
+     * No `@Singleton` on the method, same reasoning as the others above: the scope sits on
+     * [MediaRepositoryImpl], which is where the search paginator's in-memory state actually
+     * lives.
+     */
+    @Binds
+    abstract fun mediaRepository(impl: MediaRepositoryImpl): MediaRepository
 }
