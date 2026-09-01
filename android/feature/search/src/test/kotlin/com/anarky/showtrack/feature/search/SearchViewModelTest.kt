@@ -317,6 +317,32 @@ class SearchViewModelTest {
         }
 
     @Test
+    fun `a superseded search that fails after the field was cleared does not surface an error`() =
+        runTest(dispatcher) {
+            // The same guard as the Idle case above, exercised on runSearch's OTHER write: a
+            // cleared query must not show an error banner for a request that was abandoned before
+            // it failed. Without the guard on the catch branch specifically, a search that fails
+            // AFTER onQueryChange("") would overwrite Idle with SearchUiState.Error.
+            val searchGate = CompletableDeferred<Unit>()
+            val media = FakeMediaRepository(searchGate = searchGate)
+            val viewModel = SearchViewModel(media, FakeLibraryRepository())
+
+            viewModel.onQueryChange("frieren")
+            advanceUntilIdle()
+            assertEquals(SearchUiState.Loading, viewModel.state.value)
+
+            viewModel.onQueryChange("")
+            assertEquals(SearchUiState.Idle, viewModel.state.value)
+
+            // The in-flight search fails only AFTER the field was cleared.
+            media.searchFailure = IOException("offline")
+            searchGate.complete(Unit)
+            advanceUntilIdle()
+
+            assertEquals(SearchUiState.Idle, viewModel.state.value)
+        }
+
+    @Test
     fun `a superseded search resolving mid-add does not let a second add through`() =
         runTest(dispatcher) {
             // Regression test: replaceSuccess { it.copy(adding = null, addError = null) } — or,
