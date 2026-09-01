@@ -1,3 +1,9 @@
 <resources>
     <string name="app_name">ShowTrack</string>
+
+    <!-- TopLevelDestination labels — also used as each tab's icon contentDescription
+         (MainActivity.kt), so these must read correctly standalone, not just next to the icon. -->
+    <string name="destination_home">Home</string>
+    <string name="destination_favorites">Favorites</string>
+    <string name="destination_profile">Profile</string>
 </resources>

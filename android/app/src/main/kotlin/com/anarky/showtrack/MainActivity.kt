@@ -4,6 +4,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Icon
@@ -17,6 +18,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavDestination
@@ -123,14 +125,22 @@ fun ShowTrackApp(authEvents: Flow<AuthEvent>) {
             },
         navigationSuiteItems = {
             TopLevelDestination.entries.forEach { destination ->
+                // `stringResource` is called inside each composable slot (`icon`, `label`) rather
+                // than hoisted once above `item(...)`: `navigationSuiteItems` is typed
+                // `NavigationSuiteScope.() -> Unit`, not `@Composable NavigationSuiteScope.() ->
+                // Unit` — it's a builder DSL that registers slots for later composition (the same
+                // shape as `LazyListScope`), not itself a composable context. `item(...)` compiles
+                // there because `item` is a plain function; a bare `stringResource` call at that
+                // same spot does not, because `stringResource` IS `@Composable` and needs one of
+                // the slots below, which are.
                 item(
                     icon = {
                         Icon(
                             painterResource(destination.icon),
-                            contentDescription = destination.label,
+                            contentDescription = stringResource(destination.label),
                         )
                     },
-                    label = { Text(destination.label) },
+                    label = { Text(stringResource(destination.label)) },
                     selected =
                         currentBackStackEntry?.destination?.hasRoute(destination.route::class) == true,
                     onClick = {
@@ -196,11 +206,11 @@ internal fun shouldShowNavigationTabs(
  * rail switches between, which is exactly what this is.
  */
 enum class TopLevelDestination(
-    val label: String,
+    @param:StringRes val label: Int,
     val icon: Int,
     val route: AppRoute,
 ) {
-    HOME("Home", R.drawable.ic_home, LibraryRoute),
-    FAVORITES("Favorites", R.drawable.ic_favorite, FavoritesRoute),
-    PROFILE("Profile", R.drawable.ic_account_box, ProfileRoute),
+    HOME(R.string.destination_home, R.drawable.ic_home, LibraryRoute),
+    FAVORITES(R.string.destination_favorites, R.drawable.ic_favorite, FavoritesRoute),
+    PROFILE(R.string.destination_profile, R.drawable.ic_account_box, ProfileRoute),
 }
