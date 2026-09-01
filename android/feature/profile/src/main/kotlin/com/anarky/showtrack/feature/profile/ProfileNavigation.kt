@@ -46,7 +46,10 @@ fun NavGraphBuilder.profileEntry(onNavigate: (AppRoute) -> Unit) {
  *   3. The BINDING one line above — `onSignedOut = signOutNavigation(onNavigate)` — same failure
  *      mode as [libraryEntry]: change it to `onSignedOut = {}` and every existing test, including
  *      `ProfileNavigationTest`, stays green while sign-out goes unreachable again.
- * All three need a Hilt-composed `ProfileScreen` to close, which needs a test harness that does
- * not exist anywhere in this repo; see the phase-level item to build one.
+ * All three need a Hilt-composed `ProfileScreen` to close. A Hilt test harness now exists in this
+ * repo — `:feature:library`'s `LibraryEntryHiltTest` is the pattern, built against the identical
+ * gap in `LibraryNavigation.kt`'s `searchNavigation` binding — but this module has not adopted it:
+ * `:feature:profile` declares no `hilt-android-testing`/`HiltTestActivity` of its own, and all
+ * three gaps above are still open here. Do not read library's fix as covering this file too.
  */
 internal fun signOutNavigation(onNavigate: (AppRoute) -> Unit): () -> Unit = { onNavigate(AuthRoute) }

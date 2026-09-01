@@ -43,19 +43,22 @@ fun NavGraphBuilder.libraryEntry(onNavigate: (AppRoute) -> Unit) {
 /**
  * The mapping the search action drives, pulled out of the `composable<LibraryRoute> { }` lambda
  * above so it is reachable by a plain unit test. `LibraryScreen`'s stateful overload resolves a
- * `LibraryViewModel` through `hiltViewModel()`, and this module has no Hilt test harness, so a test
- * cannot compose [libraryEntry] itself to observe what a tap does — it can call this function
- * directly instead.
+ * `LibraryViewModel` through `hiltViewModel()`, so a test that wants to exercise it needs a Hilt
+ * harness to compose against — `LibraryNavigationTest` predates the one this module now has and
+ * still calls this function directly instead, which stays a legitimate, narrower test in its own
+ * right (see below).
  *
  * What IS covered: `LibraryScreenTest` pins icon tap → `onSearchClick`; `LibraryNavigationTest`
- * pins this function, `onSearchClick` (the parameter) → `onNavigate(SearchRoute)`.
+ * pins this function, `onSearchClick` (the parameter) → `onNavigate(SearchRoute)`;
+ * `LibraryEntryHiltTest` now composes [libraryEntry] itself through a real Hilt-backed
+ * `LibraryScreen` and pins the BINDING one line above — `onSearchClick =
+ * searchNavigation(onNavigate)` — end to end: tap → `onNavigate(SearchRoute)`. Change that line to
+ * `onSearchClick = {}` and `LibraryEntryHiltTest` is the one that fails; the other two, having
+ * never composed [libraryEntry], stay green regardless — which is exactly why closing this gap
+ * needed a fourth test rather than trusting the first three more.
  *
- * What is NOT: the BINDING one line above — `onSearchClick = searchNavigation(onNavigate)` — is
- * untested. Neither test composes [libraryEntry] itself, so nothing observes that this particular
- * argument is actually wired to this particular function. Change that line to
- * `onSearchClick = {}` and both tests above stay green while the search screen goes unreachable
- * again — the exact regression this file exists to prevent. Closing that needs a Hilt test
- * harness (to compose the stateful `LibraryScreen`), which does not exist anywhere in this repo;
- * see the phase-level item to build one.
+ * Not fixed by this: [com.anarky.showtrack.feature.profile.signOutNavigation] in
+ * `ProfileNavigation.kt` has the identical shape of gap and no Hilt harness closes it — `:feature:profile`
+ * gained no test harness in this change, only `:feature:library` did.
  */
 internal fun searchNavigation(onNavigate: (AppRoute) -> Unit): () -> Unit = { onNavigate(SearchRoute) }

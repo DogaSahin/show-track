@@ -102,6 +102,9 @@ androidx-datastore-preferences = { group = "androidx.datastore", name = "datasto
 
 # --- Navigation ---
 androidx-navigation-compose = { group = "androidx.navigation", name = "navigation-compose", version.ref = "navigationCompose" }
+# TestNavHostController, for driving a graph in a JVM test without a real Activity. Same version
+# ref as navigation-compose — they're released in lockstep and Gradle would unify them anyway.
+androidx-navigation-testing = { group = "androidx.navigation", name = "navigation-testing", version.ref = "navigationCompose" }
 
 # --- Coroutines ---
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }

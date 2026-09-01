@@ -36,4 +36,14 @@ dependencies {
     testImplementation(libs.androidx.compose.ui.test.junit4)
     testImplementation(libs.robolectric)
     testImplementation(libs.androidx.test.core)
+
+    // TestNavHostController, so LibraryEntryHiltTest can drive libraryEntry() inside a real graph
+    // rather than the stateless LibraryScreen() overload alone.
+    testImplementation(libs.androidx.navigation.testing)
+
+    // Hilt's test harness. `hilt-android-testing` was already in the version catalog and used by
+    // no module — composing a `hiltViewModel()`-backed screen in a JVM test is what it is for, and
+    // nothing had needed it until now. The KSP line is what generates HiltTestApplication.
+    testImplementation(libs.hilt.android.testing)
+    kspTest(libs.hilt.compiler)
 }
