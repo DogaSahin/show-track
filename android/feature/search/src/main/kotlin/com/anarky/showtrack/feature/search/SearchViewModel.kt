@@ -140,11 +140,14 @@ class SearchViewModel
          *
          * A second tap on ANY row while one add is already in flight is dropped (same re-entrancy
          * shape as [loadMore] and `DetailViewModel.edit`) rather than letting two adds race. That
-         * guard — and the `adding`/`addError` bookkeeping [replaceSuccess] applies — is scoped to
-         * [SearchUiState.Success] because a row can only be TAPPED while its list is on screen; the
-         * add call itself is not otherwise gated on the current [state] shape, so it still runs
-         * (and still navigates on success) even if a caller invokes it outside that state, rather
-         * than silently dropping a real request the way a `?: return` guard would.
+         * guard is [addInFlight], a plain ViewModel field — **not** scoped to [SearchUiState.Success],
+         * unlike the `adding`/`addError` bookkeeping [replaceSuccess] applies, which still only
+         * touches a `Success` because a row can only be TAPPED while its list is on screen. This is
+         * a deliberate widening past the reported bug: the previous guard read
+         * `(state as? Success)?.adding`, so a caller invoking [add] while [state] was NOT `Success`
+         * skipped the check entirely and had no upper bound on concurrent in-flight adds at all. A
+         * field the guard can always read, regardless of [state]'s shape, closes that instead of
+         * only the narrower "debounced search resets `adding` mid-add" case that was reported.
          *
          * A failure here may still mean the title was added: [LibraryRepository.add] refreshes the
          * library after a successful `POST`, and that refresh can throw on its own even though the
@@ -161,14 +164,19 @@ class SearchViewModel
             viewModelScope.launch {
                 try {
                     val entry = libraryRepository.add(source = summary.source, externalId = summary.externalId)
-                    addInFlight = null
                     replaceSuccess { it.copy(adding = null, addError = null) }
                     navigateChannel.trySend(entry.media.id)
                 } catch (cancellation: CancellationException) {
                     throw cancellation
                 } catch (failure: Exception) {
-                    addInFlight = null
                     replaceSuccess { it.copy(adding = null, addError = AddFailure(summary.externalId, failure)) }
+                } finally {
+                    // Clearing here, not in each branch: a CancellationException from INSIDE
+                    // libraryRepository.add (a timeout, a cancelled inner scope) would otherwise
+                    // rethrow past both `catch`es without ever clearing addInFlight, permanently
+                    // disabling this row's add affordance for the rest of the ViewModel's life with
+                    // no error shown. `finally` runs on every exit path, cancellation included.
+                    addInFlight = null
                 }
             }
         }
