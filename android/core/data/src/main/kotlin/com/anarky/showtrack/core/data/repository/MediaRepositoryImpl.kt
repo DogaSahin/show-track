@@ -6,6 +6,7 @@ import com.anarky.showtrack.core.data.paging.PagePaginator
 import com.anarky.showtrack.core.model.Media
 import com.anarky.showtrack.core.model.SearchResults
 import com.anarky.showtrack.core.network.api.ShowTrackApi
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -42,9 +43,25 @@ class MediaRepositoryImpl
                 NumberedPage(items = latest.items, hasMore = response.hasMore)
             }
 
+        @Suppress("TooGenericExceptionCaught")
         override suspend fun search(query: String) {
+            val previous = this.query
             this.query = query
-            paginator.restart()
+            try {
+                paginator.restart()
+            } catch (cancellation: CancellationException) {
+                this.query = previous
+                throw cancellation
+            } catch (failure: Exception) {
+                // PagePaginator.restart() mutates nothing when its fetch throws, so the
+                // paginator's contents still belong to `previous`. Leaving `query` on the new
+                // value would let a later loadMoreResults() fetch the new query's page 2 and
+                // APPEND it onto the old query's page 1 — a search result mixing two queries
+                // with no way for the caller to detect it. `query` must always name the query
+                // the paginator's current contents actually came from.
+                this.query = previous
+                throw failure
+            }
             publish()
         }
 

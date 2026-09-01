@@ -16,6 +16,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.IOException
 
 class MediaRepositoryTest {
     @Test
@@ -73,6 +74,61 @@ class MediaRepositoryTest {
                 repository.searchResults.value.items
                     .map { it.title },
             )
+            // The half the previous version of this test never pinned: that the new query was
+            // actually the one sent to the API, not merely that the displayed items changed.
+            assertEquals("bebop", api.lastQuery)
+            assertEquals(1, api.lastPage)
+        }
+
+    /**
+     * FINDING 2's regression test. `PagePaginator.restart()` mutates nothing when its fetch
+     * throws, so after a failed `search("bebop")` the paginator's contents still belong to
+     * "frieren". If `MediaRepositoryImpl` left `query` on "bebop" anyway, a later
+     * `loadMoreResults()` would fetch bebop's page 2 and APPEND it onto frieren's page 1 — a
+     * result set silently mixing two different queries.
+     */
+    @Test
+    fun `a failed search does not leave the next page appending to the previous query's results`() =
+        runTest {
+            val api = FakeApi(response(titles = listOf("Frieren"), hasMore = true))
+            val repository = MediaRepositoryImpl(api)
+            repository.search("frieren")
+
+            api.nextFailure = IOException("simulated network failure")
+            runCatching { repository.search("bebop") }
+
+            api.nextFailure = null
+            api.next = response(titles = listOf("Frieren 2"))
+            repository.loadMoreResults()
+
+            assertEquals(
+                listOf("Frieren", "Frieren 2"),
+                repository.searchResults.value.items
+                    .map { it.title },
+            )
+            // The page fetched by loadMoreResults() must have been requested as a continuation
+            // of "frieren", not "bebop" — the failed search must not have won the race to name
+            // the paginator's query.
+            assertEquals("frieren", api.lastQuery)
+            assertEquals(2, api.lastPage)
+        }
+
+    /** Coverage `loadMoreResults()` had none of before this fix round. */
+    @Test
+    fun `loadMoreResults accumulates items and takes hasMore from the newest page`() =
+        runTest {
+            val api = FakeApi(response(titles = listOf("Frieren"), hasMore = true))
+            val repository = MediaRepositoryImpl(api)
+            repository.search("frieren")
+
+            api.next = response(titles = listOf("Bebop"), hasMore = false)
+            repository.loadMoreResults()
+
+            val results = repository.searchResults.value
+            assertEquals(listOf("Frieren", "Bebop"), results.items.map { it.title })
+            assertFalse(results.hasMore)
+            assertEquals("frieren", api.lastQuery)
+            assertEquals(2, api.lastPage)
         }
 
     private fun response(
@@ -104,6 +160,10 @@ class MediaRepositoryTest {
     private class FakeApi(
         var next: MediaSearchResponseDto,
     ) : ShowTrackApi {
+        var lastQuery: String? = null
+        var lastPage: Int? = null
+        var nextFailure: Throwable? = null
+
         override suspend fun library(
             cursor: String?,
             limit: Int,
@@ -122,7 +182,12 @@ class MediaRepositoryTest {
         override suspend fun searchMedia(
             query: String,
             page: Int,
-        ): MediaSearchResponseDto = next
+        ): MediaSearchResponseDto {
+            lastQuery = query
+            lastPage = page
+            nextFailure?.let { throw it }
+            return next
+        }
 
         override suspend fun mediaDetail(id: String): MediaDto = TODO("not used")
 
