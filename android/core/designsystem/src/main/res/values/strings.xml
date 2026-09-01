@@ -22,6 +22,11 @@
 
     <string name="action_retry">Retry</string>
 
+    <!-- MediaSource display names (decision C-E): a raw enum constant (e.g. "ANILIST") must never
+         reach the user — the search screen's degraded-provider banner is the current caller. -->
+    <string name="media_source_anilist">AniList</string>
+    <string name="media_source_tmdb">TMDB</string>
+
     <!-- ScoreChip's fallback when the user has not scored a title — an em dash, never a raw
          null or empty string. -->
     <string name="score_unset">—</string>

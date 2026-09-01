@@ -35,6 +35,7 @@ import com.anarky.showtrack.core.designsystem.component.EmptyState
 import com.anarky.showtrack.core.designsystem.component.ErrorState
 import com.anarky.showtrack.core.designsystem.component.LoadingState
 import com.anarky.showtrack.core.designsystem.component.MediaCover
+import com.anarky.showtrack.core.designsystem.component.displayName
 import com.anarky.showtrack.core.model.Media
 import com.anarky.showtrack.core.model.MediaSource
 import com.anarky.showtrack.core.model.MediaSummary
@@ -156,9 +157,15 @@ private fun DegradedBanner(
     providers: List<MediaSource>,
     modifier: Modifier = Modifier,
 ) {
+    // Names resolved into a plain List<String> first, then joined outside any lambda: joinToString's
+    // `transform` parameter is `crossinline`, and the Compose compiler plugin cannot see through a
+    // crossinline lambda from a precompiled stdlib to infer composability — `displayName()`
+    // (a @Composable call) inside `joinToString { }` directly fails to compile for exactly that
+    // reason. `map`'s lambda has no such modifier, so resolving names there first works.
+    val providerNames = providers.map { it.displayName() }
     Surface(modifier = modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.errorContainer) {
         Text(
-            text = stringResource(R.string.search_degraded_notice, providers.joinToString { it.name }),
+            text = stringResource(R.string.search_degraded_notice, providerNames.joinToString()),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onErrorContainer,
             modifier = Modifier.fillMaxWidth().padding(all = 12.dp),
