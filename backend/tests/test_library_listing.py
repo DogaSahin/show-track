@@ -291,3 +291,58 @@ async def test_the_media_id_filter_does_not_replace_the_caller_scope(auth_client
     body = (await auth_client.get("/v1/library", params={"media_id": str(shared.id)})).json()
 
     assert body["items"] == []
+
+
+async def test_the_favorite_filter_returns_only_favourites(auth_client, db_session, auth_user):
+    loved = make_media(external_id="1", title="Loved")
+    ignored = make_media(external_id="2", title="Ignored")
+    db_session.add_all([loved, ignored])
+    await db_session.flush()
+    db_session.add_all(
+        [
+            make_user_media(auth_user.id, loved.id, favorite=True),
+            make_user_media(auth_user.id, ignored.id, favorite=False),
+        ]
+    )
+    await db_session.flush()
+
+    body = (await auth_client.get("/v1/library", params={"favorite": "true"})).json()
+
+    assert [item["media"]["title"] for item in body["items"]] == ["Loved"]
+
+
+async def test_favorite_false_returns_only_non_favourites(auth_client, db_session, auth_user):
+    """`favorite=false` is a real filter, not "unset". A client asking for non-favourites must not
+    get the whole library back — which is what an `if favorite:` truthiness check would do."""
+    loved = make_media(external_id="3", title="Loved")
+    ignored = make_media(external_id="4", title="Ignored")
+    db_session.add_all([loved, ignored])
+    await db_session.flush()
+    db_session.add_all(
+        [
+            make_user_media(auth_user.id, loved.id, favorite=True),
+            make_user_media(auth_user.id, ignored.id, favorite=False),
+        ]
+    )
+    await db_session.flush()
+
+    body = (await auth_client.get("/v1/library", params={"favorite": "false"})).json()
+
+    assert [item["media"]["title"] for item in body["items"]] == ["Ignored"]
+
+
+async def test_the_favorite_filter_does_not_replace_the_caller_scope(auth_client, db_session, auth_user):
+    """The failure this pins: a filter written as `WHERE favorite IS TRUE` that drops the
+    user_id predicate would answer with someone else's favourites, and every other test in this file
+    would still pass because none of them asks for a row the caller does not own.
+    """
+    shared = make_media(external_id="5", title="Someone else's favourite")
+    other = make_user(username="someone-else", email="else@example.com")
+    db_session.add_all([shared, other])
+    await db_session.flush()
+    db_session.add(make_user_media(other.id, shared.id, favorite=True))
+    await db_session.flush()
+
+    body = (await auth_client.get("/v1/library", params={"favorite": "true"})).json()
+
+    assert body["items"] == []

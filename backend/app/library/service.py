@@ -14,7 +14,7 @@ from sqlalchemy.orm import InstrumentedAttribute
 from app.db import BULK_INSERT_CHUNK_SIZE, FOREIGN_KEY_VIOLATION, UNIQUE_VIOLATION, chunked
 from app.library import activity
 from app.library.models import Activity, ActivityKind, Review, UserMedia, UserMediaStatus
-from app.library.schemas import LibraryEntry, LibrarySort, ReviewAuthor, ReviewRead
+from app.library.schemas import LibraryEntry, LibrarySort, LibraryStats, ReviewAuthor, ReviewRead
 from app.media import service as media_service
 from app.media.models import Media
 from app.pagination import Cursor, encode_cursor
@@ -261,6 +261,7 @@ async def list_entries(
     cursor: Cursor | None,
     now: datetime,
     media_id: uuid.UUID | None = None,
+    favorite: bool | None = None,
 ) -> tuple[list[LibraryEntry], str | None]:
     """Keyset pagination over a composite (sort_value, id).
 
@@ -292,6 +293,8 @@ async def list_entries(
         statement = statement.where(UserMedia.status == status)
     if media_id is not None:
         statement = statement.where(UserMedia.media_id == media_id)
+    if favorite is not None:
+        statement = statement.where(UserMedia.favorite == favorite)
     if cursor is not None:
         key = tuple_(expression, UserMedia.id)
         position = (cursor.value, cursor.id)
@@ -306,6 +309,46 @@ async def list_entries(
     rows = rows[:limit]
     next_cursor = encode_cursor(sort.value, rows[-1].sort_value, rows[-1].UserMedia.id) if has_more and rows else None
     return [to_entry(row.UserMedia, row.Media, now) for row in rows], next_cursor
+
+
+async def get_stats(session: AsyncSession, *, user_id: uuid.UUID) -> LibraryStats:
+    """Two small queries rather than one grouped one: `by_status` needs a GROUP BY status, while
+    the average and rated_count must NOT be grouped by anything (an average grouped by status is
+    five numbers, not one). Folding both into a single statement means either a second GROUP BY
+    dimension that turns `by_status` into a nested structure the schema doesn't want, or a window
+    function to undo the grouping. Two statements, each doing exactly one aggregation, is the
+    plainer read — Postgres scans one user's `user_media` rows twice either way, and that scan is
+    bounded by one person's library, same as list_entries above.
+
+    Absent statuses are absent from `by_status`, not present as zero: GROUP BY only ever
+    produces rows for statuses that occur, and the client renders what it is given.
+
+    `func.count(UserMedia.score)` — COUNT(column), not COUNT(*) — is what makes `rated_count`
+    skip NULLs for free, the same way `func.avg` already does. ROUND to 1 decimal place because
+    Postgres's NUMERIC average widens the scale (measured: AVG(NUMERIC(3,1)) comes back with 16
+    trailing zeros), and the column's own precision is the only meaningful place to land it.
+    """
+    status_rows = (
+        await session.execute(
+            select(UserMedia.status, func.count()).where(UserMedia.user_id == user_id).group_by(UserMedia.status)
+        )
+    ).all()
+    by_status = {row.status: row.count for row in status_rows}
+
+    average_score, rated_count = (
+        await session.execute(
+            select(func.round(func.avg(UserMedia.score), 1), func.count(UserMedia.score)).where(
+                UserMedia.user_id == user_id
+            )
+        )
+    ).one()
+
+    return LibraryStats(
+        total=sum(by_status.values()),
+        by_status=by_status,
+        average_score=average_score,
+        rated_count=rated_count,
+    )
 
 
 async def bulk_add_entries(session: AsyncSession, *, user_id: uuid.UUID, rows: Sequence[dict[str, Any]]) -> int:
