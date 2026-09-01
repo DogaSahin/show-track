@@ -193,15 +193,27 @@ fun ShowTrackApp(authEvents: Flow<AuthEvent>) {
  *
  * **Still not pinned here, though it IS fixed elsewhere:** this function only decides bar
  * VISIBILITY, never back-stack shape, so it cannot be the regression guard for that on its own —
- * see [com.anarky.showtrack.TopLevelNavigationTest] for the pin. The bug used to read, in this
- * KDoc: "in an `Auth`-started session the NavHost's `startDestination` is still `AuthRoute` after
- * login, so a tab's `onClick` `popUpTo(findStartDestination().id)` targets a destination no
- * longer on the back stack and pops nothing." That is no longer true — `navigateToLibraryClearingAuth`
- * (`ShowTrackNavHost.kt`) now re-points the graph's own `startDestinationId` at `LibraryRoute` the
- * moment login succeeds, so `findStartDestination()` names a destination that actually is on the
- * stack from then on. Nothing in THIS function changed to fix it: `shouldShowNavigationTabs`
- * never touched `startDestinationId` and still doesn't — the fix lives entirely in the navigation
- * layer this function only reads a destination from.
+ * see [com.anarky.showtrack.TopLevelNavigationTest] and `ShowTrackGraphRebuildTest` for the pin.
+ * The bug used to read, in this KDoc: "in an `Auth`-started session the NavHost's `startDestination`
+ * is still `AuthRoute` after login, so a tab's `onClick` `popUpTo(findStartDestination().id)`
+ * targets a destination no longer on the back stack and pops nothing." That is no longer true, but
+ * NOT because anything below changed: `AppViewModel.markSignedIn()` (called from
+ * `ShowTrackNavHost`'s routing table, right after `navigateToLibraryClearingAuth`) moves `start`
+ * from `Auth` to `Library`, which makes `ShowTrackNavHost`'s `when (start)` declare
+ * `startDestination = LibraryRoute` on the next recomposition — a DECLARED start destination, not
+ * a mutated one (a first version of this fix mutated the already-built graph directly and did not
+ * survive an Activity recreation; see `ShowTrackNavHost`'s KDoc for why that regressed).
+ *
+ * That move from `Auth` to `Library` is exactly why this function's own truth table needed a
+ * second look, and it survives it: [start]'s only two decided values, [AppStart.Auth] and
+ * [AppStart.Library], are BOTH `!= Undecided`, so `start != AppStart.Undecided` reads identically
+ * before and after the promotion — the condition below cannot distinguish "signed in from a
+ * `Library`-started session" from "signed in after being promoted from `Auth`", which is exactly
+ * the invariant this function is supposed to have (`shouldShowNavigationTabs` decides visibility
+ * from *where the user currently is*, `currentDestination`, never from *how the session started*).
+ * `shouldShowNavigationTabs` never touched `startDestinationId` before this change and still
+ * doesn't — the fix lives entirely in [AppViewModel] and the navigation layer this function only
+ * reads a destination from.
  */
 internal fun shouldShowNavigationTabs(
     start: AppStart,

@@ -93,6 +93,17 @@ dependencies {
     testImplementation(libs.robolectric)
     testImplementation(libs.androidx.test.core)
 
+    // ShowTrackGraphRebuildTest composes a real NavHost on the JVM under Robolectric — the only
+    // way to exercise NavController.setGraph's graph-inequality branch (task 9b.0, review finding
+    // 1) — the same Compose-test setup :feature:library's LibraryEntryHiltTest and
+    // :core:designsystem's StatusPresentationTest already use. No Hilt here: the marker
+    // destinations that test registers resolve no @HiltViewModel, so :app's lack of a Hilt test
+    // harness is not in the way for this one.
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.androidx.compose.ui.test.junit4)
+    // TestNavHostController, for the same reason :feature:library's LibraryEntryHiltTest needs it.
+    testImplementation(libs.androidx.navigation.testing)
+
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(libs.androidx.junit)
 }

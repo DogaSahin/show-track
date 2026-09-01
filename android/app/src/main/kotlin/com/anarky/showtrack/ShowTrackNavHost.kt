@@ -29,6 +29,22 @@ import kotlinx.coroutines.flow.Flow
  * navigate to Auth would leave Library on the back stack underneath it, and Back would then land
  * a signed-out user on the library. Building the `NavHost` only once `start` resolves is what
  * keeps Library off the stack entirely for a signed-out cold start.
+ *
+ * `start` is not merely read once, either. `NavHost` (inside [ShowTrackGraph]) re-supplies a
+ * `NavGraph` on EVERY recomposition, built fresh from whatever `startDestination` this `when`
+ * currently declares — `NavController.setGraph` resets the back stack to the new graph's start
+ * destination whenever the incoming graph is unequal to the one already installed
+ * (`NavGraph.equals` compares `startDestinationId`). `AppViewModel.markSignedIn()` is what turns
+ * that machinery into the fix for the `popUpTo` bug: it flips `start` from `Auth` to `Library`,
+ * this `when` re-declares `startDestination = LibraryRoute`, and the graph that gets re-supplied
+ * genuinely has `LibraryRoute` as its start destination from then on — for the rest of the
+ * `AppViewModel` instance's life, Activity recreation included, since `start` is
+ * `viewModelScope`-held and survives it while any composed `NavGraph` does not. A prior version of
+ * this fix mutated the already-built graph's `startDestinationId` directly
+ * (`graph.setStartDestination(...)`) instead of moving `start` — that mutation was invisible to a
+ * FRESH composition, so a rotation right after login silently regressed to the exact bug this
+ * exists to fix. Moving `start` is what makes the graph's declared shape, not a graph object's
+ * mutable state, the source of truth.
  */
 @Composable
 internal fun ShowTrackNavHost(
@@ -42,9 +58,19 @@ internal fun ShowTrackNavHost(
     when (val start = appViewModel.start.collectAsStateWithLifecycle().value) {
         AppStart.Undecided -> LoadingState(modifier = modifier)
         AppStart.Auth ->
-            ShowTrackGraph(navController = navController, startDestination = AuthRoute, modifier = modifier)
+            ShowTrackGraph(
+                navController = navController,
+                startDestination = AuthRoute,
+                onSignedIn = appViewModel::markSignedIn,
+                modifier = modifier,
+            )
         AppStart.Library ->
-            ShowTrackGraph(navController = navController, startDestination = LibraryRoute, modifier = modifier)
+            ShowTrackGraph(
+                navController = navController,
+                startDestination = LibraryRoute,
+                onSignedIn = appViewModel::markSignedIn,
+                modifier = modifier,
+            )
     }
 }
 
@@ -52,6 +78,7 @@ internal fun ShowTrackNavHost(
 private fun ShowTrackGraph(
     navController: NavHostController,
     startDestination: AppRoute,
+    onSignedIn: () -> Unit,
     modifier: Modifier,
 ) {
     NavHost(
@@ -59,7 +86,7 @@ private fun ShowTrackGraph(
         startDestination = startDestination,
         modifier = modifier,
     ) {
-        showTrackDestinations(onNavigate = navController::routeShowTrackNavigation)
+        showTrackDestinations(onNavigate = { route -> navController.routeShowTrackNavigation(route, onSignedIn) })
     }
 }
 
@@ -71,15 +98,28 @@ private fun ShowTrackGraph(
  * this `when` needs Hilt (every screen resolves a `@HiltViewModel`), and `:app` has no Hilt test
  * harness, so [ShowTrackGraphRoutingTest] calls this directly on a bare `NavHostController` instead
  * — the same technique `AuthNavigationTest` already uses for the two extensions below.
+ *
+ * [onSignedIn] defaults to a no-op so every existing bare-`NavHostController` test call site keeps
+ * compiling unchanged; only [ShowTrackGraph] passes a real one (`AppViewModel::markSignedIn`).
  */
-internal fun NavHostController.routeShowTrackNavigation(route: AppRoute) {
+internal fun NavHostController.routeShowTrackNavigation(
+    route: AppRoute,
+    onSignedIn: () -> Unit = {},
+) {
     when (route) {
         // Navigating TO LibraryRoute through this table only ever happens once, from
         // AuthNavigation on a successful login/register — nothing else in the app reaches Library
         // through onNavigate (it is a start destination, not a target other screens link to).
         // popUpTo<AuthRoute> there is load-bearing, not incidental: a plain push leaves Auth on
-        // the back stack and Back returns to a login form that already succeeded.
-        is LibraryRoute -> navigateToLibraryClearingAuth()
+        // the back stack and Back returns to a login form that already succeeded. onSignedIn()
+        // fires right after: it's what promotes AppViewModel.start to Library, which is what
+        // makes the NEXT recomposition declare LibraryRoute as the graph's own start destination
+        // (see ShowTrackNavHost's KDoc) — the actual fix for the popUpTo bug this comment used to
+        // describe as fixed by a graph mutation one line below instead.
+        is LibraryRoute -> {
+            navigateToLibraryClearingAuth()
+            onSignedIn()
+        }
 
         // Navigating TO AuthRoute through this table happens from ProfileNavigation on sign-out
         // (Gap 2, Phase 9a device walkthroughs). AuthRepository.logout() clears the session
@@ -125,36 +165,21 @@ internal fun NavHostController.navigateToAuthClearingStack() {
  * [navigateToAuthClearingStack]'s graph-id form) because `AuthRoute` is always a real destination
  * on the stack at this point, never the graph's own possibly-routeless root.
  *
- * `graph.setStartDestination(LibraryRoute)` after the navigate is the fix for a real bug: an
- * `Auth`-started graph (`ShowTrackNavHost` builds one with `startDestination = AuthRoute` whenever
- * `AppStart.Auth` resolves) records `AuthRoute` as `NavGraph.startDestinationId` for the rest of
- * that graph's life — `NavGraph.startDestinationId` is graph-construction metadata, not something
- * derived from what is currently on the back stack, and building the `NavHost` again with a
- * different `startDestination` would mean losing everything already navigated (`ShowTrackNavHost`'s
- * own KDoc explains why that is built only once). The `popUpTo<AuthRoute> { inclusive = true }`
- * above pops `AuthRoute` off the stack entirely, so once login succeeds `AuthRoute` is nowhere on
- * it — but `startDestinationId` still names it. Every tab's `popUpTo(findStartDestination().id)`
- * (`ShowTrackApp`'s `navigateToTopLevelDestination`) then resolves to a destination that matches
- * nothing on the stack, pops nothing, and `saveState`/`restoreState` no-op: tabs push instead of
- * swapping, the stack grows without bound, and Back walks tab history instead of exiting. This
- * affects every session that started logged out.
- *
- * The fix is deliberately NOT at the tab's `popUpTo` call site — hard-coding `popUpTo<LibraryRoute>`
- * there would "work" for this one case, but would leave the graph's own `startDestinationId`
- * describing a stack shape (`AuthRoute` as home) that stopped being true the moment login
- * succeeded, and every future call site that reads `findStartDestination()` would need the same
- * special case. Re-pointing the graph's recorded start destination HERE, at the one place session
- * state actually resolves to signed-in (`AppDestination.kt`'s routing-table comment: this is the
- * only path that ever navigates TO `LibraryRoute`), makes `findStartDestination()` tell the truth
- * for everything downstream instead. `LibraryRoute` is provably on the stack at this point — it is
- * the destination this very call just navigated to — so the re-point cannot name a destination
- * that isn't there.
+ * This function pops `AuthRoute` off the back stack — the imperative half of the fix. It does
+ * NOT touch `NavGraph.startDestinationId` (an earlier version of this function did, via
+ * `graph.setStartDestination(LibraryRoute)`, and a review caught that the mutation does not
+ * survive an Activity recreation: `NavGraph` state lives in the composition, and a rotation right
+ * after login rebuilds it from `ShowTrackNavHost`'s declared `startDestination`, silently
+ * reverting to `AuthRoute` and reintroducing the exact bug the mutation existed to fix). The
+ * declarative half — making `LibraryRoute` the graph's own recorded start destination, for real,
+ * across recreation — is [AppViewModel.markSignedIn], called by
+ * [routeShowTrackNavigation] right after this function returns. See [ShowTrackNavHost]'s KDoc for
+ * the full mechanism.
  */
 internal fun NavHostController.navigateToLibraryClearingAuth() {
     navigate(LibraryRoute) {
         popUpTo<AuthRoute> { inclusive = true }
     }
-    graph.setStartDestination(LibraryRoute)
 }
 
 /**
@@ -165,9 +190,10 @@ internal fun NavHostController.navigateToLibraryClearingAuth() {
  * top-level-destination options: they save/restore each tab's own back stack and scroll position,
  * and stop re-tapping the current tab from stacking a duplicate of itself.
  *
- * `findStartDestination().id` is trustworthy here specifically because [navigateToLibraryClearingAuth]
- * keeps it in agreement with reality — see that function's KDoc for the bug this would otherwise
- * still have.
+ * `findStartDestination().id` is trustworthy here once `AppViewModel.markSignedIn()` has run for
+ * an `Auth`-started session (see [ShowTrackNavHost]'s KDoc for the mechanism) — this function
+ * itself does nothing to guarantee that; it only reads whatever the currently-installed graph's
+ * start destination is.
  */
 internal fun NavHostController.navigateToTopLevelDestination(route: AppRoute) {
     navigate(route) {
