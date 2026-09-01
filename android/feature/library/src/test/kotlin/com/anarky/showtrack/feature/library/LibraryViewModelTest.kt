@@ -413,6 +413,67 @@ class LibraryViewModelTest {
             assertEquals(LibraryUiState.Error(failure), viewModel.state.value)
         }
 
+    @Test
+    fun `a successful loadMore after a stale render clears the lie about freshness`() =
+        runTest(dispatcher) {
+            // Finding 3, path 1 (review round 2): `loadMore()` calls `guard` with `trackLoading`
+            // defaulted false, so a successful loadMore used to write CursorPaginator's `_items`
+            // (LibraryRepository.loadMore -> CursorPaginator.loadMore, which mutates `_items` on
+            // success just like `restart()` does) WITHOUT ever flipping `hasLoaded`. A stale
+            // render's `LibraryList` auto-fires `loadMore()` the moment the last cached row is
+            // visible (`LaunchedEffect(shouldLoadMore)`), so a transient offline failure followed
+            // by the network coming back for that ONE call kept the cache-fallback condition true
+            // forever, mislabelling live rows as "saved". `guard` now flips `hasLoaded` on ANY
+            // successful repository call, not just a `trackLoading` one, closing this path.
+            val failure = IOException("offline")
+            val repository = FakeLibraryRepository(applyFilterFailure = failure)
+            repository.entries.value = listOf(ENTRY)
+            val viewModel = LibraryViewModel(repository)
+            backgroundScope.launch { viewModel.state.collect {} }
+            advanceUntilIdle() // cold start fails -> Success(isStale = true) from the cache
+            assertEquals(
+                LibraryUiState.Success(entries = listOf(ENTRY), loadingMore = false, isStale = true),
+                viewModel.state.value,
+            )
+
+            viewModel.loadMore() // the network answers THIS call, even though the reload never retried
+            advanceUntilIdle()
+
+            // The ORIGINAL reload's failure is still on record in `mutableError` (loadMore's
+            // success only clears `mutableLoadMoreError`) and now wins outright instead of being
+            // mislabelled as fresh - a failure after any success shows Error elsewhere in this
+            // suite for the same reason (see "a failed reload AFTER a successful load...").
+            assertEquals(LibraryUiState.Error(failure), viewModel.state.value)
+        }
+
+    @Test
+    fun `a failed loadMore while stale surfaces pageError instead of being silently swallowed`() =
+        runTest(dispatcher) {
+            // Finding 4 (review round 2, folded in beside path 1): the showCacheInstead branch
+            // built `Success` without carrying `pageError` through, so a loadMore failure fired
+            // automatically by the stale list's `LaunchedEffect(shouldLoadMore)` vanished
+            // entirely - no footer, no retry affordance, no signal anything went wrong.
+            val failure = IOException("offline")
+            val repository = FakeLibraryRepository(applyFilterFailure = failure, loadMoreFailure = failure)
+            repository.entries.value = listOf(ENTRY)
+            val viewModel = LibraryViewModel(repository)
+            backgroundScope.launch { viewModel.state.collect {} }
+            advanceUntilIdle() // cold start fails -> Success(isStale = true)
+
+            viewModel.loadMore() // also fails - the network is still down
+            advanceUntilIdle()
+
+            assertEquals(
+                LibraryUiState.Success(
+                    entries = listOf(ENTRY),
+                    loadingMore = false,
+                    pageError = failure,
+                    isStale = true,
+                ),
+                viewModel.state.value,
+            )
+        }
+
     private class FakeLibraryRepository(
         var applyFilterFailure: Throwable? = null,
         var loadMoreFailure: Throwable? = null,

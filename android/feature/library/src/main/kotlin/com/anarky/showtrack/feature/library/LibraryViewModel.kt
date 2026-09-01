@@ -58,20 +58,42 @@ class LibraryViewModel
         // constructing, and a collector that subscribes to `state` before that completes must see
         // Loading, not a misleadingly empty Success.
         //
-        // `hasLoaded`: whether a full reload has ever SUCCEEDED, for ANY filter, this session.
-        // Starts false, flips true only in `guard`'s success branch (never on failure — see its
-        // KDoc), and is NEVER reset back to false afterwards — not even by `selectStatus`/
-        // `selectSort`. A per-selection reset looks appealing ("a freshly picked filter hasn't
-        // loaded ANYTHING yet") but is wrong: `LibraryRepositoryImpl.applyFilter` reverts its OWN
-        // internal filter on a throw, so a FAILED switch back to the default tab, after some OTHER
-        // filter had already loaded successfully, leaves `observeLibrary()` still keyed to that
-        // other (reverted-to) filter — `entries` is that other filter's LIVE rows, not the cache.
-        // A reset here would clear `hasLoaded` for that switch and let those rows render as
-        // `Success(isStale = true)` under the wrong tab — the exact trap [state]'s KDoc describes,
-        // reached from the one direction `isDefault` alone cannot see. Session-scoped, `hasLoaded`
-        // is what lets [state] tell "never loaded, not even once, by anyone" (fall back to cache)
-        // apart from "reload failed after some real load" (show the error, not a lie about
-        // freshness) — see [state]'s KDoc for the full precedence this drives.
+        // `hasLoaded`: whether THE REPOSITORY HAS ANSWERED SUCCESSFULLY AT ALL, this session —
+        // a full reload (any filter) OR a `loadMore()` page fetch, not "a full reload" alone.
+        // Starts false, flips true in `guard`'s success branch UNCONDITIONALLY — not gated by
+        // `trackLoading` — and is NEVER reset back to false afterwards, not even by
+        // `selectStatus`/`selectSort`. Two things had to be learned the hard way to land on this:
+        //
+        // 1. A per-selection reset ("a freshly picked filter hasn't loaded ANYTHING yet") looks
+        //    appealing but is wrong: `LibraryRepositoryImpl.applyFilter` reverts its OWN internal
+        //    filter on a throw, so a FAILED switch back to the default tab, after some OTHER
+        //    filter had already loaded successfully, leaves `observeLibrary()` still keyed to
+        //    that other (reverted-to) filter — `entries` is that other filter's LIVE rows, not
+        //    the cache. A reset here would clear `hasLoaded` for that switch and let those rows
+        //    render as `Success(isStale = true)` under the wrong tab.
+        // 2. Gating the flip on `trackLoading` (so only a full reload counts, never a `loadMore`)
+        //    also looks appealing but is wrong for a different reason: `CursorPaginator.loadMore`
+        //    mutates `_items` on success exactly like `restart()` does, and a STALE render's own
+        //    list auto-fires `loadMore()` the moment its last cached row is visible
+        //    (`LibraryList`'s `LaunchedEffect(shouldLoadMore)`). A transient failure followed by
+        //    the network answering THAT call would otherwise leave `hasLoaded` false forever and
+        //    the "Showing saved titles" banner sitting over rows `loadMore` just fetched live.
+        //
+        // So `hasLoaded` genuinely means "has the network answered this session", not "have the
+        // cached rows on screen been superseded" — those are NOT the same claim. This ViewModel
+        // cannot tell the difference between a fetch that repopulated `entries` and one that
+        // didn't touch them at all; it only knows the repository stopped throwing. **Known
+        // residual, not closed by this ViewModel:** `LibraryRepositoryImpl` is `@Singleton`, and
+        // its `add()` (called from `SearchViewModel`/`DetailViewModel`, both outside this module)
+        // also calls `refresh()` — a success there is invisible here entirely, so a title added
+        // from Search while this screen sits stale leaves `isStale` mislabelling whatever
+        // `observeLibrary()` next emits. Closing that needs a signal FROM `:core:data` about
+        // which branch `observeLibrary()` actually took (cache vs. paged), which is a bigger
+        // change than this task took on — see [state]'s KDoc for where that signal would plug in.
+        // `hasLoaded` is what lets [state] tell "the network has never once answered, this
+        // session" (fall back to cache) apart from "it has answered before, and THIS attempt
+        // failed" (show the error, not a lie about freshness) — see [state]'s KDoc for the full
+        // precedence this drives.
         private val mutableLoadState = MutableStateFlow(LoadState(loading = true, hasLoaded = false))
 
         // Whether a `loadMore()` page fetch is in flight — a footer spinner under an otherwise
@@ -125,9 +147,9 @@ class LibraryViewModel
          * [applyCurrentFilter]'s KDoc) — the ordering in `guard` is a second line of defence, not
          * the fix.
          *
-         * Decision C-B, made real: an error wins UNLESS this is the default filter, nothing has
-         * loaded yet for it ([LoadState.hasLoaded] is false), and there are cached [entries] to
-         * show — in which case the cache renders as `Success(isStale = true)` instead. Both
+         * Decision C-B, made real: an error wins UNLESS this is the default filter, the network
+         * has never once answered this session ([LoadState.hasLoaded] is false), and there are
+         * `entries` to show — in which case `Success(isStale = true)` renders instead. Both
          * conditions are load-bearing, not belt-and-braces:
          *
          * - Dropping `hasLoaded` would mean a reload that fails AFTER a genuine success (for ANY
@@ -143,6 +165,13 @@ class LibraryViewModel
          *   `entries` holding whatever `observeLibrary()` last emitted for the default view (the
          *   cache, most likely) and `hasLoaded` still false. Without this check those rows would
          *   render, silently, under the new filter's tab.
+         *
+         * **`isStale` is honest about "the network hasn't answered", not about "these rows came
+         * from the cache" — those are different claims, and this ViewModel cannot tell them apart
+         * on its own.** See [mutableLoadState]'s KDoc for the one known residual this leaves open
+         * (`LibraryRepositoryImpl.add()`, called from OTHER screens, succeeding invisibly to this
+         * one) and the `:core:data`-side signal that would close it, deferred rather than grown
+         * here.
          *
          * Reading `mutableFilter.value` directly here (rather than as a sixth `combine` source) is
          * safe because every path that changes it — [selectStatus], [selectSort] — synchronously
@@ -164,8 +193,16 @@ class LibraryViewModel
                         !loadState.hasLoaded &&
                         entries.isNotEmpty()
                 when {
+                    // pageError carried through (Finding 4, review round 2): a stale render's
+                    // list auto-fires loadMore() just like a live one, and a failure there must
+                    // surface here too - otherwise it is silently swallowed, no footer, no retry.
                     showCacheInstead ->
-                        LibraryUiState.Success(entries = entries, loadingMore = loadingMore, isStale = true)
+                        LibraryUiState.Success(
+                            entries = entries,
+                            loadingMore = loadingMore,
+                            pageError = pageError,
+                            isStale = true,
+                        )
                     error != null -> LibraryUiState.Error(error)
                     loadState.loading -> LibraryUiState.Loading
                     else -> LibraryUiState.Success(entries = entries, loadingMore = loadingMore, pageError = pageError)
@@ -268,19 +305,24 @@ class LibraryViewModel
          * sink in per call, rather than writing to a hard-coded field, is what keeps the two
          * failure channels genuinely independent instead of merely "usually fine".
          *
-         * [trackLoading] is per-CALL, not a class-wide flag: [loadMore] also runs through this
-         * function but must never touch [mutableLoadState]. Both a filter change and a page fetch
-         * can be in flight at once only in theory (the UI never shows a scrollable list while
-         * [mutableLoadState]'s `loading` is true), but nothing here should rely on the UI to keep
-         * that promise — if `finally` unconditionally cleared it, a `loadMore()` coroutine that
-         * happens to resolve before a concurrent filter change's fetch would flip the full-screen
-         * spinner off while that reload is still genuinely in flight.
+         * [trackLoading] is per-CALL, not a class-wide flag, and it gates ONLY `loading` — not
+         * `hasLoaded` (see below): [loadMore] also runs through this function and DOES flip
+         * `hasLoaded` on success, but must never touch `loading`. Both a filter change and a page
+         * fetch can be in flight at once only in theory (the UI never shows a scrollable list
+         * while [mutableLoadState]'s `loading` is true), but nothing here should rely on the UI to
+         * keep that promise — if `finally` unconditionally cleared it, a `loadMore()` coroutine
+         * that happens to resolve before a concurrent filter change's fetch would flip the
+         * full-screen spinner off while that reload is still genuinely in flight.
          *
-         * `hasLoaded` is set true ONLY on the success path, before `finally` clears `loading` —
-         * never in `catch` or unconditionally in `finally`. That asymmetry is what [state] relies
-         * on to fall back to the cache on a failure that has NEVER been preceded by a success
-         * (`hasLoaded` still false), while a failure AFTER a real success leaves `hasLoaded = true`
-         * untouched and [state] shows the error instead — see [state]'s KDoc.
+         * `hasLoaded` is set true on the success path ONLY — never in `catch` — but,
+         * deliberately, is NOT gated by `trackLoading` the way clearing `loading` in `finally` is:
+         * a successful [loadMore] counts as "the network answered" just as much as a successful
+         * [applyCurrentFilter] does (see [mutableLoadState]'s KDoc for why gating it on
+         * `trackLoading` was itself a bug). That success/failure asymmetry — set on success, never
+         * touched on failure — is what [state] relies on to fall back to the cache on a failure
+         * that has NEVER been preceded by ANY success this session (`hasLoaded` still false),
+         * while a failure AFTER a real success leaves `hasLoaded = true` untouched and [state]
+         * shows the error instead — see [state]'s KDoc.
          */
         @Suppress("TooGenericExceptionCaught")
         private fun guard(
@@ -292,7 +334,15 @@ class LibraryViewModel
                 try {
                     block()
                     errorSink.value = null
-                    if (trackLoading) mutableLoadState.value = mutableLoadState.value.copy(hasLoaded = true)
+                    // Unconditional, NOT gated by trackLoading: a successful loadMore() writes
+                    // CursorPaginator's `_items` exactly like a successful full reload does (see
+                    // CursorPaginator.loadMore), so "the repository has answered at least once
+                    // this session" is true the moment EITHER succeeds, not only a full reload.
+                    // Gating this on trackLoading was Finding 3 (review round 2): a stale render's
+                    // auto-fired loadMore() could succeed without ever closing the cache fallback,
+                    // leaving the "Showing saved titles" banner over rows loadMore had just
+                    // fetched live.
+                    mutableLoadState.value = mutableLoadState.value.copy(hasLoaded = true)
                 } catch (cancellation: CancellationException) {
                     throw cancellation
                 } catch (failure: Exception) {
