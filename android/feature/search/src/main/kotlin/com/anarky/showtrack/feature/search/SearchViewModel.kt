@@ -125,6 +125,14 @@ class SearchViewModel
             }
         }
 
+        // Re-entrancy state for [add], held here rather than read off `SearchUiState.Success.adding`:
+        // a debounced search resolving mid-add replaces `state` with a FRESH `Success` whose
+        // `adding` defaults back to null (carried-forward review note — see task brief), so a
+        // guard reading `current.adding` would pass a second tap while the first add is still in
+        // flight and fire two POSTs plus two `navigateChannel.trySend`s. A ViewModel field
+        // survives that state replacement because it isn't part of the state's shape at all.
+        private var addInFlight: String? = null
+
         /**
          * A search result carries no id (decision C-N): tapping one ADDS it, then navigates to the
          * detail screen using the id `POST /v1/library` hands back in its response — never an id
@@ -147,19 +155,19 @@ class SearchViewModel
          */
         @Suppress("TooGenericExceptionCaught")
         fun add(summary: MediaSummary) {
-            val current = mutableState.value as? SearchUiState.Success
-            if (current != null) {
-                if (current.adding != null) return
-                mutableState.value = current.copy(adding = summary.externalId, addError = null)
-            }
+            if (addInFlight != null) return
+            addInFlight = summary.externalId
+            replaceSuccess { it.copy(adding = summary.externalId, addError = null) }
             viewModelScope.launch {
                 try {
                     val entry = libraryRepository.add(source = summary.source, externalId = summary.externalId)
+                    addInFlight = null
                     replaceSuccess { it.copy(adding = null, addError = null) }
                     navigateChannel.trySend(entry.media.id)
                 } catch (cancellation: CancellationException) {
                     throw cancellation
                 } catch (failure: Exception) {
+                    addInFlight = null
                     replaceSuccess { it.copy(adding = null, addError = AddFailure(summary.externalId, failure)) }
                 }
             }
@@ -170,16 +178,29 @@ class SearchViewModel
          * must not leave the OLD error on screen for the round trip's whole duration
          * (carried-forward note 2). Replacing the entire state with [SearchUiState.Loading] —
          * rather than flipping a field — clears it immediately by construction.
+         *
+         * Every write below is guarded by `mutableQuery.value != searchQuery`: [onQueryChange]'s
+         * clear-the-field path sets [SearchUiState.Idle] synchronously and does NOT go through the
+         * `debounce`/`distinctUntilChanged` collector in `init`, so an in-flight [runSearch] for a
+         * query the user has since cleared (or changed again, via [retry] racing a fresh keystroke)
+         * is not otherwise serialised against it — it would resolve later and overwrite `Idle` (or
+         * a newer `Success`/`Error`) with stale results. Checking [searchQuery] against the CURRENT
+         * [mutableQuery] value at each write — not `collectLatest` in `init`, which would cancel the
+         * repository call mid-write instead of merely discarding its result — is what makes a
+         * superseded search a no-op rather than a race.
          */
         @Suppress("TooGenericExceptionCaught")
         private suspend fun runSearch(searchQuery: String) {
+            if (mutableQuery.value != searchQuery) return
             mutableState.value = SearchUiState.Loading
             try {
                 mediaRepository.search(searchQuery)
+                if (mutableQuery.value != searchQuery) return
                 mutableState.value = SearchUiState.Success(results = mediaRepository.searchResults.value)
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (failure: Exception) {
+                if (mutableQuery.value != searchQuery) return
                 mutableState.value = SearchUiState.Error(failure)
             }
         }
