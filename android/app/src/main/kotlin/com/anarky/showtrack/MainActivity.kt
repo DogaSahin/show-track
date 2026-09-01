@@ -92,17 +92,27 @@ fun ShowTrackApp(authEvents: Flow<AuthEvent>) {
     // `start` is NOT a one-shot emission any more (task 9b.0, review round 1): `markSignedIn()`
     // moves it from `Auth` to `Library` once login succeeds, which is what fixed the popUpTo bug
     // — see `ShowTrackNavHost`'s KDoc. But that move is deliberately ONE-WAY, and that is what
-    // still matters here: `start` never reverts to `Auth` on a runtime logout, so it remains
-    // unable to serve as a CURRENT signal in the Library→Auth direction — a signed-out user mid-
-    // session would still read `start == AppStart.Library` forever, exactly the failure this
-    // condition used to have when it compared `== AppStart.Library` directly (Favorites, Profile,
-    // and therefore Sign out, unreachable — wrong in that one direction only). The ONLY thing
-    // `start` is a reliable signal for, in EITHER direction, is `Undecided` — the brief instant
-    // before the session check resolves, which is what the empty-strip guard below still needs it
-    // for. `currentBackStackEntry` is the actually-current signal: it changes the moment
-    // navigation lands on or leaves `AuthRoute`, whether that's the cold-start gate, a runtime
-    // logout via AuthGate, or a fresh login — so it alone decides the Auth/non-Auth half of this
-    // condition, `start`'s new promotion notwithstanding.
+    // still matters here.
+    //
+    // The OLD condition here was `start == AppStart.Library && currentDestination?.hasRoute(
+    // AuthRoute::class) != true` — two conjuncts, wrong in exactly ONE direction, not both:
+    //   - Auth→Library (login from an Auth-started session): `start` stuck on `Auth` makes the
+    //     LEFT conjunct false forever, so tabs stayed hidden after login — Favorites, Profile,
+    //     and therefore Sign out, unreachable. THIS is the direction that was actually broken.
+    //   - Library→Auth (a runtime logout): `start` stuck on `Library` makes the left conjunct
+    //     true, but the destination genuinely IS `AuthRoute`, so the RIGHT conjunct is false —
+    //     tabs stayed correctly hidden. This direction was never broken, because the destination
+    //     clause already owned it regardless of what `start` did.
+    // `start`'s new one-way promotion does not change that division of labour: it still cannot
+    // serve as a CURRENT signal in the Library→Auth direction (a signed-out user mid-session would
+    // still read `start == AppStart.Library` forever), but the destination clause has ALWAYS been
+    // what covers that direction, promotion or not. The ONLY thing `start` is a reliable signal
+    // for, in EITHER direction, is `Undecided` — the brief instant before the session check
+    // resolves, which is what the empty-strip guard below still needs it for. `currentBackStackEntry`
+    // is the actually-current signal: it changes the moment navigation lands on or leaves
+    // `AuthRoute`, whether that's the cold-start gate, a runtime logout via AuthGate, or a fresh
+    // login — so it alone decides the Auth/non-Auth half of this condition, `start`'s new
+    // promotion notwithstanding.
     val appViewModel: AppViewModel = hiltViewModel()
     val start by appViewModel.start.collectAsStateWithLifecycle()
     val showNavigationTabs = shouldShowNavigationTabs(start, currentBackStackEntry?.destination)
@@ -201,10 +211,10 @@ fun ShowTrackApp(authEvents: Flow<AuthEvent>) {
  * targets a destination no longer on the back stack and pops nothing." That is no longer true, but
  * NOT because anything below changed: `AppViewModel.markSignedIn()` (called from
  * `ShowTrackNavHost`'s routing table, right after `navigateToLibraryClearingAuth`) moves `start`
- * from `Auth` to `Library`, which makes `ShowTrackNavHost`'s `when (start)` declare
- * `startDestination = LibraryRoute` on the next recomposition — a DECLARED start destination, not
- * a mutated one (a first version of this fix mutated the already-built graph directly and did not
- * survive an Activity recreation; see `ShowTrackNavHost`'s KDoc for why that regressed).
+ * from `Auth` to `Library`, which makes `ShowTrackNavHost.startDestinationFor` answer
+ * `LibraryRoute` on the next recomposition — a DECLARED start destination, not a mutated one (a
+ * first version of this fix mutated the already-built graph directly and did not survive an
+ * Activity recreation; see `ShowTrackNavHost`'s KDoc for why that regressed).
  *
  * That move from `Auth` to `Library` is exactly why this function's own truth table needed a
  * second look, and it survives it: [start]'s only two decided values, [AppStart.Auth] and

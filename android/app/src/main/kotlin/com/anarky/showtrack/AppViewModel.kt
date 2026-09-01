@@ -25,7 +25,7 @@ import javax.inject.Inject
  * `startDestinationId` after a login — the fix that shape forced — does not survive an Activity
  * recreation, since `NavGraph` state lives in the composition, not in this ViewModel, and gets
  * rebuilt from whatever `start` says on the next composition. [markSignedIn] is what [start] needs
- * to be mutable FOR: the graph's *declared* `startDestination` (`ShowTrackNavHost`'s `when (start)`)
+ * to be mutable FOR: the graph's *declared* `startDestination` (`ShowTrackNavHost.startDestinationFor`)
  * is what has to change, not a graph already built.
  */
 @HiltViewModel

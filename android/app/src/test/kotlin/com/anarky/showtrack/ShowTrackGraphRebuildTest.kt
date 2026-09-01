@@ -55,6 +55,15 @@ import org.robolectric.annotation.Config
  * [MarkerGraph] mirrors [ShowTrackGraph]'s (now single) call-site shape exactly — a `NavHost` whose
  * `startDestination` is an external, reactive parameter.
  *
+ * One more gap worth naming rather than papering over: this file reads `appViewModel.start` via
+ * plain `collectAsState()`, where production ([ShowTrackNavHost]) uses
+ * `collectAsStateWithLifecycle()`. A reasonable simplification for a test with no real Activity
+ * lifecycle to gate on, but it does mean this file cannot see a failure that is specifically
+ * lifecycle-shaped — a recomposition that `collectAsStateWithLifecycle()` suppresses or defers
+ * while the host is `STOPPED`, for instance, would look identical here to one that fires
+ * immediately. Nothing in this fix depends on that distinction, but a future change to how
+ * [ShowTrackNavHost] collects `start` would not be caught by this file.
+ *
  * No Hilt, so no `HiltTestApplication` either: `application = Application::class` below overrides
  * the manifest's `ShowTrackApplication` (`@HiltAndroidApp`, with `@Inject lateinit var` fields
  * Robolectric cannot satisfy outside a real Hilt component) with the plain Android one — same as
