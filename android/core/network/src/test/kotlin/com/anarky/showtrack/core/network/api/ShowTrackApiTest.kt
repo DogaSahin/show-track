@@ -9,7 +9,6 @@ import okhttp3.MediaType.Companion.toMediaType
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import retrofit2.Retrofit
@@ -61,11 +60,12 @@ class ShowTrackApiTest {
 
             val response = api.searchMedia(query = "frieren", page = 1)
 
-            // The fields the UI actually reads. `sources` is asserted because C-O's partial-
-            // failure notice is drawn from it, and a decode that silently dropped an unknown
-            // key would leave that notice permanently absent with no other symptom.
+            // The fields the UI actually reads. `sources["tmdb"]` is pinned to the exact
+            // degraded value the fixture was captured with — `isNotEmpty()` would still pass on
+            // a fixture where every provider came back "ok", which defeats the point of
+            // capturing the fixture with a failing provider in the first place (decision C-O).
             assertEquals(2, response.items.size)
-            assertTrue(response.sources.isNotEmpty())
+            assertEquals("timeout", response.sources["tmdb"])
         }
 
     @Test
