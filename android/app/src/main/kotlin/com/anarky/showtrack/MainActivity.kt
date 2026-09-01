@@ -23,7 +23,6 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavDestination
 import androidx.navigation.NavDestination.Companion.hasRoute
-import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.anarky.showtrack.core.data.auth.AuthEventSource
@@ -143,18 +142,11 @@ fun ShowTrackApp(authEvents: Flow<AuthEvent>) {
                     label = { Text(stringResource(destination.label)) },
                     selected =
                         currentBackStackEntry?.destination?.hasRoute(destination.route::class) == true,
-                    onClick = {
-                        navController.navigate(destination.route) {
-                            // The standard top-level-destination options. saveState/restoreState
-                            // keep each tab's scroll position and back stack; launchSingleTop
-                            // stops re-tapping a tab stacking duplicates of the same screen.
-                            popUpTo(navController.graph.findStartDestination().id) {
-                                saveState = true
-                            }
-                            launchSingleTop = true
-                            restoreState = true
-                        }
-                    },
+                    // Pulled out to ShowTrackNavHost.navigateToTopLevelDestination — see its KDoc
+                    // for why findStartDestination() can be trusted here (navigateToLibraryClearingAuth
+                    // is what keeps it in agreement with reality for an Auth-started session) and for
+                    // the bug this used to have when it couldn't be.
+                    onClick = { navController.navigateToTopLevelDestination(destination.route) },
                 )
             }
         },
@@ -199,12 +191,17 @@ fun ShowTrackApp(authEvents: Flow<AuthEvent>) {
  * `Auth`-started session, which is the case that regressed before this function existed (`start`
  * alone stayed `Auth` for the rest of the process, so tabs never appeared post-login).
  *
- * **NOT pinned here, and not fixed by this change:** in an `Auth`-started session the NavHost's
- * `startDestination` is still `AuthRoute` after login, so a tab's `onClick`
- * `popUpTo(findStartDestination().id)` targets a destination no longer on the back stack and pops
- * nothing — tabs stack rather than swap. That's a real difference from a `Library`-started
- * session and needs a device check; this function only decides bar VISIBILITY, not back-stack
- * behaviour.
+ * **Still not pinned here, though it IS fixed elsewhere:** this function only decides bar
+ * VISIBILITY, never back-stack shape, so it cannot be the regression guard for that on its own —
+ * see [com.anarky.showtrack.TopLevelNavigationTest] for the pin. The bug used to read, in this
+ * KDoc: "in an `Auth`-started session the NavHost's `startDestination` is still `AuthRoute` after
+ * login, so a tab's `onClick` `popUpTo(findStartDestination().id)` targets a destination no
+ * longer on the back stack and pops nothing." That is no longer true — `navigateToLibraryClearingAuth`
+ * (`ShowTrackNavHost.kt`) now re-points the graph's own `startDestinationId` at `LibraryRoute` the
+ * moment login succeeds, so `findStartDestination()` names a destination that actually is on the
+ * stack from then on. Nothing in THIS function changed to fix it: `shouldShowNavigationTabs`
+ * never touched `startDestinationId` and still doesn't — the fix lives entirely in the navigation
+ * layer this function only reads a destination from.
  */
 internal fun shouldShowNavigationTabs(
     start: AppStart,

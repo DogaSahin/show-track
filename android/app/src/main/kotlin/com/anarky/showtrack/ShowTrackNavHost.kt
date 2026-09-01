@@ -5,6 +5,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import com.anarky.showtrack.core.designsystem.component.LoadingState
@@ -123,9 +124,57 @@ internal fun NavHostController.navigateToAuthClearingStack() {
  * to a login form that already succeeded — the type-safe overload is available here (unlike
  * [navigateToAuthClearingStack]'s graph-id form) because `AuthRoute` is always a real destination
  * on the stack at this point, never the graph's own possibly-routeless root.
+ *
+ * `graph.setStartDestination(LibraryRoute)` after the navigate is the fix for a real bug: an
+ * `Auth`-started graph (`ShowTrackNavHost` builds one with `startDestination = AuthRoute` whenever
+ * `AppStart.Auth` resolves) records `AuthRoute` as `NavGraph.startDestinationId` for the rest of
+ * that graph's life — `NavGraph.startDestinationId` is graph-construction metadata, not something
+ * derived from what is currently on the back stack, and building the `NavHost` again with a
+ * different `startDestination` would mean losing everything already navigated (`ShowTrackNavHost`'s
+ * own KDoc explains why that is built only once). The `popUpTo<AuthRoute> { inclusive = true }`
+ * above pops `AuthRoute` off the stack entirely, so once login succeeds `AuthRoute` is nowhere on
+ * it — but `startDestinationId` still names it. Every tab's `popUpTo(findStartDestination().id)`
+ * (`ShowTrackApp`'s `navigateToTopLevelDestination`) then resolves to a destination that matches
+ * nothing on the stack, pops nothing, and `saveState`/`restoreState` no-op: tabs push instead of
+ * swapping, the stack grows without bound, and Back walks tab history instead of exiting. This
+ * affects every session that started logged out.
+ *
+ * The fix is deliberately NOT at the tab's `popUpTo` call site — hard-coding `popUpTo<LibraryRoute>`
+ * there would "work" for this one case, but would leave the graph's own `startDestinationId`
+ * describing a stack shape (`AuthRoute` as home) that stopped being true the moment login
+ * succeeded, and every future call site that reads `findStartDestination()` would need the same
+ * special case. Re-pointing the graph's recorded start destination HERE, at the one place session
+ * state actually resolves to signed-in (`AppDestination.kt`'s routing-table comment: this is the
+ * only path that ever navigates TO `LibraryRoute`), makes `findStartDestination()` tell the truth
+ * for everything downstream instead. `LibraryRoute` is provably on the stack at this point — it is
+ * the destination this very call just navigated to — so the re-point cannot name a destination
+ * that isn't there.
  */
 internal fun NavHostController.navigateToLibraryClearingAuth() {
     navigate(LibraryRoute) {
         popUpTo<AuthRoute> { inclusive = true }
+    }
+    graph.setStartDestination(LibraryRoute)
+}
+
+/**
+ * The tab bar's `onClick` navigation, pulled out of `ShowTrackApp` (`:app`'s `MainActivity.kt`) so
+ * it is reachable by a plain `NavHostController` test — the same reason [navigateToAuthClearingStack]
+ * and [navigateToLibraryClearingAuth] are named extensions rather than inline lambdas.
+ * `popUpTo(findStartDestination().id)`, `launchSingleTop` and `restoreState` are the standard
+ * top-level-destination options: they save/restore each tab's own back stack and scroll position,
+ * and stop re-tapping the current tab from stacking a duplicate of itself.
+ *
+ * `findStartDestination().id` is trustworthy here specifically because [navigateToLibraryClearingAuth]
+ * keeps it in agreement with reality — see that function's KDoc for the bug this would otherwise
+ * still have.
+ */
+internal fun NavHostController.navigateToTopLevelDestination(route: AppRoute) {
+    navigate(route) {
+        popUpTo(graph.findStartDestination().id) {
+            saveState = true
+        }
+        launchSingleTop = true
+        restoreState = true
     }
 }
