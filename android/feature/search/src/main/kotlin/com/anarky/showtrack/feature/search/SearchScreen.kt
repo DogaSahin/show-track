@@ -35,6 +35,7 @@ import com.anarky.showtrack.core.designsystem.component.EmptyState
 import com.anarky.showtrack.core.designsystem.component.ErrorState
 import com.anarky.showtrack.core.designsystem.component.LoadingState
 import com.anarky.showtrack.core.designsystem.component.MediaCover
+import com.anarky.showtrack.core.designsystem.component.displayName
 import com.anarky.showtrack.core.model.Media
 import com.anarky.showtrack.core.model.MediaSource
 import com.anarky.showtrack.core.model.MediaSummary
@@ -156,9 +157,18 @@ private fun DegradedBanner(
     providers: List<MediaSource>,
     modifier: Modifier = Modifier,
 ) {
+    // Names resolved into a plain List<String> first, then joined outside any lambda. NOT a
+    // `crossinline` issue: `joinToString`'s `transform` is `((T) -> CharSequence)?` — a nullable
+    // function type with a `null` default, which Kotlin does not allow to be `inline` at all — so
+    // `joinToString`/`joinTo` are plain, non-`inline` functions. A non-inline function's lambda
+    // argument compiles to its own `Function1` object, which is not a composable context, so
+    // `displayName()` (a @Composable call) inside `joinToString { }` fails to compile. `map` works
+    // here because it genuinely IS `inline`: its lambda's body is copied into this function at
+    // compile time and stays in ITS composable scope, rather than becoming a separate object.
+    val providerNames = providers.map { it.displayName() }
     Surface(modifier = modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.errorContainer) {
         Text(
-            text = stringResource(R.string.search_degraded_notice, providers.joinToString { it.name }),
+            text = stringResource(R.string.search_degraded_notice, providerNames.joinToString()),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onErrorContainer,
             modifier = Modifier.fillMaxWidth().padding(all = 12.dp),

@@ -125,6 +125,14 @@ class SearchViewModel
             }
         }
 
+        // Re-entrancy state for [add], held here rather than read off `SearchUiState.Success.adding`:
+        // a debounced search resolving mid-add replaces `state` with a FRESH `Success` whose
+        // `adding` defaults back to null (carried-forward review note — see task brief), so a
+        // guard reading `current.adding` would pass a second tap while the first add is still in
+        // flight and fire two POSTs plus two `navigateChannel.trySend`s. A ViewModel field
+        // survives that state replacement because it isn't part of the state's shape at all.
+        private var addInFlight: String? = null
+
         /**
          * A search result carries no id (decision C-N): tapping one ADDS it, then navigates to the
          * detail screen using the id `POST /v1/library` hands back in its response — never an id
@@ -132,11 +140,14 @@ class SearchViewModel
          *
          * A second tap on ANY row while one add is already in flight is dropped (same re-entrancy
          * shape as [loadMore] and `DetailViewModel.edit`) rather than letting two adds race. That
-         * guard — and the `adding`/`addError` bookkeeping [replaceSuccess] applies — is scoped to
-         * [SearchUiState.Success] because a row can only be TAPPED while its list is on screen; the
-         * add call itself is not otherwise gated on the current [state] shape, so it still runs
-         * (and still navigates on success) even if a caller invokes it outside that state, rather
-         * than silently dropping a real request the way a `?: return` guard would.
+         * guard is [addInFlight], a plain ViewModel field — **not** scoped to [SearchUiState.Success],
+         * unlike the `adding`/`addError` bookkeeping [replaceSuccess] applies, which still only
+         * touches a `Success` because a row can only be TAPPED while its list is on screen. This is
+         * a deliberate widening past the reported bug: the previous guard read
+         * `(state as? Success)?.adding`, so a caller invoking [add] while [state] was NOT `Success`
+         * skipped the check entirely and had no upper bound on concurrent in-flight adds at all. A
+         * field the guard can always read, regardless of [state]'s shape, closes that instead of
+         * only the narrower "debounced search resets `adding` mid-add" case that was reported.
          *
          * A failure here may still mean the title was added: [LibraryRepository.add] refreshes the
          * library after a successful `POST`, and that refresh can throw on its own even though the
@@ -147,11 +158,9 @@ class SearchViewModel
          */
         @Suppress("TooGenericExceptionCaught")
         fun add(summary: MediaSummary) {
-            val current = mutableState.value as? SearchUiState.Success
-            if (current != null) {
-                if (current.adding != null) return
-                mutableState.value = current.copy(adding = summary.externalId, addError = null)
-            }
+            if (addInFlight != null) return
+            addInFlight = summary.externalId
+            replaceSuccess { it.copy(adding = summary.externalId, addError = null) }
             viewModelScope.launch {
                 try {
                     val entry = libraryRepository.add(source = summary.source, externalId = summary.externalId)
@@ -161,6 +170,19 @@ class SearchViewModel
                     throw cancellation
                 } catch (failure: Exception) {
                     replaceSuccess { it.copy(adding = null, addError = AddFailure(summary.externalId, failure)) }
+                } finally {
+                    // Clearing here, not in each branch: a CancellationException from INSIDE
+                    // libraryRepository.add (a timeout, a cancelled inner scope) would otherwise
+                    // rethrow past both `catch`es without ever clearing addInFlight, permanently
+                    // disabling this row's add affordance for the rest of the ViewModel's life with
+                    // no error shown. `finally` runs on every exit path, cancellation included.
+                    addInFlight = null
+                    // Symmetric with addInFlight above: the success/failure branches already clear
+                    // Success.adding themselves, so this is a no-op there. On the cancellation path
+                    // neither branch runs, and without this the row would keep its spinner and stay
+                    // `enabled = false` forever with no error shown — the guard released but the
+                    // state never caught up to it.
+                    replaceSuccess { it.copy(adding = null) }
                 }
             }
         }
@@ -170,16 +192,29 @@ class SearchViewModel
          * must not leave the OLD error on screen for the round trip's whole duration
          * (carried-forward note 2). Replacing the entire state with [SearchUiState.Loading] —
          * rather than flipping a field — clears it immediately by construction.
+         *
+         * Every write below is guarded by `mutableQuery.value != searchQuery`: [onQueryChange]'s
+         * clear-the-field path sets [SearchUiState.Idle] synchronously and does NOT go through the
+         * `debounce`/`distinctUntilChanged` collector in `init`, so an in-flight [runSearch] for a
+         * query the user has since cleared (or changed again, via [retry] racing a fresh keystroke)
+         * is not otherwise serialised against it — it would resolve later and overwrite `Idle` (or
+         * a newer `Success`/`Error`) with stale results. Checking [searchQuery] against the CURRENT
+         * [mutableQuery] value at each write — not `collectLatest` in `init`, which would cancel the
+         * repository call mid-write instead of merely discarding its result — is what makes a
+         * superseded search a no-op rather than a race.
          */
         @Suppress("TooGenericExceptionCaught")
         private suspend fun runSearch(searchQuery: String) {
+            if (mutableQuery.value != searchQuery) return
             mutableState.value = SearchUiState.Loading
             try {
                 mediaRepository.search(searchQuery)
+                if (mutableQuery.value != searchQuery) return
                 mutableState.value = SearchUiState.Success(results = mediaRepository.searchResults.value)
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (failure: Exception) {
+                if (mutableQuery.value != searchQuery) return
                 mutableState.value = SearchUiState.Error(failure)
             }
         }

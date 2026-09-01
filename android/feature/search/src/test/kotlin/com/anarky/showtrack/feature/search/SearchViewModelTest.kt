@@ -13,6 +13,7 @@ import com.anarky.showtrack.core.model.MediaSummary
 import com.anarky.showtrack.core.model.MediaType
 import com.anarky.showtrack.core.model.SearchResults
 import com.anarky.showtrack.core.model.UserMediaStatus
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -286,6 +287,100 @@ class SearchViewModelTest {
         }
 
     @Test
+    fun `clearing the query mid-search leaves Idle standing rather than stale results`() =
+        runTest(dispatcher) {
+            // Regression test: onQueryChange("") sets Idle SYNCHRONOUSLY and bypasses the
+            // debounce collector entirely, so it does not serialise against an already in-flight
+            // runSearch for the query that was just cleared. Without the `mutableQuery.value !=
+            // searchQuery` guard in runSearch, the in-flight search resolving after the clear
+            // would overwrite Idle with a Success — a result list left standing under an empty
+            // search box.
+            val results = SearchResults(items = listOf(SUMMARY), hasMore = false, degraded = emptyList())
+            val searchGate = CompletableDeferred<Unit>()
+            val media = FakeMediaRepository(resultsAfterSearch = results, searchGate = searchGate)
+            val viewModel = SearchViewModel(media, FakeLibraryRepository())
+
+            viewModel.onQueryChange("frieren")
+            advanceUntilIdle()
+            // The debounce has elapsed and runSearch("frieren") is suspended awaiting the gate,
+            // having already published Loading.
+            assertEquals(SearchUiState.Loading, viewModel.state.value)
+
+            viewModel.onQueryChange("")
+            assertEquals(SearchUiState.Idle, viewModel.state.value)
+
+            // Let the superseded search resolve now that the field has been cleared.
+            searchGate.complete(Unit)
+            advanceUntilIdle()
+
+            assertEquals(SearchUiState.Idle, viewModel.state.value)
+        }
+
+    @Test
+    fun `a superseded search that fails after the field was cleared does not surface an error`() =
+        runTest(dispatcher) {
+            // The same guard as the Idle case above, exercised on runSearch's OTHER write: a
+            // cleared query must not show an error banner for a request that was abandoned before
+            // it failed. Without the guard on the catch branch specifically, a search that fails
+            // AFTER onQueryChange("") would overwrite Idle with SearchUiState.Error.
+            val searchGate = CompletableDeferred<Unit>()
+            val media = FakeMediaRepository(searchGate = searchGate)
+            val viewModel = SearchViewModel(media, FakeLibraryRepository())
+
+            viewModel.onQueryChange("frieren")
+            advanceUntilIdle()
+            assertEquals(SearchUiState.Loading, viewModel.state.value)
+
+            viewModel.onQueryChange("")
+            assertEquals(SearchUiState.Idle, viewModel.state.value)
+
+            // The in-flight search fails only AFTER the field was cleared.
+            media.searchFailure = IOException("offline")
+            searchGate.complete(Unit)
+            advanceUntilIdle()
+
+            assertEquals(SearchUiState.Idle, viewModel.state.value)
+        }
+
+    @Test
+    fun `a superseded search resolving mid-add does not let a second add through`() =
+        runTest(dispatcher) {
+            // Regression test: replaceSuccess { it.copy(adding = null, addError = null) } — or,
+            // before this fix, a completely fresh Success from a superseding search — resets
+            // `SearchUiState.Success.adding` back to null while the FIRST add is still in flight.
+            // The old guard read `current.adding` off that state, so it would pass a second tap
+            // here. `addInFlight` is a ViewModel field, not part of the state's shape, so it must
+            // still block the second call.
+            val firstResults = SearchResults(items = listOf(SUMMARY), hasMore = false, degraded = emptyList())
+            val secondResults = SearchResults(items = listOf(OTHER_SUMMARY), hasMore = false, degraded = emptyList())
+            val media = FakeMediaRepository(resultsAfterSearch = firstResults)
+            val addGate = CompletableDeferred<Unit>()
+            val library = FakeLibraryRepository(addResult = ENTRY_WITH_MEDIA_ID_M1, addGate = addGate)
+            val viewModel = SearchViewModel(media, library)
+            viewModel.onQueryChange("one piece")
+            advanceUntilIdle()
+
+            viewModel.add(SUMMARY)
+            // add() is now in flight, gated on addGate — the state's own `adding` field reads
+            // SUMMARY.externalId at this point.
+
+            // A second, superseding search resolves BEFORE the add call does, publishing a fresh
+            // Success whose `adding` defaults back to null.
+            media.resultsAfterSearch = secondResults
+            viewModel.onQueryChange("dandadan")
+            advanceUntilIdle()
+            assertNull((viewModel.state.value as SearchUiState.Success).adding)
+
+            // The state now says "nothing is adding" — a second tap must still be dropped,
+            // because the ORIGINAL add is still in flight.
+            viewModel.add(OTHER_SUMMARY)
+            addGate.complete(Unit)
+            advanceUntilIdle()
+
+            assertEquals(1, library.addCalls)
+        }
+
+    @Test
     fun `a second add is ignored while one is already in flight`() =
         runTest(dispatcher) {
             val results = SearchResults(items = listOf(SUMMARY, OTHER_SUMMARY), hasMore = false, degraded = emptyList())
@@ -327,7 +422,11 @@ class SearchViewModelTest {
     private class FakeMediaRepository(
         var searchFailure: Throwable? = null,
         var loadMoreFailure: Throwable? = null,
-        private val resultsAfterSearch: SearchResults = SearchResults.EMPTY,
+        var resultsAfterSearch: SearchResults = SearchResults.EMPTY,
+        // Lets a test suspend search() mid-call to control interleaving with another action
+        // (e.g. clearing the field, or a second search) — null (the default) behaves exactly as
+        // before: search() completes synchronously with no suspension point of its own.
+        private val searchGate: CompletableDeferred<Unit>? = null,
     ) : MediaRepository {
         private val mutableSearchResults = MutableStateFlow(SearchResults.EMPTY)
         override val searchResults: StateFlow<SearchResults> = mutableSearchResults
@@ -338,6 +437,7 @@ class SearchViewModelTest {
 
         override suspend fun search(query: String) {
             searchCalls.add(query)
+            searchGate?.await()
             searchFailure?.let { throw it }
             mutableSearchResults.value = resultsAfterSearch
         }
@@ -353,6 +453,9 @@ class SearchViewModelTest {
     private class FakeLibraryRepository(
         var addResult: LibraryEntry = ENTRY_WITH_MEDIA_ID_M1,
         var addFailure: Throwable? = null,
+        // Lets a test hold add() in flight while it drives other ViewModel actions — see the
+        // addInFlight regression test above. Null (the default) behaves exactly as before.
+        private val addGate: CompletableDeferred<Unit>? = null,
     ) : LibraryRepository {
         var addCalls = 0
             private set
@@ -370,6 +473,7 @@ class SearchViewModelTest {
             externalId: String,
         ): LibraryEntry {
             addCalls++
+            addGate?.await()
             addFailure?.let { throw it }
             return addResult
         }
