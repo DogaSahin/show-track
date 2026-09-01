@@ -5,6 +5,7 @@ import com.anarky.showtrack.core.data.repository.LibraryRepository
 import com.anarky.showtrack.core.model.LibraryEntry
 import com.anarky.showtrack.core.model.LibraryFilter
 import com.anarky.showtrack.core.model.LibraryPatch
+import com.anarky.showtrack.core.model.LibrarySort
 import com.anarky.showtrack.core.model.Media
 import com.anarky.showtrack.core.model.MediaSource
 import com.anarky.showtrack.core.model.MediaStatus
@@ -21,8 +22,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
-import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.io.IOException
@@ -48,83 +48,193 @@ class LibraryViewModelTest {
     fun tearDown() = Dispatchers.resetMain()
 
     @Test
-    fun `entries starts empty and then mirrors the repository`() =
+    fun `state starts loading and then mirrors the repository`() =
         runTest(dispatcher) {
             val repository = FakeLibraryRepository()
             val viewModel = LibraryViewModel(repository)
 
-            viewModel.entries.test {
-                // stateIn's initialValue: the screen renders before the first upstream emission
-                // rather than waiting on it.
-                assertEquals(emptyList<LibraryEntry>(), awaitItem())
+            viewModel.state.test {
+                // stateIn's initialValue: the screen renders a spinner before the first fetch
+                // (triggered by init) has resolved, rather than a bare, misleading empty list.
+                assertEquals(LibraryUiState.Loading, awaitItem())
+                advanceUntilIdle()
+                assertEquals(LibraryUiState.Success(entries = emptyList(), loadingMore = false), awaitItem())
                 repository.entries.value = listOf(ENTRY)
-                assertEquals(listOf(ENTRY), awaitItem())
+                assertEquals(LibraryUiState.Success(entries = listOf(ENTRY), loadingMore = false), awaitItem())
                 cancelAndIgnoreRemainingEvents()
             }
         }
 
     @Test
-    fun `a failing refresh is captured instead of escaping the coroutine`() =
+    fun `a failing load is captured instead of escaping the coroutine`() =
         runTest(dispatcher) {
             val failure = IOException("offline")
-            val repository = FakeLibraryRepository(refreshFailure = failure)
+            val repository = FakeLibraryRepository(applyFilterFailure = failure)
             val viewModel = LibraryViewModel(repository)
 
-            viewModel.refresh()
             advanceUntilIdle()
 
             // The alternative this asserts against is not "no error shown" but "process killed":
             // an exception thrown inside viewModelScope.launch reaches the thread's uncaught
             // handler, and on Android that is a crash.
-            assertSame(failure, viewModel.lastError.value)
+            assertEquals(LibraryUiState.Error(failure), viewModel.state.value)
         }
 
     @Test
     fun `a later success clears the previous failure`() =
         runTest(dispatcher) {
-            val repository = FakeLibraryRepository(refreshFailure = IOException("offline"))
+            val repository = FakeLibraryRepository(applyFilterFailure = IOException("offline"))
+            val viewModel = LibraryViewModel(repository)
+            advanceUntilIdle()
+
+            repository.applyFilterFailure = null
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            assertEquals(LibraryUiState.Success(entries = emptyList(), loadingMore = false), viewModel.state.value)
+        }
+
+    @Test
+    fun `selecting a tab applies the filter and keeps the selection while loading`() =
+        runTest(dispatcher) {
+            // If the selection lived inside Success, the tab row would snap back to "All" on
+            // every filter change — the list reloads, so Success is briefly gone.
+            val repository = FakeLibraryRepository()
             val viewModel = LibraryViewModel(repository)
 
-            viewModel.refresh()
-            advanceUntilIdle()
-            repository.refreshFailure = null
-            viewModel.refresh()
+            viewModel.selectStatus(UserMediaStatus.PLANNED)
             advanceUntilIdle()
 
-            assertNull(viewModel.lastError.value)
+            assertEquals(UserMediaStatus.PLANNED, viewModel.filter.value.status)
+            assertEquals(LibraryFilter(status = UserMediaStatus.PLANNED), repository.appliedFilter)
+        }
+
+    @Test
+    fun `selecting a sort applies the filter`() =
+        runTest(dispatcher) {
+            val repository = FakeLibraryRepository()
+            val viewModel = LibraryViewModel(repository)
+
+            viewModel.selectSort(LibrarySort.SCORE)
+            advanceUntilIdle()
+
+            assertEquals(LibrarySort.SCORE, viewModel.filter.value.sort)
+            assertEquals(LibraryFilter(sort = LibrarySort.SCORE), repository.appliedFilter)
+        }
+
+    @Test
+    fun `a failed filter change surfaces an error and does not strand the selection`() =
+        runTest(dispatcher) {
+            val failure = IOException("offline")
+            val repository = FakeLibraryRepository()
+            val viewModel = LibraryViewModel(repository)
+            advanceUntilIdle() // let init's load settle before the filter under test fails
+
+            repository.applyFilterFailure = failure
+            viewModel.selectStatus(UserMediaStatus.PLANNED)
+            advanceUntilIdle()
+
+            // The tab the user tapped stays selected — a ViewModel that reverted `filter` here
+            // would snap the tab row back to "All" underneath an error message that never
+            // mentions the tab moved, which reads as the tap being silently ignored.
+            assertEquals(UserMediaStatus.PLANNED, viewModel.filter.value.status)
+            assertEquals(LibraryUiState.Error(failure), viewModel.state.value)
+        }
+
+    @Test
+    fun `loadMore is not fired again while one is in flight`() =
+        runTest(dispatcher) {
+            // A LazyColumn fires its end-reached callback on every frame near the bottom. Without
+            // a guard that is a request per frame; CursorPaginator's mutex makes them safe but
+            // not free, and a queue of them blocks the next legitimate page.
+            val repository = FakeLibraryRepository()
+            val viewModel = LibraryViewModel(repository)
+            advanceUntilIdle() // let init's load settle
+
+            viewModel.loadMore()
+            viewModel.loadMore()
+            viewModel.loadMore()
+            advanceUntilIdle()
+
+            assertEquals(1, repository.loadMoreCalls)
+        }
+
+    @Test
+    fun `loadMore is allowed again once the previous call finished`() =
+        runTest(dispatcher) {
+            val repository = FakeLibraryRepository()
+            val viewModel = LibraryViewModel(repository)
+            advanceUntilIdle()
+
+            viewModel.loadMore()
+            advanceUntilIdle()
+            viewModel.loadMore()
+            advanceUntilIdle()
+
+            assertEquals(2, repository.loadMoreCalls)
+        }
+
+    @Test
+    fun `loadingMore reflects an in-flight page fetch`() =
+        runTest(dispatcher) {
+            val repository = FakeLibraryRepository()
+            val viewModel = LibraryViewModel(repository)
+            advanceUntilIdle()
+
+            viewModel.state.test {
+                assertEquals(LibraryUiState.Success(entries = emptyList(), loadingMore = false), awaitItem())
+                viewModel.loadMore()
+                assertEquals(LibraryUiState.Success(entries = emptyList(), loadingMore = true), awaitItem())
+                advanceUntilIdle()
+                assertEquals(LibraryUiState.Success(entries = emptyList(), loadingMore = false), awaitItem())
+                assertTrue(repository.loadMoreCalls == 1)
+                cancelAndIgnoreRemainingEvents()
+            }
         }
 
     private class FakeLibraryRepository(
-        var refreshFailure: Throwable? = null,
+        var applyFilterFailure: Throwable? = null,
     ) : LibraryRepository {
         val entries = MutableStateFlow(emptyList<LibraryEntry>())
 
+        var appliedFilter: LibraryFilter? = null
+            private set
+
+        var loadMoreCalls = 0
+            private set
+
         override fun observeLibrary(): Flow<List<LibraryEntry>> = entries
 
-        override suspend fun refresh() {
-            refreshFailure?.let { throw it }
+        // Never exercised directly by LibraryViewModel any more: every load — the initial one and
+        // every tab/sort change — goes through applyFilter, so the ViewModel's own idea of "what
+        // filter is selected" and what the repository was actually asked for can never drift
+        // apart the way LibraryRepositoryImpl's own KDoc warns applyFilter/refresh can (task
+        // 9a.5's carried-forward note).
+        override suspend fun refresh(): Unit = error("not exercised by LibraryViewModel; it always calls applyFilter")
+
+        override suspend fun loadMore() {
+            loadMoreCalls++
         }
 
-        override suspend fun loadMore() = Unit
+        override suspend fun applyFilter(filter: LibraryFilter) {
+            applyFilterFailure?.let { throw it }
+            appliedFilter = filter
+        }
 
-        // Filters and writes are task 9a.8/9a.9's to exercise, once the library and detail
-        // screens actually call them. `error(...)` rather than a silent no-op: this ViewModel
-        // does not call these yet, so a test that reached one would be testing something that
-        // does not exist.
-        override suspend fun applyFilter(filter: LibraryFilter): Unit = error("not exercised by LibraryViewModel yet")
-
+        // Writes are task 9a.9's to exercise, once the detail screen actually calls them.
+        // `error(...)` rather than a silent no-op: this ViewModel does not call these, so a test
+        // that reached one would be testing something that does not exist.
         override suspend fun add(
             source: MediaSource,
             externalId: String,
-        ): LibraryEntry = error("not exercised by LibraryViewModel yet")
+        ): LibraryEntry = error("not exercised by LibraryViewModel")
 
         override suspend fun update(
             entryId: String,
             patch: LibraryPatch,
-        ): LibraryEntry = error("not exercised by LibraryViewModel yet")
+        ): LibraryEntry = error("not exercised by LibraryViewModel")
 
-        override suspend fun entryForMedia(mediaId: String): LibraryEntry? =
-            error("not exercised by LibraryViewModel yet")
+        override suspend fun entryForMedia(mediaId: String): LibraryEntry? = error("not exercised by LibraryViewModel")
     }
 
     private companion object {

@@ -6,6 +6,8 @@
     <string name="status_dropped">Dropped</string>
     <string name="status_planned">Planned</string>
     <string name="status_paused">Paused</string>
+    <!-- The library screen's unfiltered tab — StatusTabRow's `selected == null` case. -->
+    <string name="status_all">All</string>
 
     <!-- Countdown badge on a media card. "Today" and "Tomorrow" replace "in 0 days" / "in 1 day",
          which are both technically right and read as though something is broken. -->

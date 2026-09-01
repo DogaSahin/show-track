@@ -66,8 +66,9 @@ private fun GalleryPreview() {
                 StatusTab(status = UserMediaStatus.WATCHING, selected = true, onClick = {})
                 StatusTab(status = UserMediaStatus.COMPLETED, selected = false, onClick = {})
             }
-            // The full scrollable row (C-J) — all five tabs, not just the two shown loose above.
-            StatusTabRow(selectedStatus = UserMediaStatus.WATCHING, onStatusSelected = {})
+            // The full scrollable row (C-J) — "All" plus all five tabs, not just the two shown
+            // loose above.
+            StatusTabRow(selected = UserMediaStatus.WATCHING, onStatusSelected = {})
             EmptyState(message = "Nothing here yet")
             LoadingState()
             ErrorState(message = "Could not reach the server", onRetry = {})
