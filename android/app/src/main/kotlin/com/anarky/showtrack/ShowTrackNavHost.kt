@@ -58,32 +58,39 @@ private fun ShowTrackGraph(
         startDestination = startDestination,
         modifier = modifier,
     ) {
-        showTrackDestinations(
-            onNavigate = { route ->
-                when (route) {
-                    // Navigating TO LibraryRoute through this table only ever happens once, from
-                    // AuthNavigation on a successful login/register — nothing else in the app
-                    // reaches Library through onNavigate (it is a start destination, not a target
-                    // other screens link to). popUpTo<AuthRoute> there is load-bearing, not
-                    // incidental: a plain push leaves Auth on the back stack and Back returns to a
-                    // login form that already succeeded.
-                    is LibraryRoute -> navController.navigateToLibraryClearingAuth()
+        showTrackDestinations(onNavigate = navController::routeShowTrackNavigation)
+    }
+}
 
-                    // Navigating TO AuthRoute through this table happens from ProfileNavigation on
-                    // sign-out (Gap 2, Phase 9a device walkthroughs). AuthRepository.logout()
-                    // clears the session without emitting AuthEvent.LoggedOut — that event is
-                    // reserved for a token REFRESH failing, not a user-initiated sign-out with a
-                    // perfectly valid session — so AuthGate's reactive collector above never fires
-                    // for this path. Reusing navigateToAuthClearingStack() here, rather than a
-                    // plain push, is what keeps Back from returning to a profile screen whose
-                    // session is already gone: the exact same failure mode AuthGate's own use of
-                    // it exists to prevent, reached by a second door.
-                    is AuthRoute -> navController.navigateToAuthClearingStack()
+/**
+ * How `onNavigate` routes to a destination in the graph [ShowTrackGraph] builds. A named extension
+ * rather than the lambda that used to sit inline in [ShowTrackGraph]'s `NavHost(onNavigate = ...)`
+ * call, for the same reason [navigateToAuthClearingStack] and [navigateToLibraryClearingAuth] are
+ * named extensions rather than lambdas: composing the whole app graph to exercise one branch of
+ * this `when` needs Hilt (every screen resolves a `@HiltViewModel`), and `:app` has no Hilt test
+ * harness, so [ShowTrackGraphRoutingTest] calls this directly on a bare `NavHostController` instead
+ * — the same technique `AuthNavigationTest` already uses for the two extensions below.
+ */
+internal fun NavHostController.routeShowTrackNavigation(route: AppRoute) {
+    when (route) {
+        // Navigating TO LibraryRoute through this table only ever happens once, from
+        // AuthNavigation on a successful login/register — nothing else in the app reaches Library
+        // through onNavigate (it is a start destination, not a target other screens link to).
+        // popUpTo<AuthRoute> there is load-bearing, not incidental: a plain push leaves Auth on
+        // the back stack and Back returns to a login form that already succeeded.
+        is LibraryRoute -> navigateToLibraryClearingAuth()
 
-                    else -> navController.navigate(route)
-                }
-            },
-        )
+        // Navigating TO AuthRoute through this table happens from ProfileNavigation on sign-out
+        // (Gap 2, Phase 9a device walkthroughs). AuthRepository.logout() clears the session
+        // without emitting AuthEvent.LoggedOut — that event is reserved for a token REFRESH
+        // failing, not a user-initiated sign-out with a perfectly valid session — so AuthGate's
+        // reactive collector above never fires for this path. Reusing navigateToAuthClearingStack()
+        // here, rather than a plain push, is what keeps Back from returning to a profile screen
+        // whose session is already gone: the exact same failure mode AuthGate's own use of it
+        // exists to prevent, reached by a second door.
+        is AuthRoute -> navigateToAuthClearingStack()
+
+        else -> navigate(route)
     }
 }
 

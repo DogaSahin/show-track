@@ -25,9 +25,9 @@ import com.anarky.showtrack.core.navigation.SearchRoute
  * 9a.9's detail screen is the first thing that would have surfaced it, as a title that resolves
  * to the wrong media or a 404, depending on whether the two ids ever collided by accident.
  *
- * `onSearchClick = { onNavigate(SearchRoute) }` is the same trick applied to Gap 1: `SearchRoute`
- * was registered in `AppDestination.kt` and fully built, but nothing in the app ever navigated to
- * it — `:feature:search` was reachable code with no door in. Naming `SearchRoute` here is not a
+ * [searchNavigation] is the same trick applied to Gap 1: `SearchRoute` was registered in
+ * `AppDestination.kt` and fully built, but nothing in the app ever navigated to it —
+ * `:feature:search` was reachable code with no door in. Naming `SearchRoute` here is not a
  * dependency on `:feature:search` either, for the same reason `DetailRoute` above isn't one on
  * `:feature:detail`.
  */
@@ -35,7 +35,18 @@ fun NavGraphBuilder.libraryEntry(onNavigate: (AppRoute) -> Unit) {
     composable<LibraryRoute> {
         LibraryScreen(
             onEntryClick = { entry: LibraryEntry -> onNavigate(DetailRoute(mediaId = entry.media.id)) },
-            onSearchClick = { onNavigate(SearchRoute) },
+            onSearchClick = searchNavigation(onNavigate),
         )
     }
 }
+
+/**
+ * The mapping the search action drives, pulled out of the `composable<LibraryRoute> { }` lambda
+ * above so it is reachable by a plain unit test. `LibraryScreen`'s stateful overload resolves a
+ * `LibraryViewModel` through `hiltViewModel()`, and this module has no Hilt test harness, so a test
+ * cannot compose [libraryEntry] itself to observe what a tap does — it can call this function
+ * directly instead. `LibraryScreenTest` already pins the icon-to-callback half (search icon tap
+ * invokes `onSearchClick`); `LibraryNavigationTest` pins this half (`onSearchClick` resolves to
+ * `SearchRoute`) — changing either wiring line back to a no-op now fails a test that names it.
+ */
+internal fun searchNavigation(onNavigate: (AppRoute) -> Unit): () -> Unit = { onNavigate(SearchRoute) }
