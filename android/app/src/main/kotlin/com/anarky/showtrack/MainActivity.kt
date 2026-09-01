@@ -14,6 +14,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavDestination.Companion.hasRoute
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -22,6 +24,7 @@ import com.anarky.showtrack.core.data.auth.AuthEventSource
 import com.anarky.showtrack.core.designsystem.theme.ShowTrackTheme
 import com.anarky.showtrack.core.model.AuthEvent
 import com.anarky.showtrack.core.navigation.AppRoute
+import com.anarky.showtrack.core.navigation.AuthRoute
 import com.anarky.showtrack.core.navigation.FavoritesRoute
 import com.anarky.showtrack.core.navigation.LibraryRoute
 import com.anarky.showtrack.core.navigation.ProfileRoute
@@ -77,32 +80,48 @@ fun ShowTrackApp(authEvents: Flow<AuthEvent>) {
     // Detail, or the auth gate firing.
     val currentBackStackEntry by navController.currentBackStackEntryAsState()
 
+    // Same AppViewModel instance ShowTrackNavHost resolves below: both calls sit above any
+    // NavBackStackEntry scope, so hiltViewModel() answers from the Activity's ViewModelStore
+    // either way — this is a second read of the existing StateFlow, not a second decision.
+    //
+    // Gated on TWO signals, not one: `start` alone only covers the cold-start window (decision
+    // C-F) — it is decided once at launch and never re-evaluated, so it stays `Library` even
+    // after a runtime logout. `currentBackStackEntry` is what actually changes when AuthGate
+    // fires and navigates back to AuthRoute, so checking it too is what keeps the tabs hidden
+    // for a signed-out user at ANY point in the session, not just at the first screen.
+    val appViewModel: AppViewModel = hiltViewModel()
+    val start by appViewModel.start.collectAsStateWithLifecycle()
+    val showNavigationTabs =
+        start == AppStart.Library && currentBackStackEntry?.destination?.hasRoute(AuthRoute::class) != true
+
     NavigationSuiteScaffold(
         navigationSuiteItems = {
-            TopLevelDestination.entries.forEach { destination ->
-                item(
-                    icon = {
-                        Icon(
-                            painterResource(destination.icon),
-                            contentDescription = destination.label,
-                        )
-                    },
-                    label = { Text(destination.label) },
-                    selected =
-                        currentBackStackEntry?.destination?.hasRoute(destination.route::class) == true,
-                    onClick = {
-                        navController.navigate(destination.route) {
-                            // The standard top-level-destination options. saveState/restoreState
-                            // keep each tab's scroll position and back stack; launchSingleTop
-                            // stops re-tapping a tab stacking duplicates of the same screen.
-                            popUpTo(navController.graph.findStartDestination().id) {
-                                saveState = true
+            if (showNavigationTabs) {
+                TopLevelDestination.entries.forEach { destination ->
+                    item(
+                        icon = {
+                            Icon(
+                                painterResource(destination.icon),
+                                contentDescription = destination.label,
+                            )
+                        },
+                        label = { Text(destination.label) },
+                        selected =
+                            currentBackStackEntry?.destination?.hasRoute(destination.route::class) == true,
+                        onClick = {
+                            navController.navigate(destination.route) {
+                                // The standard top-level-destination options. saveState/restoreState
+                                // keep each tab's scroll position and back stack; launchSingleTop
+                                // stops re-tapping a tab stacking duplicates of the same screen.
+                                popUpTo(navController.graph.findStartDestination().id) {
+                                    saveState = true
+                                }
+                                launchSingleTop = true
+                                restoreState = true
                             }
-                            launchSingleTop = true
-                            restoreState = true
-                        }
-                    },
-                )
+                        },
+                    )
+                }
             }
         },
     ) {
