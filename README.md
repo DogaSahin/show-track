@@ -857,12 +857,30 @@ protection is not enabled.
 ```bash
 ./gradlew ktlintCheck detekt
 ./gradlew -p build-logic ktlintCheck detekt
+./gradlew lintDebug                # HardcodedText / ContentDescription as errors (decision C-E)
 ./gradlew testDebugUnitTest       # also runs the build-logic convention-plugin tests
 ./gradlew assembleDebug assembleDebugAndroidTest
 ```
 
-**All four commands do more than they look like they do**, and each one looks redundant until you
+**All five commands do more than they look like they do**, and each one looks redundant until you
 know why it is there:
+
+- **`lintDebug` is what actually enforces decision C-E** (every user-facing string, including
+  `contentDescription`, comes from `R.string`) — ktlint, detekt, the tests and `assembleDebug` all
+  see a hardcoded UI string and say nothing about it. `showtrack.android.library`/`.application`
+  set `error += listOf("HardcodedText", "ContentDescription")` with `abortOnError = true`, so a
+  new violation fails the build rather than waiting for the next human review to catch it — C-E
+  had already been violated and caught by review twice before this line existed. **A real limit,
+  not a footnote:** both ids are the classic Android Lint checks for XML `android:text="literal"`
+  / `android:contentDescription="literal"` attributes, and this project has no XML layouts —
+  neither id understands Compose's `Text(text = "literal")` or `contentDescription = "literal"`
+  *parameters*. Confirmed empirically: three known literal `Text("Discover"|"Favorites"|"Groups")`
+  calls in the Phase 9b/9c placeholder screens go unflagged under this exact config, in the same
+  `lintDebug` run where `ModifierParameter` — a genuine Compose-aware check bundled with
+  `androidx.compose.ui` — fires correctly elsewhere, so Compose analysis is active and simply has
+  no built-in rule watching this failure mode. Left as specified rather than swapped for something
+  else unreviewed; a Compose-aware replacement (a custom detekt rule, or a third-party ruleset) is
+  an open follow-up, not a silent substitution.
 
 - **`-p build-logic` is a separate command because it has to be.** `build-logic` is an *included
   build*, and the root `ktlintCheck detekt` does not reach into one — so until this line existed,
