@@ -27,6 +27,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.After
@@ -352,6 +353,26 @@ class LibraryRepositoryImplTest {
         }
 
     /**
+     * The read half of decision C-B, which `a non-default filter is NOT written to the cache`
+     * does not reach: that test asserts on `dao.observeAll()` directly, never on
+     * `observeLibrary()`, so it cannot see whether the `combine`'s `else paged` branch (as
+     * opposed to `paged.ifEmpty { cached }`) is actually wired in. Without it, an empty filtered
+     * result would render the stale unfiltered cache instead of an empty list — the exact failure
+     * C-B exists to prevent, and the reason `filter` is a third source of the `combine` at all.
+     */
+    @Test
+    fun `observeLibrary shows an empty filtered result, not the unfiltered cache`() =
+        runTest {
+            api.enqueueLibraryPage(pageOf("Cached title"))
+            repository.refresh()
+            api.enqueueLibraryPage(LibraryPageDto(items = emptyList(), nextCursor = null))
+
+            repository.applyFilter(LibraryFilter(status = UserMediaStatus.PLANNED))
+
+            assertEquals(emptyList<String>(), repository.observeLibrary().first().map { it.media.title })
+        }
+
+    /**
      * The invariant `applyFilter`'s KDoc names: `filter` must always describe the filter
      * [paginator]'s current contents actually came from. `CursorPaginator.restart` fetches before
      * it mutates, so a failed `applyFilter` must leave `filter` pointing at whatever the
@@ -388,6 +409,27 @@ class LibraryRepositoryImplTest {
             assertEquals(JsonNull, patch.getValue("score"))
         }
 
+    /**
+     * `JsonObjectBuilder.put` overloads on both `String` and `Number`, so
+     * `put("score", change.value.toDouble())` compiles, passes the null/omitted-key tests above,
+     * and silently reintroduces the IEEE-754 drift `NUMERIC(3,1)` and "BigDecimal, never Double"
+     * exist to prevent. `isString` is asserted explicitly — a value-only assertion (`content ==
+     * "8.5"`) would still pass for the JSON NUMBER `8.5`, since `JsonPrimitive.content` stringifies
+     * either kind. `isString` is the only thing that pins WHICH kind was actually written.
+     */
+    @Test
+    fun `a set score is sent as a JSON string, not a number`() =
+        runTest {
+            api.enqueueEntry(entryBody())
+
+            repository.update("entry-1", LibraryPatch(score = ScoreChange.Set(BigDecimal("8.5"))))
+
+            val (_, patch) = api.updateRequests.single()
+            val score = patch.getValue("score") as JsonPrimitive
+            assertTrue(score.isString)
+            assertEquals("8.5", score.content)
+        }
+
     @Test
     fun `a patch sends only the fields it names`() =
         runTest {
@@ -400,6 +442,10 @@ class LibraryRepositoryImplTest {
             // If this fails, every progress edit is also silently resetting the score.
             assertFalse(patch.containsKey("score"))
             assertFalse(patch.containsKey("status"))
+            // The read half of `update()`'s single-row upsert: without `dao.insertAll(...)` in the
+            // implementation, the edit would reach the server but never the cache the cold-start
+            // path reads from.
+            assertEquals(listOf(12), dao.observeAll().first().map { it.progress })
         }
 
     @Test
