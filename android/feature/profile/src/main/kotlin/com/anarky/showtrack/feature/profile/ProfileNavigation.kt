@@ -30,8 +30,23 @@ fun NavGraphBuilder.profileEntry(onNavigate: (AppRoute) -> Unit) {
  * is reachable by a plain unit test. `ProfileScreen` resolves a `ProfileViewModel` through
  * `hiltViewModel()`, and this module has no Hilt test harness, so a test cannot compose
  * [profileEntry] itself to observe what a confirmed sign-out does — it can call this function
- * directly instead. `ProfileViewModelTest` already pins the button-to-repository half (`signOut()`
- * calls `AuthRepository.logout()`); `ProfileNavigationTest` pins this half (`onSignedOut` resolves
- * to `AuthRoute`) — changing either wiring line back to a no-op now fails a test that names it.
+ * directly instead.
+ *
+ * What IS covered: `ProfileViewModelTest` pins `signOut()` → `AuthRepository.logout()`;
+ * `ProfileNavigationTest` pins this function, `onSignedOut` (the parameter) →
+ * `onNavigate(AuthRoute)`.
+ *
+ * What is NOT, and this module has three such gaps where `:feature:library` has one, because
+ * `:feature:profile` has no Compose test of any kind:
+ *   1. The confirm button's `onClick` inside `ProfileScreen`'s `AlertDialog` → `viewModel.signOut()`.
+ *   2. `ProfileScreen`'s `LaunchedEffect(signedOut) { if (signedOut) onSignedOut() }` →
+ *      `onSignedOut()`. Delete that `LaunchedEffect` entirely and sign-out silently stops
+ *      navigating anywhere — `signedOut` still flips, `ProfileViewModelTest` stays green, nothing
+ *      fails.
+ *   3. The BINDING one line above — `onSignedOut = signOutNavigation(onNavigate)` — same failure
+ *      mode as [libraryEntry]: change it to `onSignedOut = {}` and every existing test, including
+ *      `ProfileNavigationTest`, stays green while sign-out goes unreachable again.
+ * All three need a Hilt-composed `ProfileScreen` to close, which needs a test harness that does
+ * not exist anywhere in this repo; see the phase-level item to build one.
  */
 internal fun signOutNavigation(onNavigate: (AppRoute) -> Unit): () -> Unit = { onNavigate(AuthRoute) }

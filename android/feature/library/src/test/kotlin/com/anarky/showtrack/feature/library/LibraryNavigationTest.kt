@@ -7,12 +7,17 @@ import org.junit.Test
 
 /**
  * The regression guard `LibraryScreenTest` alone cannot provide. That test pins icon tap →
- * `onSearchClick`; this pins `onSearchClick` → `onNavigate(SearchRoute)` — the wiring line inside
- * `libraryEntry`'s `composable<LibraryRoute> { }` block that a Compose test cannot reach without
- * composing `LibraryScreen`'s stateful overload, which needs Hilt to resolve `LibraryViewModel`
- * and this module has no Hilt test harness. A plain JUnit test on the extracted [searchNavigation]
- * function needs neither Compose nor Hilt. Together the two tests close Gap 1's exact failure
- * mode: change either the icon's `onClick` or this mapping back to a no-op, and one of them fails.
+ * `onSearchClick` (the parameter); this pins [searchNavigation] itself → `onNavigate(SearchRoute)`.
+ * A plain JUnit test on the extracted function needs neither Compose nor Hilt, unlike composing
+ * `LibraryScreen`'s stateful overload, which resolves `LibraryViewModel` through `hiltViewModel()`
+ * — and this module has no Hilt test harness.
+ *
+ * What neither test pins: the BINDING at `LibraryNavigation.kt`'s
+ * `onSearchClick = searchNavigation(onNavigate)` — that nothing here composes `libraryEntry`
+ * itself means nothing observes that this particular argument is wired to this particular
+ * function. Change that one line to `onSearchClick = {}` and both this test and
+ * `LibraryScreenTest` stay green while the search screen goes unreachable again. Closing that
+ * needs a Hilt test harness this repo does not have.
  */
 class LibraryNavigationTest {
     @Test

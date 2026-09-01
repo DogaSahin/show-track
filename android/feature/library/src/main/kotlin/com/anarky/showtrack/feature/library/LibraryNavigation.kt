@@ -45,8 +45,17 @@ fun NavGraphBuilder.libraryEntry(onNavigate: (AppRoute) -> Unit) {
  * above so it is reachable by a plain unit test. `LibraryScreen`'s stateful overload resolves a
  * `LibraryViewModel` through `hiltViewModel()`, and this module has no Hilt test harness, so a test
  * cannot compose [libraryEntry] itself to observe what a tap does — it can call this function
- * directly instead. `LibraryScreenTest` already pins the icon-to-callback half (search icon tap
- * invokes `onSearchClick`); `LibraryNavigationTest` pins this half (`onSearchClick` resolves to
- * `SearchRoute`) — changing either wiring line back to a no-op now fails a test that names it.
+ * directly instead.
+ *
+ * What IS covered: `LibraryScreenTest` pins icon tap → `onSearchClick`; `LibraryNavigationTest`
+ * pins this function, `onSearchClick` (the parameter) → `onNavigate(SearchRoute)`.
+ *
+ * What is NOT: the BINDING one line above — `onSearchClick = searchNavigation(onNavigate)` — is
+ * untested. Neither test composes [libraryEntry] itself, so nothing observes that this particular
+ * argument is actually wired to this particular function. Change that line to
+ * `onSearchClick = {}` and both tests above stay green while the search screen goes unreachable
+ * again — the exact regression this file exists to prevent. Closing that needs a Hilt test
+ * harness (to compose the stateful `LibraryScreen`), which does not exist anywhere in this repo;
+ * see the phase-level item to build one.
  */
 internal fun searchNavigation(onNavigate: (AppRoute) -> Unit): () -> Unit = { onNavigate(SearchRoute) }
