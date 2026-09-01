@@ -17,13 +17,30 @@ that survives the owner walking out — are in place, and so is what a group is 
 shared activity feed, reviews, a shared "we should watch this" watchlist, and side-by-side progress
 on a title.
 
-The **Android client now exists as a 16-module foundation** — a design system, the HTTP stack with
-encrypted token storage and refresh, a Room cache, the repository layer, type-safe navigation, Hilt
-across the whole graph, and push over UnifiedPush. What it is not yet is a finished app: **seven of
-its nine feature screens are one-line placeholders**, and **nothing in it has been run on a phone or
-an emulator** — there is neither in this environment. Everything below distinguishes what is
-executed from what is merely compiled; see [What is proven, and what is
-not](#what-is-proven-and-what-is-not) and [Project status](#project-status).
+The **Android client is a 16-module app you can actually use** — register, search, add a title,
+browse and filter your library, and open one to score, progress and favourite it. A design system,
+the HTTP stack with encrypted token storage and refresh, a Room cache, the repository layer,
+type-safe navigation, Hilt across the whole graph, and push over UnifiedPush sit under four working
+screens: **`:feature:auth`** (login, four-field registration, a startup session check),
+**`:feature:library`** (status tabs, sorting, cursor paging), **`:feature:detail`** (score, progress,
+status and favourite editing, plus Add when a title is not yet tracked) and **`:feature:search`**
+(debounced search that adds a result straight into your library), alongside `:feature:profile`'s
+push-registration screen from Phase 8.9. Four of the nine feature modules —
+`:feature:discover`, `:feature:favorites`, `:feature:groups`, `:feature:feed` — are still one-line
+placeholders. **One gap in that list: nothing in the app's own navigation opens the search screen
+yet** — see the [known gap](#known-gap-search-has-no-way-in-from-the-app-ui) in [Device
+walkthroughs](#device-walkthroughs). **Registering needs an invite code** (either your server's `REGISTRATION_CODE` or a
+group's invite code — see the **Settings** list under [Backend](#backend) below), and **receiving push needs a UnifiedPush
+distributor app** installed separately — see [Push needs a second app
+installed](#push-needs-a-second-app-installed--read-this-before-concluding-push-is-broken).
+
+**Nothing in it has been run on a phone or an emulator by this repository's own tooling** — there is
+neither in the environment it was built in. That is a real boundary rather than an oversight: the
+[Device walkthroughs](#device-walkthroughs) section is a numbered, executable checklist for running
+every screen — and every decision this phase made without being able to see one — on your own
+device. Everything below distinguishes what is executed from what is merely compiled; see [What is
+proven, and what is not](#what-is-proven-and-what-is-not), [Device
+walkthroughs](#device-walkthroughs) and [Project status](#project-status).
 
 ## What it does
 
@@ -80,10 +97,11 @@ probe rather than client contract.
 `:feature:*`, one per screen (`auth`, `library`, `detail`, `discover`, `favorites`, `profile`,
 `search`, `groups`, `feed`). Two of the core modules — `:core:model` and `:core:navigation` — are
 **pure Kotlin/JVM**, with no AGP and no Android dependency at all; the other four are Android
-libraries. Only `:feature:library` and `:feature:profile` carry a real screen today (Phase 8's
-brief was the foundation, not the features); the other seven render a single `Text` and exist so
-the navigation graph, the dependency rules and the DI wiring are exercised against the shape the
-finished app will have.
+libraries. Five of the nine feature modules carry a real screen: `:feature:profile` (push
+registration, Phase 8.9) and — new this phase — `:feature:auth`, `:feature:library`,
+`:feature:detail` and `:feature:search`. The remaining four (`discover`, `favorites`, `groups`,
+`feed`) still render a single `Text` and exist so the navigation graph, the dependency rules and the
+DI wiring are exercised against the shape the finished app will have.
 Feature modules never depend on each other, and never on `:core:network` or `:core:database` — all
 data access goes through `:core:data`, which is the only module that knows Retrofit and Room exist.
 That is what keeps "Room is a cache, never the source of truth" structural rather than a convention
@@ -457,10 +475,35 @@ curl -s -X POST localhost:8000/v1/library \
 # read it back — soonest-airing first, 20 per page
 curl -s -H "Authorization: Bearer $TOKEN" \
   'localhost:8000/v1/library?sort=next_episode_date&limit=20'
+```
+
+`GET /v1/library` takes three filter/sort query parameters, all optional:
+
+- **`status`** — one of `watching`, `completed`, `dropped`, `planned`, `paused`. Narrows the page to
+  entries in that status; omitted, every status is included. This is what the Android library
+  screen's status tabs send.
+- **`sort`** — one of `title` (default), `score`, `next_episode_date`. Each has a fixed direction
+  (decision 4-J — there is no `order=`), and a paging cursor is bound to the sort it was issued for:
+  changing `sort` mid-page answers `400`, not a silently reordered page.
+- **`media_id`** — a media (not library-entry) UUID. Answers "is this title in my library?" in one
+  request: a page containing that one entry if it is tracked, `{"items":[],"next_cursor":null}` if
+  it is not — never a `404`, since "not in your library" is an ordinary, expected answer rather than
+  an error. This is what the Android detail screen uses to decide whether to show Add or the
+  score/progress/status editor (decision C-C), and it is the phase's only backend change:
+
+```bash
+BODY=$(curl -s -H "Authorization: Bearer $TOKEN" localhost:8000/v1/library)
+MEDIA=$(echo "$BODY" | python3 -c 'import json,sys; print(json.load(sys.stdin)["items"][0]["media"]["id"])')
+curl -s -H "Authorization: Bearer $TOKEN" "localhost:8000/v1/library?media_id=$MEDIA"
+# -> the one entry for that title. An id belonging to nothing you track answers
+#    {"items":[],"next_cursor":null} instead, same as any other empty page.
+
+# only watching titles, soonest-airing first
+curl -s -H "Authorization: Bearer $TOKEN" \
+  'localhost:8000/v1/library?status=watching&sort=next_episode_date'
 
 # rate it, and mark how far you have got
-ENTRY=$(curl -s -H "Authorization: Bearer $TOKEN" localhost:8000/v1/library \
-  | python3 -c 'import json,sys; print(json.load(sys.stdin)["items"][0]["id"])')
+ENTRY=$(echo "$BODY" | python3 -c 'import json,sys; print(json.load(sys.stdin)["items"][0]["id"])')
 curl -s -X PATCH "localhost:8000/v1/library/$ENTRY" \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -d '{"score":8.5,"progress":12,"status":"watching"}'
@@ -889,9 +932,10 @@ The Android client has never been run on a phone or an emulator, because there i
 environment it was built in. That is a real boundary rather than an oversight, and this section
 exists so nobody reads "done" in the table below as "seen working". Three tiers:
 
-**Executed.** The backend suite — **731 tests**, against a real PostgreSQL schema built by the
-migrations rather than by `create_all`. The Android JVM suite — **146 tests** under
-`./gradlew testDebugUnitTest`: 117 across the app and library modules, plus 29 in `build-logic`,
+**Executed.** The backend suite — **734 tests**, against a real PostgreSQL schema built by the
+migrations rather than by `create_all`. The Android JVM suite — **224 tests** under
+`./gradlew testDebugUnitTest`: **195** across the app and feature/core modules (up from 117 before
+this phase's four new screens and their ViewModels), plus 29 in `build-logic`,
 including the Gradle TestKit runs that drive a real build into each architecture-rule violation and
 one **positive control** that must succeed, so a rule passing can be told apart from a build that
 never configured. The UnifiedPush transport was also driven against a real ntfy in `docker compose`
@@ -935,14 +979,253 @@ device-only; none has been observed:
    the first stops receiving. This is the half of endpoint takeover that depends on the logout
    `DELETE` landing.
 
-   Read that one with a caveat, because it is a gap in the code and not only an unrun check:
-   **nothing calls `PushRepository.register()` on login.** The only caller is
-   `ShowTrackMessagingReceiver.onNewEndpoint`, and `PushSessionObserver` handles `LoggedOut` alone,
-   so the second account does not register when it signs in — it registers at the next
-   `onNewEndpoint`, i.e. the next app start. Logout is wired, login is not; the symmetric call is
-   Phase 9's.
+   **This item's gap is closed as of this phase.** `AuthRepositoryImpl.login()` now calls
+   `PushRepository.onLoggedIn()` itself, so a second account registers for push at sign-in rather
+   than only at the next app start — see `:core:data`'s `AuthRepository`. It is still listed here
+   because the *end-to-end* behaviour — the first account's device actually stops receiving — has
+   never been observed on hardware; only the call being made has a test behind it.
 
-Nothing in this repository claims any of those seven has happened.
+Nothing in this repository claims any of those seven has happened. [Device
+walkthroughs](#device-walkthroughs) below turns each one into a step-by-step check now that the app
+has screens to run them from.
+
+## Device walkthroughs
+
+Every walkthrough below was decided by an agent that could not see a screen — either this phase's or
+Phase 8's. Each step names what to tap, what should appear, and what it means if it does not: that
+last clause is what makes this a test rather than a tour. None of these have been run — there is no
+phone or emulator in the environment this was written in — so **this section is unverified
+instructions, not a report of what happened.**
+
+**Setup, once:**
+
+1. Start the backend (`docker compose up -d`, `alembic upgrade head`, `uvicorn`) — see
+   [Backend](#backend) above — with `REGISTRATION_CODE` set in `.env`.
+2. Build and install the debug app on a device or emulator:
+   `./gradlew installDebug`, or pointed at a non-default host with
+   `-Pshowtrack.apiBaseUrl=http://<host>:8000/` (see [Android](#android) above — the emulator's
+   `10.0.2.2` alias needs nothing extra). A physical device needs a reachable host; `10.0.2.2` only
+   resolves inside the emulator.
+3. Keep the app's data cleared between walkthroughs that call for a "cold start with an empty
+   cache" — Android Studio's "Clear data" on the app, or uninstall/reinstall.
+
+### 1. Registering and signing in (`:feature:auth`)
+
+1. Launch the app. **Expect:** the login form, mode toggle showing "Log in" / "Register" — not an
+   empty screen and not a crash. *If it crashes here, the startup session check (`AppViewModel`)
+   or the `NavHost`'s `Undecided` branch is broken — see [What is proven, and what is
+   not](#what-is-proven-and-what-is-not).*
+2. Tap **Register**. **Expect:** four fields appear — Username, Email, Password, Invite code — with
+   the invite-code field's helper text reading "The code you were given. It may also add you to a
+   group." *If the helper text or the field itself is missing, decision C-M's requirement that a
+   fresh reader always knows where the code comes from is not being honoured on screen.*
+3. Fill in a username, an email, an 8+ character password, and your server's `REGISTRATION_CODE`
+   (the same value used in the `curl` walkthrough above — never commit or screenshot the real
+   value). Tap **Create account**. **Expect:** you land directly on the library screen (empty,
+   since this is a new account). *If instead you see an error naming the invite code, re-check
+   `REGISTRATION_CODE` in your `.env` for a stray trailing/duplicate line — see the "last-wins"
+   warning in [Notifications](#notifications) for the same failure mode applied to a different
+   setting.*
+4. Force-stop and relaunch the app. **Expect:** you land back on the library screen without
+   re-entering credentials — that is `AuthRepository.hasSession()` deciding `AppStart.Library`
+   from the stored token rather than defaulting to the login screen. *If you are asked to log in
+   again, the encrypted token store (`:core:network`'s `TokenStore`) did not persist across the
+   restart.*
+5. **There is no sign-out button anywhere in the app** — `AuthRepositoryImpl.logout()` exists but
+   nothing in `:feature:profile`, `:feature:library` or anywhere else calls it; the only way `AuthGate`
+   fires today is a failed token refresh. To test the login path again, clear the app's data instead
+   (Android Settings → Apps → ShowTrack → Storage → Clear storage, or uninstall/reinstall), then log
+   back in with the same email/password from the **Log in** tab. **Expect:** success, same as
+   registration. Try a wrong password. **Expect:** "That email or password isn't right." *A
+   different message here, or one that reveals whether the email exists, is the backend's
+   deliberately generic 401 (decision, see `auth_error_invalid_credentials`) being lost somewhere in
+   the client.*
+
+### 2. No empty strip under the login screen
+
+1. On the login screen from walkthrough 1, look at the very bottom of the screen. **Expect:** the
+   form's content fills the space; no grey bar, indicator dots or squeezed layout underneath it.
+   *A visible empty strip means `NavigationSuiteScaffold`'s `layoutType` is not resolving to
+   `NavigationSuiteType.None` while signed out — see the long comment in `MainActivity.kt` next to
+   `layoutType =`.*
+2. Force-stop and relaunch with a valid stored session (from walkthrough 1 step 4). **Expect:**
+   during the brief loading spinner before the library screen appears (`AppStart.Undecided`), the
+   same thing holds — no bottom strip, content not squeezed upward. *This is the harder of the two
+   cases to catch, because it is on screen for under a second — watch specifically for a flash of
+   an empty bar rather than a smooth transition into the library screen with its own three tabs.*
+
+### 3. The status tab row at 360dp (`StatusTabRow`)
+
+1. On the library screen (some entries added — repeat the earlier `curl` `POST /v1/library` calls
+   against your account, or add titles from the app once search is reachable — see the [known
+   gap](#known-gap-search-has-no-way-in-from-the-app-ui) below), look at the row of tabs under the
+   title: **All**, **Watching**, **Completed**, **Dropped**, **Planned**, **Paused**. **Expect:**
+   it reads as an ordinary tab bar — one underline indicator under the selected tab, a bottom
+   divider under the row, no chip-shaped fill behind any tab. *Two selection indicators on the
+   same tab (an underline **and** a filled pill) means the row is still built from `FilterChip`
+   children rather than `Tab` — see `StatusTab.kt`'s note on task 9a.8's review of 9a.6.*
+2. On a phone-width device (~360dp), confirm **All** is clearly readable and not truncated or
+   padded into a wider box than its neighbours. *Uneven tab widths are `ScrollableTabRow`'s minimum
+   tab width fighting a short label — the sign the underlying children changed shape again.*
+3. Scroll the row left and right with a swipe. **Expect:** it scrolls smoothly with no snapping
+   back or clipped label. Tap **Watching**. **Expect:** the list narrows to watching-only entries,
+   and if there are none, the empty message reads **"Nothing here"** — see walkthrough 4.
+
+### 4. Empty copy differs by filter
+
+1. From the library screen's **All** tab with at least one entry, tap a status tab that has no
+   entries in it yet (e.g. **Dropped**, if you have not dropped anything). **Expect:** the message
+   **"Nothing here"** — not "Nothing in your library yet". *The default-tab message under a filter
+   is a real regression: it tells a user who has correctly filtered down to zero results that their
+   library is empty, which reads as data loss (see `library_empty_filtered` in
+   `feature/library/.../strings.xml`).*
+2. Remove every entry from your library (or use a brand-new account) and view the **All** tab.
+   **Expect:** the message flips to **"Nothing in your library yet"** — the only tab that copy is
+   correct on.
+
+### 5. The library's offline story (decision C-B)
+
+1. With at least one entry in your library and the **All** tab selected, force-stop and relaunch
+   the app with the network **on**, then immediately turn the device into airplane mode (or disable
+   Wi-Fi/data) before or right as it opens. **Expect:** the **All** tab still shows your cached
+   titles — a cold start renders from Room before any network request completes.
+2. While still offline, tap any other status tab (e.g. **Watching**). **Expect:** an error state
+   with a working **Retry** button — *not* an empty list. *An empty list here is the dangerous
+   failure: decision C-B caches only the default view, so a filtered tab with no cache and no
+   network has nothing to show honestly except an error — rendering it as "no entries" is
+   indistinguishable from data loss.*
+3. Tap **Retry** while still offline. **Expect:** the same error state reappears rather than a
+   crash or a silent no-op. Restore the network and tap **Retry** again. **Expect:** the filtered
+   list loads normally.
+
+### 6. Adaptive navigation on a wide layout
+
+1. On a tablet, a foldable opened flat, or an emulator resized to a large window/landscape,
+   sign in and look at the three-tab navigation (Home / Favorites / Profile). **Expect:** it
+   presents as a **rail** on the leading edge of the screen (icons in a vertical column), not a
+   bottom bar. *A bottom bar on a wide layout means the explicit `layoutType` passed to
+   `NavigationSuiteScaffold` is not actually reproducing the library's own adaptive default — see
+   the comment above `layoutType =` in `MainActivity.kt`, which was verified only by disassembling
+   the library's bytecode and never seen rendered.*
+2. Resize back down to phone width (or rotate a foldable closed). **Expect:** navigation returns to
+   a bottom bar. *If the resize does not trigger a re-layout at all, `currentWindowAdaptiveInfo()`
+   is not being recomposed on the size change.*
+
+### 7. Title detail — add, then edit (`:feature:detail`)
+
+1. Open a title's detail screen (via a library row, or the push deep link in walkthrough 10).
+   **Expect:** cover image, title, year/genres, and an airing countdown if the title has a next
+   episode. For a title not yet in your library: one **"Add to library"** button and nothing else.
+2. Tap **Add to library**. **Expect:** the button disables briefly, then the screen switches to the
+   score/progress/status/favourite editor with the entry unrated at progress 0. *A screen that
+   stays on the Add button after a visible delay, with no error text either, means the request
+   completed but the post-add refresh silently failed — see the `detail_add_error` comment in
+   `DetailScreen.kt` about `LibraryRepositoryImpl.add`'s two-step add-then-refresh.*
+3. Tap the score chip. **Expect:** a dropdown of half-point values from 1.0 to 10.0 plus "Clear
+   score". Pick one. **Expect:** the chip updates immediately (optimistic-looking, but confirmed by
+   the server's response, not assumed).
+4. Use the **−** / **+** buttons to change progress. **Expect:** the number updates and **−** is
+   disabled at 0.
+5. Tap a different status chip (e.g. **Completed**). **Expect:** it becomes selected; the others
+   deselect.
+6. Tap the **Favorite** chip. **Expect:** it toggles filled/unfilled.
+7. While any one of the above edits is saving (briefly disables the controls), try tapping a second
+   control. **Expect:** it does nothing until the first save completes — edits are serialized, not
+   concurrent. *A save that lets two edits race is the "second edit is ignored while one is already
+   saving" case `DetailViewModelTest` covers on the JVM; this is its on-device counterpart.*
+
+### 8. Search and add-through (`:feature:search`)
+
+<a id="known-gap-search-has-no-way-in-from-the-app-ui"></a>
+**Known gap, found while writing this walkthrough and not fixed here:** as of this phase, nothing
+in the app's UI navigates to `:feature:search`. `SearchRoute` is registered in the nav graph
+(`AppDestination.kt`) and `:feature:search` compiles and is unit-tested, but the three-tab bottom
+navigation only offers Home/Favorites/Profile (`TopLevelDestination` in `MainActivity.kt`), the
+library screen's header has only a title and a sort button, and no other screen calls
+`onNavigate(SearchRoute)`. **There is currently no way to reach this screen by tapping through the
+app.** Steps 1-4 below describe what to verify once a launch point exists (a Phase 9 follow-up); for
+now, adding a title from the device has to go through `curl` against `POST /v1/library`, as in the
+[Backend](#backend) walkthrough above.
+
+1. Once reachable: open Search. **Expect:** an empty text field and the message "Search for a title
+   to add it to your library" — not a blank screen.
+2. Type a query (e.g. "frieren"). **Expect:** after a short debounce, a scrollable list of results
+   with cover, title and year/genres.
+3. Tap a result. **Expect:** a small spinner appears on that row only (not the whole list), then the
+   app navigates straight to that title's detail screen, already added. *Tapping does not open a
+   preview first — a single tap both adds the title and opens Detail (decision C-N); if nothing
+   happens after the spinner, check for `search_add_error`'s inline text on the row.*
+4. If your backend has no `TMDB_API_KEY` configured, search a title likely to hit both providers.
+   **Expect:** a banner reading "TMDB isn't responding right now — results may be incomplete." above
+   the results, and AniList results still shown underneath — the degraded-provider notice.
+
+### 9. Push notifications — Phase 8's seven outstanding checks
+
+Complete [UnifiedPush setup](#unifiedpush--how-the-showtrack-app-itself-receives) above first: a
+distributor installed, the server pointed at, and **Profile → Use this app** tapped with
+notification permission granted. Each numbered check below corresponds to the same-numbered item in
+[What is proven, and what is not](#what-is-proven-and-what-is-not) — runnable for the first time now
+that the app has a Profile screen and a Detail screen to land on.
+
+1. **A notification arrives.** Trigger one with the `curl` smoke test in
+   [Notifications](#notifications) (`POST localhost:8080 ...`), or wait for a real airing threshold.
+   **Expect:** a system notification titled "ShowTrack" (or the title's own name, depending on
+   payload) appears within the dispatch interval. *Nothing at all, with no error anywhere, is the
+   documented failure mode for a missing distributor or a denied `POST_NOTIFICATIONS` — check both
+   before assuming the server side is broken.*
+2. **Tapping it opens the right title** — see walkthrough 10 below; it is the same check, done with
+   an empty cache from a cold start specifically.
+3. **The `POST_NOTIFICATIONS` prompt appears and is honoured.** On first tapping **Use this app** on
+   API 33+, confirm the system permission dialog actually appears (not just the in-app copy) and
+   that denying it is visibly different from granting it (e.g. `push_permission_grant`'s "Allow
+   notifications" prompt stays on screen rather than disappearing).
+4. **A cold start does not add a second push target.** Force-stop and relaunch the app several
+   times while push is on. **Expect:** `GET /v1/notifications/targets` (with your token) still
+   lists exactly one row for this device — not one per launch.
+5. **`onUnregistered` deletes the row.** In the distributor app, remove/unregister ShowTrack (or
+   uninstall the distributor). **Expect:** the corresponding target disappears from
+   `GET /v1/notifications/targets`.
+6. **The "no distributor" recovery path.** Uninstall the distributor, open Profile. **Expect:** the
+   "Push needs one more app" message naming ntfy. Install ntfy, then return to the app (bring it to
+   the foreground, do not relaunch it). **Expect:** the Profile screen updates to the "Turn on
+   episode alerts" state on its own, without a restart. *If it stays stuck on "install a
+   distributor" after ntfy is installed and you have returned to the foreground, the
+   `LifecycleResumeEffect` that re-checks on resume is not firing.*
+7. **Second-account takeover.** Sign in as account one on the device, enable push, confirm a target
+   is registered (`GET /v1/notifications/targets` with account one's token). Since there is no
+   in-app sign-out (see walkthrough 1, step 5), clear the app's data to get back to the login
+   screen, then log in as a second account on the **same physical device** and enable push there
+   too. **Expect:** the endpoint the distributor hands the app is the same one as before (it is
+   minted per app **per device**, not per account), so registering it under account two takes over
+   the existing row rather than creating a second one — `GET /v1/notifications/targets` for account
+   one now shows **no** target, and account two's shows one with a fresh `created_at` and a cleared
+   label (see the takeover paragraph in
+   [UnifiedPush](#unifiedpush--how-the-showtrack-app-itself-receives)). This exercises takeover
+   itself, which fires on re-registration regardless of whether a clean logout ever ran — it does
+   **not** exercise the separate best-effort logout `DELETE` described in the same section, since
+   clearing app data cannot call it.
+
+### 10. The push deep link, end to end
+
+This is the path decision C-C exists for, and the one nothing else in the codebase exercises against
+real hardware — three independently-tested pieces (`PushNotifierTest`, `MergedManifestTest`,
+`NavGraphRegistrationTest`) have to agree at once.
+
+1. Clear the app's data (a genuinely cold start, empty Room cache) and sign in.
+2. Set up push per walkthrough 9, then either wait for a real notification or trigger one with the
+   `curl` smoke test, for a title you are **not currently viewing** (background the app or lock the
+   device first).
+3. Tap the notification from the system tray. **Expect:** the app opens directly to that title's
+   detail screen — not the library screen, not a crash, and not the screen the app happened to be
+   showing before it was backgrounded.
+4. Repeat from a fully killed app (swiped away from recents, not just backgrounded). **Expect:** the
+   same result — the deep link survives a cold start because it goes through the system
+   (`navDeepLink`), not a live `NavController`.
+5. If the detail screen opens but for the **wrong title**, or the app opens to the library screen
+   instead: check the notification payload's `media_id` against what `PushNotifier` builds the URI
+   from, then the manifest's intent filter, then `:feature:detail`'s `navDeepLink` registration —
+   the three things `MergedManifestTest`/`NavGraphRegistrationTest`/`PushNotifierTest` each pin
+   individually but that only this walkthrough exercises together.
 
 ## Contributing
 
@@ -1462,14 +1745,18 @@ and both get worse the longer they wait.
 | 7.5b | Groups — shared feed, reviews, shared watchlist, progress comparison | done |
 | 8 | Android foundations — 16 modules, build-enforced dependency rules, design system, HTTP + token store, Room cache, repositories, navigation, Hilt | done |
 | 8.9 | Push over UnifiedPush — backend transport, Android receiver, deep-linked taps | in progress |
-| 9 | Feature modules — seven of nine screens are still placeholders | in progress |
+| 9a | Feature modules, first pass — auth, library, detail and search screens; `media_id` filter on `GET /v1/library` | done |
+| 9 | Feature modules — five of nine screens now work end to end; discover, favorites, groups and feed remain placeholders | in progress |
 | 10 | Polish and deployment | |
 
-**8.9 is `in progress`, not `done`, and the distinction is the point.** Its acceptance criterion is
-"a test push notification is received and tapping it opens the correct title" — that has never been
-executed, because there is no device here. The code and its tests are complete and the gate is
-green; the criterion is unmet. See [What is proven, and what is
-not](#what-is-proven-and-what-is-not).
+**8.9 and 9a are both `in progress`/`done` on the code, not on the device**, and the distinction is
+the point. 8.9's acceptance criterion is "a test push notification is received and tapping it opens
+the correct title" — that has never been executed, because there is no device here. 9a's own
+acceptance criterion — "follow your own instructions from a clean directory and reach a working
+state" — is likewise unmet by this repository's own tooling; [Device
+walkthroughs](#device-walkthroughs) is the instructions, not a report that they were followed. The
+code and its tests are complete and the gate is green in both cases; the device-level criterion is
+what remains open. See [What is proven, and what is not](#what-is-proven-and-what-is-not).
 
 Architecture documentation lives outside this repository, alongside the working copy: a design doc, a
 phased task breakdown, and a decision record. This README is the orientation a fresh clone gets.
