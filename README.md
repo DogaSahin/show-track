@@ -25,8 +25,8 @@ screens: **`:feature:auth`** (login, four-field registration, a startup session 
 **`:feature:library`** (status tabs, sorting, cursor paging), **`:feature:detail`** (score, progress,
 status and favourite editing, plus Add when a title is not yet tracked) and **`:feature:search`**
 (debounced search that adds a result straight into your library, reachable from a search action in
-the library screen's header), alongside `:feature:profile`'s push-registration and sign-out screen
-from Phase 8.9. Four of the nine feature modules —
+the library screen's header), alongside `:feature:profile`'s push-registration screen from Phase
+8.9, which gained a sign-out action in 9a. Four of the nine feature modules —
 `:feature:discover`, `:feature:favorites`, `:feature:groups`, `:feature:feed` — are still one-line
 placeholders. **Registering needs an invite code** (either your server's `REGISTRATION_CODE` or a
 group's invite code — see the **Settings** list under [Backend](#backend) below), and **receiving push needs a UnifiedPush
