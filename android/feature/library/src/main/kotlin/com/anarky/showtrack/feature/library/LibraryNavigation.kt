@@ -6,6 +6,7 @@ import com.anarky.showtrack.core.model.LibraryEntry
 import com.anarky.showtrack.core.navigation.AppRoute
 import com.anarky.showtrack.core.navigation.DetailRoute
 import com.anarky.showtrack.core.navigation.LibraryRoute
+import com.anarky.showtrack.core.navigation.SearchRoute
 
 /**
  * Library rows open the detail screen, so this entry translates the feature's own callback —
@@ -23,9 +24,18 @@ import com.anarky.showtrack.core.navigation.LibraryRoute
  * was silently wrong (nothing read `DetailRoute.mediaId` yet) rather than loudly wrong; task
  * 9a.9's detail screen is the first thing that would have surfaced it, as a title that resolves
  * to the wrong media or a 404, depending on whether the two ids ever collided by accident.
+ *
+ * `onSearchClick = { onNavigate(SearchRoute) }` is the same trick applied to Gap 1: `SearchRoute`
+ * was registered in `AppDestination.kt` and fully built, but nothing in the app ever navigated to
+ * it — `:feature:search` was reachable code with no door in. Naming `SearchRoute` here is not a
+ * dependency on `:feature:search` either, for the same reason `DetailRoute` above isn't one on
+ * `:feature:detail`.
  */
 fun NavGraphBuilder.libraryEntry(onNavigate: (AppRoute) -> Unit) {
     composable<LibraryRoute> {
-        LibraryScreen(onEntryClick = { entry: LibraryEntry -> onNavigate(DetailRoute(mediaId = entry.media.id)) })
+        LibraryScreen(
+            onEntryClick = { entry: LibraryEntry -> onNavigate(DetailRoute(mediaId = entry.media.id)) },
+            onSearchClick = { onNavigate(SearchRoute) },
+        )
     }
 }

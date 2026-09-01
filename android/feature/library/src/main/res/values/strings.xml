@@ -1,5 +1,6 @@
 <resources>
     <string name="library_title">Library</string>
+    <string name="library_search_content_description">Search</string>
 
     <!-- The empty message differs by filter (decision C-B made visible in the UI): Room caches
          ONLY the default view, so under a status filter or a non-default sort the list is always

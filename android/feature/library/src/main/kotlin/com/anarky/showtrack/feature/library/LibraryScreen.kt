@@ -14,6 +14,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -26,6 +28,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -52,10 +55,16 @@ import com.anarky.showtrack.core.model.UserMediaStatus
  * [onEntryClick] hands the whole [LibraryEntry] to the caller rather than a raw id, so the
  * navigation entry point below can pull `entry.media.id` — the entry's OWN id is a different
  * identifier that `DetailRoute` does not take (see `LibraryNavigation.kt`).
+ *
+ * [onSearchClick] is the same shape: this screen stays ignorant of navigation, so it hands the
+ * tap up rather than knowing `SearchRoute` exists. `LibraryNavigation.kt` is what turns it into
+ * an `onNavigate` call (Gap 1, Phase 9a device walkthroughs — the search screen existed and had
+ * no door in).
  */
 @Composable
 fun LibraryScreen(
     onEntryClick: (LibraryEntry) -> Unit,
+    onSearchClick: () -> Unit,
     modifier: Modifier = Modifier,
     viewModel: LibraryViewModel = hiltViewModel(),
 ) {
@@ -72,6 +81,7 @@ fun LibraryScreen(
         onLoadMore = viewModel::loadMore,
         onRetry = viewModel::refresh,
         onEntryClick = onEntryClick,
+        onSearchClick = onSearchClick,
         modifier = modifier,
     )
 }
@@ -85,9 +95,10 @@ fun LibraryScreen(
  * [state] is [LibraryUiState.Loading] or [LibraryUiState.Error] — see
  * [LibraryViewModel.filter]'s KDoc.
  *
- * Eight parameters trips detekt's `LongParameterList` (threshold 6); suppressed rather than
- * bundling the five callbacks into an `Actions` holder class, which would exist for this one
- * call site only and would still need six fields — indirection without fewer moving parts.
+ * Eight parameters (now nine, with [onSearchClick]) trips detekt's `LongParameterList`
+ * (threshold 6); suppressed rather than bundling the callbacks into an `Actions` holder class,
+ * which would exist for this one call site only and would still need the same number of fields —
+ * indirection without fewer moving parts.
  */
 @Suppress("LongParameterList")
 @Composable
@@ -99,10 +110,11 @@ internal fun LibraryScreen(
     onLoadMore: () -> Unit,
     onRetry: () -> Unit,
     onEntryClick: (LibraryEntry) -> Unit,
+    onSearchClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.fillMaxSize()) {
-        LibraryHeader(sort = filter.sort, onSortSelected = onSortSelected)
+        LibraryHeader(sort = filter.sort, onSortSelected = onSortSelected, onSearchClick = onSearchClick)
         StatusTabRow(selected = filter.status, onStatusSelected = onStatusSelected)
         Box(modifier = Modifier.weight(weight = 1f).fillMaxWidth()) {
             when (state) {
@@ -138,11 +150,15 @@ internal fun LibraryScreen(
     }
 }
 
-/** The title, plus the sort control (C-J's companion decision for `LibrarySort`'s three values). */
+/**
+ * The title, the search action (Gap 1 — the only route into `:feature:search`), and the sort
+ * control (C-J's companion decision for `LibrarySort`'s three values).
+ */
 @Composable
 private fun LibraryHeader(
     sort: LibrarySort,
     onSortSelected: (LibrarySort) -> Unit,
+    onSearchClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
@@ -155,6 +171,12 @@ private fun LibraryHeader(
             style = MaterialTheme.typography.titleLarge,
             modifier = Modifier.weight(weight = 1f),
         )
+        IconButton(onClick = onSearchClick) {
+            Icon(
+                painter = painterResource(R.drawable.ic_search),
+                contentDescription = stringResource(R.string.library_search_content_description),
+            )
+        }
         Box {
             TextButton(onClick = { menuExpanded = true }) {
                 Text(text = stringResource(R.string.library_sort_button, stringResource(sort.labelRes())))
