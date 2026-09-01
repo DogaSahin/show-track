@@ -10,18 +10,15 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -97,13 +94,13 @@ internal fun AuthScreen(
         state.error?.let { error ->
             if (error.pointsAtSigningIn) {
                 // EmailOrUsernameTaken and AccountCreatedNotSignedIn both tell the user to sign
-                // in — ErrorState's action is always "Retry" and only clears the error, which is
-                // the one thing that cannot help either case. A caller-supplied label isn't part
-                // of ErrorState's signature today, and widening it is a design-system change out
-                // of scope for this fix, so these two render their own action instead.
-                AuthSignInAction(
+                // in, which "clear this error and let me try again" cannot do — ErrorState's
+                // action label is a parameter for exactly this: it lets these two point at
+                // sign-in without a second copy of ErrorState's layout.
+                ErrorState(
                     message = stringResource(error.messageRes()),
-                    onSignIn = { onModeChange(AuthMode.LOGIN) },
+                    onRetry = { onModeChange(AuthMode.LOGIN) },
+                    actionLabel = R.string.auth_mode_login,
                 )
             } else {
                 ErrorState(
@@ -227,34 +224,10 @@ private fun AuthSubmitButton(
 }
 
 /**
- * Same message-plus-action shape as [ErrorState], for the two cases whose fix is "sign in", not
- * "retry": [AuthError.EmailOrUsernameTaken] and [AuthError.AccountCreatedNotSignedIn]. Mirrors
- * ErrorState's layout rather than reusing it, since ErrorState's action is fixed to "Retry".
+ * [AuthError.EmailOrUsernameTaken] and [AuthError.AccountCreatedNotSignedIn] only — both are
+ * refusals that only signing in can fix, so the caller passes ErrorState an `actionLabel` of
+ * "Log in" instead of the default "Retry".
  */
-@Composable
-private fun AuthSignInAction(
-    message: String,
-    onSignIn: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Column(
-        modifier = modifier.fillMaxWidth(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(space = 12.dp),
-    ) {
-        Text(
-            text = message,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.error,
-            textAlign = TextAlign.Center,
-        )
-        TextButton(onClick = onSignIn) {
-            Text(text = stringResource(R.string.auth_mode_login))
-        }
-    }
-}
-
-/** [AuthError.EmailOrUsernameTaken] and [AuthError.AccountCreatedNotSignedIn] only — see [AuthSignInAction]. */
 private val AuthError.pointsAtSigningIn: Boolean
     get() = this == AuthError.EmailOrUsernameTaken || this == AuthError.AccountCreatedNotSignedIn
 
