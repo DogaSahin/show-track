@@ -19,6 +19,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigation.NavDestination
 import androidx.navigation.NavDestination.Companion.hasRoute
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -87,15 +88,21 @@ fun ShowTrackApp(authEvents: Flow<AuthEvent>) {
     // NavBackStackEntry scope, so hiltViewModel() answers from the Activity's ViewModelStore
     // either way — this is a second read of the existing StateFlow, not a second decision.
     //
-    // Gated on TWO signals, not one: `start` alone only covers the cold-start window (decision
-    // C-F) — it is decided once at launch and never re-evaluated, so it stays `Library` even
-    // after a runtime logout. `currentBackStackEntry` is what actually changes when AuthGate
-    // fires and navigates back to AuthRoute, so checking it too is what keeps the tabs hidden
-    // for a signed-out user at ANY point in the session, not just at the first screen.
+    // `start` is a ONE-SHOT emission (AppViewModel's KDoc): it fires once at launch and the flow
+    // then completes, so it is never re-evaluated and cannot be trusted as a CURRENT signal in
+    // either direction. It used to be compared with `== AppStart.Library`, which reasoned about
+    // only the Library→Auth direction (a runtime logout leaves it stuck on `Library`) and missed
+    // the opposite one entirely: an `Auth`-started session that then logs in never flips `start`
+    // to `Library`, so the tabs stayed hidden for the rest of the process — Favorites, Profile,
+    // and therefore Sign out, were unreachable after the primary registration/login path. The
+    // only thing `start` IS a reliable signal for is `Undecided` — the brief instant before the
+    // session check resolves, which is what the empty-strip guard below still needs it for.
+    // `currentBackStackEntry` is the actually-current signal: it changes the moment navigation
+    // lands on or leaves `AuthRoute`, whether that's the cold-start gate, a runtime logout via
+    // AuthGate, or a fresh login — so it alone decides the Auth/non-Auth half of this condition.
     val appViewModel: AppViewModel = hiltViewModel()
     val start by appViewModel.start.collectAsStateWithLifecycle()
-    val showNavigationTabs =
-        start == AppStart.Library && currentBackStackEntry?.destination?.hasRoute(AuthRoute::class) != true
+    val showNavigationTabs = shouldShowNavigationTabs(start, currentBackStackEntry?.destination)
 
     NavigationSuiteScaffold(
         // An empty navigationSuiteItems block does not remove the bar: NavigationSuiteScaffold
@@ -151,6 +158,32 @@ fun ShowTrackApp(authEvents: Flow<AuthEvent>) {
         }
     }
 }
+
+/**
+ * Whether the bottom navigation bar should be visible, extracted out of [ShowTrackApp] so it can
+ * be pinned by a plain JUnit test with no Hilt/Compose harness — `LibraryNavigation.kt`'s
+ * `searchNavigation` is the model for pulling a decision like this out of a composable for
+ * exactly that reason.
+ *
+ * **Pinned here:** tabs stay hidden while [start] is [AppStart.Undecided] (the empty-strip guard
+ * a cold start needs, decision C-F) and while [currentDestination] is on [AuthRoute] — signed out
+ * at any point in the session, whether that is the initial auth gate or a runtime logout. Once
+ * [start] has resolved to anything other than `Undecided` AND the current destination is not
+ * `AuthRoute`, tabs are shown — including right after a fresh login from an `Auth`-started
+ * session, which is the case that regressed before this function existed (`start` alone stayed
+ * `Auth` for the rest of the process, so tabs never appeared post-login).
+ *
+ * **NOT pinned here, and not fixed by this change:** in an `Auth`-started session the NavHost's
+ * `startDestination` is still `AuthRoute` after login, so a tab's `onClick`
+ * `popUpTo(findStartDestination().id)` targets a destination no longer on the back stack and pops
+ * nothing — tabs stack rather than swap. That's a real difference from a `Library`-started
+ * session and needs a device check; this function only decides bar VISIBILITY, not back-stack
+ * behaviour.
+ */
+internal fun shouldShowNavigationTabs(
+    start: AppStart,
+    currentDestination: NavDestination?,
+): Boolean = start != AppStart.Undecided && currentDestination?.hasRoute(AuthRoute::class) != true
 
 /**
  * The three top-level destinations the navigation suite offers. A subset of the nine routes on
