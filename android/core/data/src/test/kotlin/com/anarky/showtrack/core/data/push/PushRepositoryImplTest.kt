@@ -87,13 +87,26 @@ private class FakeApi : ShowTrackApi {
 private class FakeStore : PushRegistrationStore {
     var record: PushRegistration? = null
 
+    // Kept separate from [record] deliberately: the endpoint is DEVICE-scoped and the target id
+    // is ACCOUNT-scoped (decision C-P). A fake that derived readEndpoint() from record would make
+    // clearTarget()-vs-clear() indistinguishable and the C-P tests below vacuous.
+    private var endpoint: String? = null
+
     override suspend fun read(): PushRegistration? = record
 
     override suspend fun write(registration: PushRegistration) {
         record = registration
+        endpoint = registration.endpoint
     }
 
     override suspend fun clear() {
+        record = null
+        endpoint = null
+    }
+
+    override suspend fun readEndpoint(): String? = endpoint
+
+    override suspend fun clearTarget() {
         record = null
     }
 }
@@ -312,5 +325,37 @@ class PushRepositoryImplTest {
             repository(api, FakeStore()).onLoggedOut()
 
             assertTrue(api.deletions.isEmpty())
+        }
+
+    @Test
+    fun `logging out forgets the account's target but keeps the device's endpoint`() =
+        runTest {
+            // Clearing both is the Phase 8 bug: the next account in this session then has no
+            // endpoint to register with until a cold start makes the distributor resend it.
+            val api = FakeApi()
+            val store = FakeStore()
+            val push = repository(api, store)
+            push.register(ENDPOINT)
+
+            push.onLoggedOut()
+
+            assertNull(store.read())
+            assertEquals(ENDPOINT, store.readEndpoint())
+        }
+
+    @Test
+    fun `logging back in re-registers the remembered endpoint`() =
+        runTest {
+            val api = FakeApi()
+            val store = FakeStore()
+            val push = repository(api, store)
+            push.register(ENDPOINT)
+            push.onLoggedOut()
+            api.nextId = "target-2"
+
+            push.onLoggedIn()
+
+            assertEquals(listOf(ENDPOINT, ENDPOINT), api.registrations.map { it.target })
+            assertEquals("target-2", store.read()?.targetId)
         }
 }

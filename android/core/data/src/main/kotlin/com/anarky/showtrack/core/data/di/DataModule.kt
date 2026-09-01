@@ -6,6 +6,8 @@ import com.anarky.showtrack.core.data.push.DataStorePushRegistrationStore
 import com.anarky.showtrack.core.data.push.PushRegistrationStore
 import com.anarky.showtrack.core.data.push.PushRepository
 import com.anarky.showtrack.core.data.push.PushRepositoryImpl
+import com.anarky.showtrack.core.data.repository.AuthRepository
+import com.anarky.showtrack.core.data.repository.AuthRepositoryImpl
 import com.anarky.showtrack.core.data.repository.LibraryRepository
 import com.anarky.showtrack.core.data.repository.LibraryRepositoryImpl
 import dagger.Binds
@@ -73,4 +75,11 @@ abstract class DataModule {
      */
     @Binds
     abstract fun pushRegistrationStore(impl: DataStorePushRegistrationStore): PushRegistrationStore
+
+    /**
+     * No `@Singleton` on the method, same reasoning as the others above: the scope sits on
+     * [AuthRepositoryImpl].
+     */
+    @Binds
+    abstract fun authRepository(impl: AuthRepositoryImpl): AuthRepository
 }

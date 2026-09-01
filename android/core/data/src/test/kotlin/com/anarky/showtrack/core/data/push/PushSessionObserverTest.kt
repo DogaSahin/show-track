@@ -18,6 +18,8 @@ private class RecordingPush : PushRepository {
 
     override suspend fun unregister() = Unit
 
+    override suspend fun onLoggedIn() = Unit
+
     override suspend fun onLoggedOut() {
         loggedOutCalls++
     }

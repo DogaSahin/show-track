@@ -65,8 +65,10 @@ class PushRepositoryImpl
          * When the DELETE does fail the server row survives, and the server is what closes that
          * gap: a registration for an endpoint owned by someone else REASSIGNS the row and answers
          * 200 rather than refusing it. So this method only has to guarantee that the next
-         * `register()` actually goes out — which is exactly what the unconditional `clear()`
-         * buys, since [register] skips a POST whose endpoint is unchanged.
+         * `register()` actually goes out — which is exactly what the unconditional
+         * `store.clearTarget()` buys, since [register] skips a POST whose endpoint is unchanged.
+         * It clears only the target id, not the endpoint — see [PushRegistrationStore.clearTarget]
+         * (decision C-P).
          *
          * Why the server allows that takeover, because it looks like a hole and is not:
          * possession of the endpoint IS the device credential. The distributor mints it per app
@@ -84,7 +86,12 @@ class PushRepositoryImpl
             } catch (failure: Exception) {
                 Log.w(TAG, "could not delete the push target on logout: ${failure.javaClass.simpleName}")
             }
-            store.clear()
+            store.clearTarget()
+        }
+
+        override suspend fun onLoggedIn() {
+            val endpoint = store.readEndpoint() ?: return
+            register(endpoint)
         }
 
         /**

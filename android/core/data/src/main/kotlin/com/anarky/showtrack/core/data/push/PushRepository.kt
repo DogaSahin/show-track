@@ -46,6 +46,9 @@ interface PushRepository {
      */
     suspend fun onLoggedOut()
 
+    /** Re-registers the remembered endpoint under the account that just signed in (C-P). */
+    suspend fun onLoggedIn()
+
     /**
      * Decodes a UnifiedPush message body into the domain type, or null if it is not one of ours.
      *
