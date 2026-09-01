@@ -24,12 +24,11 @@ type-safe navigation, Hilt across the whole graph, and push over UnifiedPush sit
 screens: **`:feature:auth`** (login, four-field registration, a startup session check),
 **`:feature:library`** (status tabs, sorting, cursor paging), **`:feature:detail`** (score, progress,
 status and favourite editing, plus Add when a title is not yet tracked) and **`:feature:search`**
-(debounced search that adds a result straight into your library), alongside `:feature:profile`'s
-push-registration screen from Phase 8.9. Four of the nine feature modules —
+(debounced search that adds a result straight into your library, reachable from a search action in
+the library screen's header), alongside `:feature:profile`'s push-registration and sign-out screen
+from Phase 8.9. Four of the nine feature modules —
 `:feature:discover`, `:feature:favorites`, `:feature:groups`, `:feature:feed` — are still one-line
-placeholders. **One gap in that list: nothing in the app's own navigation opens the search screen
-yet** — see the [known gap](#known-gap-search-has-no-way-in-from-the-app-ui) in [Device
-walkthroughs](#device-walkthroughs). **Registering needs an invite code** (either your server's `REGISTRATION_CODE` or a
+placeholders. **Registering needs an invite code** (either your server's `REGISTRATION_CODE` or a
 group's invite code — see the **Settings** list under [Backend](#backend) below), and **receiving push needs a UnifiedPush
 distributor app** installed separately — see [Push needs a second app
 installed](#push-needs-a-second-app-installed--read-this-before-concluding-push-is-broken).
@@ -933,8 +932,8 @@ environment it was built in. That is a real boundary rather than an oversight, a
 exists so nobody reads "done" in the table below as "seen working". Three tiers:
 
 **Executed.** The backend suite — **734 tests**, against a real PostgreSQL schema built by the
-migrations rather than by `create_all`. The Android JVM suite — **224 tests** under
-`./gradlew testDebugUnitTest`: **195** across the app and feature/core modules (up from 117 before
+migrations rather than by `create_all`. The Android JVM suite — **234 tests** under
+`./gradlew testDebugUnitTest`: **205** across the app and feature/core modules (up from 117 before
 this phase's four new screens and their ViewModels), plus 29 in `build-logic`,
 including the Gradle TestKit runs that drive a real build into each architecture-rule violation and
 one **positive control** that must succeed, so a rule passing can be told apart from a build that
@@ -1031,15 +1030,16 @@ instructions, not a report of what happened.**
    from the stored token rather than defaulting to the login screen. *If you are asked to log in
    again, the encrypted token store (`:core:network`'s `TokenStore`) did not persist across the
    restart.*
-5. **There is no sign-out button anywhere in the app** — `AuthRepositoryImpl.logout()` exists but
-   nothing in `:feature:profile`, `:feature:library` or anywhere else calls it; the only way `AuthGate`
-   fires today is a failed token refresh. To test the login path again, clear the app's data instead
-   (Android Settings → Apps → ShowTrack → Storage → Clear storage, or uninstall/reinstall), then log
-   back in with the same email/password from the **Log in** tab. **Expect:** success, same as
-   registration. Try a wrong password. **Expect:** "That email or password isn't right." *A
-   different message here, or one that reveals whether the email exists, is the backend's
-   deliberately generic 401 (decision, see `auth_error_invalid_credentials`) being lost somewhere in
-   the client.*
+5. To test the login path again, tap **Profile → Sign out**, confirm in the dialog. **Expect:** you
+   land back on the login form, and a re-launch of the app does not restore the session — that is
+   `AuthRepository.logout()` clearing the token store, then `ProfileViewModel`'s `signedOut` flag
+   driving an explicit navigation back to `AuthRoute` (`:app`'s reactive `AuthGate` does **not**
+   fire here: it only reacts to a failed token *refresh*, not a user-initiated sign-out with a
+   still-valid session — see `ProfileViewModel.signOut`'s KDoc). Log back in with the same
+   email/password from the **Log in** tab. **Expect:** success, same as registration. Try a wrong
+   password. **Expect:** "That email or password isn't right." *A different message here, or one
+   that reveals whether the email exists, is the backend's deliberately generic 401 (decision, see
+   `auth_error_invalid_credentials`) being lost somewhere in the client.*
 
 ### 2. No empty strip under the login screen
 
@@ -1056,10 +1056,10 @@ instructions, not a report of what happened.**
 
 ### 3. The status tab row at 360dp (`StatusTabRow`)
 
-1. On the library screen (some entries added — repeat the earlier `curl` `POST /v1/library` calls
-   against your account, or add titles from the app once search is reachable — see the [known
-   gap](#known-gap-search-has-no-way-in-from-the-app-ui) below), look at the row of tabs under the
-   title: **All**, **Watching**, **Completed**, **Dropped**, **Planned**, **Paused**. **Expect:**
+1. On the library screen (some entries added — tap the search icon in the header and add a couple
+   of titles from there, or repeat the earlier `curl` `POST /v1/library` calls against your
+   account), look at the row of tabs under the title: **All**, **Watching**, **Completed**,
+   **Dropped**, **Planned**, **Paused**. **Expect:**
    it reads as an ordinary tab bar — one underline indicator under the selected tab, a bottom
    divider under the row, no chip-shaped fill behind any tab. *Two selection indicators on the
    same tab (an underline **and** a filled pill) means the row is still built from `FilterChip`
@@ -1085,18 +1085,30 @@ instructions, not a report of what happened.**
 
 ### 5. The library's offline story (decision C-B)
 
-1. With at least one entry in your library and the **All** tab selected, force-stop and relaunch
-   the app with the network **on**, then immediately turn the device into airplane mode (or disable
-   Wi-Fi/data) before or right as it opens. **Expect:** the **All** tab still shows your cached
-   titles — a cold start renders from Room before any network request completes.
-2. While still offline, tap any other status tab (e.g. **Watching**). **Expect:** an error state
-   with a working **Retry** button — *not* an empty list. *An empty list here is the dangerous
-   failure: decision C-B caches only the default view, so a filtered tab with no cache and no
-   network has nothing to show honestly except an error — rendering it as "no entries" is
-   indistinguishable from data loss.*
-3. Tap **Retry** while still offline. **Expect:** the same error state reappears rather than a
-   crash or a silent no-op. Restore the network and tap **Retry** again. **Expect:** the filtered
-   list loads normally.
+1. With at least one entry in your library, put the device into airplane mode (or disable Wi-Fi/
+   data) **first**, then force-stop and relaunch the app on the **All** tab. **Expect:** a brief
+   loading spinner, then a full-screen error state with a working **Retry** button — on **All**
+   too, not only a filtered tab. *This is not a bug to chase: `LibraryViewModel.state` combines
+   `error != null` ahead of `loading`/`entries` (`LibraryViewModel.kt:113-119`), and
+   `LibraryRepositoryImpl.applyFilter` rethrows on a failed fetch rather than swallowing it, so a
+   failed reload always wins over whatever Room holds, on every tab. The Room cache is real, but it
+   does not act as an offline fallback in this code path — see the note below for what it actually
+   does.*
+2. Tap **Retry** while still offline. **Expect:** the same error state reappears rather than a
+   crash or a silent no-op.
+3. Restore the network and tap **Retry**. **Expect:** the list loads normally on every tab.
+
+Decision C-B's actual user-visible distinction is narrower than "offline shows the cache": a
+*filtered* tab is never cached at all (only the default view is, to avoid Room becoming a
+queryable mirror of fifteen status/sort combinations — architecture rule 2), so a filtered tab that
+gets a genuine, successful, empty response from the server has nothing honest to fall back to and
+correctly renders "Nothing here". The default view's cache exists for a narrower case than offline:
+`LibraryRepositoryImpl.observeLibrary()` falls back to the cached rows only when a *successful*
+fetch returns an empty page (`LibraryRepositoryImpl.kt:97`, `paged.ifEmpty { cached }`) — a
+cold-start sentinel and a guard against a legitimately-empty response racing the cache write, not a
+network-failure path. There is no reliable device step for this distinction beyond reading the two
+files above; it does not show up as a difference in on-screen behaviour between tabs while offline,
+because both are showing the same full-screen error at that point.
 
 ### 6. Adaptive navigation on a wide layout
 
@@ -1136,18 +1148,11 @@ instructions, not a report of what happened.**
 
 ### 8. Search and add-through (`:feature:search`)
 
-<a id="known-gap-search-has-no-way-in-from-the-app-ui"></a>
-**Known gap, found while writing this walkthrough and not fixed here:** as of this phase, nothing
-in the app's UI navigates to `:feature:search`. `SearchRoute` is registered in the nav graph
-(`AppDestination.kt`) and `:feature:search` compiles and is unit-tested, but the three-tab bottom
-navigation only offers Home/Favorites/Profile (`TopLevelDestination` in `MainActivity.kt`), the
-library screen's header has only a title and a sort button, and no other screen calls
-`onNavigate(SearchRoute)`. **There is currently no way to reach this screen by tapping through the
-app.** Steps 1-4 below describe what to verify once a launch point exists (a Phase 9 follow-up); for
-now, adding a title from the device has to go through `curl` against `POST /v1/library`, as in the
-[Backend](#backend) walkthrough above.
+From the library screen, tap the search icon in the header (`LibraryHeader`) — that is the only
+launch point into `:feature:search`; it is a transient action off the library screen rather than a
+fourth bottom-navigation tab.
 
-1. Once reachable: open Search. **Expect:** an empty text field and the message "Search for a title
+1. **Expect:** an empty text field and the message "Search for a title
    to add it to your library" — not a blank screen.
 2. Type a query (e.g. "frieren"). **Expect:** after a short debounce, a scrollable list of results
    with cover, title and year/genres.
@@ -1191,19 +1196,21 @@ that the app has a Profile screen and a Detail screen to land on.
    episode alerts" state on its own, without a restart. *If it stays stuck on "install a
    distributor" after ntfy is installed and you have returned to the foreground, the
    `LifecycleResumeEffect` that re-checks on resume is not firing.*
-7. **Second-account takeover.** Sign in as account one on the device, enable push, confirm a target
-   is registered (`GET /v1/notifications/targets` with account one's token). Since there is no
-   in-app sign-out (see walkthrough 1, step 5), clear the app's data to get back to the login
-   screen, then log in as a second account on the **same physical device** and enable push there
-   too. **Expect:** the endpoint the distributor hands the app is the same one as before (it is
-   minted per app **per device**, not per account), so registering it under account two takes over
-   the existing row rather than creating a second one — `GET /v1/notifications/targets` for account
-   one now shows **no** target, and account two's shows one with a fresh `created_at` and a cleared
-   label (see the takeover paragraph in
-   [UnifiedPush](#unifiedpush--how-the-showtrack-app-itself-receives)). This exercises takeover
-   itself, which fires on re-registration regardless of whether a clean logout ever ran — it does
-   **not** exercise the separate best-effort logout `DELETE` described in the same section, since
-   clearing app data cannot call it.
+7. **A real sign-out calls the best-effort logout `DELETE`.** Sign in as account one on the device,
+   enable push, confirm a target is registered (`GET /v1/notifications/targets` with account one's
+   token). Tap **Profile → Sign out** and confirm. **Expect:** account one's target disappears from
+   `GET /v1/notifications/targets` — `AuthRepositoryImpl.logout()` calls `detachPush()` (which
+   issues `DELETE /v1/notifications/targets/{id}`) **before** clearing the token store, so this is
+   an authenticated call and the DELETE actually reaches the server, unlike the terminal-refresh
+   path the rest of this section describes. Log in as a second account on the **same physical
+   device** and enable push there too. **Expect:** the endpoint the distributor hands the app is
+   the same one as before (it is minted per app **per device**, not per account), so registering it
+   under account two takes over the row rather than creating a second one — account two's target
+   shows a fresh `created_at` and a cleared label (see the takeover paragraph in
+   [UnifiedPush](#unifiedpush--how-the-showtrack-app-itself-receives)). Takeover fires on
+   re-registration regardless of whether a clean logout ran first, so this step now exercises both
+   paths: the DELETE from a real sign-out, and the takeover a second account's registration causes
+   either way.
 
 ### 10. The push deep link, end to end
 
@@ -1745,11 +1752,11 @@ and both get worse the longer they wait.
 | 7.5b | Groups — shared feed, reviews, shared watchlist, progress comparison | done |
 | 8 | Android foundations — 16 modules, build-enforced dependency rules, design system, HTTP + token store, Room cache, repositories, navigation, Hilt | done |
 | 8.9 | Push over UnifiedPush — backend transport, Android receiver, deep-linked taps | in progress |
-| 9a | Feature modules, first pass — auth, library, detail and search screens; `media_id` filter on `GET /v1/library` | done |
+| 9a | Feature modules, first pass — auth, library, detail and search screens; `media_id` filter on `GET /v1/library` | in progress |
 | 9 | Feature modules — five of nine screens now work end to end; discover, favorites, groups and feed remain placeholders | in progress |
 | 10 | Polish and deployment | |
 
-**8.9 and 9a are both `in progress`/`done` on the code, not on the device**, and the distinction is
+**8.9 and 9a are both `in progress` on the code, not verified on the device**, and the distinction is
 the point. 8.9's acceptance criterion is "a test push notification is received and tapping it opens
 the correct title" — that has never been executed, because there is no device here. 9a's own
 acceptance criterion — "follow your own instructions from a clean directory and reach a working
