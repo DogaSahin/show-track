@@ -40,6 +40,7 @@ import com.anarky.showtrack.core.designsystem.component.EmptyState
 import com.anarky.showtrack.core.designsystem.component.ErrorState
 import com.anarky.showtrack.core.designsystem.component.LoadingState
 import com.anarky.showtrack.core.designsystem.component.MediaCard
+import com.anarky.showtrack.core.designsystem.component.StaleDataBanner
 import com.anarky.showtrack.core.designsystem.component.StatusTabRow
 import com.anarky.showtrack.core.model.LibraryEntry
 import com.anarky.showtrack.core.model.LibraryFilter
@@ -126,24 +127,34 @@ internal fun LibraryScreen(
                         modifier = Modifier.fillMaxSize(),
                     )
                 is LibraryUiState.Success ->
-                    if (state.entries.isEmpty()) {
-                        EmptyState(
-                            message =
-                                stringResource(
-                                    if (filter.isDefault) {
-                                        R.string.library_empty_default
-                                    } else {
-                                        R.string.library_empty_filtered
-                                    },
-                                ),
-                            modifier = Modifier.fillMaxSize(),
-                        )
-                    } else {
-                        LibraryList(
-                            success = state,
-                            onLoadMore = onLoadMore,
-                            onEntryClick = onEntryClick,
-                        )
+                    // `isStale` (decision C-B made real): the banner sits ABOVE the content
+                    // rather than replacing it — cached rows are still worth showing, they are
+                    // just not guaranteed current, which is exactly what the banner says.
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        if (state.isStale) {
+                            StaleDataBanner(onRetry = onRetry)
+                        }
+                        Box(modifier = Modifier.weight(weight = 1f).fillMaxWidth()) {
+                            if (state.entries.isEmpty()) {
+                                EmptyState(
+                                    message =
+                                        stringResource(
+                                            if (filter.isDefault) {
+                                                R.string.library_empty_default
+                                            } else {
+                                                R.string.library_empty_filtered
+                                            },
+                                        ),
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            } else {
+                                LibraryList(
+                                    success = state,
+                                    onLoadMore = onLoadMore,
+                                    onEntryClick = onEntryClick,
+                                )
+                            }
+                        }
                     }
             }
         }

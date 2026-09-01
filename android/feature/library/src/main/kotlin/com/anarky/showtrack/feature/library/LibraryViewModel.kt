@@ -46,11 +46,26 @@ class LibraryViewModel
         private val mutableFilter = MutableStateFlow(LibraryFilter())
         val filter: StateFlow<LibraryFilter> = mutableFilter.asStateFlow()
 
-        // Whether a full reload (init, a tab switch, a sort change, or a retry) is in flight.
-        // Starts true: `init` below kicks one off before this class finishes constructing, and a
-        // collector that subscribes to `state` before that completes must see Loading, not a
-        // misleadingly empty Success.
-        private val mutableLoading = MutableStateFlow(true)
+        // `loading` and `hasLoaded` folded into one state object rather than two separate
+        // MutableStateFlows: `combine` only has typed overloads up to five flows, and this class
+        // already uses all five (repository.observeLibrary(), loading/hasLoaded, loadingMore,
+        // error, loadMoreError) — a sixth would force the vararg/Array overload, which loses the
+        // per-flow types and turns the lambda's parameters into `Any?`. Folding avoids that
+        // without reaching for a bespoke combine helper.
+        //
+        // `loading`: whether a full reload (init, a tab switch, a sort change, or a retry) is in
+        // flight. Starts true: `init` below kicks one off before this class finishes
+        // constructing, and a collector that subscribes to `state` before that completes must see
+        // Loading, not a misleadingly empty Success.
+        //
+        // `hasLoaded`: whether a full reload has ever SUCCEEDED for the CURRENTLY selected filter.
+        // Starts false, flips true only in `guard`'s success branch (never on failure — see its
+        // KDoc), and is reset back to false in `selectStatus`/`selectSort` because a genuinely new
+        // filter selection has not loaded anything yet either, even though some earlier selection
+        // may have. It is what lets [state] tell "never loaded" (fall back to cache) apart from
+        // "reload failed after a real load" (show the error, not a lie about freshness) — see
+        // [state]'s KDoc for the full precedence this drives.
+        private val mutableLoadState = MutableStateFlow(LoadState(loading = true, hasLoaded = false))
 
         // Whether a `loadMore()` page fetch is in flight — a footer spinner under an otherwise
         // complete list, never a reason to blank the screen, hence it is a field on `Success`
@@ -80,7 +95,7 @@ class LibraryViewModel
          * library table (the sync and airing jobs both do this), for a screen nobody is looking
          * at. `WhileSubscribed(5_000)` still bridges a configuration change — which would
          * otherwise restart the combine and blink the list — without paying that cost once the
-         * screen is genuinely gone. `mutableLoading`, `mutableLoadingMore`, `mutableError` and
+         * screen is genuinely gone. `mutableLoadState`, `mutableLoadingMore`, `mutableError` and
          * `mutableLoadMoreError` are cheap, subscription-less `MutableStateFlow`s with no upstream
          * of their own; only the Room-backed source actually benefits from — and needs — the gate.
          *
@@ -93,27 +108,57 @@ class LibraryViewModel
          * less `MutableStateFlow`, so this is the one exception, and it is the one exception on
          * purpose.
          *
-         * [mutableError] takes priority over [mutableLoading] in the `when` below on purpose: a
-         * reload that just failed always finishes by flipping `mutableLoading` back to `false`
-         * (see [guard]), and if a stale `Error` outranked a fresh `false` loading flag the screen
-         * would flash back to the OLD error for one frame before the new attempt's `Loading` (or
-         * a genuine failure) took over. [applyCurrentFilter] clears [mutableError] itself, before
-         * it ever launches a coroutine, which is what actually prevents that flash (a retry no
-         * longer shows the stale error for the round trip's whole duration — see
+         * [mutableError] takes priority over [mutableLoadState]'s `loading` in the `when` below on
+         * purpose: a reload that just failed always finishes by flipping `loading` back to
+         * `false` (see [guard]), and if a stale `Error` outranked a fresh `false` loading flag the
+         * screen would flash back to the OLD error for one frame before the new attempt's
+         * `Loading` (or a genuine failure) took over. [applyCurrentFilter] clears [mutableError]
+         * itself, before it ever launches a coroutine, which is what actually prevents that flash
+         * (a retry no longer shows the stale error for the round trip's whole duration — see
          * [applyCurrentFilter]'s KDoc) — the ordering in `guard` is a second line of defence, not
          * the fix.
+         *
+         * Decision C-B, made real: an error wins UNLESS this is the default filter, nothing has
+         * loaded yet for it ([LoadState.hasLoaded] is false), and there are cached [entries] to
+         * show — in which case the cache renders as `Success(isStale = true)` instead. Both
+         * conditions are load-bearing, not belt-and-braces:
+         *
+         * - Dropping `hasLoaded` would mean a reload that fails AFTER a genuine success falls back
+         *   to the (now possibly outdated) rows instead of telling the user the refresh failed —
+         *   silently lying about freshness.
+         * - Dropping the `isDefault` check (via [mutableFilter], read directly here rather than
+         *   folded into the `combine` — a UI-facing selection with no upstream of its own, see
+         *   [filter]'s KDoc) would hit the stale-rows trap: `LibraryRepositoryImpl.applyFilter`
+         *   reverts its OWN internal filter on a throw but [mutableFilter] here does NOT (by
+         *   design — see [applyCurrentFilter]'s KDoc), so a FAILED switch away from the default
+         *   filter still has `entries` holding the default filter's rows and (if that switch was
+         *   the very first thing to fail) `hasLoaded` still false. Without this check those rows
+         *   would render, silently, under the new filter's tab.
+         *
+         * Reading `mutableFilter.value` directly here (rather than as a sixth `combine` source) is
+         * safe because every path that changes it — [selectStatus], [selectSort] — synchronously
+         * follows that write with a write to [mutableLoadState] or [mutableError] before this
+         * lambda can next run, so the value this lambda observes is never stale relative to the
+         * `combine` emission that triggered it.
          */
         val state: StateFlow<LibraryUiState> =
             combine(
                 repository.observeLibrary(),
-                mutableLoading,
+                mutableLoadState,
                 mutableLoadingMore,
                 mutableError,
                 mutableLoadMoreError,
-            ) { entries, loading, loadingMore, error, pageError ->
+            ) { entries, loadState, loadingMore, error, pageError ->
+                val showCacheInstead =
+                    error != null &&
+                        mutableFilter.value.isDefault &&
+                        !loadState.hasLoaded &&
+                        entries.isNotEmpty()
                 when {
+                    showCacheInstead ->
+                        LibraryUiState.Success(entries = entries, loadingMore = loadingMore, isStale = true)
                     error != null -> LibraryUiState.Error(error)
-                    loading -> LibraryUiState.Loading
+                    loadState.loading -> LibraryUiState.Loading
                     else -> LibraryUiState.Success(entries = entries, loadingMore = loadingMore, pageError = pageError)
                 }
             }.stateIn(
@@ -128,11 +173,17 @@ class LibraryViewModel
 
         fun selectStatus(status: UserMediaStatus?) {
             mutableFilter.value = mutableFilter.value.copy(status = status)
+            // A newly-selected filter has not loaded anything yet, even though the PREVIOUSLY
+            // selected one may have — see mutableLoadState's and `state`'s KDoc for why this is
+            // what makes the stale-rows trap (a failed switch showing the OLD filter's cached
+            // rows under the NEW filter's tab) actually impossible rather than merely unlikely.
+            mutableLoadState.value = mutableLoadState.value.copy(hasLoaded = false)
             applyCurrentFilter()
         }
 
         fun selectSort(sort: LibrarySort) {
             mutableFilter.value = mutableFilter.value.copy(sort = sort)
+            mutableLoadState.value = mutableLoadState.value.copy(hasLoaded = false)
             applyCurrentFilter()
         }
 
@@ -177,8 +228,8 @@ class LibraryViewModel
          * this again with the SAME [mutableFilter] value, which is exactly what should happen.
          *
          * [mutableError] and [mutableLoadMoreError] are both cleared HERE, synchronously, before
-         * [mutableLoading] is even set — not left to `guard`'s success path to clear later. A
-         * previous version of this function only set `mutableLoading = true` and left the stale
+         * [mutableLoadState]'s `loading` is even set — not left to `guard`'s success path to clear
+         * later. A previous version of this function only set the loading flag and left the stale
          * `mutableError` in place until the fetch resolved; since `error != null` outranks
          * `loading` in [state]'s `when`, that meant a retry (or a tab switch made while already
          * showing an error) displayed the IDENTICAL, now-stale `ErrorState` for the entire round
@@ -190,7 +241,7 @@ class LibraryViewModel
         private fun applyCurrentFilter() {
             mutableError.value = null
             mutableLoadMoreError.value = null
-            mutableLoading.value = true
+            mutableLoadState.value = mutableLoadState.value.copy(loading = true)
             guard(errorSink = mutableError, trackLoading = true) { repository.applyFilter(mutableFilter.value) }
         }
 
@@ -212,12 +263,18 @@ class LibraryViewModel
          * failure channels genuinely independent instead of merely "usually fine".
          *
          * [trackLoading] is per-CALL, not a class-wide flag: [loadMore] also runs through this
-         * function but must never touch [mutableLoading]. Both a filter change and a page fetch
+         * function but must never touch [mutableLoadState]. Both a filter change and a page fetch
          * can be in flight at once only in theory (the UI never shows a scrollable list while
-         * [mutableLoading] is true), but nothing here should rely on the UI to keep that promise —
-         * if `finally` unconditionally cleared [mutableLoading], a `loadMore()` coroutine that
+         * [mutableLoadState]'s `loading` is true), but nothing here should rely on the UI to keep
+         * that promise — if `finally` unconditionally cleared it, a `loadMore()` coroutine that
          * happens to resolve before a concurrent filter change's fetch would flip the full-screen
          * spinner off while that reload is still genuinely in flight.
+         *
+         * `hasLoaded` is set true ONLY on the success path, before `finally` clears `loading` —
+         * never in `catch` or unconditionally in `finally`. That asymmetry is what [state] relies
+         * on to fall back to the cache on a failure that has NEVER been preceded by a success
+         * (`hasLoaded` still false), while a failure AFTER a real success leaves `hasLoaded = true`
+         * untouched and [state] shows the error instead — see [state]'s KDoc.
          */
         @Suppress("TooGenericExceptionCaught")
         private fun guard(
@@ -229,15 +286,22 @@ class LibraryViewModel
                 try {
                     block()
                     errorSink.value = null
+                    if (trackLoading) mutableLoadState.value = mutableLoadState.value.copy(hasLoaded = true)
                 } catch (cancellation: CancellationException) {
                     throw cancellation
                 } catch (failure: Exception) {
                     errorSink.value = failure
                 } finally {
-                    if (trackLoading) mutableLoading.value = false
+                    if (trackLoading) mutableLoadState.value = mutableLoadState.value.copy(loading = false)
                 }
             }
         }
+
+        /** See [mutableLoadState]'s KDoc for why `loading` and `hasLoaded` are folded together. */
+        private data class LoadState(
+            val loading: Boolean,
+            val hasLoaded: Boolean,
+        )
 
         private companion object {
             const val SUBSCRIPTION_TIMEOUT_MS = 5_000L

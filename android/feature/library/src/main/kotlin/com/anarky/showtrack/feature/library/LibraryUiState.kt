@@ -33,6 +33,9 @@ sealed interface LibraryUiState {
         val entries: List<LibraryEntry>,
         val loadingMore: Boolean,
         val pageError: Throwable? = null,
+        /** Rendered from the Room cache because the network has not answered yet. Drives the
+         *  banner - stale rows must never present as live ones. */
+        val isStale: Boolean = false,
     ) : LibraryUiState
 
     data class Error(
