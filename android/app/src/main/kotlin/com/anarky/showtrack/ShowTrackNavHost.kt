@@ -36,15 +36,23 @@ import kotlinx.coroutines.flow.Flow
  * destination whenever the incoming graph is unequal to the one already installed
  * (`NavGraph.equals` compares `startDestinationId`). `AppViewModel.markSignedIn()` is what turns
  * that machinery into the fix for the `popUpTo` bug: it flips `start` from `Auth` to `Library`,
- * this `when` re-declares `startDestination = LibraryRoute`, and the graph that gets re-supplied
- * genuinely has `LibraryRoute` as its start destination from then on — for the rest of the
- * `AppViewModel` instance's life, Activity recreation included, since `start` is
- * `viewModelScope`-held and survives it while any composed `NavGraph` does not. A prior version of
- * this fix mutated the already-built graph's `startDestinationId` directly
- * (`graph.setStartDestination(...)`) instead of moving `start` — that mutation was invisible to a
- * FRESH composition, so a rotation right after login silently regressed to the exact bug this
- * exists to fix. Moving `start` is what makes the graph's declared shape, not a graph object's
- * mutable state, the source of truth.
+ * [startDestinationFor] then answers `LibraryRoute`, and the graph that gets re-supplied genuinely
+ * has `LibraryRoute` as its start destination from then on — for the rest of the `AppViewModel`
+ * instance's life, Activity recreation included, since `start` is `viewModelScope`-held and
+ * survives it while any composed `NavGraph` does not. A prior version of this fix mutated the
+ * already-built graph's `startDestinationId` directly (`graph.setStartDestination(...)`) instead
+ * of moving `start` — that mutation was invisible to a FRESH composition, so a rotation right
+ * after login silently regressed to the exact bug this exists to fix. Moving `start` is what makes
+ * the graph's declared shape, not a graph object's mutable state, the source of truth.
+ *
+ * ONE call to [ShowTrackGraph] below, not one per decided [AppStart] value — a review round (task
+ * 9b.0, review round 2, finding 1) caught that two call sites meant the `Auth`→`Library` promotion
+ * disposed an entire `NavHost` subtree and composed a fresh one (Compose treats each `when` branch
+ * as a distinct call site for positional-memoization purposes), which is a bigger, less predictable
+ * operation than the one `NavController.setGraph`'s own graph-inequality check already performs on
+ * its own, and made the mechanism harder to test honestly — `ShowTrackGraphRebuildTest` can only
+ * faithfully model what production actually does when production itself has one reactive call
+ * site, not two static ones.
  */
 @Composable
 internal fun ShowTrackNavHost(
@@ -57,22 +65,28 @@ internal fun ShowTrackNavHost(
 
     when (val start = appViewModel.start.collectAsStateWithLifecycle().value) {
         AppStart.Undecided -> LoadingState(modifier = modifier)
-        AppStart.Auth ->
+        else ->
             ShowTrackGraph(
                 navController = navController,
-                startDestination = AuthRoute,
-                onSignedIn = appViewModel::markSignedIn,
-                modifier = modifier,
-            )
-        AppStart.Library ->
-            ShowTrackGraph(
-                navController = navController,
-                startDestination = LibraryRoute,
+                startDestination = startDestinationFor(start),
                 onSignedIn = appViewModel::markSignedIn,
                 modifier = modifier,
             )
     }
 }
+
+/**
+ * The single source of truth for which route [ShowTrackGraph]'s `NavHost` declares as its start
+ * destination. Pulled out to a plain, non-`@Composable` function — rather than left inline in the
+ * `when` above — specifically so `ShowTrackGraphRebuildTest` can call the EXACT function production
+ * uses instead of a hand-rolled stand-in for it (task 9b.0, review round 2, finding 1's "secondary"
+ * point: the test used to model a simpler mechanism than production actually has).
+ *
+ * [AppStart.Undecided] is a valid input only in the sense that the compiler requires
+ * exhaustiveness; [ShowTrackNavHost] never actually calls this for it — that value renders
+ * [LoadingState] instead of building a graph at all.
+ */
+internal fun startDestinationFor(start: AppStart): AppRoute = if (start == AppStart.Library) LibraryRoute else AuthRoute
 
 @Composable
 private fun ShowTrackGraph(

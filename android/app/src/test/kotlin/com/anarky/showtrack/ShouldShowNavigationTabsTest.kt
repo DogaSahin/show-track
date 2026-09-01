@@ -21,8 +21,13 @@ import org.robolectric.annotation.Config
  * Regression guard for the bug where the bottom nav bar stayed hidden for an entire process after
  * a logged-out cold start: `shouldShowNavigationTabs` used to compare `start == AppStart.Library`,
  * which is true only for a `Library`-started session and stays false forever once a session starts
- * on `AuthRoute` and then logs in — `start` is a one-shot emission (`AppViewModel`'s KDoc) and is
- * never re-evaluated. This pins the fixed condition directly, without composing `ShowTrackApp`
+ * on `AuthRoute` and then logs in — `start` was a one-shot emission at the time and never
+ * re-evaluated. That shape is gone now (task 9b.0, review round 1: `AppViewModel.markSignedIn()`
+ * promotes `start` from `Auth` to `Library` on login, for an unrelated bug), but the fix below did
+ * not change with it: `start`'s promotion is deliberately ONE-WAY, so it still cannot serve as
+ * THIS condition's signal in the Library→Auth direction — see `MainActivity.kt`'s own comment
+ * above `shouldShowNavigationTabs`'s call site for why `currentBackStackEntry` remains the one
+ * this reads. This pins the fixed condition directly, without composing `ShowTrackApp`
  * (which needs a Hilt harness this module does not have) — same Robolectric-NavController setup
  * `ShowTrackGraphRoutingTest`/`AuthNavigationTest` already use, so a real `NavDestination` (which
  * needs a `Context` to parse its route) is available to pass in.
@@ -60,7 +65,7 @@ class ShouldShowNavigationTabsTest {
     /**
      * `(Undecided, null)` is the MOST-executed cell of the nine: it's the real first composition
      * pass of every single launch, cold or warm — `start` reads `Undecided` before `AppViewModel`'s
-     * one-shot flow has emitted, and no graph exists yet for `currentBackStackEntryAsState()` to
+     * session check has resolved, and no graph exists yet for `currentBackStackEntryAsState()` to
      * read a destination from, so it's still at its `collectAsState(null)` seed. Every other cell
      * in this file is driven off a real, already-built `NavHostController`; this one — despite being
      * the one everything else starts from — had no test at all before this was added. `(Undecided,
@@ -108,8 +113,11 @@ class ShouldShowNavigationTabsTest {
         val controller = controllerWith { authOnlyGraph() }
         controller.routeShowTrackNavigation(LibraryRoute)
 
-        // `start` never flips off `Auth` for the rest of the process (it is one-shot), yet the
-        // tabs must now be visible: the current destination is what changed.
+        // This call passes no onSignedIn (the default no-op), so `start` genuinely stays
+        // AppStart.Auth right here — but even in production, where ShowTrackGraph DOES wire
+        // onSignedIn, shouldShowNavigationTabs still would not read the promotion: it never
+        // looks past Undecided vs. decided, in either direction (see MainActivity.kt). The
+        // current destination is what changed, and that is what this function reads.
         assertTrue(shouldShowNavigationTabs(AppStart.Auth, controller.currentDestination))
     }
 

@@ -89,18 +89,20 @@ fun ShowTrackApp(authEvents: Flow<AuthEvent>) {
     // NavBackStackEntry scope, so hiltViewModel() answers from the Activity's ViewModelStore
     // either way — this is a second read of the existing StateFlow, not a second decision.
     //
-    // `start` is a ONE-SHOT emission (AppViewModel's KDoc): it fires once at launch and the flow
-    // then completes, so it is never re-evaluated and cannot be trusted as a CURRENT signal in
-    // either direction. It used to be compared with `== AppStart.Library`, which reasoned about
-    // only the Library→Auth direction (a runtime logout leaves it stuck on `Library`) and missed
-    // the opposite one entirely: an `Auth`-started session that then logs in never flips `start`
-    // to `Library`, so the tabs stayed hidden for the rest of the process — Favorites, Profile,
-    // and therefore Sign out, were unreachable after the primary registration/login path. The
-    // only thing `start` IS a reliable signal for is `Undecided` — the brief instant before the
-    // session check resolves, which is what the empty-strip guard below still needs it for.
-    // `currentBackStackEntry` is the actually-current signal: it changes the moment navigation
-    // lands on or leaves `AuthRoute`, whether that's the cold-start gate, a runtime logout via
-    // AuthGate, or a fresh login — so it alone decides the Auth/non-Auth half of this condition.
+    // `start` is NOT a one-shot emission any more (task 9b.0, review round 1): `markSignedIn()`
+    // moves it from `Auth` to `Library` once login succeeds, which is what fixed the popUpTo bug
+    // — see `ShowTrackNavHost`'s KDoc. But that move is deliberately ONE-WAY, and that is what
+    // still matters here: `start` never reverts to `Auth` on a runtime logout, so it remains
+    // unable to serve as a CURRENT signal in the Library→Auth direction — a signed-out user mid-
+    // session would still read `start == AppStart.Library` forever, exactly the failure this
+    // condition used to have when it compared `== AppStart.Library` directly (Favorites, Profile,
+    // and therefore Sign out, unreachable — wrong in that one direction only). The ONLY thing
+    // `start` is a reliable signal for, in EITHER direction, is `Undecided` — the brief instant
+    // before the session check resolves, which is what the empty-strip guard below still needs it
+    // for. `currentBackStackEntry` is the actually-current signal: it changes the moment
+    // navigation lands on or leaves `AuthRoute`, whether that's the cold-start gate, a runtime
+    // logout via AuthGate, or a fresh login — so it alone decides the Auth/non-Auth half of this
+    // condition, `start`'s new promotion notwithstanding.
     val appViewModel: AppViewModel = hiltViewModel()
     val start by appViewModel.start.collectAsStateWithLifecycle()
     val showNavigationTabs = shouldShowNavigationTabs(start, currentBackStackEntry?.destination)

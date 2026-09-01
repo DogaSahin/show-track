@@ -12,6 +12,7 @@ import com.anarky.showtrack.core.navigation.DetailRoute
 import com.anarky.showtrack.core.navigation.FavoritesRoute
 import com.anarky.showtrack.core.navigation.LibraryRoute
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -49,6 +50,25 @@ class ShowTrackGraphRoutingTest {
         controller.routeShowTrackNavigation(LibraryRoute)
 
         assertEquals(listOf(null, LibraryRoute::class.qualifiedName), controller.backStackRoutes())
+    }
+
+    /**
+     * The concrete hole a review round found by grep (task 9b.0, review round 2, finding 1): no
+     * test anywhere passed a non-default `onSignedIn`, so the parameter's default (`{}`) was the
+     * only thing every existing test ever exercised — deleting the single `onSignedIn()` call in
+     * `routeShowTrackNavigation`'s `LibraryRoute` branch left every other test green. This is the
+     * direct, minimal proof that the wiring is real: a spy in place of `AppViewModel::markSignedIn`,
+     * asserted fired. Confirmed to fail when that call is removed, then restored — see this task's
+     * report.
+     */
+    @Test
+    fun `routing to LibraryRoute fires onSignedIn`() {
+        val controller = controllerWith { authOnlyGraph() }
+        var signedIn = false
+
+        controller.routeShowTrackNavigation(LibraryRoute, onSignedIn = { signedIn = true })
+
+        assertTrue(signedIn)
     }
 
     @Test
