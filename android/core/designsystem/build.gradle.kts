@@ -16,7 +16,15 @@ android {
 }
 
 dependencies {
-    implementation(project(":core:model"))
+    // `api`, not `implementation`: `MediaSource.displayName()` (component/MediaSourcePresentation.kt)
+    // is PUBLIC and takes a `:core:model` type as its receiver — the first public API surface in
+    // this module to name one (`UserMediaStatus.label()` stays `internal`, so it never needed this).
+    // With `implementation` this only compiled because every consumer today also declares
+    // `:core:data`, which re-exports `:core:model` with `api` of its own — a module depending on
+    // `:core:designsystem` alone could not have called `displayName()`. `ModuleRules.apiLeakOf`
+    // does not block this: it only forbids re-exporting `:core:network`/`:core:database`, the two
+    // modules the "Room is a cache" rule cares about, not `:core:model`.
+    api(project(":core:model"))
 
     // AsyncImage in MediaCard. coil-network-okhttp, not coil-network-ktor3: shares the OkHttp
     // engine Task 4 brings in for Retrofit rather than pulling in a second HTTP client.
