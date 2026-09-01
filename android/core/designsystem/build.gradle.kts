@@ -16,14 +16,16 @@ android {
 }
 
 dependencies {
-    // `api`, not `implementation`: `MediaSource.displayName()` (component/MediaSourcePresentation.kt)
-    // is PUBLIC and takes a `:core:model` type as its receiver — the first public API surface in
-    // this module to name one (`UserMediaStatus.label()` stays `internal`, so it never needed this).
-    // With `implementation` this only compiled because every consumer today also declares
-    // `:core:data`, which re-exports `:core:model` with `api` of its own — a module depending on
-    // `:core:designsystem` alone could not have called `displayName()`. `ModuleRules.apiLeakOf`
-    // does not block this: it only forbids re-exporting `:core:network`/`:core:database`, the two
-    // modules the "Room is a cache" rule cares about, not `:core:model`.
+    // `api`, not `implementation`: this module's public composables have always named `:core:model`
+    // types in their signatures — `MediaCard(media: Media, status: UserMediaStatus?, …)`,
+    // `StatusTab(status: UserMediaStatus, …)`, `StatusTabRow(selected: UserMediaStatus?, …)` — and
+    // `MediaSource.displayName()` (component/MediaSourcePresentation.kt) is one more. `api` is what
+    // this dependency has always actually been; `implementation` only compiled because every
+    // consumer today also declares `:core:data`, which re-exports `:core:model` with `api` of its
+    // own — a module depending on `:core:designsystem` alone could not have called any of them.
+    // `ModuleRules.apiLeakOf` does not block this: it only forbids re-exporting
+    // `:core:network`/`:core:database`, the two modules the "Room is a cache" rule cares about, not
+    // `:core:model`.
     api(project(":core:model"))
 
     // AsyncImage in MediaCard. coil-network-okhttp, not coil-network-ktor3: shares the OkHttp
