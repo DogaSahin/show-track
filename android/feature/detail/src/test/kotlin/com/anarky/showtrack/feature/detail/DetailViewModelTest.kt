@@ -76,6 +76,22 @@ class DetailViewModelTest {
         }
 
     @Test
+    fun `the mediaId from the route reaches both repositories`() =
+        runTest(dispatcher) {
+            // The central plumbing change this task made: DetailNavigation no longer decodes
+            // mediaId itself, DetailViewModel does via SavedStateHandle.toRoute. Both fakes ignore
+            // their argument in every other test, so this is the one place a regression to a
+            // hard-coded or empty id would actually be caught.
+            val media = FakeMedia()
+            val library = FakeLibrary(entry = null)
+            DetailViewModel(savedState("media-42"), media, library)
+            advanceUntilIdle()
+
+            assertEquals("media-42", media.lastMediaId)
+            assertEquals("media-42", library.lastEntryForMediaId)
+        }
+
+    @Test
     fun `a title already in the library loads with its entry`() =
         runTest(dispatcher) {
             val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), FakeLibrary(entry = ENTRY))
@@ -142,6 +158,21 @@ class DetailViewModelTest {
 
             // Progress must not ride along: the user changed one thing.
             assertEquals(LibraryPatch(score = ScoreChange.Set(BigDecimal("9.0"))), library.lastPatch)
+        }
+
+    @Test
+    fun `clearing the score sends the unrate leg of the tri-state`() =
+        runTest(dispatcher) {
+            // The third wire state score's own KDoc calls out: absent means "leave it", this
+            // means "unrate it" — the one leg of the tri-state with no assertion until now.
+            val library = FakeLibrary(entry = ENTRY)
+            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), library)
+            advanceUntilIdle()
+
+            viewModel.clearScore()
+            advanceUntilIdle()
+
+            assertEquals(LibraryPatch(score = ScoreChange.Clear), library.lastPatch)
         }
 
     @Test
@@ -306,11 +337,15 @@ class DetailViewModelTest {
     ) : MediaRepository {
         override val searchResults: StateFlow<SearchResults> = MutableStateFlow(SearchResults.EMPTY)
 
+        var lastMediaId: String? = null
+            private set
+
         override suspend fun search(query: String): Unit = error("not exercised by DetailViewModel")
 
         override suspend fun loadMoreResults(): Unit = error("not exercised by DetailViewModel")
 
         override suspend fun detail(mediaId: String): Media {
+            lastMediaId = mediaId
             detailFailure?.let { throw it }
             return MEDIA
         }
@@ -333,6 +368,9 @@ class DetailViewModelTest {
             private set
 
         var lastAddExternalId: String? = null
+            private set
+
+        var lastEntryForMediaId: String? = null
             private set
 
         override fun observeLibrary() = error("not exercised by DetailViewModel")
@@ -364,7 +402,10 @@ class DetailViewModelTest {
             return updateResult
         }
 
-        override suspend fun entryForMedia(mediaId: String): LibraryEntry? = entry
+        override suspend fun entryForMedia(mediaId: String): LibraryEntry? {
+            lastEntryForMediaId = mediaId
+            return entry
+        }
     }
 
     private companion object {

@@ -43,9 +43,11 @@ import java.math.BigDecimal
 
 private val PosterWidth = 120.dp
 
-// 0.0 through 10.0 in half-point steps, matching NUMERIC(3,1) server-side (backend decision 4-N)
-// — the same range and step ScoreChip already formats via BigDecimal.toPlainString().
-private val ScoreOptions: List<BigDecimal> = (0..20).map { half -> BigDecimal(half).divide(BigDecimal(2)).setScale(1) }
+// 1.0 through 10.0 in half-point steps. The floor is 1.0, not 0.0: the server's `score_range`
+// CHECK constraint (backend/app/library/models.py) rejects anything below it with a 422 —
+// NUMERIC(3,1) (backend decision 4-N) only fixes the PRECISION, not the range. "Unrated" already
+// has its own affordance via clearScore(), so 0 was never doing double duty here.
+private val ScoreOptions: List<BigDecimal> = (2..20).map { half -> BigDecimal(half).divide(BigDecimal(2)).setScale(1) }
 
 /**
  * The stateful entry point. `hiltViewModel()` is the only line here that touches DI — the same
@@ -328,7 +330,8 @@ private fun StatusSelector(
             StatusTab(
                 status = status,
                 selected = status == selected,
-                onClick = { if (!saving) onStatusSelected(status) },
+                onClick = { onStatusSelected(status) },
+                enabled = !saving,
             )
         }
     }

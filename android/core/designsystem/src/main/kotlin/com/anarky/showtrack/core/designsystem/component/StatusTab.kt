@@ -16,17 +16,24 @@ import com.anarky.showtrack.core.model.UserMediaStatus
  * A single selectable filter tab for one [UserMediaStatus] — e.g. filtering the library screen
  * down to "Watching". This is a filter control, not a badge: it is not reused inside [MediaCard],
  * whose status indicator is read-only.
+ *
+ * [enabled] defaults to `true` so every existing call site is unaffected; a caller mid-save
+ * (`:feature:detail`'s status selector, disabled while an edit is in flight) passes `false` so the
+ * chip is *visibly* non-interactive rather than merely swallowing the tap in its `onClick`, which
+ * would look tappable while silently doing nothing.
  */
 @Composable
 fun StatusTab(
     status: UserMediaStatus,
     selected: Boolean,
     onClick: () -> Unit,
+    enabled: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     FilterChip(
         selected = selected,
         onClick = onClick,
+        enabled = enabled,
         label = { Text(text = status.label(), style = MaterialTheme.typography.labelLarge) },
         modifier = modifier,
     )
