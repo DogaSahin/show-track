@@ -1,0 +1,25 @@
+# Overrides on top of detekt's defaults (buildUponDefaultConfig = true). Kept deliberately small:
+# every entry here is a rule that is wrong for this codebase, not a rule we found inconvenient.
+naming:
+  FunctionNaming:
+    # @Composable functions are PascalCase by Compose convention, which detekt's default
+    # lowerCamelCase pattern rejects.
+    ignoreAnnotated: ['Composable']
+
+style:
+  ReturnCount:
+    # A rule predicate is a list of guard clauses — "not my business, return null" repeated until
+    # something matches — and that is the readable shape for it. detekt's default limit of 2 would
+    # be satisfied only by nesting those guards, which makes ModuleRules strictly harder to read.
+    # `excludeGuardClauses` is detekt's own answer to exactly this, so the early returns stop
+    # counting while a genuinely tangled function with returns scattered through it still trips.
+    excludeGuardClauses: true
+  MagicNumber:
+    # Named top-level constants (theme colours, dimensions) are the fix MagicNumber asks for;
+    # flagging the constant's own literal has nowhere left to go.
+    ignorePropertyDeclaration: true
+  UnusedPrivateMember:
+    # A private @Preview-only composable is never called from application code — only rendered
+    # by tooling — so without this it reads as dead code. Every :feature:* module gains previews
+    # in Phase 9; a per-call-site @Suppress does not scale the way one config entry does.
+    ignoreAnnotated: ['Preview']

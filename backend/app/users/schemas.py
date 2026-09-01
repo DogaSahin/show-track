@@ -15,7 +15,14 @@ class RegisterRequest(BaseModel):
     # salt or memory cost), not just with input size. Argon2 itself has no input-length limit,
     # verified by hashing and verifying a 1 MB password successfully.
     password: str = Field(min_length=8, max_length=256)
-    invite_code: str
+    # Bounded to match JoinGroupRequest, and for a reason that only arrived with Phase 7.5a:
+    # this field used to be compared against one server secret, and is now looked up in a
+    # table after invites.normalise_code builds two full copies of it. Unbounded input on an
+    # UNAUTHENTICATED endpoint with no rate limiting anywhere is work an anonymous caller gets
+    # to choose the size of. No pattern, for JoinGroupRequest's reason: normalisation exists to
+    # accept a hyphenated or lowercase code, so rejecting one here would 422 the very input it
+    # was written for. 64 also fits a `openssl rand -hex 32` REGISTRATION_CODE exactly.
+    invite_code: str = Field(min_length=1, max_length=64)
 
 
 class LoginRequest(BaseModel):

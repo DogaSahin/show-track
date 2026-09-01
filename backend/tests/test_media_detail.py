@@ -48,6 +48,9 @@ class CountingProvider(MediaProvider):
         self.calls += 1
         return self._result
 
+    async def fetch_similar(self, external_id: str):
+        raise AssertionError("not used in these tests")
+
 
 async def test_get_or_create_inserts_a_row_from_provider_data(db_session):
     provider = CountingProvider(WITCHER)

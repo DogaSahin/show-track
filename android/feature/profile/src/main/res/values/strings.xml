@@ -1,0 +1,21 @@
+<resources>
+    <!-- Notification channel, shown in the system's per-app notification settings. -->
+    <string name="push_channel_airing_name">Airing episodes</string>
+    <string name="push_channel_airing_description">Alerts when an episode you follow is about to air.</string>
+
+    <!--
+        The prompt that must never be a silent failure. It names ntfy specifically: "install a
+        UnifiedPush distributor" is accurate and unactionable, while a product name is something
+        a person can search for. ntfy is named because it is what this deployment's backend
+        publishes through (backend decision 6-A), so it is the one that is certain to work.
+    -->
+    <string name="push_no_distributor_title">Push needs one more app</string>
+    <string name="push_no_distributor_body">ShowTrack delivers episode alerts over UnifiedPush, which needs a distributor app installed. Install ntfy from F-Droid or Google Play, then come back here.</string>
+    <string name="push_available_title">Turn on episode alerts</string>
+    <string name="push_registered_title">Episode alerts are on</string>
+    <string name="push_enable">Use this app</string>
+    <string name="push_disable">Turn off</string>
+    <string name="push_permission_body">Android also needs permission to show notifications.</string>
+    <string name="push_permission_grant">Allow notifications</string>
+    <string name="profile_title">Profile</string>
+</resources>

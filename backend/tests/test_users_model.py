@@ -21,7 +21,6 @@ async def test_create_user_inserts_a_row(db_session: AsyncSession) -> None:
     assert found.username == "doga"
     assert found.id is not None
     assert found.created_at is not None
-    assert found.fcm_token is None
 
 
 async def test_email_uniqueness_is_case_insensitive_and_preserves_case(db_session: AsyncSession) -> None:

@@ -1,19 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?><!--
-   Sample data extraction rules file; uncomment and customize as necessary.
-   See https://developer.android.com/about/versions/12/backup-restore#xml-changes
-   for details.
+    API 31+ backup/transfer rules. cloud-backup and device-transfer are configured SEPARATELY and
+    neither inherits from the other, so the token store is excluded from both.
+
+    https://developer.android.com/about/versions/12/backup-restore#xml-changes
 -->
 <data-extraction-rules>
     <cloud-backup>
-        <!-- TODO: Use <include> and <exclude> to control what is backed up.
-        <include .../>
-        <exclude .../>
-        -->
+        <!-- See backup_rules.xml: the Keystore key never leaves the device, so a restored copy of
+             this file is permanently undecryptable. -->
+        <exclude domain="file" path="datastore/showtrack_tokens.preferences_pb" />
+        <!-- The UnifiedPush endpoint is a bearer secret and the target id belongs to the device
+             that registered it — see backup_rules.xml for both halves. -->
+        <exclude domain="file" path="datastore/showtrack_push.preferences_pb" />
     </cloud-backup>
-    <!--
     <device-transfer>
-        <include .../>
-        <exclude .../>
+        <!-- Excluded here too. A device-to-device transfer moves app data but not another
+             device's hardware-backed Keystore entry, so the same reasoning applies unchanged. -->
+        <exclude domain="file" path="datastore/showtrack_tokens.preferences_pb" />
+        <!-- And the push registration, where a device transfer is the WORST case rather than an
+             equivalent one: both phones then hold the same target id, and whichever unregisters
+             first deletes the other's row. -->
+        <exclude domain="file" path="datastore/showtrack_push.preferences_pb" />
     </device-transfer>
-    -->
 </data-extraction-rules>

@@ -1,5 +1,5 @@
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import ClassVar
 
 from app.media.models import Media, MediaSource, MediaStatus, MediaType
@@ -9,6 +9,10 @@ from app.sync import service
 from tests.factories import make_media, make_user, make_user_media
 
 FRESH_AIR_DATE = datetime(2026, 12, 1, 15, 0, tzinfo=UTC)
+# A fixed "now" for the cadence tests. Passed in rather than read from the clock, for the same
+# reason scan_thresholds takes one: a test whose expected counts depend on the wall clock is a
+# test that fails on a slow CI runner and nowhere else.
+NOW = datetime(2026, 8, 21, 12, 0, tzinfo=UTC)
 
 
 def _detail(external_id: str, *, source=MediaSource.ANILIST, status=MediaStatus.AIRING, episode=7) -> ProviderMedia:
@@ -43,6 +47,9 @@ class BatchProvider(MediaProvider):
     async def get_by_id(self, external_id: str):
         raise AssertionError("the sync job must use get_many, not get_by_id")
 
+    async def fetch_similar(self, external_id: str):
+        raise AssertionError("not used in these tests")
+
     async def get_many(self, external_ids):
         self.calls += 1
         if self._error is not None:
@@ -51,16 +58,16 @@ class BatchProvider(MediaProvider):
         return {k: v for k, v in self._results.items() if k in wanted}
 
 
-async def _run(db_session, providers):
+async def _run(db_session, providers, *, now=NOW):
     """The three service steps run_sync composes, minus the transaction boundaries it owns.
 
     Deliberately NOT one do-everything call: run_sync's rollback() would roll back to this
     fixture's savepoint and discard the seeded rows (measured — a seeded count went 1 -> 0),
     making three tests fail and two pass for the wrong reason.
     """
-    worklist = await service.collect_worklist(db_session)
-    fetched, failed = await service.fetch_all(providers, worklist)
-    return await service.apply_refresh(db_session, worklist, fetched, failed)
+    worklist = await service.collect_worklist(db_session, now=now)
+    fetched, failed_sources = await service.fetch_all(providers, worklist)
+    return await service.apply_refresh(db_session, worklist, fetched, failed_sources, now=now)
 
 
 async def _tracked_media(db_session, **overrides) -> Media:
@@ -223,3 +230,139 @@ async def test_a_contended_run_reports_ran_false():
 
     assert summary.ran is False
     assert summary.checked == 0
+
+
+async def test_a_title_airing_soon_is_due_sooner_than_a_distant_one(db_session):
+    """The whole point of tiering. Both were synced two hours ago; only the imminent one is due.
+
+    A flat interval polls these two at the same rate, which is wrong in both directions at once —
+    it wastes provider budget on the distant title and under-samples the one whose date is about
+    to drive a notification.
+    """
+    await _tracked_media(
+        db_session,
+        external_id="imminent",
+        status=MediaStatus.AIRING,
+        next_episode_date=NOW + timedelta(hours=12),
+        next_episode_number=3,
+        last_synced_at=NOW - timedelta(hours=2),
+    )
+    await _tracked_media(
+        db_session,
+        external_id="distant",
+        status=MediaStatus.AIRING,
+        next_episode_date=NOW + timedelta(days=30),
+        next_episode_number=1,
+        last_synced_at=NOW - timedelta(hours=2),
+    )
+
+    worklist = await service.collect_worklist(db_session, now=NOW)
+
+    assert [external_id for _, _, external_id in worklist] == ["imminent"]
+
+
+async def test_a_never_synced_title_is_due_whatever_its_tier(db_session):
+    """NULL is what every row carries the moment the migration lands, and what a title added to a
+    library carries until the first sync touches it. Falling into the slowest tier on a NULL would
+    idle a brand-new row for 24 hours.
+    """
+    await _tracked_media(
+        db_session,
+        external_id="new",
+        status=MediaStatus.AIRING,
+        next_episode_date=NOW + timedelta(days=90),
+        next_episode_number=1,
+    )
+
+    worklist = await service.collect_worklist(db_session, now=NOW)
+
+    assert [external_id for _, _, external_id in worklist] == ["new"]
+
+
+async def test_a_pointer_stuck_in_the_past_is_polled_at_the_tightest_cadence(db_session):
+    """An air date that has passed while the status is still AIRING is the strongest signal that
+    the pointer is stale — so it belongs in the fastest tier, not the fallback one.
+
+    Falls out of the tier condition having no lower bound, but it is the case a future reader is
+    most likely to "tidy up" into a BETWEEN, so it gets a test.
+    """
+    await _tracked_media(
+        db_session,
+        external_id="stuck",
+        status=MediaStatus.AIRING,
+        next_episode_date=NOW - timedelta(days=2),
+        next_episode_number=5,
+        last_synced_at=NOW - timedelta(hours=2),
+    )
+
+    worklist = await service.collect_worklist(db_session, now=NOW)
+
+    assert [external_id for _, _, external_id in worklist] == ["stuck"]
+
+
+async def test_a_title_with_no_air_date_is_polled_at_the_lost_pointer_cadence(db_session):
+    """A NULL next_episode_date on an AIRING title gets its own 6h tier, not the 24h default.
+
+    AniList returns `nextAiringEpisode: null` transiently — a mid-season break, a delay
+    announcement — so a NULL is not proof the season ended. While it is NULL, scan_thresholds
+    cannot enqueue anything, so a title that blips null 23 hours before an airing and is not
+    re-polled for 24 loses BOTH notifications for that episode, and the summary never counts it.
+    """
+    await _tracked_media(
+        db_session,
+        external_id="lost-pointer",
+        status=MediaStatus.AIRING,
+        next_episode_date=None,
+        next_episode_number=None,
+        last_synced_at=NOW - timedelta(hours=7),
+    )
+    await _tracked_media(
+        db_session,
+        external_id="lost-pointer-fresh",
+        status=MediaStatus.AIRING,
+        next_episode_date=None,
+        next_episode_number=None,
+        last_synced_at=NOW - timedelta(hours=2),
+    )
+
+    worklist = await service.collect_worklist(db_session, now=NOW)
+
+    assert [external_id for _, _, external_id in worklist] == ["lost-pointer"]
+
+
+async def test_a_source_level_failure_does_not_start_a_cooldown(db_session):
+    """Stamping last_synced_at on a failure would put titles into cooldown BECAUSE the provider
+    was down — an outage would then render as "everything looks fresh", which is the one reading
+    that makes it invisible.
+
+    Also pins the failed/missing split: a title whose whole source fell over is not a title the
+    provider disowned.
+    """
+    media = await _tracked_media(db_session, external_id="1", status=MediaStatus.AIRING)
+
+    summary = await _run(db_session, {MediaSource.ANILIST: BatchProvider(error=ProviderUnavailable("down"))})
+
+    assert (summary.failed, summary.missing) == (1, 0)
+    await db_session.refresh(media)
+    assert media.last_synced_at is None
+
+
+async def test_a_title_the_provider_disowned_is_stamped_as_answered(db_session):
+    """A disowned title still counts as answered, so it starts a cooldown, so it starts a cooldown.
+
+    Without the stamp this is a hot loop: a delisted title keeps its now-past air date, which pins
+    it to the tightest tier, which re-fetches it every hour forever.
+    """
+    media = await _tracked_media(
+        db_session,
+        external_id="1",
+        status=MediaStatus.AIRING,
+        next_episode_date=NOW - timedelta(days=2),
+        next_episode_number=5,
+    )
+
+    summary = await _run(db_session, {MediaSource.ANILIST: BatchProvider({})})
+
+    assert (summary.missing, summary.failed) == (1, 0)
+    await db_session.refresh(media)
+    assert media.last_synced_at == NOW

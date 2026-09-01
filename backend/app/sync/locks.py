@@ -12,6 +12,20 @@ logger = logging.getLogger(__name__)
 # a clever derivation, and a hash collision between two job names would be invisible.
 SYNC_LOCK_KEY = 5_000_001
 THRESHOLD_LOCK_KEY = 5_000_002
+# A third key, not a shared one: a slow dispatch must never stall the threshold scan. Same
+# reasoning as 5-D, which split the jobs in the first place.
+DISPATCH_LOCK_KEY = 5_000_003
+# A fourth key. The seed job makes provider calls and must not stall — or be stalled by — the
+# airing sync, for the same reason 5-D split the jobs in the first place.
+SEED_LOCK_KEY = 5_000_004
+# NOT used with advisory_lock() above. This one is taken as pg_try_advisory_xact_lock on the
+# REQUEST's own session, keyed (RECOMPUTE_LOCK_KEY, <int32 derived from user_id>).
+#
+# The xact form is right here for precisely the reasons it is wrong for the jobs: the recompute is
+# pure SQL and is exactly one transaction, so it never spans an HTTP call and never survives a
+# mid-function commit. It auto-releases on commit or rollback with no `finally` to get wrong. Do
+# not "fix" this to match the session-scoped helper above.
+RECOMPUTE_LOCK_KEY = 5_000_005
 
 
 @asynccontextmanager
@@ -27,6 +41,16 @@ async def advisory_lock(key: int) -> AsyncIterator[bool]:
     job, including every provider HTTP call — the objection that got an advisory lock rejected in
     get_or_create_media (Phase 4, decision 4-A) and that added a rollback() to both provider paths
     (4-M). Holding the lock on a dedicated connection leaves the caller's work session free.
+
+    A SECOND, INDEPENDENT reason the xact form is wrong, and the one that survives even if the
+    open-transaction objection above is ever waved away: it releases at the end of the enclosing
+    transaction, and neither connection gives it one that lasts the job. On this connection there
+    is no enclosing transaction at all — AUTOCOMMIT (see below) makes the acquiring SELECT its own
+    transaction, so the lock would be released the instant it was taken, before the job body runs
+    a single statement. Moving it onto the caller's work session instead does not rescue it:
+    notifications.service.dispatch_once commits MID-FUNCTION to make the attempt durable (6-G),
+    which ends that transaction and drops the lock while the send loop is still running. Either
+    placement lets a second replica acquire it and double-send.
 
     A dying connection releases the lock automatically, which is what makes this safe against a
     crashed replica — where a table-based "is it running" flag would strand a stale `true`. Note

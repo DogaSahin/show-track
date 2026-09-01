@@ -48,16 +48,25 @@ class Media(UUIDPrimaryKeyMixin, Base):
     # Phase 3.4's job, at the provider boundary.
     #
     # The dialect ARRAY, not `sqlalchemy.ARRAY`: only the postgresql one exposes
-    # `overlap`/`contains`/`contained_by`, which compile to `&&`/`@>`/`<@` — the operators
-    # Phase 7's genre-overlap scoring is built on. On the generic type the first two are
-    # absent and `contains()` raises NotImplementedError. The emitted DDL is `TEXT[]` either
-    # way, so the swap needs no migration.
+    # `overlap`/`contains`/`contained_by`. Phase 7 turned out NOT to use those operators — genre
+    # decides a recommendation's RANK, never its membership, so there is no genre predicate to
+    # index (decision 7-J). The dialect type stays because the generic one lacks these methods
+    # entirely and any future query wanting them would need a migration to get them back.
     genres: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, server_default=text("'{}'::text[]"))
     cover_image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     next_episode_season: Mapped[int | None] = mapped_column(Integer, nullable=True)
     next_episode_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
     next_episode_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[MediaStatus] = mapped_column(enum_column(MediaStatus, "status"), nullable=False)
+    # When the sync job last got an ANSWER from the provider about this title — the input to the
+    # tiered refresh cadence in app/sync/service.py, not an audit field.
+    #
+    # Nullable with no server default, deliberately: NULL means "never fetched" and the due
+    # predicate treats it as always due, so every pre-existing row is picked up on the first run
+    # after this migration. A `server_default=now()` would be tidier DDL and would tell a lie —
+    # it would mark rows fresh that had never been synced at all, idling them for a full tier
+    # interval.
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (UniqueConstraint("source", "external_id"),)
 

@@ -1,8 +1,19 @@
 import asyncio
+from datetime import timedelta
+
+import pytest
 
 from app.config import Settings
+from app.notifications.models import PushTransport
 from app.sync import scheduler as scheduler_module
-from app.sync.scheduler import SYNC_JOB_ID, THRESHOLD_JOB_ID, start_scheduler
+from app.sync.scheduler import (
+    DISPATCH_JOB_ID,
+    PROVIDER_JOB_START_OFFSETS,
+    SEED_JOB_ID,
+    SYNC_JOB_ID,
+    THRESHOLD_JOB_ID,
+    start_scheduler,
+)
 
 
 def _settings(**overrides) -> Settings:
@@ -23,6 +34,18 @@ def _settings(**overrides) -> Settings:
     return Settings(**{**base, **overrides})
 
 
+@pytest.fixture(autouse=True)
+def no_transport(monkeypatch):
+    """Push off by default, so registration assertions do not depend on the developer's .env.
+
+    get_transports reads app.config's get_settings directly (through each transport module's own
+    get_transport), so the `_env_file=None` trick these tests use for everything else does not
+    reach it — a machine with NTFY_BASE_URL set would otherwise register a fourth job and fail
+    the set-equality assertion below.
+    """
+    monkeypatch.setattr(scheduler_module, "get_transports", dict)
+
+
 def test_the_scheduler_does_not_start_when_sync_is_disabled(monkeypatch):
     """sync_enabled is how a SECOND REPLICA runs safely: scheduler off, API on. The advisory lock
     protects against the mistake; this setting is how you avoid making it.
@@ -32,27 +55,88 @@ def test_the_scheduler_does_not_start_when_sync_is_disabled(monkeypatch):
     assert start_scheduler() is None
 
 
-async def test_both_jobs_are_registered_with_the_configured_intervals(monkeypatch):
+async def test_the_always_on_jobs_are_registered_with_the_configured_intervals(monkeypatch):
     """MUST be async: APScheduler 3.11 changed AsyncIOScheduler.start() from get_event_loop() to
     get_running_loop(), so a plain `def` raises RuntimeError: no running event loop.
 
     get_providers is patched even though this test never awaits between start() and shutdown():
-    both jobs are due almost immediately with misfire_grace_time=None, so a single added `await`
-    would dispatch them, build the real AniListProvider and issue LIVE requests — violating a
-    project rule by accident rather than by intent.
+    the threshold scan is due immediately and the sync job a minute later, both with
+    misfire_grace_time=None, so a single added `await` would dispatch the scan, and a slow one
+    could reach the sync job — building the real AniListProvider and issuing LIVE requests,
+    violating a project rule by accident rather than by intent. (The seed job is the one
+    provider-calling job NOT in that window; it takes a five-minute offset.)
     """
     monkeypatch.setattr(scheduler_module, "get_providers", lambda: {})
     monkeypatch.setattr(
-        scheduler_module, "get_settings", lambda: _settings(sync_interval_hours=2, threshold_scan_minutes=5)
+        scheduler_module,
+        "get_settings",
+        lambda: _settings(sync_interval_hours=2, threshold_scan_minutes=5, recommendations_seed_hours=8),
     )
 
     scheduler = start_scheduler()
     try:
-        assert {job.id for job in scheduler.get_jobs()} == {SYNC_JOB_ID, THRESHOLD_JOB_ID}
+        assert {job.id for job in scheduler.get_jobs()} == {SYNC_JOB_ID, THRESHOLD_JOB_ID, SEED_JOB_ID}
         assert scheduler.get_job(SYNC_JOB_ID).trigger.interval.total_seconds() == 2 * 3600
         assert scheduler.get_job(THRESHOLD_JOB_ID).trigger.interval.total_seconds() == 5 * 60
+        assert scheduler.get_job(SEED_JOB_ID).trigger.interval.total_seconds() == 8 * 3600
     finally:
         scheduler.shutdown(wait=False)
+
+
+async def test_the_dispatch_job_is_not_registered_without_a_transport(monkeypatch):
+    """6-K: ntfy is optional. A job that returns immediately every minute forever is noise, so it
+    is not registered at all rather than registered and inert. Tasks keep queueing as `pending`
+    and drain on the first run once ntfy is configured.
+    """
+    monkeypatch.setattr(scheduler_module, "get_providers", lambda: {})
+    monkeypatch.setattr(scheduler_module, "get_settings", _settings)
+
+    scheduler = start_scheduler()
+    try:
+        assert DISPATCH_JOB_ID not in {job.id for job in scheduler.get_jobs()}
+    finally:
+        scheduler.shutdown(wait=False)
+
+
+async def test_the_dispatch_job_is_registered_when_a_transport_exists(monkeypatch):
+    """And it fires at boot, like the threshold scan: it is a single indexed query when the queue
+    is empty, so there is nothing to stagger it against.
+    """
+    monkeypatch.setattr(scheduler_module, "get_providers", lambda: {})
+    monkeypatch.setattr(scheduler_module, "get_settings", lambda: _settings(notification_dispatch_minutes=3))
+    monkeypatch.setattr(scheduler_module, "get_transports", lambda: {PushTransport.NTFY: object()})
+
+    scheduler = start_scheduler()
+    try:
+        job = scheduler.get_job(DISPATCH_JOB_ID)
+        assert job.trigger.interval.total_seconds() == 3 * 60
+        assert str(job.trigger.timezone) == "UTC"
+        assert job.misfire_grace_time is None
+        assert job.next_run_time <= scheduler.get_job(THRESHOLD_JOB_ID).next_run_time
+    finally:
+        scheduler.shutdown(wait=False)
+
+
+async def test_the_dispatch_job_is_a_no_op_when_the_transport_disappears(monkeypatch):
+    """Registration and execution read the registry separately, so a settings-cache clear between
+    them must not push run_dispatch an EMPTY registry.
+
+    Empty is worse than None was, which is why the early return survived the signature change:
+    every claimed task would find no addressable target, be marked SKIPPED, and burn its dedup
+    key permanently — the notifications would be discarded rather than queued.
+    """
+    called = False
+
+    async def never(*args, **kwargs):
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr(scheduler_module.notifications_service, "run_dispatch", never)
+    monkeypatch.setattr(scheduler_module, "get_transports", dict)
+
+    await scheduler_module.run_dispatch_job()
+
+    assert called is False
 
 
 async def test_the_triggers_are_utc_not_the_host_timezone(monkeypatch):
@@ -90,12 +174,18 @@ async def test_a_missed_run_is_not_silently_discarded(monkeypatch):
         scheduler.shutdown(wait=False)
 
 
-async def test_the_provider_sync_does_not_fire_at_boot(monkeypatch):
+async def test_each_provider_job_takes_its_own_boot_offset(monkeypatch):
     """IntervalTrigger schedules its first run at now + interval, so a process restarting more
-    often than its interval would never sync at all — but firing BOTH jobs at boot makes every
+    often than its interval would never sync at all — but firing every job at boot makes each
     `uvicorn --reload` a full provider sweep against an API observed degraded to 30/min, and the
     lock does not help because restarts are sequential. The DB-only scan starts immediately (free,
-    and its precision is the point); the provider sync takes a short offset.
+    and its precision is the point); each provider-calling job takes an offset.
+
+    The offsets are pinned per job, not asserted as one shared value, and that is the point of
+    this test. Both provider jobs share one memoised AniList RateLimiter, so a single shared
+    offset co-located them at boot — and with the default 1h/12h intervals, 12 being a multiple of
+    1, every later seed run landed on a sync tick too. Collapsing these two back to one constant
+    restores that collision, so this test must fail if anyone does.
     """
     monkeypatch.setattr(scheduler_module, "get_providers", lambda: {})
     monkeypatch.setattr(scheduler_module, "get_settings", _settings)
@@ -104,7 +194,14 @@ async def test_the_provider_sync_does_not_fire_at_boot(monkeypatch):
     try:
         scan_at = scheduler.get_job(THRESHOLD_JOB_ID).next_run_time
         sync_at = scheduler.get_job(SYNC_JOB_ID).next_run_time
-        assert sync_at > scan_at
+        seed_at = scheduler.get_job(SEED_JOB_ID).next_run_time
+
+        # The DB-only scan is the boot baseline; both provider jobs are strictly after it...
+        assert scan_at < sync_at < seed_at
+        # ...and they are separated by the difference the module declares, not merely ordered.
+        assert seed_at - sync_at == PROVIDER_JOB_START_OFFSETS[SEED_JOB_ID] - PROVIDER_JOB_START_OFFSETS[SYNC_JOB_ID]
+        assert PROVIDER_JOB_START_OFFSETS[SYNC_JOB_ID] == timedelta(minutes=1)
+        assert PROVIDER_JOB_START_OFFSETS[SEED_JOB_ID] == timedelta(minutes=5)
     finally:
         scheduler.shutdown(wait=False)
 
@@ -205,6 +302,11 @@ def test_the_defaults_are_sane_and_nothing_is_required():
     settings = _settings()
 
     assert settings.sync_enabled is True
-    assert settings.sync_interval_hours == 6
+    # 1, not 6: the provider sync tiers its cadence per title (SYNC_TIERS) and can only honour
+    # its tightest tier if the job wakes at least that often.
+    assert settings.sync_interval_hours == 1
     assert settings.threshold_scan_minutes == 15
     assert settings.notify_soon_hours == 6
+    assert settings.notification_dispatch_minutes == 1
+    assert settings.recommendations_seed_hours == 12
+    assert settings.recommendations_ttl_hours == 24

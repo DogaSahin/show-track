@@ -5,13 +5,25 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 
-from app.config import get_settings
+from app.config import Settings, get_settings
 from app.db import get_session
 from app.media.models import MediaSource
 from app.media.providers import get_providers
 from app.media.providers.base import MediaProvider
+from app.notifications import unifiedpush as unifiedpush_module
 from app.users.models import User
 from main import app
+
+# The push server the origin check (decision A-L) is pointed at by `configured_push` below, and
+# an endpoint on it. Module constants rather than per-test literals so a route test and a service
+# test cannot disagree about which host is "ours" — the whole check is a comparison between two
+# strings, and a test that supplies both sides of it proves nothing if they drift.
+#
+# The `/up` prefix is not decoration: ntfy mints UnifiedPush topics as `up<random>` and
+# validate_endpoint pins that prefix, so a fixture without it would be rejected for the wrong
+# reason and hide the host check it is meant to exercise.
+PUSH_BASE_URL = "https://push.example.test"
+PUSH_ENDPOINT = f"{PUSH_BASE_URL}/upabcdef0123456789"
 
 
 @pytest.fixture(scope="session")
@@ -121,3 +133,60 @@ async def auth_user(auth_client: AsyncClient, db_session: AsyncSession) -> User:
     user = await db_session.scalar(select(User).where(User.email == "fixture@example.com"))
     assert user is not None, "auth_client did not register its fixture user"
     return user
+
+
+@pytest.fixture
+def commits(db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Records every `session.commit()` the route under test makes.
+
+    A route that forgets `await session.commit()` discards its write in production and NO
+    existing test can tell: `client` hands the route the SAME session the test asserts through,
+    so a flushed-but-uncommitted row is visible to every assertion in the file. Measured
+    project-wide — stripping all 20 `await session.commit()` calls from every routes.py leaves
+    663/672 green, and the 9 failures are incidental collateral from `get_or_create_media`'s
+    rollback, not commit assertions.
+
+    A spy rather than the structural fix (a request-scoped savepoint in the `client` fixture),
+    which was prototyped and breaks 10 tests: `get_or_create_media` calls `session.rollback()`,
+    which unwinds that savepoint. Reconciling the two is separate work.
+
+    Patched on the INSTANCE, not the class, so it dies with the fixture and cannot leak into a
+    test that did not ask for it.
+    """
+    calls: list[int] = []
+    real = db_session.commit
+
+    async def _spy() -> None:
+        calls.append(1)
+        await real()
+
+    monkeypatch.setattr(db_session, "commit", _spy)
+    return calls
+
+
+def push_settings(**overrides: object) -> Settings:
+    """Settings built without reading the developer's real `.env`.
+
+    `_env_file=None` is the same trick tests/test_ntfy_transport.py and tests/test_scheduler.py
+    use, for the same reason: a machine with NTFY_BASE_URL set would otherwise make every
+    origin-check assertion pass or fail on that developer's configuration rather than on the code.
+    """
+    base: dict[str, object] = {
+        "_env_file": None,
+        "database_url": "postgresql+asyncpg://x/y",
+        "secret_key": "x",
+        "registration_code": "x",
+        "ntfy_base_url": PUSH_BASE_URL,
+    }
+    return Settings(**{**base, **overrides})
+
+
+@pytest.fixture
+def configured_push(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Points the origin check at [PUSH_BASE_URL] for one test.
+
+    Patched on `unifiedpush.get_settings` — the name `validate_endpoint` actually resolves.
+    Patching `app.config.get_settings` would leave that module's already-imported reference
+    untouched, and the test would pass or fail on the developer's own .env.
+    """
+    monkeypatch.setattr(unifiedpush_module, "get_settings", push_settings)

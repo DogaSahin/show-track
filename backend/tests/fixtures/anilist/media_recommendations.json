@@ -1,0 +1,14 @@
+{
+  "data": {
+    "Media": {
+      "recommendations": {
+        "nodes": [
+          { "mediaRecommendation": { "id": 20605 } },
+          { "mediaRecommendation": { "id": 11061 } },
+          { "mediaRecommendation": null },
+          { "mediaRecommendation": { "id": 1535 } }
+        ]
+      }
+    }
+  }
+}

@@ -16,3 +16,15 @@ google-services.json
 *service-account*.json
 firebase-adminsdk*.json
 secrets.properties
+
+# ntfy server state — the auth database holds user credentials and access tokens, and a
+# server.yml would hold the same token this app authenticates with. Added now, when the file
+# type is introduced, not when a file first appears.
+ntfy-data/
+server.yml
+
+# Plan/spec scratch directories. The project rule is that no plan or spec folder lives inside
+# this repo — they belong at the workspace root, outside the checkout. Committed here rather
+# than left in .git/info/exclude, which is per-clone and therefore not a rule at all: on a fresh
+# clone the directory would show up untracked and one `git add -A` would commit it.
+.superpowers/

@@ -46,6 +46,11 @@ jobs:
       # job, so there is nothing to rotate.
       SECRET_KEY: ci-test-secret-not-used-outside-ci
       REGISTRATION_CODE: ci-test-code
+      # No NTFY_* here on purpose, and no ntfy service either. The notification tests mock the
+      # transport boundary and never open a socket; NTFY_BASE_URL is optional, so its absence
+      # disables the dispatcher cleanly and is exactly the state the suite expects. Adding a
+      # value or a service would test ntfy rather than this project, and would make a required
+      # setting out of one deliberately kept optional (see app/config.py).
 
     steps:
       - uses: actions/checkout@v4

@@ -6,7 +6,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.notifications.models import NotificationTask, NotificationTaskStatus, NotificationThreshold
-from tests.factories import make_notification_prefs, make_notification_task, make_parents, make_user
+from tests.factories import (
+    make_media,
+    make_notification_prefs,
+    make_notification_task,
+    make_parents,
+    make_push_target,
+    make_user,
+)
 
 
 async def test_a_user_cannot_have_two_preference_rows(db_session: AsyncSession) -> None:
@@ -110,3 +117,57 @@ async def test_provider_jitter_does_not_make_a_new_key(db_session: AsyncSession)
         await db_session.flush()
 
     await db_session.rollback()
+
+
+async def test_two_users_cannot_register_the_same_target(db_session):
+    """An ntfy topic is a bearer secret: whoever posts to it reaches that phone, and whoever
+    subscribes reads it. Per-user uniqueness would let one account register another's topic and
+    silently receive their notifications, with nothing in the system objecting (6-D).
+    """
+    first = make_user(username="a", email="a@example.com")
+    second = make_user(username="b", email="b@example.com")
+    db_session.add_all([first, second])
+    await db_session.flush()
+
+    db_session.add(make_push_target(first.id, target="shared-topic"))
+    await db_session.flush()
+
+    db_session.add(make_push_target(second.id, target="shared-topic"))
+    with pytest.raises(IntegrityError):
+        await db_session.flush()
+
+
+async def test_a_new_task_is_immediately_eligible(db_session):
+    """next_attempt_at is NULL on insert, and NULL means "due now". This keeps Phase 5's
+    scan_thresholds insert unchanged — it sets no value and the row is picked up on the next
+    dispatch (6-I).
+    """
+    user = make_user(username="c", email="c@example.com")
+    media = make_media(external_id="1")
+    db_session.add_all([user, media])
+    await db_session.flush()
+
+    task = make_notification_task(user.id, media.id)
+    db_session.add(task)
+    await db_session.flush()
+
+    assert task.next_attempt_at is None
+    assert task.status is NotificationTaskStatus.PENDING
+
+
+async def test_the_status_check_admits_the_new_terminal_values(db_session):
+    """skipped and expired are stored as strings under a VARCHAR + CHECK, so a migration that
+    forgets to widen the constraint fails HERE rather than in production at 3am.
+    """
+    user = make_user(username="d", email="d@example.com")
+    media = make_media(external_id="2")
+    db_session.add_all([user, media])
+    await db_session.flush()
+
+    for index, status in enumerate((NotificationTaskStatus.SKIPPED, NotificationTaskStatus.EXPIRED)):
+        # enumerate, NOT hash(status) % 1000: Python randomises string hashing per process
+        # (PYTHONHASHSEED), so hashed values differ between runs and two statuses can collide on
+        # the modulus. The episode number is arbitrary here; it only has to be distinct.
+        task = make_notification_task(user.id, media.id, episode_number=index, status=status)
+        db_session.add(task)
+        await db_session.flush()

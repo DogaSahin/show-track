@@ -6,13 +6,31 @@ from sqlalchemy import func, select
 from app.media.models import MediaSource, MediaStatus
 from app.notifications.models import NotificationTask, NotificationThreshold
 from app.sync import service
-from tests.factories import make_media, make_notification_prefs, make_user, make_user_media
+from tests.factories import (
+    make_media,
+    make_notification_prefs,
+    make_push_target,
+    make_user,
+    make_user_media,
+)
 
 NOW = datetime(2026, 12, 1, 12, 0, tzinfo=UTC)
 SOON = 6  # notify_soon_hours, passed explicitly so no test depends on a developer's .env
 
 
-async def _tracking_user(db_session, *, airs_in: timedelta | None, push_enabled: bool = True, episode: int = 7):
+async def _tracking_user(
+    db_session,
+    *,
+    airs_in: timedelta | None,
+    push_enabled: bool = True,
+    episode: int = 7,
+    with_target: bool = True,
+):
+    """A user who can actually receive a push: prefs enabled AND a registered device.
+
+    `with_target` defaults True because a user with no target is now a scan-time exclusion, not
+    just a dispatch-time one — see test_a_user_with_no_target_enqueues_nothing_until_one_exists.
+    """
     tag = uuid.uuid4().hex[:8]
     user = make_user(username=f"u{tag}", email=f"{tag}@example.com")
     media = make_media(
@@ -27,6 +45,10 @@ async def _tracking_user(db_session, *, airs_in: timedelta | None, push_enabled:
     db_session.add_all(
         [make_user_media(user.id, media.id), make_notification_prefs(user.id, push_enabled=push_enabled)]
     )
+    if with_target:
+        # Unique per user: the (transport, target) constraint is GLOBAL, so a shared literal
+        # would collide the moment a test builds two users.
+        db_session.add(make_push_target(user.id, target=f"topic-{tag}"))
     await db_session.flush()
     return user, media
 
@@ -129,12 +151,39 @@ async def test_a_user_with_no_prefs_row_enqueues_nothing(db_session):
     )
     db_session.add_all([user, media])
     await db_session.flush()
-    db_session.add(make_user_media(user.id, media.id))
+    # A registered target, deliberately: without one this test would pass for two reasons at
+    # once and stop isolating the prefs join it is named for.
+    db_session.add_all([make_user_media(user.id, media.id), make_push_target(user.id, target=f"topic-{tag}")])
     await db_session.flush()
 
     summary = await service.scan_thresholds(db_session, now=NOW, soon_hours=SOON)
 
     assert summary.enqueued == 0
+
+
+async def test_a_user_with_no_target_enqueues_nothing_until_one_exists(db_session):
+    """Enqueuing is IRREVERSIBLE, which is what makes this a scan-time concern rather than a
+    dispatch-time one. The dedup upsert is on_conflict_do_nothing regardless of status, so a task
+    the dispatcher burns to `skipped` for having nowhere to send can never be enqueued again for
+    that (user, media, episode, threshold, airs_on).
+
+    The second half is the actual bug: the README's setup order is enable prefs, then register a
+    device. A scan in that gap used to queue tasks, the dispatcher killed them within a minute,
+    and the device registered two minutes later received nothing for those episodes — ever.
+    """
+    user, _ = await _tracking_user(db_session, airs_in=timedelta(hours=20), with_target=False)
+
+    before = await service.scan_thresholds(db_session, now=NOW, soon_hours=SOON)
+    assert (before.considered, before.enqueued) == (0, 0)
+    assert await db_session.scalar(select(func.count()).select_from(NotificationTask)) == 0
+
+    db_session.add(make_push_target(user.id, target=f"topic-{uuid.uuid4().hex[:8]}"))
+    await db_session.flush()
+
+    after = await service.scan_thresholds(db_session, now=NOW, soon_hours=SOON)
+
+    assert after.enqueued == 1
+    assert await db_session.scalar(select(func.count()).select_from(NotificationTask)) == 1
 
 
 async def test_an_episode_inside_the_soon_window_enqueues_both_thresholds(db_session):

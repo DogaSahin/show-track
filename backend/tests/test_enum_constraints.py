@@ -22,9 +22,13 @@ from app.users import models as _users_models  # noqa: F401
 # Postgres stores as `CHECK (((status)::text = ANY ((ARRAY['airing'::character varying, ...
 _QUOTED = re.compile(r"'([^']*)'")
 
-# The shape that same CHECK always takes, used to find these constraints from the database
-# side. The one hand-written CHECK in the schema (`ck_user_media_score_range`) does not match.
-_ENUM_CHECK_SQL_SHAPE = "%= ANY ((ARRAY[%"
+# The shapes that same CHECK can take, used to find these constraints from the database side.
+# An `Enum(create_constraint=True)` with two or more members renders as `x = ANY (ARRAY[...])`.
+# One member — `PushTransport`, so far — collapses under Postgres's own IN-list simplification
+# into a plain `x = 'value'`: no ANY, no ARRAY. Measured directly against `push_targets`. Both
+# shapes are covered below; the one hand-written CHECK in the schema
+# (`ck_user_media_score_range`) matches neither.
+_ENUM_CHECK_SQL_SHAPES = ("%= ANY ((ARRAY[%", "%::text = '%'::text)%")
 
 
 def _enum_check_constraints() -> list[tuple[str, frozenset[str]]]:
@@ -113,9 +117,9 @@ async def test_every_enum_check_constraint_in_the_database_is_covered(db_session
             text(
                 "SELECT conname FROM pg_constraint "
                 "WHERE contype = 'c' AND connamespace = 'public'::regnamespace "
-                "AND pg_get_constraintdef(oid) LIKE :shape"
+                "AND (pg_get_constraintdef(oid) LIKE :shape_multi OR pg_get_constraintdef(oid) LIKE :shape_single)"
             ),
-            {"shape": _ENUM_CHECK_SQL_SHAPE},
+            {"shape_multi": _ENUM_CHECK_SQL_SHAPES[0], "shape_single": _ENUM_CHECK_SQL_SHAPES[1]},
         )
     ).scalars()
 

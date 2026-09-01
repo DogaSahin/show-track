@@ -1,7 +1,8 @@
+from collections.abc import Sequence
 from typing import Any, ClassVar
 
 from app.media.models import MediaSource, MediaType
-from app.media.providers.base import MediaProvider, ProviderMedia, ProviderSearchPage
+from app.media.providers.base import SIMILAR_LIMIT, MediaProvider, MediaRef, ProviderMedia, ProviderSearchPage
 from app.media.providers.errors import ProviderUnavailable
 from app.media.providers.http import ProviderHTTPClient
 from app.media.providers.tmdb import mapper
@@ -37,6 +38,28 @@ class TMDBProvider(MediaProvider):
     async def get_by_id(self, external_id: str) -> ProviderMedia | None:
         raw = await self._get(f"/tv/{external_id}", {})
         return mapper.to_media(raw) if raw is not None else None
+
+    async def fetch_similar(self, external_id: str) -> Sequence[MediaRef]:
+        raw = await self._get(f"/tv/{external_id}/recommendations", {"page": 1})
+        if raw is None:
+            # 404 here DOES have a "no such record" reading, unlike search: the path names a
+            # specific show. An unknown show simply has no neighbours.
+            return ()
+
+        results = raw.get("results") or []
+        if not isinstance(results, list):
+            # An annotation is not a check, and _get only guarantees the TOP level is an object.
+            # Slicing a dict raises TypeError — not a ProviderError — and the seed job catches
+            # only ProviderError per seed, so that one bad body would abort the whole sweep and
+            # discard the edges every other seed had already earned.
+            raise ProviderUnavailable("TMDB recommendations response carried a non-list `results`")
+
+        refs: list[MediaRef] = []
+        for entry in results[:SIMILAR_LIMIT]:
+            if not isinstance(entry, dict) or entry.get("id") is None:
+                continue
+            refs.append(MediaRef(source=MediaSource.TMDB, external_id=str(entry["id"])))
+        return tuple(refs)
 
     async def _get(self, path: str, params: dict[str, Any]) -> dict[str, Any] | None:
         response = await self._client.request(

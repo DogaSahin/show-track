@@ -27,6 +27,7 @@ from app.db import Base  # noqa: E402
 # it would have its enum columns silently missing from the set. The failure is loud (the
 # `enum_column()` false positive this module works around returns for that module's
 # tables), not silent, but there's no reason to invite it.
+from app.groups import models as _groups_models  # noqa: F401,E402
 from app.library import models as _library_models  # noqa: F401,E402
 from app.media import models as _media_models  # noqa: F401,E402
 from app.notifications import models as _notifications_models  # noqa: F401,E402

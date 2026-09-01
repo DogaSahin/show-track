@@ -23,6 +23,9 @@ class OneTitleProvider(MediaProvider):
     async def get_by_id(self, external_id: str):
         raise AssertionError("the sync job must use get_many")
 
+    async def fetch_similar(self, external_id: str):
+        raise AssertionError("not used in these tests")
+
     async def get_many(self, external_ids):
         return {
             external_id: ProviderMedia(
