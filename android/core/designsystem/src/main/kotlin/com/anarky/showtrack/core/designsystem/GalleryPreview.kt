@@ -16,6 +16,7 @@ import com.anarky.showtrack.core.designsystem.component.LoadingState
 import com.anarky.showtrack.core.designsystem.component.MediaCard
 import com.anarky.showtrack.core.designsystem.component.ScoreChip
 import com.anarky.showtrack.core.designsystem.component.StatusTab
+import com.anarky.showtrack.core.designsystem.component.StatusTabRow
 import com.anarky.showtrack.core.designsystem.theme.ShowTrackTheme
 import com.anarky.showtrack.core.model.Media
 import com.anarky.showtrack.core.model.MediaSource
@@ -65,6 +66,8 @@ private fun GalleryPreview() {
                 StatusTab(status = UserMediaStatus.WATCHING, selected = true, onClick = {})
                 StatusTab(status = UserMediaStatus.COMPLETED, selected = false, onClick = {})
             }
+            // The full scrollable row (C-J) — all five tabs, not just the two shown loose above.
+            StatusTabRow(selectedStatus = UserMediaStatus.WATCHING, onStatusSelected = {})
             EmptyState(message = "Nothing here yet")
             LoadingState()
             ErrorState(message = "Could not reach the server", onRetry = {})

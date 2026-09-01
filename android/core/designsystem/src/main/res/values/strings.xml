@@ -1,0 +1,26 @@
+<resources>
+    <!-- Library statuses. These are the five tab labels AND the badge on every card, so they
+         must stay short enough for a tab at 360dp (decision C-J). -->
+    <string name="status_watching">Watching</string>
+    <string name="status_completed">Completed</string>
+    <string name="status_dropped">Dropped</string>
+    <string name="status_planned">Planned</string>
+    <string name="status_paused">Paused</string>
+
+    <!-- Countdown badge on a media card. "Today" and "Tomorrow" replace "in 0 days" / "in 1 day",
+         which are both technically right and read as though something is broken. -->
+    <string name="countdown_today">Today</string>
+    <string name="countdown_tomorrow">Tomorrow</string>
+    <!-- Everything past tomorrow. No "in" prefix, matching CountdownBadge's existing
+         "$daysUntil days" wording verbatim rather than introducing one. -->
+    <plurals name="countdown_days_remaining">
+        <item quantity="one">%d day</item>
+        <item quantity="other">%d days</item>
+    </plurals>
+
+    <string name="action_retry">Retry</string>
+
+    <!-- ScoreChip's fallback when the user has not scored a title — an em dash, never a raw
+         null or empty string. -->
+    <string name="score_unset">—</string>
+</resources>
