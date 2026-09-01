@@ -1,5 +1,7 @@
 package com.anarky.showtrack.core.data.repository
 
+import com.anarky.showtrack.core.model.AuthFailure
+
 /**
  * The session. `:app` asks [hasSession] before choosing a start destination — the reactive
  * `AuthEvent.LoggedOut` gate cannot cover a cold start, because a logged-out launch has no token
@@ -8,12 +10,16 @@ package com.anarky.showtrack.core.data.repository
 interface AuthRepository {
     suspend fun hasSession(): Boolean
 
+    /** Throws [AuthFailure] — `:feature:auth` catches its cases to tell a wrong password from being offline. */
     suspend fun login(
         email: String,
         password: String,
     )
 
-    /** Creates the account and signs in. Throws [RegisteredButNotLoggedIn] if only the first half succeeded. */
+    /**
+     * Creates the account and signs in. Throws [AuthFailure] if the account itself could not be
+     * created, or [RegisteredButNotLoggedIn] if it was created but the follow-up login failed.
+     */
     suspend fun register(
         username: String,
         email: String,

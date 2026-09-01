@@ -1,6 +1,7 @@
 package com.anarky.showtrack.core.data.repository
 
 import com.anarky.showtrack.core.data.push.PushRepository
+import com.anarky.showtrack.core.model.AuthFailure
 import com.anarky.showtrack.core.model.PushNotification
 import com.anarky.showtrack.core.network.api.AuthApi
 import com.anarky.showtrack.core.network.auth.TokenPair
@@ -11,6 +12,7 @@ import com.anarky.showtrack.core.network.dto.RegisterRequest
 import com.anarky.showtrack.core.network.dto.TokenPairDto
 import com.anarky.showtrack.core.network.dto.UserDto
 import kotlinx.coroutines.test.runTest
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -19,7 +21,12 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import retrofit2.HttpException
+import retrofit2.Response
 import java.io.IOException
+
+/** Builds an `HttpException` the way Retrofit itself does, for a non-2xx response. */
+private fun httpError(code: Int): HttpException = HttpException(Response.error<Any>(code, "".toResponseBody(null)))
 
 /**
  * Robolectric for the same reason as [com.anarky.showtrack.core.data.push.PushRepositoryImplTest]:
@@ -106,6 +113,59 @@ class AuthRepositoryTest {
         }
 
     @Test
+    fun `logout clears the tokens even when the push cleanup fails`() =
+        runTest {
+            // Unguarded, a throw here would skip revoke() and tokenStore.clear() below and leave
+            // the user pressing "log out" and staying logged in — worse than login's symmetric
+            // case, where a push failure must not be misreported as a login failure.
+            val store = FakeTokenStore(initial = TokenPair("access-1", "refresh-1"))
+            val repository = AuthRepositoryImpl(FakeAuthApi(), store, FakePush(failure = IOException("offline")))
+
+            repository.logout()
+
+            assertFalse(repository.hasSession())
+        }
+
+    @Test
+    fun `a wrong password surfaces as invalid credentials`() =
+        runTest {
+            val api = FakeAuthApi(loginFailure = httpError(401))
+            val repository = AuthRepositoryImpl(api, FakeTokenStore(), FakePush())
+
+            val failure = runCatching { repository.login("a@example.com", "wrong") }.exceptionOrNull()
+
+            assertTrue(failure is AuthFailure.InvalidCredentials)
+        }
+
+    @Test
+    fun `being offline during login surfaces as being offline`() =
+        runTest {
+            val api = FakeAuthApi(loginFailure = IOException("offline"))
+            val repository = AuthRepositoryImpl(api, FakeTokenStore(), FakePush())
+
+            val failure = runCatching { repository.login("a@example.com", "hunter2hunter2") }.exceptionOrNull()
+
+            assertTrue(failure is AuthFailure.Offline)
+        }
+
+    @Test
+    fun `a taken email or bad invite code surfaces as a refusal`() =
+        runTest {
+            // The backend does not let the client tell these apart from the status alone —
+            // Refused carries only the status code, not an invented distinction.
+            val api = FakeAuthApi(registerFailure = httpError(409))
+            val repository = AuthRepositoryImpl(api, FakeTokenStore(), FakePush())
+
+            val failure =
+                runCatching {
+                    repository.register("someone", "a@example.com", "hunter2hunter2", "CODE")
+                }.exceptionOrNull()
+
+            assertTrue(failure is AuthFailure.Refused)
+            assertEquals(409, (failure as AuthFailure.Refused).statusCode)
+        }
+
+    @Test
     fun `hasSession is false with nothing stored and true with tokens`() =
         runTest {
             assertFalse(AuthRepositoryImpl(FakeAuthApi(), FakeTokenStore(), FakePush()).hasSession())
@@ -120,11 +180,13 @@ class AuthRepositoryTest {
 
     private class FakeAuthApi(
         private val loginFailure: Throwable? = null,
+        private val registerFailure: Throwable? = null,
     ) : AuthApi {
         val calls = mutableListOf<String>()
 
         override suspend fun register(request: RegisterRequest): UserDto {
             calls += "register"
+            registerFailure?.let { throw it }
             return UserDto("u-1", request.username, request.email, "2026-09-01T00:00:00Z")
         }
 
@@ -179,6 +241,7 @@ class AuthRepositoryTest {
 
         override suspend fun onLoggedOut() {
             calls += "push.onLoggedOut"
+            failure?.let { throw it }
         }
 
         override fun decodeMessage(body: ByteArray): PushNotification? = null
