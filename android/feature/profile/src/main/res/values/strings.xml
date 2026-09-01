@@ -26,5 +26,5 @@
     <string name="profile_sign_out_confirm_body">You\'ll need to sign in again to see your library and get episode alerts.</string>
     <string name="profile_sign_out_confirm_action">Sign out</string>
     <string name="profile_sign_out_cancel">Cancel</string>
-    <string name="profile_sign_out_error">Couldn\'t sign out. Check your connection and try again.</string>
+    <string name="profile_sign_out_error">Couldn\'t sign out due to a local storage problem. Try again, or restart the app.</string>
 </resources>

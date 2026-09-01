@@ -119,10 +119,22 @@ class ProfileViewModel
          * looks like nothing more than "sign out".
          *
          * [signedOut] is flipped only on SUCCESS, not in a `finally`: a thrown `clear()` means
-         * DataStore's `edit` transaction did not commit, so the session was NOT actually cleared —
-         * navigating the user back to the login screen at that point would be a lie (a relaunch
-         * would find a valid token and land them right back in the library), worse than leaving
-         * them on Profile with a chance to retry. [signOutError] is what tells them that, instead.
+         * DataStore's `edit` transaction did not commit, so the LOCAL token is NOT actually
+         * cleared — navigating the user back to the login screen at that point would be a lie (a
+         * relaunch would find a valid token and land them right back in the library), worse than
+         * leaving them on Profile with a chance to retry. [signOutError] is what tells them that,
+         * instead.
+         *
+         * That is not the same as "nothing happened", and this KDoc used to imply it was. By the
+         * time `clear()` can even run, `AuthRepository.logout()`'s `detachPush()` and `revoke()`
+         * have already executed and swallowed their own failures (see its KDoc) — so a `clear()`
+         * failure specifically leaves the user signed in locally with the server-side push target
+         * already deleted and the refresh token possibly already revoked. Both recover on their
+         * own without more code here: the next successful login re-registers push
+         * (`registerForPush()`), and a revoked refresh token simply fails its next use, which is
+         * exactly the terminal-refresh path `AuthEventBus`/`AuthGate` already handle. Worth
+         * knowing when reading this failure, not worth guarding against — retrying [signOut] is
+         * the same call either way.
          */
         @Suppress("TooGenericExceptionCaught")
         fun signOut() {

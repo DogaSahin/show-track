@@ -227,7 +227,7 @@ class ProfileViewModelTest {
             // own guards, and a corrupt/unwritable DataStore throws IOException from it. Flipping
             // signedOut anyway would send the user back to the login screen while a valid session
             // is still on the device — a lie a relaunch would immediately expose.
-            val authRepository = FakeAuthRepository(onLogout = { throw IOException("offline") })
+            val authRepository = FakeAuthRepository(onLogout = { throw IOException("token store unwritable") })
             val viewModel = ProfileViewModel(FakeDistributors(), authRepository)
 
             viewModel.signOut()
@@ -241,7 +241,8 @@ class ProfileViewModelTest {
     fun `retrying a failed sign-out clears the previous error`() =
         runTest(dispatcher) {
             var shouldFail = true
-            val authRepository = FakeAuthRepository(onLogout = { if (shouldFail) throw IOException("offline") })
+            val authRepository =
+                FakeAuthRepository(onLogout = { if (shouldFail) throw IOException("token store unwritable") })
             val viewModel = ProfileViewModel(FakeDistributors(), authRepository)
             viewModel.signOut()
             advanceUntilIdle()
