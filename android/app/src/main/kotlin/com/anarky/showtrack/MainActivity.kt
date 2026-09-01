@@ -180,12 +180,19 @@ fun ShowTrackApp(authEvents: Flow<AuthEvent>) {
  * any point in the session, whether that is the initial auth gate or a runtime logout — and while
  * [currentDestination] is `null`. That last one matters on its own: `currentBackStackEntryAsState()`
  * is backed by `currentBackStackEntryFlow.collectAsState(null)`, so it SEEDS at `null` and does not
- * emit a real destination until the graph exists and the collector resumes — a window that exists
- * on every cold start, including a `Library`-started one. `null` means "we don't know where we are
- * yet", which must read the same as `Undecided`: unknown is not "not `AuthRoute`". The condition
- * below is therefore `currentDestination?.hasRoute(AuthRoute::class) == false` — true only when
- * there IS a destination and it is provably not `AuthRoute` — not `!= true`, which is also true for
- * `null` and would show the tab bar over the login screen for that first-composition window.
+ * emit a real destination until the graph exists and the collector resumes. `null` means "we don't
+ * know where we are yet", which must read the same as `Undecided`: unknown is not "not `AuthRoute`".
+ * The condition below is therefore `currentDestination?.hasRoute(AuthRoute::class) == false` — true
+ * only when there IS a destination and it is provably not `AuthRoute` — not `!= true`, which is
+ * also true for `null` and would show the tab bar over the login screen for that window.
+ *
+ * That `null` seed is NOT cold-start-only, despite the framing above: any composition-from-scratch
+ * re-seeds it too, even with an already-decided [start] — a configuration change, a theme switch, a
+ * multi-window resize recreates the composition while [AppViewModel] survives (it's activity-scoped
+ * `hiltViewModel()`), so `currentBackStackEntryAsState()` starts over at `null` for one frame and
+ * the tab bar hides for exactly that pass. Safe direction — worst case is a one-frame flicker, never
+ * tabs showing over a screen that doesn't have them — but a real, repeatable case beyond the
+ * first-ever launch, not a cold-start-only quirk.
  *
  * Once [start] has resolved to anything other than `Undecided` AND the current destination is
  * known and not `AuthRoute`, tabs are shown — including right after a fresh login from an

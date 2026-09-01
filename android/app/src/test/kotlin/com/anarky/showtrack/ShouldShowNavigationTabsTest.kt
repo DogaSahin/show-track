@@ -38,7 +38,14 @@ import org.robolectric.annotation.Config
  * because nothing here passed `null` at all.
  *
  * **Not pinned:** the `popUpTo` back-stack-stacking follow-on noted in `shouldShowNavigationTabs`'s
- * KDoc — that needs an on-device check, not a Robolectric one.
+ * KDoc — that needs an on-device check, not a Robolectric one. Nor, more fundamentally, can this
+ * file catch the class of bug `shouldShowNavigationTabs` has actually had TWICE: it drives static
+ * cells of a truth table, one call at a time, and both regressions here were ordering/staleness
+ * bugs — a value that was correct in isolation but wrong at the moment it was read relative to
+ * something else changing. A full truth table passes trivially against a bug like that; only
+ * composing `ShowTrackApp` across real recompositions would catch it, and `:app` has no Hilt
+ * harness to do so. Treat every green run of this file as "the function is internally consistent",
+ * never as "the bug class is covered".
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], application = Application::class)
@@ -48,6 +55,23 @@ class ShouldShowNavigationTabsTest {
         val destination = controllerWith { defaultGraph() }.currentDestination
 
         assertFalse(shouldShowNavigationTabs(AppStart.Undecided, destination))
+    }
+
+    /**
+     * `(Undecided, null)` is the MOST-executed cell of the nine: it's the real first composition
+     * pass of every single launch, cold or warm — `start` reads `Undecided` before `AppViewModel`'s
+     * one-shot flow has emitted, and no graph exists yet for `currentBackStackEntryAsState()` to
+     * read a destination from, so it's still at its `collectAsState(null)` seed. Every other cell
+     * in this file is driven off a real, already-built `NavHostController`; this one — despite being
+     * the one everything else starts from — had no test at all before this was added. `(Undecided,
+     * AuthRoute)` alongside it costs nothing extra and rules out the other plausible early value.
+     */
+    @Test
+    fun `hidden on the real first composition pass — Undecided with no destination yet`() {
+        assertFalse(shouldShowNavigationTabs(AppStart.Undecided, null))
+
+        val authDestination = controllerWith { authOnlyGraph() }.currentDestination
+        assertFalse(shouldShowNavigationTabs(AppStart.Undecided, authDestination))
     }
 
     @Test
