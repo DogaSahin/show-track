@@ -45,3 +45,8 @@ jobs:
         uses: gitleaks/gitleaks-action@dcedce43c6f43de0b836d1fe38946645c9c638dc # v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Named explicitly rather than relying on gitleaks finding .gitleaks.toml by walking the
+          # working directory. Config resolution that depends on cwd is the kind of thing that
+          # works until a runner changes where it starts, and its failure mode is silent: the scan
+          # still runs, still reports success or failure, and simply ignores the allowlist.
+          GITLEAKS_CONFIG: .gitleaks.toml

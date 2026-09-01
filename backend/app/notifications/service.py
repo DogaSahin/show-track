@@ -2,13 +2,15 @@ import logging
 import secrets
 import uuid
 from collections import defaultdict
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import Select, delete, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db import get_sessionmaker
+from app.db import UNIQUE_VIOLATION, get_sessionmaker
 from app.library.models import UserMedia
 from app.media.models import Media
 from app.notifications.models import (
@@ -26,6 +28,7 @@ from app.notifications.transport import (
     TransportPermanent,
     TransportRetryable,
 )
+from app.notifications.unifiedpush import validate_endpoint
 from app.sync.locks import DISPATCH_LOCK_KEY, advisory_lock
 
 logger = logging.getLogger(__name__)
@@ -79,6 +82,153 @@ async def create_target(session: AsyncSession, *, user_id: uuid.UUID, label: str
     session.add(target)
     await session.flush()
     return target
+
+
+def _unifiedpush_row(endpoint: str) -> Select[tuple[PushTarget]]:
+    """One definition of "the row for this endpoint", used by the lookup and by the race recovery.
+
+    Scoped by (transport, target) and NOT by user_id, matching the unique constraint exactly. A
+    user-scoped lookup would miss another account's row and fall through to the insert, where the
+    global constraint would turn a device handover into a 500.
+    """
+    return select(PushTarget).where(PushTarget.transport == PushTransport.UNIFIEDPUSH, PushTarget.target == endpoint)
+
+
+def _adopt(target: PushTarget, *, user_id: uuid.UUID, label: str | None) -> None:
+    """Point an existing endpoint row at `user_id`, clearing what belonged to the last owner.
+
+    ORM assignment on a loaded instance, deliberately, and not a Core UPDATE: this session's
+    identity map holds `target`, and only its OWN ORM writes invalidate it (architecture rule 8).
+    A Core UPDATE here would leave the object the route then serialises still carrying the
+    PREVIOUS owner's user_id — invisible, and exactly the kind of stale read rule 8 exists for.
+
+    An UPDATE and never an INSERT — one row per endpoint is 6-D's invariant and takeover changes
+    only who owns it. MEASURED, so the next reader does not re-derive it: mutating this into an
+    insert, and mutating it to update-then-also-insert, both die as an IntegrityError on
+    `uq_push_targets_transport_target` rather than as a duplicate row.
+
+    `label` and `created_at` MOVE WITH THE OWNER, and that is the part that was previously missed:
+    reassigning user_id alone left the new owner's device list showing a name the previous owner
+    chose ("Dad's Pixel") for a phone they now hold, and a registration date months before they
+    ever saw it. `list_targets` also orders by created_at, so a stale one files the newest device
+    at the top of the list. Both are the previous owner's data surfacing in someone else's UI.
+
+    Only on a genuine OWNER CHANGE. A re-registration by the same user runs through here too —
+    `onNewEndpoint` fires on every app start — and must be inert, or every cold start would reset
+    a label the user had chosen and bump the created_at of a device that did not change hands.
+
+    The app clock rather than `func.now()`: a server-side default on an UPDATE leaves the
+    attribute expired, and refreshing it would be a lazy load, which raises MissingGreenlet in
+    async code. `dispatch_once` already writes `sent_at`/`last_seen_at` from the app clock for the
+    same reason, so this is the established convention and not a new one.
+    """
+    if target.user_id == user_id:
+        return
+    target.user_id = user_id
+    target.label = label
+    target.created_at = datetime.now(tz=UTC)
+
+
+async def create_unifiedpush_target(
+    session: AsyncSession, *, user_id: uuid.UUID, endpoint: str, label: str | None
+) -> tuple[PushTarget, bool]:
+    """Returns (target, created). Idempotent on the endpoint. Flushes; the caller commits.
+
+    This is the half of registration `create_target` above cannot be, and the docstring there
+    explains why: the server mints the ntfy topic, so there is no client-supplied key to be
+    idempotent ON. UnifiedPush reverses that — the distributor mints the endpoint and re-delivers
+    it through `onNewEndpoint` on EVERY app start, not once — so without this lookup one cold
+    start per day silently adds a row, and one episode then yields N notifications on one device.
+    The user's only remedy would be deleting rows they never knowingly created (decision A-O).
+
+    **A DIFFERENT OWNER TAKES THE ROW OVER — it is not refused.** A-O originally specified 409
+    here, and that was wrong for a reason worth stating plainly, because otherwise someone will
+    restore it as a hardening measure and reintroduce a dead end:
+
+    **Possession of the endpoint IS the device credential.** The distributor mints it per app per
+    device, and ntfy delivers by topic to whoever subscribes — so anyone holding this string
+    already receives everything sent to it. A 409 does not take that away from an attacker; it
+    only refuses the person standing in front of the phone. Meanwhile it PERMANENTLY breaks
+    legitimate handover in the common case: the app learns it is logged out from a terminal
+    refresh failure, so the logout DELETE cannot authenticate, the previous owner's row survives,
+    and the next user on that device can never register — with no recovery path they can reach.
+    Refusing protects nothing an attacker does not already have and guarantees a dead end for a
+    real user. That asymmetry is what decides it.
+
+    What takeover changes is WHO OWNS the row, never HOW MANY rows exist. The global
+    `UniqueConstraint("transport", "target")` (6-D) is untouched and still doing its job — one row
+    per endpoint — which is also why the reassignment below is an UPDATE and never an insert.
+
+    NOT a Core `ON CONFLICT DO UPDATE` upsert, which is the usual answer to a check-then-write
+    race. Architecture rule 8 is why: a Core write does not invalidate this session's identity
+    map, so the returned row would have to be re-read with `populate_existing=True` to be trusted
+    at all. Assigning through the ORM keeps the returned object and the database in agreement
+    without a second query.
+
+    The residual race — two simultaneous FIRST registrations of the same endpoint — is HANDLED
+    below rather than merely acknowledged. It used to reach the client as a 500: the constraint
+    held the line in the database, which is the property that matters, but the loser got an
+    unhandled IntegrityError for a request that is supposed to be idempotent. The insert is
+    wrapped in a savepoint and the loser re-looks-up the winner's row and takes it over, so both
+    callers get the same 200 they would have got a millisecond apart.
+    """
+    # Origin-checked FIRST, ahead of the lookup, and the order is the point (decision A-L). Check
+    # after the lookup and an endpoint that was legal when it was stored — but is off-server now,
+    # because NTFY_BASE_URL moved — takes the `return existing, False` path and is re-blessed with
+    # a 200. Here rather than in the route so there is ONE gate: a second caller cannot reach the
+    # insert without passing it, and the thing being prevented is a stored SSRF target that the
+    # dispatcher will later POST the ntfy credential to.
+    validate_endpoint(endpoint)
+
+    existing = await session.scalar(_unifiedpush_row(endpoint))
+    if existing is not None:
+        _adopt(existing, user_id=user_id, label=label)
+        await session.flush()
+        # `created` is False for a takeover exactly as for a re-registration by the same user: no
+        # row was created, and the client cannot act differently on the difference anyway.
+        return existing, False
+
+    target = PushTarget(
+        user_id=user_id,
+        transport=PushTransport.UNIFIEDPUSH,
+        target=endpoint,
+        label=label,
+    )
+    try:
+        # The savepoint, and the `add` INSIDE it, are both load-bearing — the same shape, and for
+        # the same measured reason, as `library.create_review`. Adding before the nested block
+        # puts the pending object in the snapshot the savepoint was opened on, so rolling back
+        # does not expunge it and the session is left needing a full rollback: the caller's next
+        # statement then raises PendingRollbackError instead of proceeding.
+        async with session.begin_nested():
+            session.add(target)
+            await session.flush()
+    except IntegrityError as exc:
+        # SQLSTATE, not the constraint name — app/db.py explains why, and this is the third call
+        # site to need the discrimination. `except IntegrityError` alone would also swallow the
+        # user_id FK violation, and reporting a deleted account as "someone else registered this
+        # endpoint first" is the misclassification that pattern exists to prevent.
+        if getattr(exc.orig, "sqlstate", None) != UNIQUE_VIOLATION:
+            raise
+        # THE LOSER OF A FIRST-REGISTRATION RACE. Two devices — realistically one device retrying
+        # while the first attempt is still in flight — passed the lookup above before either
+        # inserted, and `uq_push_targets_transport_target` let exactly one through. Postgres
+        # blocks the second INSERT on the unique index until the first COMMITS, so by the time
+        # 23505 is raised the winner's row is committed and visible to this READ COMMITTED
+        # transaction's next statement.
+        #
+        # Rule 8 does not bite here: this session never loaded the winner's row, so there is no
+        # identity-map entry to be stale and the select below really does emit SQL.
+        winner = await session.scalar(_unifiedpush_row(endpoint))
+        if winner is None:
+            # Not reachable under READ COMMITTED, and re-raised rather than papered over: a None
+            # here means the unique violation was about something this function does not model,
+            # and inventing an answer would hide it.
+            raise
+        _adopt(winner, user_id=user_id, label=label)
+        await session.flush()
+        return winner, False
+    return target, True
 
 
 async def list_targets(session: AsyncSession, *, user_id: uuid.UUID) -> list[PushTarget]:
@@ -167,7 +317,12 @@ def _verdict(
     return NotificationTaskStatus.SKIPPED
 
 
-async def dispatch_once(session: AsyncSession, transport: NotificationTransport, *, now: datetime) -> DispatchSummary:
+async def dispatch_once(
+    session: AsyncSession,
+    transports: Mapping[PushTransport, NotificationTransport],
+    *,
+    now: datetime,
+) -> DispatchSummary:
     """Claim, re-validate, send, finalize.
 
     Commits ONCE in the middle, to make the attempt durable before the transport is touched (6-G);
@@ -176,6 +331,13 @@ async def dispatch_once(session: AsyncSession, transport: NotificationTransport,
     Split out from run_dispatch so it is callable with a test's savepoint-joined session —
     run_dispatch owns its own sessions and would bypass the fixture entirely, the hazard
     tests/test_sync_job.py's `_run` helper documents at length.
+
+    A MAPPING, not one transport, and this is decision A-P rather than a generalisation for its
+    own sake. `send()` receives only the target STRING, so a routing wrapper standing in for a
+    single transport could not tell a 43-character ntfy topic from a UnifiedPush callback URL —
+    the one piece of information that decides the wire format lives on the target ROW, and this
+    is the only place that has it. The alternative, sniffing `target.startswith("http")`, makes
+    the routing decision a string-shape coincidence.
     """
     candidates = (
         select(NotificationTask, Media, UserMedia.user_id.label("tracked"), NotificationPrefs.push_enabled)
@@ -212,10 +374,30 @@ async def dispatch_once(session: AsyncSession, transport: NotificationTransport,
         ) - len(rows)
 
     targets_by_user: dict[uuid.UUID, list[PushTarget]] = defaultdict(list)
+    unaddressable = 0
     for target in await session.scalars(
         select(PushTarget).where(PushTarget.user_id.in_({row.NotificationTask.user_id for row in rows}))
     ):
+        if target.transport not in transports:
+            # SKIPPED AND COUNTED, never an exception, and filtered out HERE rather than in the
+            # send loop below — where it would first have burned an attempt on a target that
+            # cannot be addressed at all, and reported `retrying` for something that will never
+            # be retryable. Downstream this collapses into the existing "no targets registered"
+            # branch, which already marks the task SKIPPED: nowhere to send is not a failure
+            # (6-F).
+            #
+            # Defensive rather than operational: registry.get_transports() gates both transports
+            # on NTFY_BASE_URL, so in this deployment they are configured together or not at all,
+            # and with neither configured the dispatch job is not registered. Worth stating
+            # because marking SKIPPED is TERMINAL — on_conflict_do_nothing ignores status, so the
+            # dedup key can never be re-enqueued. If a future transport is ever gated on its own
+            # setting, turning that setting off for an hour permanently drops every queued
+            # notification for it, and this comment is where to start.
+            unaddressable += 1
+            continue
         targets_by_user[target.user_id].append(target)
+    if unaddressable:
+        logger.warning("%s push target(s) have no configured transport and were skipped", unaddressable)
 
     sendable: list[tuple[NotificationTask, list[PushTarget], PushMessage]] = []
     for row in rows:
@@ -279,7 +461,10 @@ async def dispatch_once(session: AsyncSession, transport: NotificationTransport,
         delivered = False
         for target in targets:
             try:
-                await transport.send(target.target, message)
+                # Per ROW. Two targets on one task can take two different wire formats — which is
+                # exactly the state a user has mid-migration, with an old ntfy topic and a new
+                # UnifiedPush endpoint on the same phone.
+                await transports[target.transport].send(target.target, message)
             except TransportPermanent:
                 # Never succeeds. Prune rather than burn the attempt budget of live targets.
                 # No target value in the log line — it is a bearer secret (6-L).
@@ -305,13 +490,15 @@ async def dispatch_once(session: AsyncSession, transport: NotificationTransport,
     return summary
 
 
-async def run_dispatch(transport: NotificationTransport, *, now: datetime | None = None) -> DispatchSummary:
+async def run_dispatch(
+    transports: Mapping[PushTransport, NotificationTransport], *, now: datetime | None = None
+) -> DispatchSummary:
     """The locked, session-owning entry point, mirroring run_sync and run_threshold_scan."""
     async with advisory_lock(DISPATCH_LOCK_KEY) as acquired:
         if not acquired:
             return DispatchSummary(ran=False)
         now = now or datetime.now(tz=UTC)
         async with get_sessionmaker()() as session:
-            summary = await dispatch_once(session, transport, now=now)
+            summary = await dispatch_once(session, transports, now=now)
             await session.commit()
             return summary

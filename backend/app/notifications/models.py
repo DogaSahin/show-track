@@ -64,6 +64,12 @@ class NotificationTaskStatus(enum.StrEnum):
 
 class PushTransport(enum.StrEnum):
     NTFY = "ntfy"
+    # UnifiedPush (decision A-A). The two differ in WHO MINTS THE TARGET, which is why they
+    # cannot share a registration path: for ntfy the server generates the topic and a
+    # client-supplied one is a 422 (6-L); for UnifiedPush the distributor on the device mints a
+    # full callback URL and the client is the only party that can know it. TargetCreate's
+    # validator encodes exactly that asymmetry.
+    UNIFIEDPUSH = "unifiedpush"
 
 
 class PushTarget(UUIDPrimaryKeyMixin, Base):
@@ -79,9 +85,11 @@ class PushTarget(UUIDPrimaryKeyMixin, Base):
 
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     transport: Mapped[PushTransport] = mapped_column(enum_column(PushTransport, "transport"), nullable=False)
-    # The ntfy topic. A BEARER SECRET, not an identifier: anyone who knows it can both read every
-    # notification on it and post arbitrary ones to this phone. Generated server-side from a
-    # CSPRNG, never client-supplied (6-L), never written to a log line.
+    # The ntfy topic, or — for `unifiedpush` — the distributor's full callback URL. Either way a
+    # BEARER SECRET, not an identifier: anyone who knows it can both read every notification on it
+    # and post arbitrary ones to this phone. Never written to a log line. For `ntfy` it is
+    # generated server-side from a CSPRNG and never client-supplied (6-L); for `unifiedpush` only
+    # the device can know it, so it arrives from the client and is origin-checked instead (A-L).
     target: Mapped[str] = mapped_column(String(255), nullable=False)
     # For the human, never used in routing. "Pixel 8".
     label: Mapped[str | None] = mapped_column(String(64), nullable=True)

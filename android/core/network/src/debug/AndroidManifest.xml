@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+      Debug source set only. Android has blocked cleartext HTTP by default since API 28, so a
+      debug build pointed at the local backend (the default API_BASE_URL, http://10.0.2.2:8000)
+      cannot connect at all without this. Scoped to the two loopback aliases and never merged
+      into a release build, so it cannot become a shipped downgrade of the app's TLS posture.
+    -->
+    <application android:networkSecurityConfig="@xml/showtrack_debug_network_security_config" />
+
+</manifest>

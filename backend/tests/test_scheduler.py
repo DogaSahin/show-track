@@ -4,6 +4,7 @@ from datetime import timedelta
 import pytest
 
 from app.config import Settings
+from app.notifications.models import PushTransport
 from app.sync import scheduler as scheduler_module
 from app.sync.scheduler import (
     DISPATCH_JOB_ID,
@@ -35,13 +36,14 @@ def _settings(**overrides) -> Settings:
 
 @pytest.fixture(autouse=True)
 def no_transport(monkeypatch):
-    """ntfy off by default, so registration assertions do not depend on the developer's .env.
+    """Push off by default, so registration assertions do not depend on the developer's .env.
 
-    get_transport reads app.config's get_settings directly, so the `_env_file=None` trick these
-    tests use for everything else does not reach it — a machine with NTFY_BASE_URL set would
-    otherwise register a third job and fail the set-equality assertion below.
+    get_transports reads app.config's get_settings directly (through each transport module's own
+    get_transport), so the `_env_file=None` trick these tests use for everything else does not
+    reach it — a machine with NTFY_BASE_URL set would otherwise register a fourth job and fail
+    the set-equality assertion below.
     """
-    monkeypatch.setattr(scheduler_module, "get_transport", lambda: None)
+    monkeypatch.setattr(scheduler_module, "get_transports", dict)
 
 
 def test_the_scheduler_does_not_start_when_sync_is_disabled(monkeypatch):
@@ -102,7 +104,7 @@ async def test_the_dispatch_job_is_registered_when_a_transport_exists(monkeypatc
     """
     monkeypatch.setattr(scheduler_module, "get_providers", lambda: {})
     monkeypatch.setattr(scheduler_module, "get_settings", lambda: _settings(notification_dispatch_minutes=3))
-    monkeypatch.setattr(scheduler_module, "get_transport", lambda: object())
+    monkeypatch.setattr(scheduler_module, "get_transports", lambda: {PushTransport.NTFY: object()})
 
     scheduler = start_scheduler()
     try:
@@ -116,8 +118,12 @@ async def test_the_dispatch_job_is_registered_when_a_transport_exists(monkeypatc
 
 
 async def test_the_dispatch_job_is_a_no_op_when_the_transport_disappears(monkeypatch):
-    """Registration and execution read the transport separately, so a settings-cache clear between
-    them must not push run_dispatch a None transport and blow up inside _guarded.
+    """Registration and execution read the registry separately, so a settings-cache clear between
+    them must not push run_dispatch an EMPTY registry.
+
+    Empty is worse than None was, which is why the early return survived the signature change:
+    every claimed task would find no addressable target, be marked SKIPPED, and burn its dedup
+    key permanently — the notifications would be discarded rather than queued.
     """
     called = False
 
@@ -126,7 +132,7 @@ async def test_the_dispatch_job_is_a_no_op_when_the_transport_disappears(monkeyp
         called = True
 
     monkeypatch.setattr(scheduler_module.notifications_service, "run_dispatch", never)
-    monkeypatch.setattr(scheduler_module, "get_transport", lambda: None)
+    monkeypatch.setattr(scheduler_module, "get_transports", dict)
 
     await scheduler_module.run_dispatch_job()
 

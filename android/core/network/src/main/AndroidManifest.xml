@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+      Declared by the module that owns the HTTP stack, matching :core:designsystem's own
+      declaration for Coil. Manifest merging carries it up to any app depending on either.
+    -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+</manifest>

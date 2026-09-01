@@ -37,8 +37,29 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Lint
+        run: ./gradlew ktlintCheck detekt
+
+      # build-logic is an INCLUDED BUILD, so the root `ktlintCheck detekt` above does not reach it —
+      # its own step is the only way it gets linted at all. Measured before this step existed: a
+      # deliberately malformed build-logic/src/main/kotlin/.../Bad.kt (double spaces, spaced
+      # parameters, 8-space indent, no trailing newline) gave BUILD SUCCESSFUL under the root
+      # command; with the step, ktlint reports 15 violations and detekt one. The module holding both
+      # architecture rules, both TestKit suites and all six convention plugins was the one nothing
+      # checked.
+      - name: Lint build-logic
+        run: ./gradlew -p build-logic ktlintCheck detekt
+
+      # Also runs the build-logic convention-plugin tests, including the ones that prove the
+      # module-dependency rules fail a real build. See android/build.gradle.kts.
       - name: Unit tests
         run: ./gradlew testDebugUnitTest
 
+      # assembleDebugAndroidTest alongside assembleDebug: :core:network has an instrumentation
+      # test for the Android Keystore, which has no off-device stand-in. Nothing here can RUN it
+      # (there is no emulator in this pipeline), but without compiling it the androidTest source
+      # set is never built by anything and would rot silently on the first refactor.
+      # (The Room tests in :core:database and :core:data run on Robolectric instead, so they are
+      # exercised by the unit-test step above, not by this one.)
       - name: Assemble debug
-        run: ./gradlew assembleDebug
+        run: ./gradlew assembleDebug assembleDebugAndroidTest

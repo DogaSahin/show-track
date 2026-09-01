@@ -3,6 +3,7 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <application
+        android:name=".ShowTrackApplication"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
@@ -21,6 +22,36 @@
                 <action android:name="android.intent.action.MAIN" />
 
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!--
+                The door a push notification's tap comes through. The URI is built by
+                :core:navigation's detailDeepLink() and answered by :feature:detail's
+                navDeepLink<DetailRoute>, so this filter is the ONLY place the scheme and host are
+                written as literals — a change to DEEP_LINK_SCHEME that forgets this file makes
+                every notification tap open the launcher instead of the title, with no error
+                anywhere. NavGraphRegistrationTest asserts the graph side; this side is manifest,
+                which no JVM test can reach.
+
+                DEFAULT and BROWSABLE are both required: DEFAULT for an implicit ACTION_VIEW, and
+                BROWSABLE so the intent may originate outside the app — which a notification tap,
+                dispatched by the system, does.
+
+                A custom scheme rather than an https:// App Link because App Links need a verified
+                domain and hosting is still undecided (design doc §11). Any app may claim a custom
+                scheme, so nothing sensitive travels in it — the media id is a public identifier
+                and every screen behind it needs a token. PushNotifier pins the intent to this
+                package for the outbound half.
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+
+                <data
+                    android:host="detail"
+                    android:scheme="showtrack" />
             </intent-filter>
         </activity>
     </application>

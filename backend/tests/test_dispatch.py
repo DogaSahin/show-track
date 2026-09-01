@@ -13,6 +13,7 @@ from app.notifications.models import (
     NotificationTaskStatus,
     NotificationThreshold,
     PushTarget,
+    PushTransport,
     airs_on_for,
 )
 from app.notifications.transport import PushMessage, TransportPermanent, TransportRetryable
@@ -31,6 +32,18 @@ from tests.factories import (
 # takes one: a test whose expected counts depend on the wall clock fails on a slow CI runner and
 # nowhere else.
 NOW = datetime(2026, 8, 21, 12, 0, tzinfo=UTC)
+
+
+def ntfy_only(transport):
+    """The registry every pre-existing test in this file wants: one transport, reachable from an
+    ntfy target row.
+
+    dispatch_once takes a Mapping keyed by PushTransport (decision A-P) rather than one transport,
+    because `send()` is handed only the target STRING and cannot tell an ntfy topic from a
+    UnifiedPush URL. A helper rather than an inline dict at twenty call sites, so the tests below
+    still read as "this test is about backoff", not "this test is about the registry".
+    """
+    return {PushTransport.NTFY: transport}
 
 
 class FakeTransport:
@@ -99,7 +112,7 @@ async def test_a_due_task_is_sent_and_marked(db_session):
     state = await _queued(db_session)
     transport = FakeTransport()
 
-    summary = await service.dispatch_once(db_session, transport, now=NOW)
+    summary = await service.dispatch_once(db_session, ntfy_only(transport), now=NOW)
 
     assert (summary.sent, summary.skipped, summary.expired) == (1, 0, 0)
     assert len(transport.sent) == 1
@@ -117,7 +130,7 @@ async def test_a_rescheduled_episode_is_skipped_not_sent(db_session):
     await db_session.flush()
     transport = FakeTransport()
 
-    summary = await service.dispatch_once(db_session, transport, now=NOW)
+    summary = await service.dispatch_once(db_session, ntfy_only(transport), now=NOW)
 
     assert (summary.sent, summary.skipped) == (0, 1)
     assert transport.sent == []
@@ -133,7 +146,7 @@ async def test_provider_jitter_does_not_skip(db_session):
     state.media.next_episode_date = state.media.next_episode_date + timedelta(seconds=30)
     await db_session.flush()
 
-    summary = await service.dispatch_once(db_session, FakeTransport(), now=NOW)
+    summary = await service.dispatch_once(db_session, ntfy_only(FakeTransport()), now=NOW)
 
     assert summary.sent == 1
 
@@ -143,7 +156,7 @@ async def test_a_title_removed_from_the_library_is_skipped(db_session):
     await db_session.delete(state.user_media)
     await db_session.flush()
 
-    summary = await service.dispatch_once(db_session, FakeTransport(), now=NOW)
+    summary = await service.dispatch_once(db_session, ntfy_only(FakeTransport()), now=NOW)
 
     assert (summary.sent, summary.skipped) == (0, 1)
 
@@ -156,7 +169,7 @@ async def test_push_disabled_after_enqueue_is_skipped(db_session):
     state.prefs.push_enabled = False
     await db_session.flush()
 
-    summary = await service.dispatch_once(db_session, FakeTransport(), now=NOW)
+    summary = await service.dispatch_once(db_session, ntfy_only(FakeTransport()), now=NOW)
 
     assert (summary.sent, summary.skipped) == (0, 1)
 
@@ -167,7 +180,7 @@ async def test_an_episode_that_already_aired_expires(db_session):
     """
     state = await _queued(db_session, airs_at=NOW - timedelta(hours=2))
 
-    summary = await service.dispatch_once(db_session, FakeTransport(), now=NOW)
+    summary = await service.dispatch_once(db_session, ntfy_only(FakeTransport()), now=NOW)
 
     assert (summary.sent, summary.expired) == (0, 1)
     await db_session.refresh(state.task)
@@ -188,7 +201,7 @@ async def test_an_episode_the_pointer_has_advanced_past_expires(db_session):
     state.media.next_episode_date = NOW + timedelta(days=7)
     await db_session.flush()
 
-    summary = await service.dispatch_once(db_session, FakeTransport(), now=NOW)
+    summary = await service.dispatch_once(db_session, ntfy_only(FakeTransport()), now=NOW)
 
     assert (summary.expired, summary.skipped) == (1, 0)
     await db_session.refresh(state.task)
@@ -208,7 +221,7 @@ async def test_a_series_finale_with_a_cleared_pointer_expires(db_session):
     state.media.next_episode_number = None
     await db_session.flush()
 
-    summary = await service.dispatch_once(db_session, FakeTransport(), now=NOW)
+    summary = await service.dispatch_once(db_session, ntfy_only(FakeTransport()), now=NOW)
 
     assert (summary.expired, summary.skipped) == (1, 0)
     await db_session.refresh(state.task)
@@ -226,7 +239,7 @@ async def test_an_episode_rescheduled_out_of_a_past_slot_is_skipped_not_expired(
     state.media.next_episode_date = NOW + timedelta(days=7)
     await db_session.flush()
 
-    summary = await service.dispatch_once(db_session, FakeTransport(), now=NOW)
+    summary = await service.dispatch_once(db_session, ntfy_only(FakeTransport()), now=NOW)
 
     assert (summary.skipped, summary.expired) == (1, 0)
     await db_session.refresh(state.task)
@@ -237,7 +250,7 @@ async def test_a_user_with_no_targets_is_skipped(db_session):
     """Push enabled but no device registered. Not a failure — there is nowhere to send."""
     await _queued(db_session, targets=0)
 
-    summary = await service.dispatch_once(db_session, FakeTransport(), now=NOW)
+    summary = await service.dispatch_once(db_session, ntfy_only(FakeTransport()), now=NOW)
 
     assert (summary.sent, summary.skipped) == (0, 1)
 
@@ -249,7 +262,7 @@ async def test_two_targets_both_receive_the_push(db_session):
     await _queued(db_session, targets=2)
     transport = FakeTransport()
 
-    await service.dispatch_once(db_session, transport, now=NOW)
+    await service.dispatch_once(db_session, ntfy_only(transport), now=NOW)
 
     assert len(transport.sent) == 2
 
@@ -257,7 +270,7 @@ async def test_two_targets_both_receive_the_push(db_session):
 async def test_a_retryable_failure_leaves_the_task_pending_with_backoff(db_session):
     state = await _queued(db_session)
 
-    summary = await service.dispatch_once(db_session, FakeTransport(TransportRetryable("503")), now=NOW)
+    summary = await service.dispatch_once(db_session, ntfy_only(FakeTransport(TransportRetryable("503"))), now=NOW)
 
     assert (summary.sent, summary.retrying) == (0, 1)
     await db_session.refresh(state.task)
@@ -291,7 +304,7 @@ async def test_the_attempt_is_committed_before_the_send(db_session, monkeypatch)
             events.append("send")
             await super().send(target, message)
 
-    await service.dispatch_once(db_session, RecordingTransport(), now=NOW)
+    await service.dispatch_once(db_session, ntfy_only(RecordingTransport()), now=NOW)
 
     assert "send" in events, "the transport was never called; this test proves nothing"
     assert "commit" in events, "the attempt was never committed before the transport was touched"
@@ -305,7 +318,7 @@ async def test_the_final_attempt_marks_the_task_failed(db_session):
     state.task.attempts = service.MAX_ATTEMPTS - 1
     await db_session.flush()
 
-    summary = await service.dispatch_once(db_session, FakeTransport(TransportRetryable("503")), now=NOW)
+    summary = await service.dispatch_once(db_session, ntfy_only(FakeTransport(TransportRetryable("503"))), now=NOW)
 
     assert summary.failed == 1
     await db_session.refresh(state.task)
@@ -318,7 +331,7 @@ async def test_a_permanent_failure_deletes_the_target(db_session):
     """
     state = await _queued(db_session)
 
-    await service.dispatch_once(db_session, FakeTransport(TransportPermanent("404")), now=NOW)
+    await service.dispatch_once(db_session, ntfy_only(FakeTransport(TransportPermanent("404"))), now=NOW)
 
     remaining = await db_session.scalars(select(PushTarget).where(PushTarget.user_id == state.user.id))
     assert list(remaining) == []
@@ -332,7 +345,7 @@ async def test_a_task_not_yet_due_is_left_alone(db_session):
     state.task.next_attempt_at = NOW + timedelta(minutes=10)
     await db_session.flush()
 
-    summary = await service.dispatch_once(db_session, FakeTransport(), now=NOW)
+    summary = await service.dispatch_once(db_session, ntfy_only(FakeTransport()), now=NOW)
 
     assert summary.claimed == 0
 
@@ -349,7 +362,7 @@ async def test_a_capped_batch_reports_what_it_left_behind(db_session, monkeypatc
     for _ in range(5):
         await _queued(db_session)
 
-    summary = await service.dispatch_once(db_session, FakeTransport(), now=NOW)
+    summary = await service.dispatch_once(db_session, ntfy_only(FakeTransport()), now=NOW)
 
     assert (summary.claimed, summary.remaining) == (2, 3)
     assert summary.sent == 2
@@ -361,6 +374,6 @@ async def test_a_contended_run_reports_ran_false():
     """
     async with advisory_lock(DISPATCH_LOCK_KEY) as held:
         assert held is True
-        summary = await service.run_dispatch(FakeTransport())
+        summary = await service.run_dispatch(ntfy_only(FakeTransport()))
 
     assert summary.ran is False

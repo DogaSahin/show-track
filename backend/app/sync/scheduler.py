@@ -9,7 +9,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from app.config import get_settings
 from app.media.providers import get_providers
 from app.notifications import service as notifications_service
-from app.notifications.ntfy import get_transport
+from app.notifications.registry import get_transports
 from app.recommendations import service as recommendations_service
 from app.sync import service
 
@@ -104,15 +104,19 @@ async def run_seed_job() -> None:
 
 
 async def run_dispatch_job() -> None:
-    """Resolves the transport per RUN, not at registration.
+    """Resolves the transports per RUN, not at registration.
 
-    start_scheduler only decides whether to register the job at all; a transport captured there
-    would outlive a get_settings cache clear. Re-reading is one attribute lookup a minute.
+    start_scheduler only decides whether to register the job at all; a registry captured there
+    would outlive a get_settings cache clear. Re-reading is two attribute lookups a minute.
+
+    An EMPTY registry returns early for the reason a None transport used to: every claimed task
+    would have no addressable target, be marked SKIPPED, and burn its dedup key permanently
+    (decision A-P's terminal-status note). "No transports configured" must queue, not discard.
     """
-    transport = get_transport()
-    if transport is None:
+    transports = get_transports()
+    if not transports:
         return
-    await _guarded("notification dispatch", lambda: notifications_service.run_dispatch(transport))
+    await _guarded("notification dispatch", lambda: notifications_service.run_dispatch(transports))
 
 
 def start_scheduler() -> AsyncIOScheduler | None:
@@ -150,7 +154,7 @@ def start_scheduler() -> AsyncIOScheduler | None:
     # Guarded, not registered-and-inert: with ntfy unconfigured (6-K) run_dispatch_job returns
     # immediately, so registering it anyway would wake the loop every minute forever to do
     # nothing and log nothing. Tasks still accumulate as `pending` and drain once ntfy is set up.
-    dispatch_enabled = get_transport() is not None
+    dispatch_enabled = bool(get_transports())
     if dispatch_enabled:
         jobs.append(
             (
