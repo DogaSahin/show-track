@@ -9,6 +9,11 @@ import com.anarky.showtrack.core.data.mapper.toEntity
 import com.anarky.showtrack.core.database.LibraryDao
 import com.anarky.showtrack.core.database.LibraryEntryEntity
 import com.anarky.showtrack.core.database.ShowTrackDatabase
+import com.anarky.showtrack.core.model.LibraryFilter
+import com.anarky.showtrack.core.model.LibraryPatch
+import com.anarky.showtrack.core.model.LibrarySort
+import com.anarky.showtrack.core.model.MediaSource
+import com.anarky.showtrack.core.model.ScoreChange
 import com.anarky.showtrack.core.model.UserMediaStatus
 import com.anarky.showtrack.core.network.api.ShowTrackApi
 import com.anarky.showtrack.core.network.dto.AddLibraryEntryRequest
@@ -20,9 +25,15 @@ import com.anarky.showtrack.core.network.dto.PushTargetDto
 import com.anarky.showtrack.core.network.dto.RegisterTargetRequest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -299,9 +310,119 @@ class LibraryRepositoryImplTest {
             assertEquals(listOf(PAGE_SIZE), api.requestedLimits)
         }
 
+    @Test
+    fun `entryForMedia returns null for a title that is not in the library`() =
+        runTest {
+            // The backend answers an empty page, not a 404 (decision C-C). Null here is what
+            // draws the detail screen's Add button rather than Edit.
+            api.enqueueLibraryPage(LibraryPageDto(items = emptyList(), nextCursor = null))
+
+            assertNull(repository.entryForMedia("media-1"))
+            assertEquals("media-1", api.requestedMediaIds.last())
+        }
+
+    @Test
+    fun `a non-default filter is NOT written to the cache`() =
+        runTest {
+            // Decision C-B. Caching a filtered page would make a later cold start render
+            // "Watching" as if it were the whole library.
+            api.enqueueLibraryPage(pageOf("Cached title"))
+            repository.refresh()
+            api.enqueueLibraryPage(pageOf("Only planned"))
+
+            repository.applyFilter(LibraryFilter(status = UserMediaStatus.PLANNED))
+
+            assertEquals(listOf("Cached title"), dao.observeAll().first().map { it.title })
+        }
+
+    @Test
+    fun `applying a filter sends it as query parameters and starts from page one`() =
+        runTest {
+            api.enqueueLibraryPage(pageOf("Anything", nextCursor = "cursor-2"))
+            repository.refresh()
+            api.enqueueLibraryPage(pageOf("Filtered"))
+
+            repository.applyFilter(LibraryFilter(status = UserMediaStatus.WATCHING, sort = LibrarySort.SCORE))
+
+            assertEquals("watching", api.requestedStatuses.last())
+            assertEquals("score", api.requestedSorts.last())
+            // The cursor from the PREVIOUS filter must not carry over: replaying it under a new
+            // sort compares against the wrong column and silently skips rows.
+            assertNull(api.requestedCursors.last())
+        }
+
+    /**
+     * The invariant `applyFilter`'s KDoc names: `filter` must always describe the filter
+     * [paginator]'s current contents actually came from. `CursorPaginator.restart` fetches before
+     * it mutates, so a failed `applyFilter` must leave `filter` pointing at whatever the
+     * paginator still holds — the OLD filter — not the new one that never took effect. Getting
+     * this backwards is exactly task 9a.4's `MediaRepositoryImpl.search` bug: a later `loadMore`
+     * would pair the new filter with the old cursor.
+     */
+    @Test
+    fun `a failed applyFilter restores the previous filter rather than leaving it mismatched`() =
+        runTest {
+            api.failNext()
+
+            runCatching { repository.applyFilter(LibraryFilter(status = UserMediaStatus.PLANNED)) }
+            repository.refresh()
+
+            // First call: the failed attempt DID try "planned" — proving the filter was applied
+            // before the fetch ran. Second call: refresh() went out under the RESTORED (default)
+            // filter, not "planned" — proving the rollback happened.
+            assertEquals(listOf("planned", null), api.requestedStatuses)
+        }
+
+    @Test
+    fun `an unrated score is sent as an explicit null, not omitted`() =
+        runTest {
+            // The whole reason the PATCH body is a JsonObject. An omitted score means "leave it
+            // alone", so a data class with a nullable field could never express "unrate this".
+            api.enqueueEntry(entryBody())
+
+            repository.update("entry-1", LibraryPatch(score = ScoreChange.Clear))
+
+            val (id, patch) = api.updateRequests.single()
+            assertEquals("entry-1", id)
+            assertTrue(patch.containsKey("score"))
+            assertEquals(JsonNull, patch.getValue("score"))
+        }
+
+    @Test
+    fun `a patch sends only the fields it names`() =
+        runTest {
+            api.enqueueEntry(entryBody())
+
+            repository.update("entry-1", LibraryPatch(progress = 12))
+
+            val (_, patch) = api.updateRequests.single()
+            assertEquals(12, patch.getValue("progress").jsonPrimitive.int)
+            // If this fails, every progress edit is also silently resetting the score.
+            assertFalse(patch.containsKey("score"))
+            assertFalse(patch.containsKey("status"))
+        }
+
+    @Test
+    fun `adding a title refreshes the list so it appears`() =
+        runTest {
+            // Decision C-K. Without the refresh the user returns from detail to a list that does
+            // not contain what they just added.
+            api.enqueueEntry(entryBody(title = "Newly added"))
+            api.enqueueLibraryPage(pageOf("Newly added"))
+
+            val created = repository.add(MediaSource.ANILIST, "154587")
+
+            assertEquals("Newly added", created.media.title)
+            assertEquals(listOf("Newly added"), dao.observeAll().first().map { it.title })
+            // The source enum is lowercased for the wire, matching what `library()`'s status/sort
+            // params do above.
+            assertEquals(AddLibraryEntryRequest(source = "anilist", externalId = "154587"), api.addRequests.single())
+        }
+
     private fun dto(
         id: String,
         score: String? = null,
+        title: String = "Title $id",
     ) = LibraryEntryDto(
         id = id,
         status = "watching",
@@ -315,7 +436,7 @@ class LibraryRepositoryImplTest {
                 source = "anilist",
                 externalId = id,
                 type = "anime",
-                title = "Title $id",
+                title = title,
                 year = 1998,
                 genres = listOf("action"),
                 coverImageUrl = "https://example.com/$id.jpg",
@@ -326,6 +447,15 @@ class LibraryRepositoryImplTest {
                 daysUntilNextEpisode = 4,
             ),
     )
+
+    /** A one-item page, for the filter/write tests that do not care about a real cursor chain. */
+    private fun pageOf(
+        title: String,
+        nextCursor: String? = null,
+    ): LibraryPageDto = LibraryPageDto(items = listOf(dto(id = "id-$title", title = title)), nextCursor = nextCursor)
+
+    /** A single entry DTO, for stubbing `addLibraryEntry`/`updateLibraryEntry` responses. */
+    private fun entryBody(title: String = "Title entry-1"): LibraryEntryDto = dto(id = "entry-1", title = title)
 
     private companion object {
         const val PAGE_SIZE = 20
@@ -342,10 +472,30 @@ private class FakeShowTrackApi(
 ) : ShowTrackApi {
     val requestedCursors = mutableListOf<String?>()
     val requestedLimits = mutableListOf<Int>()
+    val requestedStatuses = mutableListOf<String?>()
+    val requestedSorts = mutableListOf<String?>()
+    val requestedMediaIds = mutableListOf<String?>()
+    val addRequests = mutableListOf<AddLibraryEntryRequest>()
+    val updateRequests = mutableListOf<Pair<String, JsonObject>>()
     private var shouldFail = false
+
+    // One-shot responses, consumed in FIFO order and taking priority over [pages] — the
+    // equivalent of MockWebServer's `enqueue`, needed because [pages] is keyed by cursor alone
+    // and several filter/write tests issue more than one `cursor = null` request that must answer
+    // differently each time.
+    private val queuedPages = ArrayDeque<LibraryPageDto>()
+    private val queuedEntries = ArrayDeque<LibraryEntryDto>()
 
     fun failNext() {
         shouldFail = true
+    }
+
+    fun enqueueLibraryPage(page: LibraryPageDto) {
+        queuedPages.addLast(page)
+    }
+
+    fun enqueueEntry(entry: LibraryEntryDto) {
+        queuedEntries.addLast(entry)
     }
 
     override suspend fun library(
@@ -357,24 +507,33 @@ private class FakeShowTrackApi(
     ): LibraryPageDto {
         requestedCursors += cursor
         requestedLimits += limit
+        requestedStatuses += status
+        requestedSorts += sort
+        requestedMediaIds += mediaId
         if (shouldFail) {
             shouldFail = false
             throw IOException("simulated network failure")
         }
+        queuedPages.removeFirstOrNull()?.let { return it }
         return pages.getValue(cursor)
     }
 
     // The rest of the interface. `error(...)` rather than a silent no-op: a library test that
     // reached these would be doing something it has no business doing, and should say so loudly.
-    // PushRepositoryImplTest has its own fake for the push half; the write/search/detail methods
-    // are 9a.3–9a.5's to test.
-    override suspend fun addLibraryEntry(request: AddLibraryEntryRequest): LibraryEntryDto =
-        error("this fake only serves observeLibrary/refresh/loadMore")
+    // PushRepositoryImplTest has its own fake for the push half; the search/detail methods stay
+    // outside this repository's business.
+    override suspend fun addLibraryEntry(request: AddLibraryEntryRequest): LibraryEntryDto {
+        addRequests += request
+        return queuedEntries.removeFirst()
+    }
 
     override suspend fun updateLibraryEntry(
         id: String,
         patch: JsonObject,
-    ): LibraryEntryDto = error("this fake only serves observeLibrary/refresh/loadMore")
+    ): LibraryEntryDto {
+        updateRequests += id to patch
+        return queuedEntries.removeFirst()
+    }
 
     override suspend fun searchMedia(
         query: String,

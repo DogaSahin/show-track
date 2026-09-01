@@ -3,6 +3,8 @@ package com.anarky.showtrack.feature.library
 import app.cash.turbine.test
 import com.anarky.showtrack.core.data.repository.LibraryRepository
 import com.anarky.showtrack.core.model.LibraryEntry
+import com.anarky.showtrack.core.model.LibraryFilter
+import com.anarky.showtrack.core.model.LibraryPatch
 import com.anarky.showtrack.core.model.Media
 import com.anarky.showtrack.core.model.MediaSource
 import com.anarky.showtrack.core.model.MediaStatus
@@ -104,6 +106,25 @@ class LibraryViewModelTest {
         }
 
         override suspend fun loadMore() = Unit
+
+        // Filters and writes are task 9a.8/9a.9's to exercise, once the library and detail
+        // screens actually call them. `error(...)` rather than a silent no-op: this ViewModel
+        // does not call these yet, so a test that reached one would be testing something that
+        // does not exist.
+        override suspend fun applyFilter(filter: LibraryFilter): Unit = error("not exercised by LibraryViewModel yet")
+
+        override suspend fun add(
+            source: MediaSource,
+            externalId: String,
+        ): LibraryEntry = error("not exercised by LibraryViewModel yet")
+
+        override suspend fun update(
+            entryId: String,
+            patch: LibraryPatch,
+        ): LibraryEntry = error("not exercised by LibraryViewModel yet")
+
+        override suspend fun entryForMedia(mediaId: String): LibraryEntry? =
+            error("not exercised by LibraryViewModel yet")
     }
 
     private companion object {
