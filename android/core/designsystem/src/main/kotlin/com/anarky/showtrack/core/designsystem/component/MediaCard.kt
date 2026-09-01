@@ -81,14 +81,21 @@ fun MediaCard(
 }
 
 /**
- * The poster slot. [coverImageUrl] is loaded through Coil's [AsyncImage]; [placeholder], [error]
- * and [fallback] all point at the same [rememberPosterPlaceholder] painter, so a still-loading
- * cover, a failed fetch and a genuinely absent URL (as in `previewMedia`, whose whole point is to
- * exercise this without a network) all resolve to one deliberate, theme-coloured mark rather than
- * three different broken-looking states.
+ * The poster slot: exported (not `private`) because [coverImageUrl] is loaded through Coil's
+ * [AsyncImage], and Coil is `implementation`-scoped inside this module — no `:feature:*` module
+ * has it on its compile classpath (architecture rule 2). This is the design system's only cover-art
+ * primitive, so a screen showing one title full-size (`:feature:detail`) reuses this instead of
+ * either depending on Coil directly (which the build would refuse) or growing a second,
+ * near-identical placeholder/loading painter of its own. Sizing is entirely the caller's: pass a
+ * `width` (or any other size) through [modifier] and the aspect ratio derives the rest.
+ *
+ * [placeholder], [error] and [fallback] all point at the same [rememberPosterPlaceholder] painter,
+ * so a still-loading cover, a failed fetch and a genuinely absent URL (as in `previewMedia`, whose
+ * whole point is to exercise this without a network) all resolve to one deliberate, theme-coloured
+ * mark rather than three different broken-looking states.
  */
 @Composable
-private fun MediaCover(
+fun MediaCover(
     coverImageUrl: String?,
     modifier: Modifier = Modifier,
 ) {
