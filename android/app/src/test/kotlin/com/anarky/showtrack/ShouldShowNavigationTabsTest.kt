@@ -27,9 +27,15 @@ import org.robolectric.annotation.Config
  * `ShowTrackGraphRoutingTest`/`AuthNavigationTest` already use, so a real `NavDestination` (which
  * needs a `Context` to parse its route) is available to pass in.
  *
- * **Pinned:** the four cells of the truth table `shouldShowNavigationTabs` is built from —
- * `Undecided`/decided crossed with on-`AuthRoute`/elsewhere — including the exact regression case
- * (decided + not-`AuthRoute`, reached via an `Auth`-started session that navigated to `Library`).
+ * **Pinned:** the truth table `shouldShowNavigationTabs` is built from — `Undecided`/decided
+ * crossed with on-`AuthRoute`/elsewhere/`null` — including the exact regression case (decided +
+ * not-`AuthRoute`, reached via an `Auth`-started session that navigated to `Library`) AND the
+ * `null`-destination case: `currentBackStackEntryAsState()` seeds at `null`
+ * (`collectAsState(null)`) before the back-stack flow's first emission, a window every cold start
+ * passes through, `Library`-started ones included. A condition using `!= true` instead of
+ * `== false` reads `null?.hasRoute(...) != true` as `true` and shows the tab bar over the login
+ * screen for that window — a real regression this test file did not catch the first time round
+ * because nothing here passed `null` at all.
  *
  * **Not pinned:** the `popUpTo` back-stack-stacking follow-on noted in `shouldShowNavigationTabs`'s
  * KDoc — that needs an on-device check, not a Robolectric one.
@@ -52,6 +58,20 @@ class ShouldShowNavigationTabsTest {
         assertFalse(shouldShowNavigationTabs(AppStart.Library, destination))
     }
 
+    /**
+     * The boundary a review round found live: `currentBackStackEntryAsState()` is
+     * `currentBackStackEntryFlow.collectAsState(null)`, so it SEEDS at `null` — before any graph
+     * exists — and stays `null` through the composition pass where `start` first flips off
+     * `Undecided`. `null` must read the same as `Undecided`: "we don't know where we are yet" is
+     * not "provably not `AuthRoute`". The original `!= true` phrasing got this wrong (`null !=
+     * true` is `true`); `== false` requires an actual, known, non-`AuthRoute` destination.
+     */
+    @Test
+    fun `hidden when the destination is null, even once start has resolved`() {
+        assertFalse(shouldShowNavigationTabs(AppStart.Auth, null))
+        assertFalse(shouldShowNavigationTabs(AppStart.Library, null))
+    }
+
     @Test
     fun `shown once start has resolved and the current destination is not AuthRoute`() {
         val destination = controllerWith { defaultGraph() }.currentDestination
@@ -70,7 +90,7 @@ class ShouldShowNavigationTabsTest {
     }
 
     @Test
-    fun `stays hidden while navigating elsewhere before login, from an Auth-started session`() {
+    fun `shown as soon as navigation leaves AuthRoute, regardless of which route follows`() {
         val controller = controllerWith { authOnlyGraph() }
 
         assertFalse(shouldShowNavigationTabs(AppStart.Auth, controller.currentDestination))

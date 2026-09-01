@@ -176,12 +176,21 @@ fun ShowTrackApp(authEvents: Flow<AuthEvent>) {
  * exactly that reason.
  *
  * **Pinned here:** tabs stay hidden while [start] is [AppStart.Undecided] (the empty-strip guard
- * a cold start needs, decision C-F) and while [currentDestination] is on [AuthRoute] — signed out
- * at any point in the session, whether that is the initial auth gate or a runtime logout. Once
- * [start] has resolved to anything other than `Undecided` AND the current destination is not
- * `AuthRoute`, tabs are shown — including right after a fresh login from an `Auth`-started
- * session, which is the case that regressed before this function existed (`start` alone stayed
- * `Auth` for the rest of the process, so tabs never appeared post-login).
+ * a cold start needs, decision C-F), while [currentDestination] is on [AuthRoute] — signed out at
+ * any point in the session, whether that is the initial auth gate or a runtime logout — and while
+ * [currentDestination] is `null`. That last one matters on its own: `currentBackStackEntryAsState()`
+ * is backed by `currentBackStackEntryFlow.collectAsState(null)`, so it SEEDS at `null` and does not
+ * emit a real destination until the graph exists and the collector resumes — a window that exists
+ * on every cold start, including a `Library`-started one. `null` means "we don't know where we are
+ * yet", which must read the same as `Undecided`: unknown is not "not `AuthRoute`". The condition
+ * below is therefore `currentDestination?.hasRoute(AuthRoute::class) == false` — true only when
+ * there IS a destination and it is provably not `AuthRoute` — not `!= true`, which is also true for
+ * `null` and would show the tab bar over the login screen for that first-composition window.
+ *
+ * Once [start] has resolved to anything other than `Undecided` AND the current destination is
+ * known and not `AuthRoute`, tabs are shown — including right after a fresh login from an
+ * `Auth`-started session, which is the case that regressed before this function existed (`start`
+ * alone stayed `Auth` for the rest of the process, so tabs never appeared post-login).
  *
  * **NOT pinned here, and not fixed by this change:** in an `Auth`-started session the NavHost's
  * `startDestination` is still `AuthRoute` after login, so a tab's `onClick`
@@ -193,7 +202,7 @@ fun ShowTrackApp(authEvents: Flow<AuthEvent>) {
 internal fun shouldShowNavigationTabs(
     start: AppStart,
     currentDestination: NavDestination?,
-): Boolean = start != AppStart.Undecided && currentDestination?.hasRoute(AuthRoute::class) != true
+): Boolean = start != AppStart.Undecided && currentDestination?.hasRoute(AuthRoute::class) == false
 
 /**
  * The three top-level destinations the navigation suite offers. A subset of the nine routes on
