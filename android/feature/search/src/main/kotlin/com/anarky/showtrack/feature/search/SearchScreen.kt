@@ -157,11 +157,14 @@ private fun DegradedBanner(
     providers: List<MediaSource>,
     modifier: Modifier = Modifier,
 ) {
-    // Names resolved into a plain List<String> first, then joined outside any lambda: joinToString's
-    // `transform` parameter is `crossinline`, and the Compose compiler plugin cannot see through a
-    // crossinline lambda from a precompiled stdlib to infer composability — `displayName()`
-    // (a @Composable call) inside `joinToString { }` directly fails to compile for exactly that
-    // reason. `map`'s lambda has no such modifier, so resolving names there first works.
+    // Names resolved into a plain List<String> first, then joined outside any lambda. NOT a
+    // `crossinline` issue: `joinToString`'s `transform` is `((T) -> CharSequence)?` — a nullable
+    // function type with a `null` default, which Kotlin does not allow to be `inline` at all — so
+    // `joinToString`/`joinTo` are plain, non-`inline` functions. A non-inline function's lambda
+    // argument compiles to its own `Function1` object, which is not a composable context, so
+    // `displayName()` (a @Composable call) inside `joinToString { }` fails to compile. `map` works
+    // here because it genuinely IS `inline`: its lambda's body is copied into this function at
+    // compile time and stays in ITS composable scope, rather than becoming a separate object.
     val providerNames = providers.map { it.displayName() }
     Surface(modifier = modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.errorContainer) {
         Text(
