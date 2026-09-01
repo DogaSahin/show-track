@@ -1,0 +1,28 @@
+<resources>
+    <string name="library_title">Library</string>
+    <string name="library_search_content_description">Search</string>
+
+    <!-- The empty message differs by filter (decision C-B made visible in the UI): Room caches
+         ONLY the default view, so under a status filter or a non-default sort the list is always
+         a fresh network read with nothing local to fall back to. "Nothing in your library yet" is
+         true on the unfiltered default tab but FALSE under a filter — it reads as data loss when
+         the real answer is "nothing matches this filter". -->
+    <string name="library_empty_default">Nothing in your library yet</string>
+    <string name="library_empty_filtered">Nothing here</string>
+
+    <string name="library_error_message">Couldn\'t load your library. Check your connection and try again.</string>
+
+    <!-- A failed loadMore() (LibraryUiState.Success.pageError) — the already-loaded list stays on
+         screen underneath this footer, so the copy is a small, tap-to-retry note rather than the
+         full-screen library_error_message above. -->
+    <string name="library_page_error">Couldn\'t load more. Tap to retry.</string>
+
+    <!-- %1$s is the CURRENT sort's own label (e.g. "Sort: Score"), so the button always shows
+         what's active rather than a static "Sort" that leaves the DropdownMenu as the only way
+         to tell. -->
+    <string name="library_sort_button">Sort: %1$s</string>
+    <string name="library_sort_content_description">Sort the library</string>
+    <string name="library_sort_title">Title</string>
+    <string name="library_sort_score">Score</string>
+    <string name="library_sort_next_episode">Next episode</string>
+</resources>

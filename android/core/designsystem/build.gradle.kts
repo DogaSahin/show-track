@@ -3,6 +3,18 @@ plugins {
     id("showtrack.android.compose")
 }
 
+android {
+    testOptions {
+        // Robolectric needs this to load the module's own res/values/strings.xml — StatusPresentationTest
+        // exercises stringResource() calls, which resolve nothing without it. Same requirement as
+        // :core:database's LibraryDaoTest, for a different reason (there it's Robolectric's own
+        // manifest/resource prerequisite; here it's this module's actual resources).
+        unitTests {
+            isIncludeAndroidResources = true
+        }
+    }
+}
+
 dependencies {
     implementation(project(":core:model"))
 
@@ -10,4 +22,13 @@ dependencies {
     // engine Task 4 brings in for Retrofit rather than pulling in a second HTTP client.
     implementation(libs.coil.compose)
     implementation(libs.coil.network.okhttp)
+
+    // StatusPresentationTest drives label() (now @Composable, reading a resource) through a real
+    // Compose test rule on the JVM. Robolectric supplies the Android runtime; sdk=35 is pinned in
+    // src/test/resources/robolectric.properties, copied from :core:database — Robolectric ships no
+    // API 36 shadow jar.
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.androidx.compose.ui.test.junit4)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
 }

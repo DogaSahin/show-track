@@ -1,0 +1,28 @@
+<resources>
+    <string name="search_field_label">Search</string>
+    <string name="search_field_placeholder">Search for an anime or show</string>
+    <string name="search_field_clear_content_description">Clear search</string>
+
+    <!-- SearchUiState.Idle: nothing has been typed yet. Distinct from an empty Success — that is
+         "no results for that query", this is "no query at all" (SearchUiState's KDoc). -->
+    <string name="search_idle_message">Search for a title to add it to your library</string>
+    <string name="search_empty_message">No results for that search</string>
+
+    <string name="search_error_message">Couldn\'t search right now. Check your connection and try again.</string>
+
+    <!-- A failed loadMoreResults() (SearchUiState.Success.pageError) — the already-loaded results
+         stay on screen underneath this footer, so the copy is a small tap-to-retry note, not the
+         full-screen search_error_message above. -->
+    <string name="search_page_error">Couldn\'t load more. Tap to retry.</string>
+
+    <!-- SearchResults.isDegraded (decision C-O): has_more is false because the provider that
+         ANSWERED has no more, which looks exactly like a complete result set unless this is shown.
+         %1$s is the comma-joined list of providers that did not answer, e.g. "TMDB". -->
+    <string name="search_degraded_notice">%1$s isn\'t responding right now — results may be incomplete.</string>
+
+    <!-- add() calls refresh() after a successful POST (LibraryRepositoryImpl); if the refresh
+         throws, the title may already have been added even though this call failed. Worded for
+         what is actually known — never "Couldn't add this title". Retrying (tapping the row again)
+         is always safe: the endpoint is idempotent. -->
+    <string name="search_add_error">Couldn\'t confirm this was added — it may already be in your library. Tap to try again.</string>
+</resources>

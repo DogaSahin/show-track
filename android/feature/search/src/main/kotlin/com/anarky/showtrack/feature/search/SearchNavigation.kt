@@ -2,6 +2,8 @@ package com.anarky.showtrack.feature.search
 
 import androidx.navigation.NavGraphBuilder
 import androidx.navigation.compose.composable
+import com.anarky.showtrack.core.navigation.AppRoute
+import com.anarky.showtrack.core.navigation.DetailRoute
 import com.anarky.showtrack.core.navigation.SearchRoute
 
 /**
@@ -9,13 +11,17 @@ import com.anarky.showtrack.core.navigation.SearchRoute
  * nothing else depends on this module (architecture rule 1). The route type comes from
  * `:core:navigation`, so registering a destination costs no knowledge of any other feature.
  *
- * No `onNavigate` parameter: this screen has nowhere to go yet. Handing every entry a navigation
- * callback "for symmetry" would be a lie about what the screen can do, and the day it gains a
- * destination the compiler asks for the parameter at the call site — `FeedScreen`'s deliberate
- * lack of a default value is the same argument one layer down.
+ * `onNavigate(DetailRoute(mediaId))`, the same `onNavigate: (AppRoute) -> Unit` shape
+ * `libraryEntry`/`authEntry` already use — naming `DetailRoute` here is not a dependency on
+ * `:feature:detail`; this module's build file names only `:core:navigation`.
+ *
+ * The `mediaId` is `SearchScreen`'s own `onNavigateToDetail: (String) -> Unit` callback argument,
+ * which is only ever invoked with the id `SearchViewModel.navigateToDetail` emits AFTER
+ * `POST /v1/library` creates the row — never a raw tap on a search result, which carries no id at
+ * all (decision C-N; see `SearchViewModel`'s KDoc).
  */
-fun NavGraphBuilder.searchEntry() {
+fun NavGraphBuilder.searchEntry(onNavigate: (AppRoute) -> Unit) {
     composable<SearchRoute> {
-        SearchScreen()
+        SearchScreen(onNavigateToDetail = { mediaId -> onNavigate(DetailRoute(mediaId = mediaId)) })
     }
 }

@@ -1,0 +1,23 @@
+<resources>
+    <string name="detail_error_message">Couldn\'t load this title. Check your connection and try again.</string>
+
+    <string name="detail_add_button">Add to library</string>
+
+    <!-- add() calls refresh() after a successful POST (LibraryRepositoryImpl); if the refresh
+         throws, the title may already have been added even though this call failed. Worded for
+         what is actually known — never "Couldn't add this title", which would be a false claim
+         about half of this failure's possible causes. Retrying is always safe: the endpoint is
+         idempotent. -->
+    <string name="detail_add_error">Couldn\'t confirm this was added — it may already be in your library. Tap Add to try again.</string>
+
+    <!-- An edit (score/progress/status/favorite) failure. The entry on screen is untouched — see
+         DetailUiState.Success.actionError's KDoc — so this is a small inline note, not a
+         full-screen error. -->
+    <string name="detail_edit_error">Couldn\'t save your change. Try again.</string>
+
+    <string name="detail_score_clear">Clear score</string>
+    <string name="detail_progress_label">Progress: %1$d</string>
+    <string name="detail_progress_decrease">−</string>
+    <string name="detail_progress_increase">+</string>
+    <string name="detail_favorite_label">Favorite</string>
+</resources>

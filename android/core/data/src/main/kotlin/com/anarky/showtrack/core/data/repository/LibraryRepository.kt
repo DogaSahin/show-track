@@ -1,6 +1,9 @@
 package com.anarky.showtrack.core.data.repository
 
 import com.anarky.showtrack.core.model.LibraryEntry
+import com.anarky.showtrack.core.model.LibraryFilter
+import com.anarky.showtrack.core.model.LibraryPatch
+import com.anarky.showtrack.core.model.MediaSource
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -21,4 +24,21 @@ interface LibraryRepository {
 
     /** Appends the next page, or does nothing once the list is exhausted. */
     suspend fun loadMore()
+
+    /** Re-queries from page one under [filter]. Only the default filter is cached (decision C-B). */
+    suspend fun applyFilter(filter: LibraryFilter)
+
+    /** `POST /v1/library`, then refreshes so the new title appears in the list (decision C-K). */
+    suspend fun add(
+        source: MediaSource,
+        externalId: String,
+    ): LibraryEntry
+
+    suspend fun update(
+        entryId: String,
+        patch: LibraryPatch,
+    ): LibraryEntry
+
+    /** Null means "not in your library" — not an error (decision C-C). */
+    suspend fun entryForMedia(mediaId: String): LibraryEntry?
 }

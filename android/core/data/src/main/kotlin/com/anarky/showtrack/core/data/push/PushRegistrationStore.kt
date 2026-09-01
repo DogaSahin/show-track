@@ -58,6 +58,16 @@ interface PushRegistrationStore {
     suspend fun write(registration: PushRegistration)
 
     suspend fun clear()
+
+    /**
+     * The endpoint alone, whether or not a target id is stored. The endpoint belongs to this
+     * DEVICE and its distributor; the target id belongs to the ACCOUNT. Phase 8 stored and
+     * cleared them together, which is why a logout used to lose the endpoint (decision C-P).
+     */
+    suspend fun readEndpoint(): String?
+
+    /** Forgets the account-scoped target id and keeps the device-scoped endpoint. */
+    suspend fun clearTarget()
 }
 
 // A top-level delegate, which is how DataStore enforces one instance per file per process —
@@ -109,6 +119,15 @@ class DataStorePushRegistrationStore(
             prefs.remove(TARGET_ID)
             prefs.remove(ENDPOINT)
         }
+    }
+
+    override suspend fun readEndpoint(): String? =
+        dataStore.data
+            .catch { cause -> if (cause is IOException) emit(emptyPreferences()) else throw cause }
+            .first()[ENDPOINT]
+
+    override suspend fun clearTarget() {
+        dataStore.edit { prefs -> prefs.remove(TARGET_ID) }
     }
 
     private companion object {

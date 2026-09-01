@@ -48,6 +48,14 @@ dependencies {
     // COMPILER plugin here: this module names no @Serializable type of its own.
     implementation(libs.kotlinx.serialization.json)
 
+    // `retrofit2.HttpException` is what `AuthApi` throws on a non-2xx, and `AuthRepositoryImpl`
+    // reads its status code to translate it into `AuthFailure` (a `:core:model` type, safe for
+    // `:feature:auth` to catch) — retrofit2 is `implementation`-scoped inside :core:network, so
+    // without this line the type would be on this module's RUNTIME classpath but not its COMPILE
+    // one. `implementation`, never `api`, for the same reason as the two lines above: this stops
+    // here, `:feature:auth` never sees `HttpException` itself.
+    implementation(libs.retrofit.core)
+
     // Room's runtime is `implementation` inside :core:database, so it reaches this module's
     // RUNTIME classpath but not its COMPILE one. The repository test calls
     // `Room.inMemoryDatabaseBuilder` directly, so the test source set needs it compiled against.

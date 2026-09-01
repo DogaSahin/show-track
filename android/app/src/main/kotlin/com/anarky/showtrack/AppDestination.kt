@@ -52,13 +52,13 @@ internal class AppDestination(
  */
 internal val appDestinations: List<AppDestination> =
     listOf(
-        AppDestination(AuthRoute::class) { authEntry() },
+        AppDestination(AuthRoute::class) { onNavigate -> authEntry(onNavigate) },
         AppDestination(LibraryRoute::class) { onNavigate -> libraryEntry(onNavigate) },
         AppDestination(DetailRoute::class) { detailEntry() },
         AppDestination(DiscoverRoute::class) { discoverEntry() },
         AppDestination(FavoritesRoute::class) { favoritesEntry() },
-        AppDestination(ProfileRoute::class) { profileEntry() },
-        AppDestination(SearchRoute::class) { searchEntry() },
+        AppDestination(ProfileRoute::class) { onNavigate -> profileEntry(onNavigate) },
+        AppDestination(SearchRoute::class) { onNavigate -> searchEntry(onNavigate) },
         AppDestination(GroupsRoute::class) { groupsEntry() },
         AppDestination(FeedRoute::class) { onNavigate -> feedEntry(onNavigate) },
     )

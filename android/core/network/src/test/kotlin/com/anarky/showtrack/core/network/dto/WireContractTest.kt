@@ -174,4 +174,17 @@ class WireContractTest {
             json.encodeToString(RegisterTargetRequest(transport = "ntfy")),
         )
     }
+
+    @Test
+    fun `a real registration response decodes`() {
+        // Captured from the real POST /v1/auth/register route (task 9a.2's stubbed-provider
+        // pytest, not curl) rather than hand-written, so this pins the server's actual UserOut
+        // shape: field set and the snake_case `created_at` that @SerialName maps back from.
+        val user = json.decodeFromString<UserDto>(fixture("register_user.json"))
+
+        assertEquals("a22a65d5-2348-4bce-b35f-e173d3b45bf2", user.id)
+        assertEquals("someone", user.username)
+        assertEquals("someone@example.com", user.email)
+        assertEquals("2026-09-01T08:58:37.582626Z", user.createdAt)
+    }
 }

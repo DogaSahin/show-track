@@ -1,12 +1,19 @@
 package com.anarky.showtrack.feature.profile
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.anarky.showtrack.core.data.repository.AuthRepository
 import com.anarky.showtrack.feature.profile.push.DistributorSource
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import javax.inject.Inject
+
+private const val TAG = "ShowTrackProfile"
 
 /**
  * What the profile screen shows about push, as a closed set of states.
@@ -46,9 +53,24 @@ class ProfileViewModel
     @Inject
     constructor(
         private val distributors: DistributorSource,
+        private val authRepository: AuthRepository,
     ) : ViewModel() {
         private val mutablePushState = MutableStateFlow<PushState>(PushState.NoDistributor)
         val pushState: StateFlow<PushState> = mutablePushState.asStateFlow()
+
+        // Separate from PushState on purpose, not a third field folded into it: PushState is
+        // "what push looks like right now" and sign-out is not a fact about push at all — folding
+        // it in would force every existing `when` over PushState to grow a branch that means
+        // nothing. `false` once and never reset: this ViewModel is scoped to the NavBackStackEntry
+        // and is torn down the moment ProfileScreen navigates away on `true`, so there is no second
+        // sign-out to observe.
+        private val mutableSignedOut = MutableStateFlow(false)
+        val signedOut: StateFlow<Boolean> = mutableSignedOut.asStateFlow()
+
+        // Set on a failed signOut() only — see its KDoc. Cleared at the start of the next attempt
+        // so a stale error does not linger under a retry that is still in flight.
+        private val mutableSignOutError = MutableStateFlow(false)
+        val signOutError: StateFlow<Boolean> = mutableSignOutError.asStateFlow()
 
         init {
             refresh()
@@ -78,5 +100,55 @@ class ProfileViewModel
         fun disablePush() {
             distributors.unregister()
             refresh()
+        }
+
+        /**
+         * `AuthRepository.logout()` deletes the server-side push target, revokes the refresh
+         * token, and clears the local session — but it does NOT emit `AuthEvent.LoggedOut`. That
+         * event is `AuthEventBus`'s signal for a token REFRESH failing (see
+         * `TokenRefreshAuthenticator`), which is a different situation from a user tapping "sign
+         * out" with a perfectly valid session. Because of that, `:app`'s reactive `AuthGate` never
+         * fires for this path — [signedOut] is what `ProfileScreen` watches instead, to navigate
+         * back to auth explicitly rather than relying on a gate that was never going to open.
+         *
+         * Guarded the way `AuthViewModel.submit` and `LibraryViewModel.guard` are: `logout()` can
+         * throw — `tokenStore.tokens()`/`tokenStore.clear()` sit outside its own internal
+         * try/catches, and a corrupt or unwritable DataStore throws `IOException` from `clear()`.
+         * `viewModelScope` carries no `CoroutineExceptionHandler`, so an unguarded throw here would
+         * escape to the thread's default handler and kill the process — silently, on a tap that
+         * looks like nothing more than "sign out".
+         *
+         * [signedOut] is flipped only on SUCCESS, not in a `finally`: a thrown `clear()` means
+         * DataStore's `edit` transaction did not commit, so the LOCAL token is NOT actually
+         * cleared — navigating the user back to the login screen at that point would be a lie (a
+         * relaunch would find a valid token and land them right back in the library), worse than
+         * leaving them on Profile with a chance to retry. [signOutError] is what tells them that,
+         * instead.
+         *
+         * That is not the same as "nothing happened", and this KDoc used to imply it was. By the
+         * time `clear()` can even run, `AuthRepository.logout()`'s `detachPush()` and `revoke()`
+         * have already executed and swallowed their own failures (see its KDoc) — so a `clear()`
+         * failure specifically leaves the user signed in locally with the server-side push target
+         * already deleted and the refresh token possibly already revoked. Both recover on their
+         * own without more code here: the next successful login re-registers push
+         * (`registerForPush()`), and a revoked refresh token simply fails its next use, which is
+         * exactly the terminal-refresh path `AuthEventBus`/`AuthGate` already handle. Worth
+         * knowing when reading this failure, not worth guarding against — retrying [signOut] is
+         * the same call either way.
+         */
+        @Suppress("TooGenericExceptionCaught")
+        fun signOut() {
+            mutableSignOutError.value = false
+            viewModelScope.launch {
+                try {
+                    authRepository.logout()
+                    mutableSignedOut.value = true
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (failure: Exception) {
+                    Log.w(TAG, "sign-out failed: ${failure.javaClass.simpleName}")
+                    mutableSignOutError.value = true
+                }
+            }
         }
     }

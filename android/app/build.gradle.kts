@@ -73,6 +73,15 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.navigation.compose)
 
+    // hiltViewModel(), for AppViewModel — the startup half of the auth gate — resolved directly
+    // in ShowTrackNavHost rather than inside a NavBackStackEntry scope, since it decides the
+    // graph's own start destination and therefore must resolve before any destination exists.
+    // Every :feature:* module gets this from showtrack.android.feature; :app applies
+    // showtrack.android.application instead, so it is declared here explicitly.
+    implementation(libs.androidx.hilt.navigation.compose)
+    // collectAsStateWithLifecycle for AppViewModel.start, same reasoning.
+    implementation(libs.androidx.lifecycle.runtime.compose)
+
     // AppRoute::class.sealedSubclasses throws KotlinReflectionNotSupportedError without this, and
     // nothing in the build pulls it in transitively. Test-only on purpose: the route set is
     // enumerated to CHECK the graph, never to build it, so kotlin-reflect never reaches :app's

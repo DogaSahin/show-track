@@ -9,11 +9,16 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.adaptive.currentWindowAdaptiveInfo
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
+import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffoldDefaults
+import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteType
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavDestination.Companion.hasRoute
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -22,6 +27,7 @@ import com.anarky.showtrack.core.data.auth.AuthEventSource
 import com.anarky.showtrack.core.designsystem.theme.ShowTrackTheme
 import com.anarky.showtrack.core.model.AuthEvent
 import com.anarky.showtrack.core.navigation.AppRoute
+import com.anarky.showtrack.core.navigation.AuthRoute
 import com.anarky.showtrack.core.navigation.FavoritesRoute
 import com.anarky.showtrack.core.navigation.LibraryRoute
 import com.anarky.showtrack.core.navigation.ProfileRoute
@@ -77,7 +83,37 @@ fun ShowTrackApp(authEvents: Flow<AuthEvent>) {
     // Detail, or the auth gate firing.
     val currentBackStackEntry by navController.currentBackStackEntryAsState()
 
+    // Same AppViewModel instance ShowTrackNavHost resolves below: both calls sit above any
+    // NavBackStackEntry scope, so hiltViewModel() answers from the Activity's ViewModelStore
+    // either way — this is a second read of the existing StateFlow, not a second decision.
+    //
+    // Gated on TWO signals, not one: `start` alone only covers the cold-start window (decision
+    // C-F) — it is decided once at launch and never re-evaluated, so it stays `Library` even
+    // after a runtime logout. `currentBackStackEntry` is what actually changes when AuthGate
+    // fires and navigates back to AuthRoute, so checking it too is what keeps the tabs hidden
+    // for a signed-out user at ANY point in the session, not just at the first screen.
+    val appViewModel: AppViewModel = hiltViewModel()
+    val start by appViewModel.start.collectAsStateWithLifecycle()
+    val showNavigationTabs =
+        start == AppStart.Library && currentBackStackEntry?.destination?.hasRoute(AuthRoute::class) != true
+
     NavigationSuiteScaffold(
+        // An empty navigationSuiteItems block does not remove the bar: NavigationSuiteScaffold
+        // (material3-adaptive-navigation-suite 1.4.0) emits its container unconditionally for
+        // every NavigationSuiteType except None — verified against NavigationSuiteScaffoldKt's
+        // bytecode, which has no item-count check anywhere. `if (showNavigationTabs) { forEach }`
+        // alone leaves an empty NavigationBar (defaultMinSize(minHeight = 80.dp)) pinned under
+        // the login screen. NavigationSuiteType.None is the library's own way to remove the
+        // container entirely, so that is what's gated here instead. Signed in, this reproduces
+        // NavigationSuiteScaffold's own default `layoutType` expression exactly (confirmed from
+        // the same bytecode), so the adaptive rail/bar/drawer choice is unchanged from before
+        // this parameter was ever passed explicitly.
+        layoutType =
+            if (showNavigationTabs) {
+                NavigationSuiteScaffoldDefaults.calculateFromAdaptiveInfo(currentWindowAdaptiveInfo())
+            } else {
+                NavigationSuiteType.None
+            },
         navigationSuiteItems = {
             TopLevelDestination.entries.forEach { destination ->
                 item(

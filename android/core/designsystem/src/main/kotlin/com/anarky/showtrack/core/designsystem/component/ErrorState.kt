@@ -1,5 +1,6 @@
 package com.anarky.showtrack.core.designsystem.component
 
+import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -10,15 +11,22 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.anarky.showtrack.core.designsystem.R
 
-/** An error message with a retry action, for a screen or list that failed to load. */
+/**
+ * An error message with an action, for a screen or list that failed to load. [actionLabel]
+ * defaults to "Retry" — the common case — but is a parameter because not every caller's fix is
+ * retrying: a refusal that only sign-in can resolve needs its button to say so instead.
+ */
 @Composable
 fun ErrorState(
     message: String,
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
+    @StringRes actionLabel: Int = R.string.action_retry,
 ) {
     Column(
         modifier = modifier.fillMaxWidth().padding(all = 24.dp),
@@ -32,7 +40,7 @@ fun ErrorState(
             textAlign = TextAlign.Center,
         )
         TextButton(onClick = onRetry) {
-            Text(text = "Retry")
+            Text(text = stringResource(actionLabel))
         }
     }
 }

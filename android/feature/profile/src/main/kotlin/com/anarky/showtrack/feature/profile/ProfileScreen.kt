@@ -9,12 +9,14 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -28,12 +30,27 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
+/**
+ * [onSignedOut] fires exactly once, right after `AuthRepository.logout()` completes — keyed on
+ * [ProfileViewModel.signedOut] the same way `AuthScreen`'s `onAuthenticated` is keyed on
+ * `AuthUiState`. It is not the reactive `AuthGate` in `:app`: `logout()` clears the session
+ * without emitting `AuthEvent.LoggedOut` (that event is reserved for a failed token refresh — see
+ * `ProfileViewModel.signOut`'s KDoc), so this explicit callback is the only thing that sends a
+ * signed-out user back to the auth screen. `ProfileNavigation.kt` turns it into
+ * `onNavigate(AuthRoute)`.
+ */
 @Composable
 fun ProfileScreen(
+    onSignedOut: () -> Unit,
     modifier: Modifier = Modifier,
     viewModel: ProfileViewModel = hiltViewModel(),
 ) {
     val pushState by viewModel.pushState.collectAsStateWithLifecycle()
+    val signedOut by viewModel.signedOut.collectAsStateWithLifecycle()
+    val signOutError by viewModel.signOutError.collectAsStateWithLifecycle()
+    LaunchedEffect(signedOut) {
+        if (signedOut) onSignedOut()
+    }
 
     // ON RESUME, not just in the ViewModel's `init`, and this is the difference between the
     // NoDistributor prompt working and being a dead end. The prompt tells the user to go and
@@ -50,6 +67,8 @@ fun ProfileScreen(
         onPauseOrDispose { }
     }
 
+    var showSignOutConfirmation by remember { mutableStateOf(false) }
+
     Column(
         modifier = modifier.fillMaxWidth().padding(all = 16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -59,6 +78,45 @@ fun ProfileScreen(
             state = pushState,
             onEnable = viewModel::enablePush,
             onDisable = viewModel::disablePush,
+        )
+        TextButton(onClick = { showSignOutConfirmation = true }) {
+            Text(text = stringResource(R.string.profile_sign_out))
+        }
+        // signOut() only ever sets this on a caught failure — see its KDoc for why signedOut is
+        // NOT flipped in that case, which is what makes leaving the user here, able to retry,
+        // the correct response rather than a dead end.
+        if (signOutError) {
+            Text(
+                text = stringResource(R.string.profile_sign_out_error),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+    }
+
+    // A confirmation step because signing out discards local session state (tokens, the push
+    // registration) that the tap cannot undo — the same reasoning `LibraryList`'s tap-to-retry
+    // footer does NOT need, since a retry there costs nothing if it was a mistake.
+    if (showSignOutConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showSignOutConfirmation = false },
+            title = { Text(text = stringResource(R.string.profile_sign_out_confirm_title)) },
+            text = { Text(text = stringResource(R.string.profile_sign_out_confirm_body)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showSignOutConfirmation = false
+                        viewModel.signOut()
+                    },
+                ) {
+                    Text(text = stringResource(R.string.profile_sign_out_confirm_action))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSignOutConfirmation = false }) {
+                    Text(text = stringResource(R.string.profile_sign_out_cancel))
+                }
+            },
         )
     }
 }

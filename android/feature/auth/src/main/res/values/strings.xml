@@ -1,0 +1,47 @@
+<resources>
+    <string name="auth_mode_login">Log in</string>
+    <string name="auth_mode_register">Register</string>
+
+    <string name="auth_field_username">Username</string>
+    <string name="auth_field_email">Email</string>
+    <string name="auth_field_password">Password</string>
+    <string name="auth_field_invite_code">Invite code</string>
+    <!-- Explains what the REQUIRED fourth field is: the deployment's registration code, or any
+         group's own invite code, which also joins the new account to that group (decision C-M). -->
+    <string name="auth_invite_code_help">The code you were given. It may also add you to a group.</string>
+
+    <string name="auth_submit_login">Log in</string>
+    <string name="auth_submit_register">Create account</string>
+
+    <!-- Client-side validation, before a round trip the server would refuse anyway. The server
+         remains the authority — these never replace handling AuthError below. -->
+    <string name="auth_validation_username_blank">Enter a username.</string>
+    <string name="auth_validation_email_invalid">Enter a valid email address.</string>
+    <string name="auth_validation_password_short">Password must be at least 8 characters.</string>
+    <string name="auth_validation_invite_code_blank">Enter your invite code.</string>
+
+    <!-- One body for every login failure that isn\'t Offline: the backend already returns one
+         generic 401 for both an unknown email and a wrong password (users/routes.py's
+         _INVALID_CREDENTIALS), so this does not invent a distinction the server itself declined
+         to make either. -->
+    <string name="auth_error_invalid_credentials">That email or password isn\'t right.</string>
+    <!-- 400 from register (RegistrationError(400, "invalid invite code")). The action is to get
+         a WORKING code — never conflated with the 409 case below, whose action is the opposite
+         (stop looking for a code and sign in instead). -->
+    <string name="auth_error_invite_code_rejected">That invite code wasn\'t accepted. Check it and try again.</string>
+    <!-- 409 from register (RegistrationError(409, "username or email already registered")).
+         Points at signing in, not at the invite code: a user told their CODE was rejected when
+         it was their email that\'s already registered will go hunting for a code that can never
+         work — the same mistake AccountCreatedNotSignedIn below exists to avoid. -->
+    <string name="auth_error_email_or_username_taken">That email or username is already registered. Switch to Log in above and sign in instead.</string>
+    <!-- The fallback for any OTHER 4xx from register. The server defines only the two cases
+         above (backend/app/users/service.py's RegistrationError); this never fires for either
+         one of them. -->
+    <string name="auth_error_registration_refused">Registration wasn\'t accepted. Check your details and try again.</string>
+    <!-- The account WAS created; only the follow-up sign-in failed. Never "try registering
+         again" — registering again now answers "email already taken" and strands the user with
+         nothing to try (decision C-M). The mode toggle above this message is how they act on it. -->
+    <string name="auth_error_account_created_not_signed_in">Your account was created, but we couldn\'t sign you in. Switch to Log in above and sign in with your new password.</string>
+    <string name="auth_error_offline">You\'re offline. Check your connection and try again.</string>
+    <string name="auth_error_unknown">Something went wrong. Please try again.</string>
+</resources>

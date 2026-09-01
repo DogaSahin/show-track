@@ -1,10 +1,15 @@
 package com.anarky.showtrack
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
+import com.anarky.showtrack.core.designsystem.component.LoadingState
 import com.anarky.showtrack.core.model.AuthEvent
+import com.anarky.showtrack.core.navigation.AppRoute
 import com.anarky.showtrack.core.navigation.AuthRoute
 import com.anarky.showtrack.core.navigation.LibraryRoute
 import kotlinx.coroutines.flow.Flow
@@ -16,23 +21,76 @@ import kotlinx.coroutines.flow.Flow
  * destination is on screen, and a collector placed inside a destination's composable would be
  * cancelled the moment that destination left the composition — i.e. exactly when the user
  * navigated somewhere that then 401s.
+ *
+ * [AppViewModel] is the OTHER half of the gate — see its doc. Its `start` begins `Undecided`,
+ * and this renders [LoadingState] for that one frame rather than building the graph with a
+ * guessed `startDestination` and navigating away afterwards: a guessed Library followed by a
+ * navigate to Auth would leave Library on the back stack underneath it, and Back would then land
+ * a signed-out user on the library. Building the `NavHost` only once `start` resolves is what
+ * keeps Library off the stack entirely for a signed-out cold start.
  */
 @Composable
 internal fun ShowTrackNavHost(
     navController: NavHostController,
     authEvents: Flow<AuthEvent>,
     modifier: Modifier = Modifier,
+    appViewModel: AppViewModel = hiltViewModel(),
 ) {
     AuthGate(authEvents = authEvents, onLoggedOut = navController::navigateToAuthClearingStack)
 
+    when (val start = appViewModel.start.collectAsStateWithLifecycle().value) {
+        AppStart.Undecided -> LoadingState(modifier = modifier)
+        AppStart.Auth ->
+            ShowTrackGraph(navController = navController, startDestination = AuthRoute, modifier = modifier)
+        AppStart.Library ->
+            ShowTrackGraph(navController = navController, startDestination = LibraryRoute, modifier = modifier)
+    }
+}
+
+@Composable
+private fun ShowTrackGraph(
+    navController: NavHostController,
+    startDestination: AppRoute,
+    modifier: Modifier,
+) {
     NavHost(
         navController = navController,
-        startDestination = LibraryRoute,
+        startDestination = startDestination,
         modifier = modifier,
     ) {
-        // `NavController.navigate(route: Any)` accepts an AppRoute, and Function1 is
-        // contravariant in its parameter, so this reference satisfies `(AppRoute) -> Unit`.
-        showTrackDestinations(onNavigate = navController::navigate)
+        showTrackDestinations(onNavigate = navController::routeShowTrackNavigation)
+    }
+}
+
+/**
+ * How `onNavigate` routes to a destination in the graph [ShowTrackGraph] builds. A named extension
+ * rather than the lambda that used to sit inline in [ShowTrackGraph]'s `NavHost(onNavigate = ...)`
+ * call, for the same reason [navigateToAuthClearingStack] and [navigateToLibraryClearingAuth] are
+ * named extensions rather than lambdas: composing the whole app graph to exercise one branch of
+ * this `when` needs Hilt (every screen resolves a `@HiltViewModel`), and `:app` has no Hilt test
+ * harness, so [ShowTrackGraphRoutingTest] calls this directly on a bare `NavHostController` instead
+ * — the same technique `AuthNavigationTest` already uses for the two extensions below.
+ */
+internal fun NavHostController.routeShowTrackNavigation(route: AppRoute) {
+    when (route) {
+        // Navigating TO LibraryRoute through this table only ever happens once, from
+        // AuthNavigation on a successful login/register — nothing else in the app reaches Library
+        // through onNavigate (it is a start destination, not a target other screens link to).
+        // popUpTo<AuthRoute> there is load-bearing, not incidental: a plain push leaves Auth on
+        // the back stack and Back returns to a login form that already succeeded.
+        is LibraryRoute -> navigateToLibraryClearingAuth()
+
+        // Navigating TO AuthRoute through this table happens from ProfileNavigation on sign-out
+        // (Gap 2, Phase 9a device walkthroughs). AuthRepository.logout() clears the session
+        // without emitting AuthEvent.LoggedOut — that event is reserved for a token REFRESH
+        // failing, not a user-initiated sign-out with a perfectly valid session — so AuthGate's
+        // reactive collector above never fires for this path. Reusing navigateToAuthClearingStack()
+        // here, rather than a plain push, is what keeps Back from returning to a profile screen
+        // whose session is already gone: the exact same failure mode AuthGate's own use of it
+        // exists to prevent, reached by a second door.
+        is AuthRoute -> navigateToAuthClearingStack()
+
+        else -> navigate(route)
     }
 }
 
@@ -56,5 +114,18 @@ internal fun ShowTrackNavHost(
 internal fun NavHostController.navigateToAuthClearingStack() {
     navigate(AuthRoute) {
         popUpTo(graph.id) { inclusive = true }
+    }
+}
+
+/**
+ * The reverse trip: reached only via `authEntry`'s `onNavigate(LibraryRoute)` after a successful
+ * login or registration. `popUpTo<AuthRoute>` rather than a plain push, so Back does not return
+ * to a login form that already succeeded — the type-safe overload is available here (unlike
+ * [navigateToAuthClearingStack]'s graph-id form) because `AuthRoute` is always a real destination
+ * on the stack at this point, never the graph's own possibly-routeless root.
+ */
+internal fun NavHostController.navigateToLibraryClearingAuth() {
+    navigate(LibraryRoute) {
+        popUpTo<AuthRoute> { inclusive = true }
     }
 }

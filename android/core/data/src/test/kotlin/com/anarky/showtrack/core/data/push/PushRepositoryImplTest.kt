@@ -1,11 +1,16 @@
 package com.anarky.showtrack.core.data.push
 
 import com.anarky.showtrack.core.network.api.ShowTrackApi
+import com.anarky.showtrack.core.network.dto.AddLibraryEntryRequest
+import com.anarky.showtrack.core.network.dto.LibraryEntryDto
 import com.anarky.showtrack.core.network.dto.LibraryPageDto
+import com.anarky.showtrack.core.network.dto.MediaDto
+import com.anarky.showtrack.core.network.dto.MediaSearchResponseDto
 import com.anarky.showtrack.core.network.dto.PushTargetDto
 import com.anarky.showtrack.core.network.dto.RegisterTargetRequest
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -36,7 +41,24 @@ private class FakeApi : ShowTrackApi {
     override suspend fun library(
         cursor: String?,
         limit: Int,
+        status: String?,
+        sort: String?,
+        mediaId: String?,
     ): LibraryPageDto = error("not used")
+
+    override suspend fun addLibraryEntry(request: AddLibraryEntryRequest): LibraryEntryDto = error("not used")
+
+    override suspend fun updateLibraryEntry(
+        id: String,
+        patch: JsonObject,
+    ): LibraryEntryDto = error("not used")
+
+    override suspend fun searchMedia(
+        query: String,
+        page: Int,
+    ): MediaSearchResponseDto = error("not used")
+
+    override suspend fun mediaDetail(id: String): MediaDto = error("not used")
 
     override suspend fun registerPushTarget(request: RegisterTargetRequest): PushTargetDto {
         registerFailure?.let { throw it }
@@ -65,13 +87,26 @@ private class FakeApi : ShowTrackApi {
 private class FakeStore : PushRegistrationStore {
     var record: PushRegistration? = null
 
+    // Kept separate from [record] deliberately: the endpoint is DEVICE-scoped and the target id
+    // is ACCOUNT-scoped (decision C-P). A fake that derived readEndpoint() from record would make
+    // clearTarget()-vs-clear() indistinguishable and the C-P tests below vacuous.
+    private var endpoint: String? = null
+
     override suspend fun read(): PushRegistration? = record
 
     override suspend fun write(registration: PushRegistration) {
         record = registration
+        endpoint = registration.endpoint
     }
 
     override suspend fun clear() {
+        record = null
+        endpoint = null
+    }
+
+    override suspend fun readEndpoint(): String? = endpoint
+
+    override suspend fun clearTarget() {
         record = null
     }
 }
@@ -290,5 +325,37 @@ class PushRepositoryImplTest {
             repository(api, FakeStore()).onLoggedOut()
 
             assertTrue(api.deletions.isEmpty())
+        }
+
+    @Test
+    fun `logging out forgets the account's target but keeps the device's endpoint`() =
+        runTest {
+            // Clearing both is the Phase 8 bug: the next account in this session then has no
+            // endpoint to register with until a cold start makes the distributor resend it.
+            val api = FakeApi()
+            val store = FakeStore()
+            val push = repository(api, store)
+            push.register(ENDPOINT)
+
+            push.onLoggedOut()
+
+            assertNull(store.read())
+            assertEquals(ENDPOINT, store.readEndpoint())
+        }
+
+    @Test
+    fun `logging back in re-registers the remembered endpoint`() =
+        runTest {
+            val api = FakeApi()
+            val store = FakeStore()
+            val push = repository(api, store)
+            push.register(ENDPOINT)
+            push.onLoggedOut()
+            api.nextId = "target-2"
+
+            push.onLoggedIn()
+
+            assertEquals(listOf(ENDPOINT, ENDPOINT), api.registrations.map { it.target })
+            assertEquals("target-2", store.read()?.targetId)
         }
 }
