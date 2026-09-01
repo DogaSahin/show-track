@@ -1,0 +1,34 @@
+{
+  "items": [
+    {
+      "source": "anilist",
+      "external_id": "1",
+      "type": "anime",
+      "title": "Frieren: Beyond Journey's End",
+      "year": 2023,
+      "genres": [
+        "fantasy",
+        "adventure"
+      ],
+      "cover_image_url": "https://example.test/covers/1.jpg"
+    },
+    {
+      "source": "anilist",
+      "external_id": "2",
+      "type": "anime",
+      "title": "Frieren: Special Edition",
+      "year": 2023,
+      "genres": [
+        "fantasy",
+        "adventure"
+      ],
+      "cover_image_url": "https://example.test/covers/2.jpg"
+    }
+  ],
+  "page": 1,
+  "has_more": false,
+  "sources": {
+    "anilist": "ok",
+    "tmdb": "timeout"
+  }
+}

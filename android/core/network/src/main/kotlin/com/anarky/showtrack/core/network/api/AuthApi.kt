@@ -2,7 +2,9 @@ package com.anarky.showtrack.core.network.api
 
 import com.anarky.showtrack.core.network.dto.LoginRequest
 import com.anarky.showtrack.core.network.dto.RefreshRequest
+import com.anarky.showtrack.core.network.dto.RegisterRequest
 import com.anarky.showtrack.core.network.dto.TokenPairDto
+import com.anarky.showtrack.core.network.dto.UserDto
 import retrofit2.http.Body
 import retrofit2.http.POST
 
@@ -33,4 +35,14 @@ interface AuthApi {
     suspend fun logout(
         @Body request: RefreshRequest,
     )
+
+    /**
+     * 201 with a [UserDto] — NOT a token pair. The caller must log in afterwards to get tokens
+     * (decision C-M). A 400/409 arrives as an `HttpException`: a bad invite code and a taken
+     * email are both refusals this client cannot tell apart from the status alone.
+     */
+    @POST("v1/auth/register")
+    suspend fun register(
+        @Body request: RegisterRequest,
+    ): UserDto
 }

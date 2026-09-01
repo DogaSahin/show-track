@@ -82,7 +82,7 @@ class LibraryRepositoryImpl
 
         private val paginator =
             CursorPaginator<LibraryEntry> { cursor ->
-                val page = api.library(cursor = cursor, limit = PAGE_SIZE)
+                val page = api.library(cursor = cursor, limit = PAGE_SIZE, status = null, sort = null, mediaId = null)
                 Page(page.items.map(LibraryEntryDto::toDomain), page.nextCursor)
             }
 

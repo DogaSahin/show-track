@@ -1,11 +1,16 @@
 package com.anarky.showtrack.core.data.push
 
 import com.anarky.showtrack.core.network.api.ShowTrackApi
+import com.anarky.showtrack.core.network.dto.AddLibraryEntryRequest
+import com.anarky.showtrack.core.network.dto.LibraryEntryDto
 import com.anarky.showtrack.core.network.dto.LibraryPageDto
+import com.anarky.showtrack.core.network.dto.MediaDto
+import com.anarky.showtrack.core.network.dto.MediaSearchResponseDto
 import com.anarky.showtrack.core.network.dto.PushTargetDto
 import com.anarky.showtrack.core.network.dto.RegisterTargetRequest
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -36,7 +41,24 @@ private class FakeApi : ShowTrackApi {
     override suspend fun library(
         cursor: String?,
         limit: Int,
+        status: String?,
+        sort: String?,
+        mediaId: String?,
     ): LibraryPageDto = error("not used")
+
+    override suspend fun addLibraryEntry(request: AddLibraryEntryRequest): LibraryEntryDto = error("not used")
+
+    override suspend fun updateLibraryEntry(
+        id: String,
+        patch: JsonObject,
+    ): LibraryEntryDto = error("not used")
+
+    override suspend fun searchMedia(
+        query: String,
+        page: Int,
+    ): MediaSearchResponseDto = error("not used")
+
+    override suspend fun mediaDetail(id: String): MediaDto = error("not used")
 
     override suspend fun registerPushTarget(request: RegisterTargetRequest): PushTargetDto {
         registerFailure?.let { throw it }

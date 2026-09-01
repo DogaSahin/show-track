@@ -11,13 +11,16 @@ import com.anarky.showtrack.core.database.LibraryEntryEntity
 import com.anarky.showtrack.core.database.ShowTrackDatabase
 import com.anarky.showtrack.core.model.UserMediaStatus
 import com.anarky.showtrack.core.network.api.ShowTrackApi
+import com.anarky.showtrack.core.network.dto.AddLibraryEntryRequest
 import com.anarky.showtrack.core.network.dto.LibraryEntryDto
 import com.anarky.showtrack.core.network.dto.LibraryPageDto
 import com.anarky.showtrack.core.network.dto.MediaDto
+import com.anarky.showtrack.core.network.dto.MediaSearchResponseDto
 import com.anarky.showtrack.core.network.dto.PushTargetDto
 import com.anarky.showtrack.core.network.dto.RegisterTargetRequest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonObject
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Before
@@ -348,6 +351,9 @@ private class FakeShowTrackApi(
     override suspend fun library(
         cursor: String?,
         limit: Int,
+        status: String?,
+        sort: String?,
+        mediaId: String?,
     ): LibraryPageDto {
         requestedCursors += cursor
         requestedLimits += limit
@@ -358,9 +364,26 @@ private class FakeShowTrackApi(
         return pages.getValue(cursor)
     }
 
-    // The push half of the same interface. `error(...)` rather than a silent no-op: a library
-    // test that reached these would be doing something it has no business doing, and should say
-    // so loudly. PushRepositoryImplTest has its own fake for them.
+    // The rest of the interface. `error(...)` rather than a silent no-op: a library test that
+    // reached these would be doing something it has no business doing, and should say so loudly.
+    // PushRepositoryImplTest has its own fake for the push half; the write/search/detail methods
+    // are 9a.3–9a.5's to test.
+    override suspend fun addLibraryEntry(request: AddLibraryEntryRequest): LibraryEntryDto =
+        error("this fake only serves observeLibrary/refresh/loadMore")
+
+    override suspend fun updateLibraryEntry(
+        id: String,
+        patch: JsonObject,
+    ): LibraryEntryDto = error("this fake only serves observeLibrary/refresh/loadMore")
+
+    override suspend fun searchMedia(
+        query: String,
+        page: Int,
+    ): MediaSearchResponseDto = error("this fake only serves observeLibrary/refresh/loadMore")
+
+    override suspend fun mediaDetail(id: String): MediaDto =
+        error("this fake only serves observeLibrary/refresh/loadMore")
+
     override suspend fun registerPushTarget(request: RegisterTargetRequest): PushTargetDto =
         error("the library repository must not touch push registration")
 

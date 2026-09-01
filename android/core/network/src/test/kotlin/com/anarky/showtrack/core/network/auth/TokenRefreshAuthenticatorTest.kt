@@ -80,7 +80,7 @@ class TokenRefreshAuthenticatorTest {
         buildApi()
         server.dispatcher = backend()
 
-        runBlocking { api.library(cursor = null, limit = 20) }
+        runBlocking { callLibrary() }
 
         val recorded = server.takeRequest()
         assertEquals("Bearer $FRESH_ACCESS", recorded.headers["Authorization"])
@@ -93,7 +93,7 @@ class TokenRefreshAuthenticatorTest {
 
         runBlocking {
             (1..CONCURRENT_CALLS)
-                .map { async(Dispatchers.IO) { api.library(cursor = null, limit = 20) } }
+                .map { async(Dispatchers.IO) { callLibrary() } }
                 .awaitAll()
         }
 
@@ -111,7 +111,7 @@ class TokenRefreshAuthenticatorTest {
 
         runBlocking {
             events.events.test(timeout = 10.seconds) {
-                val failure = assertThrows(HttpException::class.java) { runBlocking { api.library(null, 20) } }
+                val failure = assertThrows(HttpException::class.java) { runBlocking { callLibrary() } }
                 assertEquals(401, failure.code())
                 assertEquals(AuthEvent.LoggedOut, awaitItem())
             }
@@ -126,7 +126,7 @@ class TokenRefreshAuthenticatorTest {
         buildApi()
         server.dispatcher = backend(libraryAlwaysRejects = true)
 
-        val failure = assertThrows(HttpException::class.java) { runBlocking { api.library(null, 20) } }
+        val failure = assertThrows(HttpException::class.java) { runBlocking { callLibrary() } }
 
         assertEquals(401, failure.code())
         assertEquals("the refresh must not be attempted again for the replayed request", 1, refreshRequests.get())
@@ -153,7 +153,7 @@ class TokenRefreshAuthenticatorTest {
             events.events.test(timeout = 10.seconds) {
                 // HttpException, not IOException: the failure was handled and the ORIGINAL 401 is
                 // what surfaces. An IOException here would mean the throwable escaped.
-                val failure = assertThrows(HttpException::class.java) { runBlocking { api.library(null, 20) } }
+                val failure = assertThrows(HttpException::class.java) { runBlocking { callLibrary() } }
                 assertEquals(401, failure.code())
                 assertEquals(AuthEvent.LoggedOut, awaitItem())
             }
@@ -175,7 +175,7 @@ class TokenRefreshAuthenticatorTest {
 
         runBlocking {
             events.events.test(timeout = 10.seconds) {
-                assertThrows(HttpException::class.java) { runBlocking { api.library(null, 20) } }
+                assertThrows(HttpException::class.java) { runBlocking { callLibrary() } }
                 assertEquals(AuthEvent.LoggedOut, awaitItem())
             }
         }
@@ -200,6 +200,10 @@ class TokenRefreshAuthenticatorTest {
         events = component.events()
         api = component.showTrackApi()
     }
+
+    /** Every filter left null: these tests exercise the auth stack, not the library filters. */
+    private suspend fun callLibrary() =
+        api.library(cursor = null, limit = 20, status = null, sort = null, mediaId = null)
 
     /**
      * A stateful dispatcher rather than a queue of canned responses: with five calls in flight
