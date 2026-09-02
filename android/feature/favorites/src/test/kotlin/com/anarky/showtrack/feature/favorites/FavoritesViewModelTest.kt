@@ -3,8 +3,6 @@ package com.anarky.showtrack.feature.favorites
 import app.cash.turbine.test
 import com.anarky.showtrack.core.data.repository.LibraryRepository
 import com.anarky.showtrack.core.model.LibraryEntry
-import com.anarky.showtrack.core.model.LibraryFilter
-import com.anarky.showtrack.core.model.LibraryPatch
 import com.anarky.showtrack.core.model.Media
 import com.anarky.showtrack.core.model.MediaSource
 import com.anarky.showtrack.core.model.MediaStatus
@@ -12,10 +10,6 @@ import com.anarky.showtrack.core.model.MediaType
 import com.anarky.showtrack.core.model.UserMediaStatus
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -56,7 +50,7 @@ class FavoritesViewModelTest {
      * paginator's surface at all, and never the general one.
      */
     @Test
-    fun `the feed requests only favourites`() =
+    fun `the feed reads the favourites surface, never the general library one`() =
         runTest(dispatcher) {
             val repository = FakeLibraryRepository(refreshResult = listOf(FRIEREN, BEBOP))
             val viewModel = FavoritesViewModel(repository)
@@ -69,13 +63,18 @@ class FavoritesViewModelTest {
         }
 
     /**
-     * The acceptance criterion (brief, task 9b.4): favouriting/unfavouriting happens on Detail or
-     * Library, never on this screen, so this screen's only way to learn about it is a fresh
-     * [FavoritesViewModel.refresh] re-reading `favorite=true` from the server. A title dropped
-     * from that response must disappear from [FavoritesUiState.Success.entries].
+     * [FavoritesViewModel.refresh]'s own data-shape half of the acceptance criterion:
+     * favouriting/unfavouriting happens on Detail or Library, never on this screen, so a fresh
+     * `refresh()` re-reading `favorite=true` from the server must drop a title the response no
+     * longer includes. This is a WHITE-BOX unit test of `refresh()` in isolation — calling it
+     * directly is not something a user can do. The other half — that a user's actual round trip
+     * (Favorites -> Detail -> unfavourite -> Back) ever CALLS `refresh()` at all — is
+     * [FavoritesResumeTest], which drives it through a real `Lifecycle` resume rather than this
+     * shortcut (review finding: a ViewModel-only test cannot see whether anything in the
+     * Composable layer actually triggers it).
      */
     @Test
-    fun `unfavouriting elsewhere removes the entry from this view on refresh`() =
+    fun `refresh drops an entry the server no longer returns, once called`() =
         runTest(dispatcher) {
             val repository = FakeLibraryRepository(refreshResult = listOf(FRIEREN, BEBOP))
             val viewModel = FavoritesViewModel(repository)
@@ -202,53 +201,6 @@ class FavoritesViewModelTest {
                 viewModel.state.value,
             )
         }
-
-    private class FakeLibraryRepository(
-        var refreshResult: List<LibraryEntry> = emptyList(),
-        var refreshFailure: Throwable? = null,
-        var loadMoreAppends: List<LibraryEntry> = emptyList(),
-        var loadMoreFailure: Throwable? = null,
-    ) : LibraryRepository {
-        private val mutableFavorites = MutableStateFlow<List<LibraryEntry>>(emptyList())
-        override val favoriteEntries: StateFlow<List<LibraryEntry>> = mutableFavorites.asStateFlow()
-
-        var loadMoreCalls = 0
-            private set
-
-        // The GENERAL-purpose surface, deliberately unreachable — see `the feed requests only
-        // favourites`'s KDoc for what a call reaching one of these actually proves.
-        override fun observeLibrary(): Flow<List<LibraryEntry>> = error("not exercised by FavoritesViewModel")
-
-        override suspend fun refresh(): Unit = error("not exercised by FavoritesViewModel")
-
-        override suspend fun loadMore(): Unit = error("not exercised by FavoritesViewModel")
-
-        override suspend fun applyFilter(filter: LibraryFilter): Unit = error("not exercised by FavoritesViewModel")
-
-        override suspend fun add(
-            source: MediaSource,
-            externalId: String,
-        ): LibraryEntry = error("not exercised by FavoritesViewModel")
-
-        override suspend fun update(
-            entryId: String,
-            patch: LibraryPatch,
-        ): LibraryEntry = error("not exercised by FavoritesViewModel")
-
-        override suspend fun entryForMedia(mediaId: String): LibraryEntry? =
-            error("not exercised by FavoritesViewModel")
-
-        override suspend fun refreshFavorites() {
-            refreshFailure?.let { throw it }
-            mutableFavorites.value = refreshResult
-        }
-
-        override suspend fun loadMoreFavorites() {
-            loadMoreCalls++
-            loadMoreFailure?.let { throw it }
-            mutableFavorites.value = mutableFavorites.value + loadMoreAppends
-        }
-    }
 
     private companion object {
         fun entry(

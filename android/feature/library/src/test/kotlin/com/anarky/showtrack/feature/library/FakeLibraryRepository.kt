@@ -46,9 +46,14 @@ internal class FakeLibraryRepository
         override suspend fun entryForMedia(mediaId: String): LibraryEntry? =
             error("not exercised by LibraryEntryHiltTest")
 
+        // Unlike `refresh`/`loadMore`/`applyFilter` above (silent no-ops, because `LibraryViewModel`
+        // genuinely calls those during ordinary composition and the test needs them to succeed
+        // quietly), `LibraryViewModel` never touches the favourites surface at all — so a call
+        // reaching here is a bug, and should fail loudly the same way `add`/`update`/
+        // `entryForMedia` already do, rather than passing unnoticed.
         override val favoriteEntries: StateFlow<List<LibraryEntry>> = MutableStateFlow(emptyList())
 
-        override suspend fun refreshFavorites() = Unit
+        override suspend fun refreshFavorites(): Unit = error("not exercised by LibraryEntryHiltTest")
 
-        override suspend fun loadMoreFavorites() = Unit
+        override suspend fun loadMoreFavorites(): Unit = error("not exercised by LibraryEntryHiltTest")
     }

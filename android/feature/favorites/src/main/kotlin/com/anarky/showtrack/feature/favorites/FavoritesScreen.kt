@@ -20,6 +20,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.anarky.showtrack.core.designsystem.component.CountdownBadge
 import com.anarky.showtrack.core.designsystem.component.EmptyState
@@ -37,6 +38,20 @@ import com.anarky.showtrack.core.model.LibraryEntry
  * `LibraryScreen`'s own parameter: a [LibraryEntry]'s own id identifies the user's library ROW,
  * while the detail screen's route needs `entry.media.id` — two different primary keys, and the
  * translation belongs at the module's graph boundary (`FavoritesNavigation.kt`), not here.
+ *
+ * [LifecycleResumeEffect] is not decoration — it is the ENTIRE mechanism by which this screen ever
+ * learns about a favourite/unfavourite made elsewhere. Every mutation this screen's content
+ * depends on happens on Detail or Library, never here (this screen has no add/remove of its own —
+ * task 9b.4's brief), and the [FavoritesViewModel] is scoped to this destination's
+ * `NavBackStackEntry`: navigating to Detail and back, or switching tabs and back (`ShowTrackNavHost`
+ * uses `saveState`/`restoreState`, which retains the `ViewModelStore`), leaves the SAME ViewModel
+ * instance alive with `init` never running again. Without this effect, the exact round trip the
+ * acceptance criterion names — Favorites -> tap a row -> Detail -> unfavourite -> Back — would
+ * leave the unfavourited row on screen indefinitely, since nothing else re-collects
+ * [com.anarky.showtrack.core.data.repository.LibraryRepository.favoriteEntries]. `ProfileScreen`'s
+ * own `LifecycleResumeEffect` KDoc documents the identical failure mode for the identical reason
+ * (a ViewModel surviving a round trip its own `init` cannot see); this is that fix applied to the
+ * same class of bug.
  */
 @Composable
 fun FavoritesScreen(
@@ -44,6 +59,10 @@ fun FavoritesScreen(
     modifier: Modifier = Modifier,
     viewModel: FavoritesViewModel = hiltViewModel(),
 ) {
+    LifecycleResumeEffect(viewModel) {
+        viewModel.refresh()
+        onPauseOrDispose { }
+    }
     val state by viewModel.state.collectAsStateWithLifecycle()
     FavoritesScreen(
         state = state,

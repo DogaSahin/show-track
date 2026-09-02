@@ -6,7 +6,14 @@
          ONLY the default view, so under a status filter or a non-default sort the list is always
          a fresh network read with nothing local to fall back to. "Nothing in your library yet" is
          true on the unfiltered default tab but FALSE under a filter — it reads as data loss when
-         the real answer is "nothing matches this filter". -->
+         the real answer is "nothing matches this filter".
+
+         `:feature:favorites`'s `FavoritesScreenTest` (`the empty state shows the favourites copy,
+         not the library copy`) keeps a LITERAL COPY of this exact string as a regression guard —
+         it cannot import this module's `R` class (architecture rule 1 forbids a feature-to-
+         feature dependency, even in test sources). If you reword this string, that test's
+         snapshot goes stale silently: it keeps passing, just against wording nobody renders
+         anymore. Reword `LIBRARY_EMPTY_DEFAULT_COPY` in that test file to match. -->
     <string name="library_empty_default">Nothing in your library yet</string>
     <string name="library_empty_filtered">Nothing here</string>
 

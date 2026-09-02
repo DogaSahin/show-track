@@ -18,6 +18,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -70,6 +71,16 @@ class LibraryRepositoryImpl
                 Page(page.items.map(LibraryEntryDto::toDomain), page.nextCursor)
             }
 
+        // The most recently FETCHED page's items — not the accumulated list. Mirrors
+        // `RecommendationRepositoryImpl.lastFetchedPage`: `CursorPaginator.loadMore()` itself
+        // returns `Unit`, so this is the only way [loadMoreFavorites] learns what a successful
+        // fetch just added, as opposed to re-reading `favoritesPaginator.items.value` — which
+        // `CursorPaginator.restart()`'s own KDoc warns against precisely because "[items] can have
+        // grown by the time the caller looks at it" (a concurrent `loadMoreFavorites()` racing a
+        // `refreshFavorites()`, in principle — this class does not rely on `favoriteEntries`
+        // still agreeing with what a just-finished fetch actually returned).
+        private var lastFetchedFavoritesPage: List<LibraryEntry> = emptyList()
+
         // A SEPARATE CursorPaginator from [paginator] above (this class's own KDoc / task 9b.4,
         // decision D-H): Library and Favorites are both `TopLevelDestination`s with saved state
         // and can be open at once, so sharing one paginator would make switching tabs reset the
@@ -87,14 +98,18 @@ class LibraryRepositoryImpl
                         mediaId = null,
                         favorite = true,
                     )
-                Page(page.items.map(LibraryEntryDto::toDomain), page.nextCursor)
+                val items = page.items.map(LibraryEntryDto::toDomain)
+                lastFetchedFavoritesPage = items
+                Page(items, page.nextCursor)
             }
 
-        // Published straight from `favoritesPaginator.items` — unlike `RecommendationRepositoryImpl.feed`,
-        // nothing here ever mutates this list in place (there is no in-screen remove/restore for
-        // Favorites, per task 9b.4's brief: "no add here"), so a second, separately-mutated
-        // `MutableStateFlow` would only be indirection with no behavioural difference.
-        override val favoriteEntries: StateFlow<List<LibraryEntry>> = favoritesPaginator.items
+        // A SEPARATE published list from `favoritesPaginator.items`, deliberately — not a
+        // passthrough the way an earlier version of this class had. `refreshFavorites`/
+        // `loadMoreFavorites` set this explicitly from what `restart()`/[lastFetchedFavoritesPage]
+        // actually returned, never by re-reading `favoritesPaginator.items` after the fact — see
+        // [lastFetchedFavoritesPage]'s KDoc for why that distinction is the whole point.
+        private val mutableFavoriteEntries = MutableStateFlow<List<LibraryEntry>>(emptyList())
+        override val favoriteEntries: StateFlow<List<LibraryEntry>> = mutableFavoriteEntries.asStateFlow()
 
         /**
          * The cache wins only before the first network page arrives, and only for the default
@@ -214,18 +229,39 @@ class LibraryRepositoryImpl
                 ?.toDomain()
 
         /**
-         * `favoritesPaginator.restart()`'s return value is discarded deliberately: [favoriteEntries]
-         * is [favoritesPaginator.items] itself, which `restart()` already writes as part of
-         * fetching — re-reading it here would just be [favoriteEntries]'s own current value one
-         * statement later, with nothing gained (unlike [refresh] above, this repository publishes
-         * NOTHING beyond the paginator's own list — there is no Room cache row to conditionally
-         * write for the favourites view).
+         * `favoritesPaginator.restart()`'s RETURNED page, not a re-read of [favoriteEntries] or
+         * `favoritesPaginator.items.value` — the same "fetch before mutate, use what it handed
+         * back" discipline [refresh] above and `RecommendationRepositoryImpl.refresh` both follow,
+         * and for the identical reason: a failed restart leaves [mutableFavoriteEntries] exactly
+         * as it was (this line is never reached when the fetch throws), and a caller that instead
+         * re-read the paginator's own list after the fact would be exposed to whatever a
+         * concurrently-racing [loadMoreFavorites] had appended in the meantime — see
+         * [lastFetchedFavoritesPage]'s KDoc.
          */
         override suspend fun refreshFavorites() {
-            favoritesPaginator.restart()
+            val firstPage = favoritesPaginator.restart()
+            mutableFavoriteEntries.value = firstPage
         }
 
-        override suspend fun loadMoreFavorites() = favoritesPaginator.loadMore()
+        /**
+         * Appends [lastFetchedFavoritesPage] onto [mutableFavoriteEntries] — never re-publishes
+         * the whole of `favoritesPaginator.items.value` — mirroring
+         * `RecommendationRepositoryImpl.loadMore`'s own KDoc for why.
+         *
+         * The `favoritesPaginator.hasMore.value` guard is NOT redundant with `CursorPaginator`'s
+         * own `started && cursor == null` no-op check: that guard makes
+         * `favoritesPaginator.loadMore()` a harmless no-op for a caller reading
+         * `favoritesPaginator.items` directly, but [lastFetchedFavoritesPage] here is a field that
+         * OUTLIVES a single call — without this check, an exhausted `loadMore()` fetches nothing
+         * and this function would still append the STALE [lastFetchedFavoritesPage] from the last
+         * call that actually fetched, duplicating the final page every time a scrolled-to-the-
+         * bottom list fires `loadMoreFavorites()` again.
+         */
+        override suspend fun loadMoreFavorites() {
+            if (!favoritesPaginator.hasMore.value) return
+            favoritesPaginator.loadMore()
+            mutableFavoriteEntries.value = mutableFavoriteEntries.value + lastFetchedFavoritesPage
+        }
     }
 
 /**
