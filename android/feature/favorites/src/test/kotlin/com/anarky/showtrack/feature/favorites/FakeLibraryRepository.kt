@@ -4,6 +4,7 @@ import com.anarky.showtrack.core.data.repository.LibraryRepository
 import com.anarky.showtrack.core.model.LibraryEntry
 import com.anarky.showtrack.core.model.LibraryFilter
 import com.anarky.showtrack.core.model.LibraryPatch
+import com.anarky.showtrack.core.model.LibraryStats
 import com.anarky.showtrack.core.model.MediaSource
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.Flow
@@ -73,6 +74,8 @@ internal class FakeLibraryRepository(
     ): LibraryEntry = error("not exercised by FavoritesViewModel")
 
     override suspend fun entryForMedia(mediaId: String): LibraryEntry? = error("not exercised by FavoritesViewModel")
+
+    override suspend fun libraryStats(): LibraryStats = error("not exercised by FavoritesViewModel")
 
     override suspend fun refreshFavorites() {
         refreshCalls++

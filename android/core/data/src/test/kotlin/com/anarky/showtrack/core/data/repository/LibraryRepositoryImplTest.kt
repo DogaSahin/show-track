@@ -19,6 +19,7 @@ import com.anarky.showtrack.core.network.api.ShowTrackApi
 import com.anarky.showtrack.core.network.dto.AddLibraryEntryRequest
 import com.anarky.showtrack.core.network.dto.LibraryEntryDto
 import com.anarky.showtrack.core.network.dto.LibraryPageDto
+import com.anarky.showtrack.core.network.dto.LibraryStatsDto
 import com.anarky.showtrack.core.network.dto.MediaDto
 import com.anarky.showtrack.core.network.dto.MediaSearchResponseDto
 import com.anarky.showtrack.core.network.dto.PushTargetDto
@@ -536,6 +537,25 @@ class LibraryRepositoryImplTest {
             assertEquals(AddLibraryEntryRequest(source = "anilist", externalId = "154587"), api.addRequests.single())
         }
 
+    /**
+     * The field-by-field mapping (unknown status dropped, `BigDecimal` not `Double`, absent
+     * statuses staying absent) is [com.anarky.showtrack.core.data.mapper.MapperTest]'s job — this
+     * pins only that [LibraryRepositoryImpl.libraryStats] actually reaches
+     * [ShowTrackApi.libraryStats] and returns what it maps to, rather than, say, a hardcoded value
+     * or a call routed through the general `library()` surface.
+     */
+    @Test
+    fun `libraryStats reads through to the wire endpoint`() =
+        runTest {
+            api.statsResponse =
+                LibraryStatsDto(total = 5, byStatus = mapOf("watching" to 5), averageScore = "8.4", ratedCount = 3)
+
+            val stats = repository.libraryStats()
+
+            assertEquals(5, stats.total)
+            assertEquals(BigDecimal("8.4"), stats.averageScore)
+        }
+
     private fun dto(
         id: String,
         score: String? = null,
@@ -595,6 +615,7 @@ private class FakeShowTrackApi(
     val requestedFavorites = mutableListOf<Boolean?>()
     val addRequests = mutableListOf<AddLibraryEntryRequest>()
     val updateRequests = mutableListOf<Pair<String, JsonObject>>()
+    var statsResponse = LibraryStatsDto(total = 0, byStatus = emptyMap(), averageScore = null, ratedCount = 0)
     private var shouldFail = false
 
     // One-shot responses, consumed in FIFO order and taking priority over [pages] — the
@@ -642,6 +663,8 @@ private class FakeShowTrackApi(
     // reached these would be doing something it has no business doing, and should say so loudly.
     // PushRepositoryImplTest has its own fake for the push half; the search/detail methods stay
     // outside this repository's business.
+    override suspend fun libraryStats(): LibraryStatsDto = statsResponse
+
     override suspend fun addLibraryEntry(request: AddLibraryEntryRequest): LibraryEntryDto {
         addRequests += request
         return queuedEntries.removeFirst()

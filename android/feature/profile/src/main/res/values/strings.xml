@@ -27,4 +27,23 @@
     <string name="profile_sign_out_confirm_action">Sign out</string>
     <string name="profile_sign_out_cancel">Cancel</string>
     <string name="profile_sign_out_error">Couldn\'t sign out due to a local storage problem. Try again, or restart the app.</string>
+
+    <!-- Library statistics (task 9b.5, GET /v1/library/stats). A status absent from the response
+         is never rendered as zero — see LibraryStats' own KDoc — so profile_stats_status_row is
+         only ever emitted for statuses the server actually reported. Both counts below are
+         <plurals>, not plain <string>s with an embedded %d — lint's PluralsCandidate flagged the
+         earlier plain-string versions ("%d titles"/"%d rated titles"), correctly: a bare %d
+         followed by a word is exactly what plurals exists to localise. -->
+    <string name="profile_stats_title">Library stats</string>
+    <plurals name="profile_stats_total">
+        <item quantity="one">%1$d title total</item>
+        <item quantity="other">%1$d titles total</item>
+    </plurals>
+    <string name="profile_stats_status_row">%1$s: %2$d</string>
+    <plurals name="profile_stats_average">
+        <item quantity="one">Average score: %1$s across %2$d rated title</item>
+        <item quantity="other">Average score: %1$s across %2$d rated titles</item>
+    </plurals>
+    <string name="profile_stats_no_ratings">No ratings yet</string>
+    <string name="profile_stats_error">Couldn\'t load your library stats.</string>
 </resources>

@@ -3,6 +3,7 @@ package com.anarky.showtrack.core.network.api
 import com.anarky.showtrack.core.network.dto.AddLibraryEntryRequest
 import com.anarky.showtrack.core.network.dto.LibraryEntryDto
 import com.anarky.showtrack.core.network.dto.LibraryPageDto
+import com.anarky.showtrack.core.network.dto.LibraryStatsDto
 import com.anarky.showtrack.core.network.dto.MediaDto
 import com.anarky.showtrack.core.network.dto.MediaSearchResponseDto
 import com.anarky.showtrack.core.network.dto.PushTargetDto
@@ -72,6 +73,13 @@ interface ShowTrackApi {
         @Path("id") id: String,
         @Body patch: JsonObject,
     ): LibraryEntryDto
+
+    /**
+     * `GET /v1/library/stats` (task 9b.5, decision D-F's stats half). Aggregates computed in SQL,
+     * not by paging the library client-side — see the backend's `get_stats` KDoc.
+     */
+    @GET("v1/library/stats")
+    suspend fun libraryStats(): LibraryStatsDto
 
     @GET("v1/media/search")
     suspend fun searchMedia(

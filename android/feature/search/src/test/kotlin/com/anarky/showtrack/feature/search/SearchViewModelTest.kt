@@ -490,6 +490,8 @@ class SearchViewModelTest {
         override suspend fun refreshFavorites(): Unit = error("not exercised by SearchViewModel")
 
         override suspend fun loadMoreFavorites(): Unit = error("not exercised by SearchViewModel")
+
+        override suspend fun libraryStats() = error("not exercised by SearchViewModel")
     }
 
     private companion object {

@@ -6,6 +6,7 @@ import com.anarky.showtrack.core.model.MediaStatus
 import com.anarky.showtrack.core.model.MediaType
 import com.anarky.showtrack.core.model.UserMediaStatus
 import com.anarky.showtrack.core.network.dto.LibraryEntryDto
+import com.anarky.showtrack.core.network.dto.LibraryStatsDto
 import com.anarky.showtrack.core.network.dto.MediaDto
 import com.anarky.showtrack.core.network.dto.PersistedMediaDto
 import com.anarky.showtrack.core.network.dto.RecommendationDto
@@ -172,6 +173,54 @@ class MapperTest {
         assertEquals("seed-1", recommendation.reason.seedMediaId)
         assertEquals("Made in Abyss", recommendation.reason.seedTitle)
         assertEquals(listOf("fantasy", "adventure"), recommendation.reason.matchedGenres)
+    }
+
+    /** Task 9b.5. Literal expectations, not `dto.toDomain()` against itself — this file's own rule. */
+    @Test
+    fun `a library stats dto maps every field into the domain`() {
+        val stats =
+            LibraryStatsDto(
+                total = 7,
+                byStatus = mapOf("watching" to 5, "completed" to 2),
+                averageScore = "8.4",
+                ratedCount = 3,
+            ).toDomain()
+
+        assertEquals(7, stats.total)
+        assertEquals(mapOf(UserMediaStatus.WATCHING to 5, UserMediaStatus.COMPLETED to 2), stats.byStatus)
+        // BigDecimal(String), never a trip through Double — see LibraryEntryDto.toDomain's own
+        // KDoc for why that specific conversion is scale-safe as well as value-safe. "8.4" is not
+        // exactly representable as an IEEE 754 double, so a `BigDecimal(score.toDouble())` mutant
+        // fails this on the value alone, without needing 8.1's dyadic-rational argument.
+        assertEquals(BigDecimal("8.4"), stats.averageScore)
+        assertEquals(3, stats.ratedCount)
+    }
+
+    @Test
+    fun `an unrated library maps to a null average rather than zero`() {
+        val stats = LibraryStatsDto(total = 3, byStatus = emptyMap(), averageScore = null, ratedCount = 0).toDomain()
+
+        assertNull(stats.averageScore)
+    }
+
+    /**
+     * `by_status` keys the client does not recognise are DROPPED, matching `SearchMapper`'s
+     * treatment of an unknown `MediaSource` — the client must not crash when the server reports a
+     * status it has never heard of. `total` is left untouched (it is the server's own sum, not
+     * recomputed from the surviving keys), so a dropped key does not silently corrupt the total.
+     */
+    @Test
+    fun `an unrecognised status key is dropped from the map rather than thrown on`() {
+        val stats =
+            LibraryStatsDto(
+                total = 6,
+                byStatus = mapOf("watching" to 4, "on_hold_legacy" to 2),
+                averageScore = null,
+                ratedCount = 0,
+            ).toDomain()
+
+        assertEquals(mapOf(UserMediaStatus.WATCHING to 4), stats.byStatus)
+        assertEquals(6, stats.total)
     }
 
     private fun persistedMediaDto() =

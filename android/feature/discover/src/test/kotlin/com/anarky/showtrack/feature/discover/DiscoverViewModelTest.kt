@@ -418,6 +418,8 @@ class DiscoverViewModelTest {
         override suspend fun refreshFavorites(): Unit = error("not exercised by DiscoverViewModel")
 
         override suspend fun loadMoreFavorites(): Unit = error("not exercised by DiscoverViewModel")
+
+        override suspend fun libraryStats() = error("not exercised by DiscoverViewModel")
     }
 
     private companion object {

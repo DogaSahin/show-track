@@ -526,6 +526,8 @@ class LibraryViewModelTest {
         override suspend fun refreshFavorites(): Unit = error("not exercised by LibraryViewModel")
 
         override suspend fun loadMoreFavorites(): Unit = error("not exercised by LibraryViewModel")
+
+        override suspend fun libraryStats() = error("not exercised by LibraryViewModel")
     }
 
     private companion object {

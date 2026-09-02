@@ -9,6 +9,7 @@ import com.anarky.showtrack.core.database.LibraryEntryEntity
 import com.anarky.showtrack.core.model.LibraryEntry
 import com.anarky.showtrack.core.model.LibraryFilter
 import com.anarky.showtrack.core.model.LibraryPatch
+import com.anarky.showtrack.core.model.LibraryStats
 import com.anarky.showtrack.core.model.MediaSource
 import com.anarky.showtrack.core.model.ScoreChange
 import com.anarky.showtrack.core.network.api.ShowTrackApi
@@ -270,6 +271,9 @@ class LibraryRepositoryImpl
             favoritesPaginator.loadMore()
             mutableFavoriteEntries.value = mutableFavoriteEntries.value + lastFetchedFavoritesPage
         }
+
+        /** A plain pass-through — no cache, no paginator, nothing to sequence. */
+        override suspend fun libraryStats(): LibraryStats = api.libraryStats().toDomain()
     }
 
 /**

@@ -4,6 +4,8 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.anarky.showtrack.core.data.repository.AuthRepository
+import com.anarky.showtrack.core.data.repository.LibraryRepository
+import com.anarky.showtrack.core.model.LibraryStats
 import com.anarky.showtrack.feature.profile.push.DistributorSource
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
@@ -38,8 +40,39 @@ sealed interface PushState {
 }
 
 /**
- * Push is the only thing on this screen so far, which is why the state is `PushState` and not a
- * `ProfileUiState` wrapping it — a wrapper with one field is a rename waiting to happen.
+ * The library-stats block (task 9b.5, decision D-F's stats half) — the screen's THIRD independent
+ * concern alongside push and sign-out (decision C-S), with its own failure channel exactly like
+ * those two.
+ *
+ * [Success.isStale] mirrors `FavoritesUiState.Success.isStale`, for the identical reason: a
+ * resume's failed background refetch must not destroy numbers the user is already looking at
+ * (decision C-B). `FavoritesViewModel.refresh`'s own KDoc documents the two-round bug this shape
+ * exists to prevent — [ProfileViewModel.refresh] follows the same discipline for [statsState]
+ * that it already follows for `FavoritesUiState.Success` there: [Loading] is written only when
+ * nothing is on screen yet, and a failure over an already-[Success] state marks it stale instead
+ * of replacing it with [Error].
+ */
+sealed interface LibraryStatsUiState {
+    /** The initial load, or a retry from [Error], is in flight. Replaces whatever was on screen. */
+    data object Loading : LibraryStatsUiState
+
+    data class Success(
+        val stats: LibraryStats,
+        val isStale: Boolean = false,
+    ) : LibraryStatsUiState
+
+    /** Only a failed fetch with nothing already on screen ever produces this. */
+    data class Error(
+        val cause: Throwable,
+    ) : LibraryStatsUiState
+}
+
+/**
+ * Push is not the only thing on this screen any more — task 9b.5 added [statsState] — but the
+ * state stays split across [pushState]/[signedOut]/[signOutError]/[statsState] rather than folded
+ * into one `ProfileUiState`: the four are independent concerns with independent failure modes
+ * (decision C-S), and a single wrapper `data class` would force every reader to reconstruct which
+ * combinations are actually reachable instead of the type system doing it.
  *
  * Re-read on [refresh] rather than observed: a distributor is installed or uninstalled by the
  * user leaving the app entirely, and `PackageManager` offers no flow. `ProfileScreen` calls
@@ -47,6 +80,17 @@ sealed interface PushState {
  * the `init` below covers only the first composition, and the ViewModel is scoped to the
  * NavBackStackEntry, so it survives the trip to the Play Store and back that the NoDistributor
  * prompt asks the user to make.
+ *
+ * [statsState] rides along on the SAME [refresh] rather than its own resume effect (ruling, task
+ * 9b.5's brief): the library changes on OTHER screens, so a stats block that only loaded once on
+ * `init` would be stale exactly when a user navigates back here to check it. The one accepted
+ * consequence: unlike push's synchronous `PackageManager` read, a stats fetch is a real network
+ * round trip, so [enablePush]/[disablePush] now also re-issue one by calling [refresh] — and the
+ * `init` below plus `ProfileScreen`'s `LifecycleResumeEffect` firing on the very first composition
+ * (the same replay `FavoritesViewModel`'s own KDoc measures) means the FIRST open fetches stats
+ * twice. Both are harmless — a stats re-fetch is idempotent and the second call's [Loading] guard
+ * never fires over a populated screen — not free, so worth naming rather than leaving as a silent
+ * side effect of this ruling.
  */
 @HiltViewModel
 class ProfileViewModel
@@ -54,6 +98,7 @@ class ProfileViewModel
     constructor(
         private val distributors: DistributorSource,
         private val authRepository: AuthRepository,
+        private val libraryRepository: LibraryRepository,
     ) : ViewModel() {
         private val mutablePushState = MutableStateFlow<PushState>(PushState.NoDistributor)
         val pushState: StateFlow<PushState> = mutablePushState.asStateFlow()
@@ -72,10 +117,37 @@ class ProfileViewModel
         private val mutableSignOutError = MutableStateFlow(false)
         val signOutError: StateFlow<Boolean> = mutableSignOutError.asStateFlow()
 
+        // The screen's THIRD independent channel (decision C-S) — see LibraryStatsUiState's own
+        // KDoc for the isStale/Loading discipline this follows.
+        private val mutableStatsState = MutableStateFlow<LibraryStatsUiState>(LibraryStatsUiState.Loading)
+        val statsState: StateFlow<LibraryStatsUiState> = mutableStatsState.asStateFlow()
+
         init {
             refresh()
         }
 
+        /**
+         * Push's half is unchanged from before task 9b.5: a synchronous `PackageManager` read,
+         * still not wrapped in `viewModelScope.launch`.
+         *
+         * The stats half is new and asynchronous — see this class's own KDoc for why it lives here
+         * rather than behind its own resume effect, and for the accepted duplicate-fetch-on-first-
+         * open consequence. [LibraryStatsUiState.Loading] is written ONLY when nothing is on screen
+         * yet (`!is Success`) — carried forward from `FavoritesViewModel.refresh`'s round-1 fix:
+         * writing it unconditionally would blank a populated stats block to a spinner on every
+         * single resume, the exact bug that cost that task three fix rounds. On failure, an
+         * already-[LibraryStatsUiState.Success] state is marked [LibraryStatsUiState.Success.isStale]
+         * instead of being replaced by [LibraryStatsUiState.Error] — `FavoritesViewModel.refresh`'s
+         * round-2 fix, applied here: a failed background resume must not destroy numbers the user
+         * is already reading. [LibraryStatsUiState.Error] stays reachable for the case it always
+         * covered: nothing usable is on screen yet.
+         *
+         * A stats failure never touches [pushState]/[signedOut]/[signOutError] — its own `catch`,
+         * scoped to its own `mutableStatsState` (decision C-S) — so a broken `/v1/library/stats`
+         * leaves push opt-in and sign-out fully usable, which is exactly what
+         * `a failed stats load leaves the rest of the profile usable` pins.
+         */
+        @Suppress("TooGenericExceptionCaught")
         fun refresh() {
             val installed = distributors.available()
             mutablePushState.value =
@@ -89,6 +161,22 @@ class ProfileViewModel
                         distributors.selected()?.takeIf { it in installed }?.let(PushState::Registered)
                             ?: PushState.Available(installed)
                 }
+
+            if (mutableStatsState.value !is LibraryStatsUiState.Success) {
+                mutableStatsState.value = LibraryStatsUiState.Loading
+            }
+            viewModelScope.launch {
+                try {
+                    val stats = libraryRepository.libraryStats()
+                    mutableStatsState.value = LibraryStatsUiState.Success(stats)
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (failure: Exception) {
+                    val stillShowing = mutableStatsState.value as? LibraryStatsUiState.Success
+                    mutableStatsState.value =
+                        stillShowing?.copy(isStale = true) ?: LibraryStatsUiState.Error(failure)
+                }
+            }
         }
 
         /** Chooses a distributor. `onNewEndpoint` does the rest, asynchronously and out of process. */

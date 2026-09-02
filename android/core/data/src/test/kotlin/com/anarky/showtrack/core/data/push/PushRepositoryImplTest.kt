@@ -4,6 +4,7 @@ import com.anarky.showtrack.core.network.api.ShowTrackApi
 import com.anarky.showtrack.core.network.dto.AddLibraryEntryRequest
 import com.anarky.showtrack.core.network.dto.LibraryEntryDto
 import com.anarky.showtrack.core.network.dto.LibraryPageDto
+import com.anarky.showtrack.core.network.dto.LibraryStatsDto
 import com.anarky.showtrack.core.network.dto.MediaDto
 import com.anarky.showtrack.core.network.dto.MediaSearchResponseDto
 import com.anarky.showtrack.core.network.dto.PushTargetDto
@@ -49,6 +50,8 @@ private class FakeApi : ShowTrackApi {
     ): LibraryPageDto = error("not used")
 
     override suspend fun addLibraryEntry(request: AddLibraryEntryRequest): LibraryEntryDto = error("not used")
+
+    override suspend fun libraryStats(): LibraryStatsDto = error("not used")
 
     override suspend fun updateLibraryEntry(
         id: String,

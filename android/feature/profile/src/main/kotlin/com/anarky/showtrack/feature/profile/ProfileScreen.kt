@@ -23,12 +23,19 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.anarky.showtrack.core.designsystem.component.ErrorState
+import com.anarky.showtrack.core.designsystem.component.LoadingState
+import com.anarky.showtrack.core.designsystem.component.StaleDataBanner
+import com.anarky.showtrack.core.designsystem.component.label
+import com.anarky.showtrack.core.model.LibraryStats
+import com.anarky.showtrack.core.model.UserMediaStatus
 
 /**
  * [onSignedOut] fires exactly once, right after `AuthRepository.logout()` completes — keyed on
@@ -48,6 +55,7 @@ fun ProfileScreen(
     val pushState by viewModel.pushState.collectAsStateWithLifecycle()
     val signedOut by viewModel.signedOut.collectAsStateWithLifecycle()
     val signOutError by viewModel.signOutError.collectAsStateWithLifecycle()
+    val statsState by viewModel.statsState.collectAsStateWithLifecycle()
     LaunchedEffect(signedOut) {
         if (signedOut) onSignedOut()
     }
@@ -79,46 +87,74 @@ fun ProfileScreen(
             onEnable = viewModel::enablePush,
             onDisable = viewModel::disablePush,
         )
-        TextButton(onClick = { showSignOutConfirmation = true }) {
-            Text(text = stringResource(R.string.profile_sign_out))
-        }
-        // signOut() only ever sets this on a caught failure — see its KDoc for why signedOut is
-        // NOT flipped in that case, which is what makes leaving the user here, able to retry,
-        // the correct response rather than a dead end.
-        if (signOutError) {
-            Text(
-                text = stringResource(R.string.profile_sign_out_error),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-            )
-        }
+        StatsSection(
+            state = statsState,
+            onRetry = viewModel::refresh,
+        )
+        SignOutSection(
+            error = signOutError,
+            onSignOutClick = { showSignOutConfirmation = true },
+        )
     }
 
     // A confirmation step because signing out discards local session state (tokens, the push
     // registration) that the tap cannot undo — the same reasoning `LibraryList`'s tap-to-retry
     // footer does NOT need, since a retry there costs nothing if it was a mistake.
     if (showSignOutConfirmation) {
-        AlertDialog(
-            onDismissRequest = { showSignOutConfirmation = false },
-            title = { Text(text = stringResource(R.string.profile_sign_out_confirm_title)) },
-            text = { Text(text = stringResource(R.string.profile_sign_out_confirm_body)) },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        showSignOutConfirmation = false
-                        viewModel.signOut()
-                    },
-                ) {
-                    Text(text = stringResource(R.string.profile_sign_out_confirm_action))
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showSignOutConfirmation = false }) {
-                    Text(text = stringResource(R.string.profile_sign_out_cancel))
-                }
+        SignOutConfirmationDialog(
+            onDismiss = { showSignOutConfirmation = false },
+            onConfirm = {
+                showSignOutConfirmation = false
+                viewModel.signOut()
             },
         )
     }
+}
+
+/**
+ * The sign-out button and its own failure channel — split out of [ProfileScreen] purely to keep
+ * that function under detekt's `LongMethod` threshold now that it also hosts [StatsSection].
+ */
+@Composable
+private fun SignOutSection(
+    error: Boolean,
+    onSignOutClick: () -> Unit,
+) {
+    TextButton(onClick = onSignOutClick) {
+        Text(text = stringResource(R.string.profile_sign_out))
+    }
+    // signOut() only ever sets this on a caught failure — see its KDoc for why signedOut is NOT
+    // flipped in that case, which is what makes leaving the user here, able to retry, the correct
+    // response rather than a dead end.
+    if (error) {
+        Text(
+            text = stringResource(R.string.profile_sign_out_error),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error,
+        )
+    }
+}
+
+@Composable
+private fun SignOutConfirmationDialog(
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(text = stringResource(R.string.profile_sign_out_confirm_title)) },
+        text = { Text(text = stringResource(R.string.profile_sign_out_confirm_body)) },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text(text = stringResource(R.string.profile_sign_out_confirm_action))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(text = stringResource(R.string.profile_sign_out_cancel))
+            }
+        },
+    )
 }
 
 /**
@@ -215,4 +251,80 @@ private fun NotificationPermissionPrompt() {
     Button(onClick = { launcher.launch(Manifest.permission.POST_NOTIFICATIONS) }) {
         Text(text = stringResource(R.string.push_permission_grant))
     }
+}
+
+/**
+ * The library-stats block (task 9b.5). [LibraryStatsUiState.Loading]/[LibraryStatsUiState.Error]
+ * reuse `:core:designsystem`'s [LoadingState]/[ErrorState] rather than hand-rolled equivalents
+ * (decision C-T) — the same components `FavoritesScreen`/`LibraryScreen` already use for the
+ * identical two states.
+ */
+@Composable
+private fun StatsSection(
+    state: LibraryStatsUiState,
+    onRetry: () -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(all = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(text = stringResource(R.string.profile_stats_title), style = MaterialTheme.typography.titleMedium)
+            when (state) {
+                is LibraryStatsUiState.Loading -> LoadingState()
+                is LibraryStatsUiState.Error ->
+                    ErrorState(message = stringResource(R.string.profile_stats_error), onRetry = onRetry)
+                is LibraryStatsUiState.Success -> {
+                    // `isStale` (decision C-B, `FavoritesScreen`'s identical shape): the banner sits
+                    // ABOVE the numbers rather than replacing them — a resume's failed background
+                    // refetch leaves stats that are still worth showing, just not guaranteed current.
+                    if (state.isStale) {
+                        StaleDataBanner(onRetry = onRetry)
+                    }
+                    StatsContent(stats = state.stats)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * A status absent from [LibraryStats.byStatus] renders as absent, not as zero (the server sends
+ * what exists — see [LibraryStats]'s own KDoc), which is why this iterates [UserMediaStatus.entries]
+ * for a STABLE row order and skips whatever [LibraryStats.byStatus] does not carry, rather than
+ * iterating the map itself.
+ *
+ * [LibraryStats.averageScore]'s precision is the server's job, already done (`ROUND(avg, 1)`) — this
+ * renders [java.math.BigDecimal.toPlainString] as-is, with no further rounding or formatting, and
+ * null renders as "no ratings yet" rather than a `0.0` that would falsely claim every title was
+ * rated zero.
+ */
+@Composable
+private fun StatsContent(stats: LibraryStats) {
+    Text(
+        text = pluralStringResource(R.plurals.profile_stats_total, stats.total, stats.total),
+        style = MaterialTheme.typography.bodyMedium,
+    )
+    UserMediaStatus.entries.forEach { status ->
+        val count = stats.byStatus[status] ?: return@forEach
+        Text(
+            text = stringResource(R.string.profile_stats_status_row, status.label(), count),
+            style = MaterialTheme.typography.bodySmall,
+        )
+    }
+    val average = stats.averageScore
+    Text(
+        text =
+            if (average != null) {
+                pluralStringResource(
+                    R.plurals.profile_stats_average,
+                    stats.ratedCount,
+                    average.toPlainString(),
+                    stats.ratedCount,
+                )
+            } else {
+                stringResource(R.string.profile_stats_no_ratings)
+            },
+        style = MaterialTheme.typography.bodyMedium,
+    )
 }

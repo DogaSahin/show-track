@@ -56,4 +56,6 @@ internal class FakeLibraryRepository
         override suspend fun refreshFavorites(): Unit = error("not exercised by LibraryEntryHiltTest")
 
         override suspend fun loadMoreFavorites(): Unit = error("not exercised by LibraryEntryHiltTest")
+
+        override suspend fun libraryStats() = error("not exercised by LibraryEntryHiltTest")
     }

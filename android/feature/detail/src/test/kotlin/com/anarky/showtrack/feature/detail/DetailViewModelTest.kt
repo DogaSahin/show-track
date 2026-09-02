@@ -412,6 +412,8 @@ class DetailViewModelTest {
         override suspend fun refreshFavorites(): Unit = error("not exercised by DetailViewModel")
 
         override suspend fun loadMoreFavorites(): Unit = error("not exercised by DetailViewModel")
+
+        override suspend fun libraryStats() = error("not exercised by DetailViewModel")
     }
 
     private companion object {

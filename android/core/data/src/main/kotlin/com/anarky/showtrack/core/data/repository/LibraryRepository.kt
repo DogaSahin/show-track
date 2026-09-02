@@ -3,6 +3,7 @@ package com.anarky.showtrack.core.data.repository
 import com.anarky.showtrack.core.model.LibraryEntry
 import com.anarky.showtrack.core.model.LibraryFilter
 import com.anarky.showtrack.core.model.LibraryPatch
+import com.anarky.showtrack.core.model.LibraryStats
 import com.anarky.showtrack.core.model.MediaSource
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
@@ -60,4 +61,12 @@ interface LibraryRepository {
 
     /** Appends the next page of [favoriteEntries], or does nothing once it is exhausted. */
     suspend fun loadMoreFavorites()
+
+    /**
+     * `GET /v1/library/stats` (task 9b.5, decision D-F's stats half). No cache and no `StateFlow`
+     * upstream, unlike [observeLibrary]/[favoriteEntries] — this is a one-shot read the caller
+     * (`ProfileViewModel`) drives itself and re-issues on its own schedule, the same shape
+     * [add]/[update]/[entryForMedia] already have.
+     */
+    suspend fun libraryStats(): LibraryStats
 }

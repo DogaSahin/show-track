@@ -14,6 +14,11 @@ android {
 }
 
 dependencies {
+    // LoadingState/ErrorState/StaleDataBanner for the library-stats block (task 9b.5), and
+    // UserMediaStatus.label() for its status breakdown — decision C-T: a feature module never
+    // re-implements a design-system component.
+    implementation(project(":core:designsystem"))
+
     // ProfileRoute, and the detail deep link the notification tap resolves to — the route
     // contract, never :feature:detail itself (architecture rule 1, and ModuleRules fails the
     // build over it).

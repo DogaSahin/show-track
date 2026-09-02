@@ -2,12 +2,14 @@ package com.anarky.showtrack.core.data.mapper
 
 import com.anarky.showtrack.core.database.LibraryEntryEntity
 import com.anarky.showtrack.core.model.LibraryEntry
+import com.anarky.showtrack.core.model.LibraryStats
 import com.anarky.showtrack.core.model.Media
 import com.anarky.showtrack.core.model.MediaSource
 import com.anarky.showtrack.core.model.MediaStatus
 import com.anarky.showtrack.core.model.MediaType
 import com.anarky.showtrack.core.model.UserMediaStatus
 import com.anarky.showtrack.core.network.dto.LibraryEntryDto
+import com.anarky.showtrack.core.network.dto.LibraryStatsDto
 import java.math.BigDecimal
 import java.time.Instant
 
@@ -41,6 +43,32 @@ fun LibraryEntryDto.toDomain(): LibraryEntry =
         favorite = favorite,
         updatedAt = Instant.parse(updatedAt),
         media = media.toDomain(),
+    )
+
+/**
+ * `by_status` keys that don't map to a known [UserMediaStatus] are DROPPED, not thrown on —
+ * `mapNotNull` here matches `SearchMapper.toDomain`'s treatment of an unknown `MediaSource`: the
+ * client must not crash when the server reports a status it has never heard of. The conversion
+ * itself, `UserMediaStatus.valueOf(status.uppercase())`, is the exact expression [LibraryEntryDto.toDomain]
+ * above uses for a single entry's status — reused rather than re-invented, just guarded with
+ * `runCatching` here because THIS caller must survive an unknown key instead of throwing on it.
+ *
+ * `average_score` is `BigDecimal(String)`, never a trip through `Double` — see
+ * [LibraryEntryDto.toDomain]'s own KDoc for why that conversion specifically (not
+ * `Double.toBigDecimal()`) is the one that is scale-safe as well as value-safe. Its precision is
+ * final: the server already applies `ROUND(avg, 1)` (backend's `get_stats` KDoc), so this parses
+ * the string as-is rather than re-rounding or re-scaling it.
+ */
+fun LibraryStatsDto.toDomain(): LibraryStats =
+    LibraryStats(
+        total = total,
+        byStatus =
+            byStatus
+                .mapNotNull { (status, count) ->
+                    runCatching { UserMediaStatus.valueOf(status.uppercase()) }.getOrNull()?.let { it to count }
+                }.toMap(),
+        averageScore = averageScore?.let(::BigDecimal),
+        ratedCount = ratedCount,
     )
 
 /**
