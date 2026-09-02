@@ -96,4 +96,21 @@ class RecommendationRepositoryImpl
         override fun remove(mediaId: String) {
             mutableFeed.value = mutableFeed.value.filterNot { it.media.id == mediaId }
         }
+
+        /**
+         * `coerceIn(0, size)`, not a blind insert at [index]: a `loadMore()` that completed while
+         * the row was out (D-I's optimistic add is in flight) can only have grown [mutableFeed] by
+         * appending past the removal point — `loadMore` never inserts before it — so [index] is
+         * always still a valid position; the clamp is defensive against a future change to that
+         * assumption, not load-bearing for the race as it exists today.
+         */
+        override fun restore(
+            index: Int,
+            recommendation: Recommendation,
+        ) {
+            mutableFeed.value =
+                mutableFeed.value.toMutableList().apply {
+                    add(index.coerceIn(0, size), recommendation)
+                }
+        }
     }

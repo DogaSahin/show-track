@@ -1,6 +1,7 @@
 package com.anarky.showtrack.feature.discover
 
 import android.content.Context
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -80,6 +81,32 @@ class DiscoverScreenTest {
 
         assertEquals(BEBOP, clicked)
         assertEquals("tapping the row must not also trigger an add", null, added)
+    }
+
+    /**
+     * Fix round 1, finding 4: a row whose reason carries no matched genres used to render "Because
+     * you watched Frieren — " — a dangling em dash with nothing after it. The subtitle line
+     * immediately above already guards `media.genres` with `takeIf { it.isNotEmpty() }`; the reason
+     * line needed the same guard and did not have it.
+     */
+    @Test
+    fun `a reason with no matched genres renders without a dangling em dash`() {
+        val noGenres = FRIEREN.copy(reason = FRIEREN.reason.copy(matchedGenres = emptyList()))
+
+        composeRule.setContent {
+            DiscoverScreen(
+                state = DiscoverUiState.Success(items = listOf(noGenres)),
+                onRetry = {},
+                onLoadMore = {},
+                onAdd = {},
+                onRowClick = {},
+            )
+        }
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule
+            .onNodeWithText(context.getString(R.string.discover_reason, noGenres.reason.seedTitle))
+            .assertIsDisplayed()
     }
 
     @Test

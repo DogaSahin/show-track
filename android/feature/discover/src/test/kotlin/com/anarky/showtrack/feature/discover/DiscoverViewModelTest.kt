@@ -201,6 +201,10 @@ class DiscoverViewModelTest {
      * The restore-on-failure test — decision D-I's whole point, and the one the task brief calls
      * out as "the one that matters". [FRIEREN] sits at index 0 of a three-row feed; the add fails;
      * the row must come back at index 0, not appended to the end, and not merely present somewhere.
+     *
+     * The restore itself now goes through [RecommendationRepository.restore] (fix round 1: a
+     * review found the original UI-only restore did not survive a later `loadMore()` — see the
+     * composing test directly below, which is the one that would have caught it).
      */
     @Test
     fun `a failed add restores the row at its original index and reports beside it`() =
@@ -217,6 +221,49 @@ class DiscoverViewModelTest {
             val success = viewModel.state.value as DiscoverUiState.Success
             assertEquals(listOf(FRIEREN, BEBOP, DANDADAN), success.items)
             assertEquals(AddFailure(BEBOP.media.id, failure), success.addError)
+        }
+
+    /**
+     * The composing test fix round 1 asked for, written to fail first: a middle row's add fails
+     * (restoring it via [RecommendationRepository.restore]), then a SUCCESSFUL `loadMore()` runs.
+     * `loadMore`'s success path re-publishes `items` wholesale from
+     * [RecommendationRepository.feed] — if the restore had only patched this ViewModel's own copy
+     * of the list (the original implementation), that wholesale re-read would silently discard the
+     * restored row the moment the user scrolled far enough to trigger a page fetch: it would vanish
+     * with no user action, and [DiscoverUiState.Success.addError] would be left naming a `mediaId`
+     * no longer present in `items` at all — which also strands the row's own retry affordance,
+     * since that renders inside the (now-gone) row's own list item.
+     *
+     * Confirmed to fail against the pre-fix implementation before this fix: with the restore
+     * applied to local UI state only, the assertion below failed with
+     * `expected:<[Frieren, Bebop, Dandadan, SpyFamily]> but was:<[Frieren, Dandadan, SpyFamily]>` —
+     * Bebop silently dropped, exactly the reported bug.
+     */
+    @Test
+    fun `a restored row survives a loadMore that runs after the failed add`() =
+        runTest(dispatcher) {
+            val recommendations =
+                FakeRecommendationRepository(
+                    refreshResult = listOf(FRIEREN, BEBOP, DANDADAN),
+                    loadMoreAppends = listOf(SPY_FAMILY),
+                )
+            val failure = IOException("offline")
+            val library = FakeLibraryRepository(addFailure = failure)
+            val viewModel = DiscoverViewModel(recommendations, library)
+            advanceUntilIdle()
+
+            viewModel.add(BEBOP)
+            advanceUntilIdle()
+            // Sanity check: the restore already landed before loadMore ever runs.
+            assertEquals(listOf(FRIEREN, BEBOP, DANDADAN), (viewModel.state.value as DiscoverUiState.Success).items)
+
+            viewModel.loadMore()
+            advanceUntilIdle()
+
+            assertEquals(
+                listOf(FRIEREN, BEBOP, DANDADAN, SPY_FAMILY),
+                (viewModel.state.value as DiscoverUiState.Success).items,
+            )
         }
 
     @Test
@@ -319,6 +366,16 @@ class DiscoverViewModelTest {
         override fun remove(mediaId: String) {
             removedIds += mediaId
             mutableFeed.value = mutableFeed.value.filterNot { it.media.id == mediaId }
+        }
+
+        override fun restore(
+            index: Int,
+            recommendation: Recommendation,
+        ) {
+            mutableFeed.value =
+                mutableFeed.value.toMutableList().apply {
+                    add(index.coerceIn(0, size), recommendation)
+                }
         }
     }
 
@@ -433,6 +490,17 @@ class DiscoverViewModelTest {
                     RecommendationReason(
                         seedMediaId = "seed-3",
                         seedTitle = "Mob Psycho 100",
+                        matchedGenres = listOf("comedy"),
+                    ),
+            )
+
+        val SPY_FAMILY =
+            Recommendation(
+                media = media(id = "media-spy-family", title = "Spy x Family", externalId = "3"),
+                reason =
+                    RecommendationReason(
+                        seedMediaId = "seed-4",
+                        seedTitle = "Great Pretender",
                         matchedGenres = listOf("comedy"),
                     ),
             )

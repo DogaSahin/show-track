@@ -156,6 +156,53 @@ class RecommendationRepositoryTest {
         }
 
     @Test
+    fun `restore re-inserts a removed row at the given index`() =
+        runTest {
+            val api = FakeApi(mapOf(null to page(titles = listOf("Frieren", "Bebop", "Dandadan"), nextCursor = null)))
+            val repository = RecommendationRepositoryImpl(api)
+            repository.refresh()
+            val bebop = repository.feed.value.first { it.media.title == "Bebop" }
+            repository.remove(bebop.media.id)
+
+            repository.restore(1, bebop)
+
+            assertEquals(listOf("Frieren", "Bebop", "Dandadan"), repository.feed.value.map { it.media.title })
+        }
+
+    /**
+     * Fix round 1, finding 1: the composing test for the axis a review caught was missing. `remove`
+     * surviving a later `loadMore` (above) and `restore` re-inserting at the right spot (above) were
+     * each pinned in isolation; neither test alone would catch a `restore` that only patched a
+     * CALLER's copy of the list instead of `mutableFeed` itself — `loadMore`'s success path
+     * re-publishes from `mutableFeed` (see its own KDoc), so a restore that bypassed it would be
+     * silently overwritten the next time a page loads. `restore` must land in the SAME published
+     * list `loadMore` appends onto, which is what this proves by actually running both in sequence.
+     */
+    @Test
+    fun `a restored row survives a later loadMore and keeps its position`() =
+        runTest {
+            val api =
+                FakeApi(
+                    mapOf(
+                        null to page(titles = listOf("Frieren", "Bebop", "Dandadan"), nextCursor = "c1"),
+                        "c1" to page(titles = listOf("Trigun"), nextCursor = null),
+                    ),
+                )
+            val repository = RecommendationRepositoryImpl(api)
+            repository.refresh()
+            val bebop = repository.feed.value.first { it.media.title == "Bebop" }
+            repository.remove(bebop.media.id)
+            repository.restore(1, bebop)
+
+            repository.loadMore()
+
+            assertEquals(
+                listOf("Frieren", "Bebop", "Dandadan", "Trigun"),
+                repository.feed.value.map { it.media.title },
+            )
+        }
+
+    @Test
     fun `it asks for the documented page size`() =
         runTest {
             val api = FakeApi(mapOf(null to page(titles = listOf("Frieren"), nextCursor = null)))

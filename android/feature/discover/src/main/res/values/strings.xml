@@ -13,7 +13,12 @@
          title, %2$s the comma-joined matched genres — deliberately one seed, never all of them
          (RecommendationReason's KDoc: "because you liked these four things a little" is not
          something a user can act on). -->
-    <string name="discover_reason">Because you watched %1$s — %2$s</string>
+    <string name="discover_reason_with_genres">Because you watched %1$s — %2$s</string>
+
+    <!-- The same reason line for the (currently theoretical, but not impossible) case where the
+         backend answers matchedGenres = []: no dangling em dash with nothing after it. %1$s is the
+         seed title. -->
+    <string name="discover_reason">Because you watched %1$s</string>
 
     <!-- The one-tap add affordance (decision D-I). %1$s is the title, so two rows on screen never
          share an indistinguishable contentDescription (decision C-E). -->

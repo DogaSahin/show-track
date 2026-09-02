@@ -18,6 +18,16 @@ private const val DEFAULT_THRESHOLD = 3
  * caller still needs its own re-entrancy guard for the in-flight case — a `LazyColumn` near its end
  * recomposes on every frame, but this only *emits* on the edge.
  *
+ * **This changed `:feature:library`'s own firing point, not merely its implementation.** Before
+ * this extraction, `LibraryList`'s inline condition fired only once the LAST row itself was
+ * visible (`lastVisibleIndex >= entries.lastIndex`, equivalent to `threshold = 0`). Every call site
+ * that does not pass [threshold] explicitly — `LibraryList` included — now gets [DEFAULT_THRESHOLD]
+ * (3), so Library prefetches three rows earlier than it used to. That is the shape the task brief
+ * specified verbatim and is benign (`LibraryViewModel.loadMore`'s re-entrancy guard and
+ * `CursorPaginator`'s own exhaustion check both still hold at the new firing point), but it is a
+ * real behaviour change, not a like-for-like refactor — no `:feature:library` test exercised the
+ * composable's scroll trigger before or after, so nothing would have gone red either way.
+ *
  * `itemCount: Int` rather than the list itself (decision D-H, extracted from `:feature:library`):
  * the primitive key is behaviourally equivalent to keying on the list reference for THIS
  * calculation specifically, because the calculation only ever reads `itemCount` and

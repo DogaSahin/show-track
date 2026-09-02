@@ -106,19 +106,27 @@ class DiscoverViewModel
         /**
          * The optimistic add (decision D-I). [recommendation]'s row is removed from
          * [DiscoverUiState.Success.items] IMMEDIATELY — before the `POST /v1/library` round trip
-         * even starts — and [libraryRepository].add is called with its `(source, externalId)`.
+         * even starts — via [recommendationRepository]'s own [RecommendationRepository.remove], and
+         * [libraryRepository].add is called with its `(source, externalId)`.
          *
          * On failure, the row is put back **at its original index**, never merely appended back to
-         * the end: [originalIndex] is captured before the removal, and restoring anywhere else
-         * would visibly reshuffle the list the user is still looking at over an error that has
-         * nothing to do with ordering. The index is `coerceIn`-clamped against the CURRENT list
-         * size when restoring, not blindly reused: a `loadMore()` completing while this add was in
-         * flight can only have grown [DiscoverUiState.Success.items] by appending past the removal
-         * point (never inserting before it — `RecommendationRepository.loadMore` only appends), so
-         * the original index is always still a valid insertion point for what was removed from it;
-         * the clamp is defensive rather than load-bearing for that specific race, and exists so a
-         * future change to that assumption fails safe (an inserted row at the wrong end) rather
-         * than by throwing.
+         * the end, via [RecommendationRepository.restore] — NOT by patching
+         * [DiscoverUiState.Success.items] directly. That distinction is load-bearing, not stylistic:
+         * [loadMore] re-publishes `items` wholesale from [RecommendationRepository.feed] on success,
+         * so a restore applied only to this ViewModel's copy of the list would be silently discarded
+         * the next time [loadMore] succeeds — the row would vanish with no user action, and
+         * [DiscoverUiState.Success.addError] would be left pointing at a `mediaId` no longer in
+         * `items` at all, which also strands the retry affordance the row itself renders. Routing
+         * the restore through the repository keeps [RecommendationRepository.feed] the single list
+         * both [loadMore] and this failure path agree on, the same way [remove]'s permanence across
+         * a later [loadMore] is guaranteed on the repository side rather than here.
+         *
+         * [originalIndex] is captured before the removal: restoring anywhere else would visibly
+         * reshuffle the list the user is still looking at over an error that has nothing to do with
+         * ordering. [RecommendationRepository.restore] clamps it against the CURRENT feed size, not
+         * blindly reusing it — see that function's KDoc for why the clamp is defensive rather than
+         * load-bearing for the one race that can move it (a `loadMore()` completing while this add
+         * is in flight).
          *
          * Never refetches the feed on either outcome — see [DiscoverUiState]'s and this class's own
          * KDoc: a refetch re-ranks the whole feed and would move rows out from under a user who is
@@ -134,10 +142,7 @@ class DiscoverViewModel
             addInFlight = recommendation.media.id
             recommendationRepository.remove(recommendation.media.id)
             replaceSuccess { success ->
-                success.copy(
-                    items = success.items.filterNot { it.media.id == recommendation.media.id },
-                    addError = null,
-                )
+                success.copy(items = recommendationRepository.feed.value, addError = null)
             }
             viewModelScope.launch {
                 try {
@@ -148,12 +153,12 @@ class DiscoverViewModel
                 } catch (cancellation: CancellationException) {
                     throw cancellation
                 } catch (failure: Exception) {
+                    recommendationRepository.restore(originalIndex, recommendation)
                     replaceSuccess { success ->
-                        val restored =
-                            success.items.toMutableList().apply {
-                                add(originalIndex.coerceIn(0, size), recommendation)
-                            }
-                        success.copy(items = restored, addError = AddFailure(recommendation.media.id, failure))
+                        success.copy(
+                            items = recommendationRepository.feed.value,
+                            addError = AddFailure(recommendation.media.id, failure),
+                        )
                     }
                 } finally {
                     addInFlight = null

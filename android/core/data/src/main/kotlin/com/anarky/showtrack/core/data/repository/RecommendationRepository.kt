@@ -22,10 +22,24 @@ interface RecommendationRepository {
     /**
      * Removes the row for [mediaId] from [feed], in memory only — there is no server-side
      * "dismiss" endpoint for a recommendation. Decision D-I's optimistic add calls this
-     * immediately, before the `POST /v1/library` round trip even starts; if that call fails, the
-     * VIEWMODEL is what re-inserts the row (at its original index) into what the screen renders —
-     * this function only ever removes, since only the caller still holds the removed row and where
-     * it was.
+     * immediately, before the `POST /v1/library` round trip even starts; if that call fails,
+     * [restore] is what puts the row back.
      */
     fun remove(mediaId: String)
+
+    /**
+     * The counterpart to [remove]: re-inserts [recommendation] into [feed] at [index] (clamped to
+     * the current bounds), for a failed optimistic add. This lives on the REPOSITORY, not the
+     * caller's own copy of the list, deliberately: [loadMore] re-publishes [feed] wholesale from
+     * what it just fetched, so a restore applied only to a ViewModel's local state would be silently
+     * discarded the next time [loadMore] succeeds — the row would vanish with no user action, and
+     * any error still pointing at it would now name a row [feed] no longer contains. Routing the
+     * restore through here instead keeps [feed] the single list [loadMore] appends onto, so a row
+     * put back by [restore] survives every later [loadMore] the same way a row taken out by
+     * [remove] stays out.
+     */
+    fun restore(
+        index: Int,
+        recommendation: Recommendation,
+    )
 }

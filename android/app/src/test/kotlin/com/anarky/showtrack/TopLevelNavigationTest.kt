@@ -51,12 +51,19 @@ class TopLevelNavigationTest {
     }
 
     /**
-     * The regression guard task 9b.3 exists to add: `TopLevelDestination` gained a `DISCOVER` entry
-     * this task (`MainActivity.kt`'s own KDoc explains why), and a route can sit in that enum,
-     * compile, and still never be reached if `showTrackDestinations` (built from `appDestinations`,
-     * asserted by `NavGraphRegistrationTest`) does not actually register a matching destination —
-     * exactly the Gap 1/Gap 2 failure mode this file's sibling test already guards for Favorites.
-     * Tapping Discover must land ON `DiscoverRoute`, not silently no-op or crash.
+     * Narrower than it might read: this only pins that `DISCOVER` exists in the TAB set at all —
+     * a plain enum read, nothing about the nav graph. `TopLevelDestination` gained this entry in
+     * task 9b.3 (`MainActivity.kt`'s own KDoc explains why); if a future edit dropped it from the
+     * enum, the tab would simply not render and nothing else here would notice.
+     *
+     * Whether tapping Discover actually LANDS on `DiscoverRoute` — the "registered in the enum but
+     * unreachable" failure mode, the Gap 1/Gap 2 shape this file's Favorites test also guards
+     * against — is NOT this test's job: that is the sibling test directly below (drives a real
+     * `NavHostController` through `navigateToTopLevelDestination(DiscoverRoute)` and asserts the
+     * resulting back stack), together with `NavGraphRegistrationTest` (asserts
+     * `showTrackDestinations` actually registers a `DiscoverRoute` destination in the graph at
+     * all). Fix round 1, finding 5: an earlier version of this KDoc attributed that coverage to
+     * this test instead of naming the tests that actually provide it.
      */
     @Test
     fun `Discover is registered as a top-level destination`() {

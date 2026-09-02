@@ -221,14 +221,22 @@ private fun DiscoverRow(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                // ONE seed, never all of them — RecommendationReason's own KDoc.
-                Text(
-                    text =
+                // ONE seed, never all of them — RecommendationReason's own KDoc. A separate,
+                // genres-free string when matchedGenres is empty — the SAME guard the subtitle
+                // above applies to media.genres — so this never renders a dangling "— " with
+                // nothing after it.
+                val reasonText =
+                    if (reason.matchedGenres.isEmpty()) {
+                        stringResource(R.string.discover_reason, reason.seedTitle)
+                    } else {
                         stringResource(
-                            R.string.discover_reason,
+                            R.string.discover_reason_with_genres,
                             reason.seedTitle,
                             reason.matchedGenres.joinToString(),
-                        ),
+                        )
+                    }
+                Text(
+                    text = reasonText,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 2,
