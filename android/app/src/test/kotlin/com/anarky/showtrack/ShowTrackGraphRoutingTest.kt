@@ -132,6 +132,39 @@ class ShowTrackGraphRoutingTest {
     }
 
     /**
+     * Round 3, task 9b.6 fix round: the `ImportRoute` half of the pop condition
+     * (`currentDestination?.hasRoute(ImportRoute::class) == true`) had no test isolating it —
+     * deleting that clause and popping on `previousBackStackEntry != null` alone left the whole
+     * suite green, because only two doors reach `onNavigate(LibraryRoute)` today and neither
+     * needs this specific clause to already behave correctly. It is what stops a future third
+     * door from silently inheriting pop behaviour instead of an ordinary push. Stack
+     * `[null, Library, Profile]`, current destination `ProfileRoute` — NOT `ImportRoute` — must
+     * push, even though `previousBackStackEntry` (`LibraryRoute`) is exactly the shape the pop
+     * condition's OTHER half would otherwise be satisfied by.
+     */
+    @Test
+    fun `routing to LibraryRoute from Profile with Library already underneath is still an ordinary push`() {
+        val controller = controllerWith { defaultGraph() }
+        controller.navigate(ProfileRoute)
+        assertEquals(
+            listOf(null, LibraryRoute::class.qualifiedName, ProfileRoute::class.qualifiedName),
+            controller.backStackRoutes(),
+        )
+
+        controller.routeShowTrackNavigation(LibraryRoute)
+
+        assertEquals(
+            listOf(
+                null,
+                LibraryRoute::class.qualifiedName,
+                ProfileRoute::class.qualifiedName,
+                LibraryRoute::class.qualifiedName,
+            ),
+            controller.backStackRoutes(),
+        )
+    }
+
+    /**
      * **Round 2's actual fix, at the bare-controller level.** Back stack shape `[null, AuthRoute]`
      * — the shape a sign-out leaves, and the shape the NEXT login reaches this branch from. Current
      * destination is `AuthRoute`, not `ImportRoute`, so the pop condition does not match REGARDLESS

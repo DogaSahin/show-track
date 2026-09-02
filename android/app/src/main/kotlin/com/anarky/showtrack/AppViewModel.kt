@@ -71,14 +71,21 @@ class AppViewModel
          * `Library`, and the caller does not need a second name for "not new, and also not
          * currently mid-onboarding" to say so.
          *
-         * One-way and idempotent, deliberately: [start] never reverts to [AppStart.Auth], and never
-         * moves from [AppStart.Library] back to [AppStart.Onboarding] — onboarding is offered once,
-         * at the moment of registration, never re-offered to an already-promoted session (Profile's
-         * own door to `ImportRoute` calls this function ZERO times; see `ShowTrackNavHost`'s
-         * `ImportRoute` branch). A runtime logout is handled entirely by navigation
-         * (`navigateToAuthClearingStack`), never by moving this value backward — see
+         * One-way in exactly ONE direction, deliberately: [start] never reverts to [AppStart.Auth]
+         * — a runtime logout is handled entirely by navigation (`navigateToAuthClearingStack`),
+         * never by moving this value backward. It is NOT one-way in every direction, and an earlier
+         * version of this KDoc (round 1) claimed [start] also never moves from [AppStart.Library]
+         * back to [AppStart.Onboarding] — that claim was false by round 2: [start] DOES move from
+         * [AppStart.Library] back to [AppStart.Onboarding], deliberately, for a second registration
+         * reached after a sign-out (`` `markSignedIn promotes to Onboarding from Library — a second
+         * registration after a sign-out` ``, this class's own test). See the correction below for
+         * why that is required rather than a bug, and why a guard making "never `Library` back to
+         * `Onboarding`" literally true turned out to be unsound. Onboarding is still offered exactly
+         * once PER REGISTRATION — never re-offered to the SAME already-promoted session by anything
+         * short of signing out and registering again (Profile's own door to `ImportRoute` calls this
+         * function ZERO times; see `ShowTrackNavHost`'s `ImportRoute` branch). See
          * [ShowTrackNavHost]'s KDoc for why the graph's *declared* start destination is meant to
-         * describe "how far this session has been promoted", not "is the user currently signed in
+         * describe "how far THIS session has been promoted", not "is the user currently signed in
          * this instant". Calling this with a value [start] already holds (a second login after a
          * mid-session logout, or a second call reaching `Library` from `Library`) is a same-value
          * `StateFlow` write — no-op, no recomposition.

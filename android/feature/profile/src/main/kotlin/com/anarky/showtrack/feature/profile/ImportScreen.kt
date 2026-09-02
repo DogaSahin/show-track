@@ -67,6 +67,26 @@ internal fun ImportScreen(
 ) {
     var username by remember { mutableStateOf("") }
 
+    // Round 3 (task 9b.6 fix round): a debounced `onFinished`, not `onFinished` passed straight
+    // through. A rapid double-tap of Skip or Done fires two `onNavigate(LibraryRoute)` calls
+    // before the NavHost recomposes away from this screen — the back stack mutation from the
+    // FIRST call is synchronous, but this composable does not know that happened, so a second tap
+    // landing on the still-visible button called `onFinished()` again, and the second call to
+    // `routeShowTrackNavigation` reached its `LibraryRoute` branch with `currentDestination`
+    // already moved on from `ImportRoute` to `ProfileRoute` — missing the pop condition and
+    // pushing a second Library (`[Library, Profile, Library]`, the exact duplicate-Library shape
+    // M1 existed to remove; see this task's report). `finished` makes every call after the first
+    // a no-op regardless of whether the screen has visually transitioned away yet — the cheapest
+    // guard against a re-entrant callback, and one that needs no change to
+    // `routeShowTrackNavigation`'s own decision logic at all.
+    var finished by remember { mutableStateOf(false) }
+    val onFinishedOnce: () -> Unit = {
+        if (!finished) {
+            finished = true
+            onFinished()
+        }
+    }
+
     Column(
         modifier = modifier.fillMaxWidth().padding(all = 16.dp),
         verticalArrangement = Arrangement.spacedBy(space = 16.dp),
@@ -82,10 +102,10 @@ internal fun ImportScreen(
                     username = username,
                     onUsernameChange = { username = it },
                     onImport = { onImport(username) },
-                    onSkip = onFinished,
+                    onSkip = onFinishedOnce,
                 )
 
-            is ImportUiState.Success -> ImportResult(summary = state.summary, onDone = onFinished)
+            is ImportUiState.Success -> ImportResult(summary = state.summary, onDone = onFinishedOnce)
         }
     }
 }

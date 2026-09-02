@@ -184,10 +184,15 @@ private fun ShowTrackGraph(
  *   this same branch with `currentDestination == ProfileRoute`, so it never promotes — no change in
  *   OUTCOME from round 1's guard for that case, only in how it is decided.
  *
- * [AppViewModel.markSignedIn] itself also carries a structural guard (round 2) refusing to move
- * `start` from anything but `Auth` to `Onboarding` — belt and braces with the `currentDestination ==
- * AuthRoute` check above, not a substitute for it: that guard protects [AppViewModel.start]'s own
- * invariant from any caller, while this one is what decides whether a caller reaches it at all.
+ * [AppViewModel.markSignedIn] carries NO guard of its own — an earlier version of this KDoc
+ * (round 2) claimed one, "belt and braces" with the `currentDestination == AuthRoute` check above,
+ * and that claim was false. Round 2 considered exactly that guard and REVERTED it: it is unsound,
+ * because a second registration reached after a sign-out legitimately calls `markSignedIn(true)`
+ * while `start` already reads `Library` (a sign-out never moves `start` backward), which a
+ * `start`-based guard inside that function cannot tell apart from the demotion bug it would be
+ * trying to prevent — see [AppViewModel.markSignedIn]'s own KDoc for the measured conflict. The
+ * `currentDestination == AuthRoute` check immediately above is therefore the ONLY guard against
+ * that demotion, not one half of two.
  */
 internal fun NavHostController.routeShowTrackNavigation(
     route: AppRoute,

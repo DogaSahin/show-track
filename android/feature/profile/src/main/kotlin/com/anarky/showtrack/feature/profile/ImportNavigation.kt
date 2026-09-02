@@ -15,14 +15,21 @@ import com.anarky.showtrack.core.navigation.LibraryRoute
  *
  * **Round 1 correction (task 9b.6 fix round):** an earlier version of this KDoc claimed
  * `ShowTrackNavHost`'s routing table treats every arrival at `LibraryRoute` the same way. It does
- * not, on purpose — `routeShowTrackNavigation`'s `LibraryRoute` branch reads `AppViewModel.start`
- * to tell "an already-signed-in session's import screen is returning" (this door, reached from
- * Profile) apart from "a sign-in or onboarding is completing" (a fresh login, or finishing
- * onboarding after registration), and does something DIFFERENT for each — a `popBackStack()` for
- * the former, a promoting navigate for the latter. This function still only ever calls
- * `onNavigate(LibraryRoute)`; which of those two things actually happens is entirely
- * `routeShowTrackNavigation`'s decision, made from information (`start`) this module has no
- * business knowing — see that function's own KDoc for the full three-way split.
+ * not, on purpose — `routeShowTrackNavigation`'s `LibraryRoute` branch tells "an already-signed-in
+ * session's import screen is returning" (this door, reached from Profile) apart from "a sign-in or
+ * onboarding is completing" (a fresh login, or finishing onboarding after registration), and does
+ * something DIFFERENT for each — a `popBackStack()` for the former, a promoting navigate for the
+ * latter. This function still only ever calls `onNavigate(LibraryRoute)`; which of those two
+ * things actually happens is entirely `routeShowTrackNavigation`'s decision.
+ *
+ * **Round 2 correction:** an earlier version of the sentence above said that decision was "made
+ * from information (`start`) this module has no business knowing". Round 2 deleted the `start:
+ * AppStart` parameter from `routeShowTrackNavigation` entirely — it was measured to be the WRONG
+ * signal (a sign-out never moves it backward, so it can be stale by the time a real decision needs
+ * making) — and replaced it with the actual back stack shape
+ * (`NavHostController.currentDestination`/`previousBackStackEntry`), read fresh at the moment each
+ * navigation fires. See `routeShowTrackNavigation`'s own KDoc for the full split and why the back
+ * stack, not `start`, is what this module still has no business reading.
  */
 fun NavGraphBuilder.importEntry(onNavigate: (AppRoute) -> Unit) {
     composable<ImportRoute> {

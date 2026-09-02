@@ -1,10 +1,14 @@
 package com.anarky.showtrack.feature.profile
 
 import android.content.Context
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
 import com.anarky.showtrack.core.model.LibraryStats
 import com.anarky.showtrack.core.model.UserMediaStatus
@@ -180,6 +184,39 @@ class ProfileScreenTest {
             .performClick()
 
         assertTrue(clicked)
+    }
+
+    /**
+     * Round 3, task 9b.6 fix round: round 2's own disclosure said there was "no lightweight way"
+     * to test `ProfileScreen`'s `.verticalScroll` under Robolectric. There is — this test, using
+     * the same trick `` `tapping the import action invokes onImportClick` `` diagnosed by accident:
+     * a Robolectric root does not auto-size to content, so `Modifier.heightIn(max = 40.dp)` here
+     * constrains the SAME `Column` to a genuinely too-short viewport on purpose, and
+     * `performScrollTo()` is what a real finger drag does. Sign-out is chosen because it is the
+     * functional necessity `.verticalScroll` exists to protect (this class's own KDoc) — a scroll
+     * that could reach some OTHER row but not this one would still be a real regression.
+     */
+    @Test
+    fun `sign-out is reachable by scrolling when the viewport is too short to show everything at once`() {
+        composeRule.setContent {
+            ProfileScreen(
+                pushState = PushState.NoDistributor,
+                statsState = LibraryStatsUiState.Success(UNRATED_STATS),
+                signOutError = false,
+                onEnablePush = {},
+                onDisablePush = {},
+                onStatsRetry = {},
+                onSignOut = {},
+                onImportClick = {},
+                modifier = Modifier.heightIn(max = 40.dp),
+            )
+        }
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule
+            .onNodeWithText(context.getString(R.string.profile_sign_out))
+            .performScrollTo()
+            .assertIsDisplayed()
     }
 
     private companion object {

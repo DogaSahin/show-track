@@ -134,7 +134,10 @@ internal fun ProfileScreen(
     // large font scale, sign-out (a functional necessity, not a nice-to-have) could fall off the
     // bottom of this Column with no way to reach it. `ImportScreen` and the rest of this project's
     // non-scrolling screens are deliberately left alone — this is scoped to the one screen this
-    // task actually made taller.
+    // task actually made taller. Round 3: pinned by `ProfileScreenTest`'s own
+    // `` `sign-out is reachable by scrolling when the viewport is too short to show everything at
+    // once` `` — a height-constrained `Column` plus `performScrollTo()` under Robolectric, no
+    // gesture/instrumentation test needed after all.
     Column(
         modifier = modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(all = 16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),

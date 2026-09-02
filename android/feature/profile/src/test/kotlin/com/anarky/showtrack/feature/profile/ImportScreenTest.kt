@@ -12,6 +12,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.test.core.app.ApplicationProvider
 import com.anarky.showtrack.core.model.ImportSummary
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -81,6 +82,34 @@ class ImportScreenTest {
         composeRule.onNodeWithText(context.getString(R.string.import_skip)).performClick()
 
         assertTrue(finished)
+    }
+
+    /**
+     * Round 3, task 9b.6 fix round: a rapid double-tap of Skip fires `onFinished` twice before the
+     * NavHost recomposes away from this screen — the back stack mutation from the FIRST call is
+     * synchronous, but this composable has no way to know that happened, so the button stays
+     * clickable and a second tap used to call `onFinished()` again. `routeShowTrackNavigation`'s
+     * `LibraryRoute` branch then saw the SECOND call with `currentDestination` already moved on to
+     * `ProfileRoute` (from the first call's pop), missed its own pop condition, and pushed a
+     * second `LibraryRoute` — `[Library, Profile, Library]`, the exact duplicate-library shape M1
+     * existed to remove. Pinned here at the UI layer, where the fix actually lives, rather than at
+     * `routeShowTrackNavigation`, whose own decision logic is unchanged by this fix — see
+     * `ShowTrackGraphRoutingTest`'s `` `routing to LibraryRoute from Profile with Library already
+     * underneath is still an ordinary push` `` for why that logic staying unchanged matters.
+     */
+    @Test
+    fun `tapping skip twice only invokes onFinished once`() {
+        var finishedCalls = 0
+        composeRule.setContent {
+            ImportScreen(state = ImportUiState.Form(), onImport = {}, onFinished = { finishedCalls++ })
+        }
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val skip = composeRule.onNodeWithText(context.getString(R.string.import_skip))
+        skip.performClick()
+        skip.performClick()
+
+        assertEquals(1, finishedCalls)
     }
 
     /**
@@ -169,6 +198,23 @@ class ImportScreenTest {
         composeRule.onNodeWithText(context.getString(R.string.import_done)).performClick()
 
         assertTrue(finished)
+    }
+
+    /** The mirror of `` `tapping skip twice only invokes onFinished once` `` for the Done button. */
+    @Test
+    fun `tapping done twice only invokes onFinished once`() {
+        var finishedCalls = 0
+        val summary = ImportSummary(imported = 1, skipped = 0, failed = 0, truncated = false)
+        composeRule.setContent {
+            ImportScreen(state = ImportUiState.Success(summary), onImport = {}, onFinished = { finishedCalls++ })
+        }
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val done = composeRule.onNodeWithText(context.getString(R.string.import_done))
+        done.performClick()
+        done.performClick()
+
+        assertEquals(1, finishedCalls)
     }
 
     /**
