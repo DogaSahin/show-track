@@ -12,10 +12,17 @@ import com.anarky.showtrack.core.navigation.LibraryRoute
  *
  * Both the skip action and the terminal success screen's "Done" button resolve to
  * `onNavigate(LibraryRoute)` — see [ImportScreen]'s own KDoc for why one callback covers both.
- * `ShowTrackNavHost`'s routing table treats navigating TO `LibraryRoute` the same way regardless
- * of which screen it came from (`AuthRoute` or here): it clears `AuthRoute` off the stack when
- * present and promotes `AppViewModel.start`, which is a no-op the second time it runs — see that
- * table's own KDoc.
+ *
+ * **Round 1 correction (task 9b.6 fix round):** an earlier version of this KDoc claimed
+ * `ShowTrackNavHost`'s routing table treats every arrival at `LibraryRoute` the same way. It does
+ * not, on purpose — `routeShowTrackNavigation`'s `LibraryRoute` branch reads `AppViewModel.start`
+ * to tell "an already-signed-in session's import screen is returning" (this door, reached from
+ * Profile) apart from "a sign-in or onboarding is completing" (a fresh login, or finishing
+ * onboarding after registration), and does something DIFFERENT for each — a `popBackStack()` for
+ * the former, a promoting navigate for the latter. This function still only ever calls
+ * `onNavigate(LibraryRoute)`; which of those two things actually happens is entirely
+ * `routeShowTrackNavigation`'s decision, made from information (`start`) this module has no
+ * business knowing — see that function's own KDoc for the full three-way split.
  */
 fun NavGraphBuilder.importEntry(onNavigate: (AppRoute) -> Unit) {
     composable<ImportRoute> {

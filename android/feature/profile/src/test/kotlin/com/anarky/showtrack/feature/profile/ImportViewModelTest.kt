@@ -66,6 +66,24 @@ class ImportViewModelTest {
         }
 
     /**
+     * M4, task 9b.6 fix round: without `FakeLibraryRepository.lastUsername`, every test in this
+     * class that called `import("someone")` would have stayed green even if `import()` passed the
+     * repository a hardcoded or blank string instead of the caller's actual [String] argument — the
+     * fake counted CALLS but discarded the one thing that made each call meaningful.
+     */
+    @Test
+    fun `the exact username typed reaches the repository`() =
+        runTest(dispatcher) {
+            val repository = FakeLibraryRepository()
+            val viewModel = ImportViewModel(repository)
+
+            viewModel.import("Frieren1998")
+            advanceUntilIdle()
+
+            assertEquals("Frieren1998", repository.lastUsername)
+        }
+
+    /**
      * The acceptance criterion, and the thing that makes a second run safe to offer: nothing here
      * refuses a repeat call, and the FAKE's own `importCalls` proves the ViewModel genuinely
      * issued the request again rather than short-circuiting to a cached result — a state-only

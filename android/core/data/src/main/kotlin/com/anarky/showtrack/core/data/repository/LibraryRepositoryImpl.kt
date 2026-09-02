@@ -52,7 +52,9 @@ private val UPSTREAM_FAILURE_CODES = setOf(HTTP_TOO_MANY_REQUESTS, HTTP_BAD_GATE
  * collector.
  *
  * `@Suppress("TooManyFunctions")`: mirrors [LibraryRepository]'s own suppression, for the same
- * reason — see that interface's KDoc.
+ * reason — cohesion of the SEAM, not of this class's internal state, and permanently off the
+ * ratchet for whatever function arrives after this one — see that interface's KDoc (round 1, task
+ * 9b.6 fix round, corrected the original state-sharing justification here too).
  */
 @Suppress("TooManyFunctions")
 @Singleton

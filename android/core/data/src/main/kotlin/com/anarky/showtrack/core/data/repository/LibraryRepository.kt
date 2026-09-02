@@ -18,13 +18,24 @@ import kotlinx.coroutines.flow.StateFlow
  * There is no use-case layer between this and a ViewModel by decision: a use case per method
  * would be one class each forwarding a single call.
  *
- * `@Suppress("TooManyFunctions")` (task 9b.6 added the eleventh, [importAniList]): this interface
- * is the WHOLE library domain's single seam into `:core:data` — list, favourites, stats, and now
- * import — not eleven unrelated concerns. Splitting it into several interfaces bound to the same
- * [LibraryRepositoryImpl] singleton would fragment one cohesive piece of state (the paginator, the
- * cache, the favourites view) across artificial boundaries for no reader's benefit; the same
- * suppression [com.anarky.showtrack.core.network.api.ShowTrackApi.library]'s `LongParameterList`
- * carries for the identical reason — a split that exists only to satisfy the linter.
+ * `@Suppress("TooManyFunctions")` (task 9b.6 added the eleventh, [importAniList]). The outcome —
+ * keep it one interface, don't split — is right; the ORIGINAL reasoning here was not (round 1,
+ * task 9b.6 fix round, a review finding). It is not shared implementation state that justifies
+ * this: [importAniList] shares none of it — no paginator, no cache, no favourites view — it is a
+ * one-line `api.importAniList(...).toDomain()` behind a `try`/`catch`, and would bind cleanly to
+ * its own stateless class with no loss of cohesion to the STATE. The honest argument is cohesion
+ * of the SEAM, not of the implementation behind it: a `:feature:*` module is meant to see ONE
+ * library-domain interface (architecture rule 2's whole point), and splitting the moment one
+ * member happens not to share mutable state with the rest would make "which interface do I
+ * inject" a fact about `LibraryRepositoryImpl`'s internals a caller has no business knowing — the
+ * same reasoning [com.anarky.showtrack.core.network.api.ShowTrackApi.library]'s `LongParameterList`
+ * suppression carries for a parallel case, a split that exists only to satisfy the linter.
+ *
+ * The cost this suppression carries, worth stating rather than omitting: it sits on the TYPE, so
+ * the ratchet it disables is off PERMANENTLY, not just for this one addition past the threshold.
+ * A twelfth, fifteenth, or twentieth method added here later gets no signal from `TooManyFunctions`
+ * at all — nothing enforces that a future addition belongs on this seam the way [importAniList]
+ * genuinely does; that judgement has to be made by hand at review time, every time, from now on.
  */
 @Suppress("TooManyFunctions")
 interface LibraryRepository {

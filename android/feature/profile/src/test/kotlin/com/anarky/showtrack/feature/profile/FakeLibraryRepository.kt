@@ -44,6 +44,13 @@ internal class FakeLibraryRepository(
     var importCalls = 0
         private set
 
+    // Round 1 fix (task 9b.6 fix round, M4): without this, `importAniList("")` was
+    // indistinguishable from `importAniList("someone")` to every test using this fake — the count
+    // moved, but the ARGUMENT itself was discarded and unverifiable, which is exactly the gap
+    // between "the call happened" and "the call happened with what the caller actually typed".
+    var lastUsername: String? = null
+        private set
+
     // Round 1's own regression guard: proves `init`/push toggles reach `libraryStats()` zero
     // times, which a state-only assertion (`statsState.value`, still `Loading`) cannot — a
     // ViewModel that fetched and then discarded the result would look identical to one that
@@ -89,6 +96,7 @@ internal class FakeLibraryRepository(
 
     override suspend fun importAniList(username: String): ImportSummary {
         importCalls++
+        lastUsername = username
         importFailure?.let { throw it }
         return importResult
     }

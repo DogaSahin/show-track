@@ -218,10 +218,12 @@ fun ShowTrackApp(authEvents: Flow<AuthEvent>) {
  * Activity recreation; see `ShowTrackNavHost`'s KDoc for why that regressed).
  *
  * That move from `Auth` to `Library` is exactly why this function's own truth table needed a
- * second look, and it survives it: [start]'s only two decided values, [AppStart.Auth] and
- * [AppStart.Library], are BOTH `!= Undecided`, so `start != AppStart.Undecided` reads identically
- * before and after the promotion — the condition below cannot distinguish "signed in from a
- * `Library`-started session" from "signed in after being promoted from `Auth`", which is exactly
+ * second look, and it survives it: [start]'s three decided values — [AppStart.Auth],
+ * [AppStart.Library], and (task 9b.6) [AppStart.Onboarding] — are ALL `!= Undecided`, so
+ * `start != AppStart.Undecided` reads identically across every one of them, before and after any
+ * promotion between them — the condition below cannot distinguish, and is not supposed to
+ * distinguish, "signed in from a `Library`-started session" from "signed in after being promoted
+ * from `Auth`" from "signed in and currently offered the AniList import screen", which is exactly
  * the invariant this function is supposed to have (`shouldShowNavigationTabs` decides visibility
  * from *where the user currently is*, `currentDestination`, never from *how the session started*).
  * `shouldShowNavigationTabs` never touched `startDestinationId` before this change and still

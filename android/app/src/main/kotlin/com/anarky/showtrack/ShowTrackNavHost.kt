@@ -35,11 +35,12 @@ import kotlinx.coroutines.flow.Flow
  * `NavGraph` on EVERY recomposition, built fresh from whatever `startDestination`
  * [startDestinationFor] currently answers — `NavController.setGraph` resets the back stack to the
  * new graph's start destination whenever the incoming graph is unequal to the one already
- * installed (`NavGraph.equals` compares `startDestinationId`). `AppViewModel.markSignedIn()` is
- * what turns that machinery into the fix for the `popUpTo` bug: it flips `start` from `Auth` to
- * `Library`, [startDestinationFor] then answers `LibraryRoute`, and the graph that gets
- * re-supplied genuinely has `LibraryRoute` as its start destination from then on — for the rest
- * of the `AppViewModel`
+ * installed (`NavGraph.equals` compares `startDestinationId`). `AppViewModel.markSignedIn(isNewAccount)`
+ * is what turns that machinery into the fix for the `popUpTo` bug: it flips `start` from `Auth` to
+ * `Library` (or, task 9b.6, to `Onboarding` for a fresh registration — the identical mechanism, one
+ * more decided value; see [AppViewModel.markSignedIn]'s own KDoc), [startDestinationFor] then
+ * answers the matching route, and the graph that gets re-supplied genuinely has that route as its
+ * start destination from then on — for the rest of the `AppViewModel`
  * instance's life, Activity recreation included, since `start` is `viewModelScope`-held and
  * survives it while any composed `NavGraph` does not. A prior version of this fix mutated the
  * already-built graph's `startDestinationId` directly (`graph.setStartDestination(...)`) instead
@@ -67,9 +68,10 @@ internal fun ShowTrackNavHost(
 
     when (val start = appViewModel.start.collectAsStateWithLifecycle().value) {
         AppStart.Undecided -> LoadingState(modifier = modifier)
-        AppStart.Auth, AppStart.Library ->
+        AppStart.Auth, AppStart.Library, AppStart.Onboarding ->
             ShowTrackGraph(
                 navController = navController,
+                start = start,
                 startDestination = startDestinationFor(start),
                 onSignedIn = appViewModel::markSignedIn,
                 modifier = modifier,
@@ -84,26 +86,41 @@ internal fun ShowTrackNavHost(
  * uses instead of a hand-rolled stand-in for it (task 9b.0, review round 2, finding 1's "secondary"
  * point: the test used to model a simpler mechanism than production actually has).
  *
- * Both `when`s here are genuinely exhaustive over [AppStart]'s three cases, deliberately, not an
+ * Both `when`s here are genuinely exhaustive over [AppStart]'s four cases, deliberately, not an
  * `if`/`else` or an `else ->` branch (task 9b.0, review round 3, finding 3: an early version used
  * both, which meant a fourth `AppStart` value would have compiled clean and silently started at
- * `AuthRoute`). [ShowTrackNavHost] never calls this function for [AppStart.Undecided] — that value
- * renders [LoadingState] instead of building a graph at all — so its branch here `error`s rather
- * than silently answering something: a caller that reaches it is calling this out of the one
- * context it is meant for, and should fail loudly instead of picking a default.
+ * `AuthRoute`) — [AppStart.Onboarding] (task 9b.6 fix round) is exactly that fourth value, and
+ * both `when`s below needed a real branch for it rather than compiling by accident. [ShowTrackNavHost]
+ * never calls this function for [AppStart.Undecided] — that value renders [LoadingState] instead
+ * of building a graph at all — so its branch here `error`s rather than silently answering
+ * something: a caller that reaches it is calling this out of the one context it is meant for, and
+ * should fail loudly instead of picking a default.
  */
 internal fun startDestinationFor(start: AppStart): AppRoute =
     when (start) {
         AppStart.Auth -> AuthRoute
         AppStart.Library -> LibraryRoute
+        AppStart.Onboarding -> ImportRoute
         AppStart.Undecided -> error("startDestinationFor is not meaningful for AppStart.Undecided")
     }
 
+/**
+ * [start] (task 9b.6 fix round) is threaded all the way to [routeShowTrackNavigation] so that
+ * function can tell "this navigation is completing a sign-in" apart from "this navigation is an
+ * ordinary trip taken by an already-signed-in session" — see its own KDoc for why that
+ * distinction is load-bearing for both the `LibraryRoute` and `ImportRoute` branches. Passed as an
+ * explicit parameter, not re-read from `appViewModel.start.value` inside the lambda: this
+ * composable is the single call site [ShowTrackNavHost]'s own KDoc describes, recomposed fresh
+ * whenever `start` changes, so the closure below always captures whatever value THIS composition
+ * was built with — the same freshness a direct re-read would give, with no extra `StateFlow`
+ * access from inside a lambda that already has the value in scope.
+ */
 @Composable
 private fun ShowTrackGraph(
     navController: NavHostController,
+    start: AppStart,
     startDestination: AppRoute,
-    onSignedIn: () -> Unit,
+    onSignedIn: (Boolean) -> Unit,
     modifier: Modifier,
 ) {
     NavHost(
@@ -111,7 +128,9 @@ private fun ShowTrackGraph(
         startDestination = startDestination,
         modifier = modifier,
     ) {
-        showTrackDestinations(onNavigate = { route -> navController.routeShowTrackNavigation(route, onSignedIn) })
+        showTrackDestinations(
+            onNavigate = { route -> navController.routeShowTrackNavigation(route, start, onSignedIn) },
+        )
     }
 }
 
@@ -124,37 +143,59 @@ private fun ShowTrackGraph(
  * harness, so [ShowTrackGraphRoutingTest] calls this directly on a bare `NavHostController` instead
  * — the same technique `AuthNavigationTest` already uses for the two extensions below.
  *
- * [onSignedIn] defaults to a no-op so every existing bare-`NavHostController` test call site keeps
- * compiling unchanged; only [ShowTrackGraph] passes a real one (`AppViewModel::markSignedIn`).
+ * [start]/[onSignedIn] both default so every existing bare-`NavHostController` test call site keeps
+ * compiling unchanged (`start` defaults to [AppStart.Undecided], a value this function never
+ * receives from production — [ShowTrackGraph] always supplies a decided one — so a test that omits
+ * it is exercising the "not currently signed in" branch shape, same as before this parameter
+ * existed); only [ShowTrackGraph] passes real ones.
+ *
+ * **Round 1 correction (task 9b.6 fix round).** `LibraryRoute` and `ImportRoute` are BOTH reachable
+ * from a session that is already fully signed in, not only from `AuthRoute` — Profile's own door
+ * to `ImportRoute` (`ProfileNavigation.kt`'s `importNavigation`), and `ImportScreen`'s own
+ * skip/Done action routing back to `LibraryRoute` (`ImportNavigation.kt`'s `importFinishedNavigation`)
+ * — so neither branch below can unconditionally treat "I was asked to go there" as "a sign-in just
+ * completed". [start] is what tells the two apart, and each branch reads it for a different
+ * purpose:
+ *
+ * - `LibraryRoute`: [start] `== `[AppStart.Library] means the session was ALREADY at `Library`
+ *   before this call — the only way that happens is the Profile door's own import screen
+ *   returning, since nothing else ever routes to `LibraryRoute` from an already-`Library` session
+ *   (a login/registration always arrives from `Auth`, and finishing onboarding always arrives from
+ *   `Onboarding`). That case is a plain [popBackStack], not a forward navigation — see M1 in this
+ *   task's report for the duplicate-`LibraryRoute` bug a forward navigation produced. Every OTHER
+ *   value of [start] (`Auth` from a login, `Onboarding` finishing) calls [navigateToLibraryClearingAuth]
+ *   and promotes with `onSignedIn(false)` — for `Onboarding` specifically, that promotion is what
+ *   converges the declarative reset onto `LibraryRoute`, the same mechanism [AppViewModel.markSignedIn]'s
+ *   KDoc documents for the `Auth`→`Onboarding` case, run in reverse.
+ * - `ImportRoute`: only promotes (`onSignedIn(true)`, `Auth`→`Onboarding`) when [start] is
+ *   [AppStart.Auth] — i.e. only for a genuine fresh registration. Profile's door reaches this same
+ *   branch with [start] already [AppStart.Library], and MUST NOT promote: an unconditional
+ *   `onSignedIn(true)` here would demote an already-signed-in session's `start` from `Library` back
+ *   to `Onboarding`, which is exactly the "one-way" invariant [AppViewModel.markSignedIn]'s KDoc
+ *   asserts and would silently break — an Activity recreation after visiting Profile's import
+ *   screen would then reopen on `ImportRoute` instead of `Library`.
  */
 internal fun NavHostController.routeShowTrackNavigation(
     route: AppRoute,
-    onSignedIn: () -> Unit = {},
+    start: AppStart = AppStart.Undecided,
+    onSignedIn: (Boolean) -> Unit = {},
 ) {
     when (route) {
-        // Navigating TO LibraryRoute through this table only ever happens once, from
-        // AuthNavigation on a successful login/register — nothing else in the app reaches Library
-        // through onNavigate (it is a start destination, not a target other screens link to).
-        // popUpTo<AuthRoute> there is load-bearing, not incidental: a plain push leaves Auth on
-        // the back stack and Back returns to a login form that already succeeded. onSignedIn()
-        // fires right after: it's what promotes AppViewModel.start to Library, which is what
-        // makes the NEXT recomposition declare LibraryRoute as the graph's own start destination
-        // (see ShowTrackNavHost's KDoc) — the actual fix for the popUpTo bug this comment used to
-        // describe as fixed by a graph mutation one line below instead.
         is LibraryRoute -> {
-            navigateToLibraryClearingAuth()
-            onSignedIn()
+            if (start == AppStart.Library) {
+                // The Profile door's import screen returning (skip or Done) — see this
+                // function's own KDoc. A pop, not a push: lands back on whatever screen sent the
+                // user to Import (Profile), rather than stacking a second Library underneath it.
+                popBackStack()
+            } else {
+                navigateToLibraryClearingAuth()
+                onSignedIn(false)
+            }
         }
 
-        // Task 9b.6: a FRESH registration lands here instead (AuthNavigation's onAuthenticated),
-        // offering the AniList import screen as the alternative to an empty library. The same two
-        // effects as the LibraryRoute branch above apply for the identical reason — Back must not
-        // return to a login form that already succeeded, and the session must be promoted the
-        // same way regardless of which screen a successful auth lands on — so this shares
-        // [navigateToImportClearingAuth] and [onSignedIn] rather than skipping either.
         is ImportRoute -> {
             navigateToImportClearingAuth()
-            onSignedIn()
+            if (start == AppStart.Auth) onSignedIn(true)
         }
 
         // Navigating TO AuthRoute through this table happens from ProfileNavigation on sign-out
@@ -195,11 +236,17 @@ internal fun NavHostController.navigateToAuthClearingStack() {
 }
 
 /**
- * The reverse trip: reached only via `authEntry`'s `onNavigate(LibraryRoute)` after a successful
- * login or registration. `popUpTo<AuthRoute>` rather than a plain push, so Back does not return
- * to a login form that already succeeded — the type-safe overload is available here (unlike
- * [navigateToAuthClearingStack]'s graph-id form) because `AuthRoute` is always a real destination
- * on the stack at this point, never the graph's own possibly-routeless root.
+ * The reverse trip: reached via `authEntry`'s `onNavigate(LibraryRoute)` after a successful login
+ * (a fresh registration goes to [navigateToImportClearingAuth] instead — see that function's
+ * KDoc), and via `importFinishedNavigation`'s `onNavigate(LibraryRoute)` when onboarding finishes.
+ * `popUpTo<AuthRoute>` rather than a plain push, so Back does not return to a login form that
+ * already succeeded — the type-safe overload is available here (unlike [navigateToAuthClearingStack]'s
+ * graph-id form) because `AuthRoute` is a real destination on the stack the first time this runs
+ * (a login); it is a harmless no-op the second (onboarding finishing — `AuthRoute` was already
+ * popped when the session first moved to `ImportRoute`, so there is nothing left to find, and
+ * `popUpTo` on an absent destination degrades to an ordinary push rather than throwing — confirmed
+ * empirically, not assumed: see `ShowTrackGraphRoutingTest`'s
+ * `` `routing on to LibraryRoute after Onboarding is an ordinary push` ``).
  *
  * This function pops `AuthRoute` off the back stack — the imperative half of the fix. It does
  * NOT touch `NavGraph.startDestinationId` (an earlier version of this function did, via
@@ -208,9 +255,12 @@ internal fun NavHostController.navigateToAuthClearingStack() {
  * after login rebuilds it from `ShowTrackNavHost`'s declared `startDestination`, silently
  * reverting to `AuthRoute` and reintroducing the exact bug the mutation existed to fix). The
  * declarative half — making `LibraryRoute` the graph's own recorded start destination, for real,
- * across recreation — is [AppViewModel.markSignedIn], called by
- * [routeShowTrackNavigation] right after this function returns. See [ShowTrackNavHost]'s KDoc for
- * the full mechanism.
+ * across recreation — is [AppViewModel.markSignedIn], called by [routeShowTrackNavigation] right
+ * after this function returns, for BOTH cases above (`isNewAccount = false` either way — see that
+ * function's KDoc for why one parameter value covers login and onboarding-finishing alike). See
+ * [ShowTrackNavHost]'s KDoc for the full mechanism, and [routeShowTrackNavigation]'s own KDoc for
+ * the THIRD case that reaches `LibraryRoute` through the routing table without calling this
+ * function at all — the Profile door's `ImportRoute` returning via a plain [NavHostController.popBackStack].
  */
 internal fun NavHostController.navigateToLibraryClearingAuth() {
     navigate(LibraryRoute) {
@@ -222,10 +272,24 @@ internal fun NavHostController.navigateToLibraryClearingAuth() {
  * The same trip as [navigateToLibraryClearingAuth], for a fresh registration (task 9b.6):
  * `AuthRoute` must not survive on the back stack under the import screen either, for the
  * identical reason — Back from `ImportRoute` must not return to a login form that already
- * succeeded. `ImportScreen`'s own skip action, and its terminal success screen's "Done" button,
- * both then navigate on to `LibraryRoute` through the ordinary [LibraryRoute] branch above, which
- * only pushes at that point since `AuthRoute` is already gone from the stack by the time either
- * fires.
+ * succeeded.
+ *
+ * `ImportScreen`'s own skip action, and its terminal success screen's "Done" button, both then
+ * navigate on to `LibraryRoute` — but NOT simply "through the ordinary `LibraryRoute` branch
+ * above" the way an earlier version of this KDoc claimed. That claim was the round-0 bug: a plain
+ * push onto `[null, ImportRoute]` produces `[null, ImportRoute, LibraryRoute]`, and separately
+ * calling `onSignedIn` to promote `AppViewModel.start` from `Onboarding` to `Library` causes
+ * `NavHost` to re-supply a graph whose declared start is now `LibraryRoute` — DIFFERENT from the
+ * `ImportRoute` start the currently-installed graph has — so `NavController.setGraph`'s
+ * graph-inequality branch resets the back stack to `[null, LibraryRoute]` on the very next
+ * recomposition, regardless of what the explicit push just did or which of the two calls ran
+ * first. The imperative push is therefore not wasted work exactly, but it is not what produces
+ * the final shape either — the declarative reset is, and the two are DESIGNED to converge on the
+ * same destination rather than race, the same way `navigateToLibraryClearingAuth`'s push and
+ * `markSignedIn`'s `Auth`→`Library` promotion already do for an ordinary login. See
+ * [routeShowTrackNavigation]'s KDoc for the full three-way split this destination is now part of,
+ * and `ShowTrackGraphRebuildTest`'s `` `finishing onboarding converges on the shape a login already
+ * produces` `` for the composed, end-to-end proof.
  */
 internal fun NavHostController.navigateToImportClearingAuth() {
     navigate(ImportRoute) {

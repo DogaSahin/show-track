@@ -17,6 +17,7 @@ import com.anarky.showtrack.core.data.repository.AuthRepository
 import com.anarky.showtrack.core.navigation.AppRoute
 import com.anarky.showtrack.core.navigation.AuthRoute
 import com.anarky.showtrack.core.navigation.FavoritesRoute
+import com.anarky.showtrack.core.navigation.ImportRoute
 import com.anarky.showtrack.core.navigation.LibraryRoute
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -104,7 +105,7 @@ class ShowTrackGraphRebuildTest {
         composeRule.waitForIdle()
 
         composeRule.runOnIdle {
-            navController.routeShowTrackNavigation(LibraryRoute, appViewModel::markSignedIn)
+            navController.routeShowTrackNavigation(LibraryRoute, AppStart.Auth, appViewModel::markSignedIn)
         }
         composeRule.waitForIdle()
 
@@ -117,6 +118,61 @@ class ShowTrackGraphRebuildTest {
         navController.navigateToTopLevelDestination(LibraryRoute)
 
         assertEquals(listOf(null, LibraryRoute::class.qualifiedName), navController.backStackRoutes())
+    }
+
+    /**
+     * **B1/B2, task 9b.6 fix round.** This is the test the blind review demanded, and the one
+     * round 0 shipped without: `ShowTrackGraphRoutingTest`'s bare-`NavHostController` harness
+     * calls `NavController.setGraph` exactly once and can never exercise the graph-inequality reset
+     * this whole mechanism depends on (see that file's own class KDoc). Only a composed `NavHost`,
+     * recomposing across a REAL `start` change, can prove the onboarding door actually lands the
+     * user on `ImportRoute` and STAYS there.
+     *
+     * Two moves, both through the real `routeShowTrackNavigation`/`AppViewModel.markSignedIn`:
+     * a fresh registration (`ImportRoute`, `start = Auth` → `onSignedIn(true)` → `Onboarding`),
+     * then `ImportScreen`'s own skip/Done action finishing onboarding (`LibraryRoute`,
+     * `start = Onboarding` → `onSignedIn(false)` → `Library`). The claim under test for the FIRST
+     * move is the one the blind review's probe measured failing before this fix: navigating to
+     * `ImportRoute` must not be wiped by the very `onSignedIn` call that promotes the session,
+     * because `start` now agrees with `ImportRoute` as its destination rather than jumping straight
+     * to `Library`. The SECOND move is the mirror of `logging in from an Auth-started session
+     * converges on the shape login already produces` above — the exact convergence that test
+     * documents, reached from `Onboarding` instead of `Auth`.
+     */
+    @Test
+    fun `finishing onboarding converges on the shape a login already produces`() {
+        val appViewModel = AppViewModel(FakeAuthRepository(hasSession = false))
+        lateinit var navController: TestNavHostController
+
+        composeRule.setContent {
+            val start by appViewModel.start.collectAsState()
+            navController = rememberTestNavController()
+            if (start != AppStart.Undecided) {
+                MarkerGraph(navController = navController, startDestination = startDestinationFor(start))
+            }
+        }
+        composeRule.waitForIdle()
+
+        // A fresh registration: AuthNavigation's onAuthenticated routes here with isNewAccount = true.
+        composeRule.runOnIdle {
+            navController.routeShowTrackNavigation(ImportRoute, AppStart.Auth, appViewModel::markSignedIn)
+        }
+        composeRule.waitForIdle()
+
+        // The exact assertion the blind review's probe found false before this fix: navigating to
+        // ImportRoute must SURVIVE the onSignedIn call that just promoted the session, not be
+        // wiped by it on the very next recomposition.
+        assertEquals(listOf(null, ImportRoute::class.qualifiedName), navController.backStackRoutes())
+        assertEquals(AppStart.Onboarding, appViewModel.start.value)
+
+        // ImportScreen's own skip/Done action routes on to LibraryRoute.
+        composeRule.runOnIdle {
+            navController.routeShowTrackNavigation(LibraryRoute, AppStart.Onboarding, appViewModel::markSignedIn)
+        }
+        composeRule.waitForIdle()
+
+        assertEquals(listOf(null, LibraryRoute::class.qualifiedName), navController.backStackRoutes())
+        assertEquals(AppStart.Library, appViewModel.start.value)
     }
 
     /**
@@ -178,6 +234,7 @@ class ShowTrackGraphRebuildTest {
             composable<AuthRoute> { }
             composable<LibraryRoute> { }
             composable<FavoritesRoute> { }
+            composable<ImportRoute> { }
         }
     }
 

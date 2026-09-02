@@ -21,8 +21,20 @@ import com.anarky.showtrack.core.navigation.LibraryRoute
  */
 fun NavGraphBuilder.authEntry(onNavigate: (AppRoute) -> Unit) {
     composable<AuthRoute> {
-        AuthScreen(
-            onAuthenticated = { isNewAccount -> onNavigate(if (isNewAccount) ImportRoute else LibraryRoute) },
-        )
+        AuthScreen(onAuthenticated = authenticatedNavigation(onNavigate))
     }
 }
+
+/**
+ * The mapping a successful authentication drives, pulled out of the `composable<AuthRoute> { }`
+ * lambda above so it is reachable by a plain unit test — `ProfileNavigation.kt`'s
+ * `signOutNavigation`/`importNavigation` are the pattern this follows: [authEntry]'s lambda
+ * constructs `AuthScreen` WITHOUT passing `viewModel`, which evaluates its `hiltViewModel()`
+ * default, and `:feature:auth` has no Hilt test harness — so a test cannot compose [authEntry]
+ * itself to observe which route a given `isNewAccount` value produces; it can call this function
+ * directly instead (round 1, task 9b.6 fix round: nothing in the repository referenced [authEntry]
+ * at all before this, so a round-0 defect that inverted or deleted the condition on the line this
+ * replaces would have passed the entire suite).
+ */
+internal fun authenticatedNavigation(onNavigate: (AppRoute) -> Unit): (Boolean) -> Unit =
+    { isNewAccount -> onNavigate(if (isNewAccount) ImportRoute else LibraryRoute) }

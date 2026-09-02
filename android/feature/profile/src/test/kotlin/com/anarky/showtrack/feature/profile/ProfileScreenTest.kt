@@ -4,9 +4,11 @@ import android.content.Context
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ApplicationProvider
 import com.anarky.showtrack.core.model.LibraryStats
 import com.anarky.showtrack.core.model.UserMediaStatus
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -127,6 +129,49 @@ class ProfileScreenTest {
         composeRule
             .onNodeWithText(context.getString(R.string.profile_stats_status_row, "Completed", 0))
             .assertDoesNotExist()
+    }
+
+    /**
+     * M2, task 9b.6 fix round: `ImportSection`'s `Button(onClick = onImportClick)` had no test
+     * anywhere clicking it — every existing call site passed `onImportClick = {}` and never tapped
+     * the button, so `onClick = {}` (Profile's door to `ImportRoute` silently dead) would have left
+     * this entire suite green. Drives the stateless overload directly, no Hilt or ViewModel needed.
+     *
+     * `@Config(qualifiers = ...)` widens the Robolectric virtual display for this one test, and
+     * this is a test-environment fact worth recording rather than a stylistic pick:
+     * `createComposeRule()`'s default Robolectric root measured a fixed 320x470px in this project
+     * — NOT auto-sized to content — and `ProfileScreen`'s full stack (push card, stats card, then
+     * `ImportSection`) genuinely exceeds that height. Confirmed by printing the semantics tree, not
+     * guessed: the button's own node reported `Actions = […, OnClick, …]` — present, genuinely
+     * clickable, and unambiguously matched (`onNodeWithText` found exactly one node) — with
+     * `t=454.0, b=454.0`, collapsed to zero height by the 470px floor; Compose's own hit-testing
+     * cannot route a synthetic tap to a zero-area node, so `performClick()` silently found nothing
+     * to click rather than throwing. A Pixel-sized qualifier gives this test room the production
+     * screen already has on any real device — `ProfileScreen`'s `Column` has no `verticalScroll` of
+     * its own, so a real device narrower/shorter than this would show the identical clipping,
+     * which is a UX question for the actual screen, not something to paper over in the test.
+     */
+    @Test
+    @Config(sdk = [35], qualifiers = "w411dp-h891dp")
+    fun `tapping the import action invokes onImportClick`() {
+        var clicked = false
+        composeRule.setContent {
+            ProfileScreen(
+                pushState = PushState.NoDistributor,
+                statsState = LibraryStatsUiState.Success(UNRATED_STATS),
+                signOutError = false,
+                onEnablePush = {},
+                onDisablePush = {},
+                onStatsRetry = {},
+                onSignOut = {},
+                onImportClick = { clicked = true },
+            )
+        }
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule.onNodeWithText(context.getString(R.string.profile_import_action)).performClick()
+
+        assertTrue(clicked)
     }
 
     private companion object {

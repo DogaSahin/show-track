@@ -27,6 +27,19 @@ import javax.inject.Inject
  * rebuilt from whatever `start` says on the next composition. [markSignedIn] is what [start] needs
  * to be mutable FOR: the graph's *declared* `startDestination` (`ShowTrackNavHost.startDestinationFor`)
  * is what has to change, not a graph already built.
+ *
+ * Round 1 (task 9b.6 fix round): [AppStart.Onboarding] is what makes the SAME mechanism serve the
+ * AniList import screen. A version of this fix that navigated to `ImportRoute` and then called
+ * [markSignedIn] discovered the mechanism works AGAINST a caller who fights it: `markSignedIn`
+ * promoting `Auth` to `Library` in the same frame as an explicit navigate to `ImportRoute` still
+ * re-supplies a graph whose declared start is `LibraryRoute`, and `NavController.setGraph`'s
+ * inequality branch resets the back stack to THAT — wiping the navigation that had just happened,
+ * regardless of which of the two calls ran first (both land in the same recomposition). The fix
+ * is not to fight the reset but to make `start` agree with where the navigate is actually going:
+ * [Onboarding] is a THIRD decided value precisely so the graph's declared start destination and
+ * the imperative navigate converge on `ImportRoute` together, the same way `Auth` promoting to
+ * `Library` already converges with `navigateToLibraryClearingAuth()` — see `ShowTrackNavHost`'s
+ * KDoc for the mechanism this reuses rather than reinvents.
  */
 @HiltViewModel
 class AppViewModel
@@ -44,21 +57,34 @@ class AppViewModel
         }
 
         /**
-         * Promotes an `Auth`-started session to `Library` once login succeeds — called from
-         * `ShowTrackNavHost`'s routing table at the exact choke point `navigateToLibraryClearingAuth`
-         * already is: `AppDestination.kt`'s own comment records that navigating TO `LibraryRoute`
-         * through that table only ever happens once, from a successful login/register.
+         * Promotes an `Auth`-started session once authentication succeeds — called from
+         * `ShowTrackNavHost`'s routing table at the exact choke point `navigateToLibraryClearingAuth`/
+         * `navigateToImportClearingAuth` already is.
          *
-         * One-way and idempotent, deliberately: [start] never reverts to [AppStart.Auth]. A runtime
-         * logout is handled entirely by navigation (`navigateToAuthClearingStack`), never by moving
-         * this value backward — see [ShowTrackNavHost]'s KDoc for why the graph's *declared* start
-         * destination is meant to describe "has this session ever been promoted to signed-in", not
-         * "is the user currently signed in this instant". Calling this when [start] already reads
-         * [AppStart.Library] (a second login after a mid-session logout) is a same-value
+         * [isNewAccount] decides WHICH decided value: [AppStart.Onboarding] for a fresh
+         * registration (offering the AniList import screen), [AppStart.Library] for everything
+         * else — an ordinary login, AND finishing onboarding itself. That second case is why this
+         * is one function taking a parameter rather than two named ones: `routeShowTrackNavigation`'s
+         * `LibraryRoute` branch calls this with `isNewAccount = false` both when a login completes
+         * (`start` was `Auth`) and when the import screen's skip/Done action finishes onboarding
+         * (`start` was `Onboarding`) — in both cases the destination this call promotes TOWARD is
+         * `Library`, and the caller does not need a second name for "not new, and also not
+         * currently mid-onboarding" to say so.
+         *
+         * One-way and idempotent, deliberately: [start] never reverts to [AppStart.Auth], and never
+         * moves from [AppStart.Library] back to [AppStart.Onboarding] — onboarding is offered once,
+         * at the moment of registration, never re-offered to an already-promoted session (Profile's
+         * own door to `ImportRoute` calls this function ZERO times; see `ShowTrackNavHost`'s
+         * `ImportRoute` branch). A runtime logout is handled entirely by navigation
+         * (`navigateToAuthClearingStack`), never by moving this value backward — see
+         * [ShowTrackNavHost]'s KDoc for why the graph's *declared* start destination is meant to
+         * describe "how far this session has been promoted", not "is the user currently signed in
+         * this instant". Calling this with a value [start] already holds (a second login after a
+         * mid-session logout, or a second call reaching `Library` from `Library`) is a same-value
          * `StateFlow` write — no-op, no recomposition.
          */
-        fun markSignedIn() {
-            mutableStart.value = AppStart.Library
+        fun markSignedIn(isNewAccount: Boolean) {
+            mutableStart.value = if (isNewAccount) AppStart.Onboarding else AppStart.Library
         }
     }
 
@@ -68,4 +94,12 @@ sealed interface AppStart {
     data object Auth : AppStart
 
     data object Library : AppStart
+
+    /**
+     * A fresh registration, signed in but not yet past the AniList import offer (task 9b.6).
+     * [ShowTrackNavHost.startDestinationFor] maps this to `ImportRoute` — see [AppViewModel.markSignedIn]'s
+     * KDoc for why this needed to be a THIRD decided value rather than a flag riding along with
+     * [Library].
+     */
+    data object Onboarding : AppStart
 }

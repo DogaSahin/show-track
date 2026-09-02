@@ -1,7 +1,11 @@
 package com.anarky.showtrack.feature.profile
 
 import android.content.Context
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -14,6 +18,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import com.anarky.showtrack.core.designsystem.R as DesignSystemR
 
 /**
  * Drives the `internal` stateless [ImportScreen] overload directly — `AuthScreen`/
@@ -164,5 +169,68 @@ class ImportScreenTest {
         composeRule.onNodeWithText(context.getString(R.string.import_done)).performClick()
 
         assertTrue(finished)
+    }
+
+    /**
+     * M3, task 9b.6 fix round: nothing rendered [ImportUiState.Form.submitting] `= true` before
+     * this test, and `import_submitting` was unreferenced by any test — the `enabled =
+     * !state.submitting` guard on the primary button was correct in the production code but
+     * unpinned, which is exactly the gap that would let a user tap Import twice during the
+     * multi-second synchronous call and race two full AniList imports against each other
+     * server-side.
+     */
+    @Test
+    fun `while submitting, the button shows the submitting label and is disabled`() {
+        // A mutable state DRIVEN FROM THE TEST, not a fixed `state = Form(submitting = true)`:
+        // that field is ALSO disabled while submitting, so a username could never be typed into
+        // it directly under a submitting state, and `enabled = !state.submitting &&
+        // username.isNotBlank()` has TWO reasons to disable the button — a blank field alone
+        // would mask a deleted `!state.submitting` guard. Typing while `submitting = false`, THEN
+        // flipping to `true`, isolates the submitting half specifically; `username` is the
+        // stateless overload's own `remember`ed draft and survives the state flip within one
+        // composition.
+        var state by mutableStateOf<ImportUiState>(ImportUiState.Form())
+        composeRule.setContent {
+            ImportScreen(state = state, onImport = {}, onFinished = {})
+        }
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule
+            .onNodeWithText(context.getString(R.string.import_username_label))
+            .performTextInput("someone")
+
+        state = ImportUiState.Form(submitting = true)
+        composeRule.waitForIdle()
+
+        composeRule
+            .onNodeWithText(context.getString(R.string.import_submitting))
+            .assertIsDisplayed()
+            .assertIsNotEnabled()
+        composeRule
+            .onNodeWithText(context.getString(R.string.import_submit))
+            .assertDoesNotExist()
+    }
+
+    /**
+     * M5, task 9b.6 fix round: `ErrorState`'s retry action had no `isNotBlank()` guard, unlike the
+     * primary button right below it — fail once, clear the username field, tap Retry, and the
+     * unguarded version would call `onImport("")`, a guaranteed 422 the user never chose to send.
+     */
+    @Test
+    fun `retrying a failed import with a blank username does nothing`() {
+        var imported: String? = null
+        composeRule.setContent {
+            ImportScreen(
+                state = ImportUiState.Form(error = ImportError.Unknown),
+                onImport = { imported = it },
+                onFinished = {},
+            )
+        }
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule
+            .onNodeWithText(context.getString(DesignSystemR.string.action_retry))
+            .performClick()
+
+        assertTrue(imported == null)
     }
 }

@@ -4,7 +4,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -108,8 +110,19 @@ private fun ImportForm(
     // Decision C-S: the error is cleared the moment a retry launches (ImportViewModel.import sets
     // a fresh Form(submitting = true) with no error), not only on success — so this can safely
     // wire ErrorState's own retry action straight to another attempt.
+    //
+    // Round 1 fix (task 9b.6 fix round, M5): guarded with the SAME `isNotBlank()` the primary
+    // button below enforces — `ErrorState` exposes no `enabled` to disable its own button, so an
+    // unguarded `onRetry` let a user clear the username field after a failure and then tap Retry
+    // straight into a guaranteed 422 for an empty username, silently bypassing the validation the
+    // primary button already does. A no-op tap while blank, matching the primary button's
+    // disabled state in OUTCOME even though `ErrorState`'s retry button itself stays visually
+    // enabled.
     state.error?.let { error ->
-        ErrorState(message = stringResource(error.messageRes()), onRetry = onImport)
+        ErrorState(
+            message = stringResource(error.messageRes()),
+            onRetry = { if (username.isNotBlank()) onImport() },
+        )
     }
 
     Button(
@@ -122,6 +135,16 @@ private fun ImportForm(
         )
     }
 
+    // The brief's "expect it to take seconds, and show progress accordingly" (M3, round 1): the
+    // swapped button label alone was easy to miss at a glance mid-import, on a synchronous call
+    // that genuinely takes seconds. A visible spinner is also what makes the `enabled =
+    // !state.submitting` guard above matter to a real user, not just to a test — without it,
+    // nothing on screen visibly discourages a second tap while the first import is still running,
+    // which would race two full AniList imports against each other server-side.
+    if (state.submitting) {
+        CircularProgressIndicator(modifier = Modifier.size(ImportSpinnerSize))
+    }
+
     // The onboarding entry point must be skippable (task brief) — a user who declines lands in
     // the library, never stuck on a form they cannot get past. Reached from Profile too, where
     // this is simply "I changed my mind" rather than a dead end: system Back already returns
@@ -130,6 +153,9 @@ private fun ImportForm(
         Text(text = stringResource(R.string.import_skip))
     }
 }
+
+/** `SearchScreen`'s `AddingSpinnerSize` naming convention, for the identical kind of inline spinner. */
+private val ImportSpinnerSize = 20.dp
 
 /**
  * The terminal state. [ImportSummary.truncated] renders as its OWN, separate notice rather than

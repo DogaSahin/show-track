@@ -61,13 +61,49 @@ class AppViewModelTest {
         }
 
     @Test
-    fun `markSignedIn promotes an Auth-started session to Library`() =
+    fun `markSignedIn promotes an Auth-started session to Library when not a new account`() =
         runTest(dispatcher) {
             val viewModel = AppViewModel(FakeAuthRepository(hasSession = false))
             advanceUntilIdle()
             assertEquals(AppStart.Auth, viewModel.start.value)
 
-            viewModel.markSignedIn()
+            viewModel.markSignedIn(isNewAccount = false)
+
+            assertEquals(AppStart.Library, viewModel.start.value)
+        }
+
+    /**
+     * Task 9b.6, round 1 fix: the case a fresh registration reaches, and the whole reason
+     * [AppStart.Onboarding] exists — see [AppViewModel.markSignedIn]'s own KDoc for why this could
+     * not be a boolean riding along with [AppStart.Library] instead.
+     */
+    @Test
+    fun `markSignedIn promotes an Auth-started session to Onboarding when a new account`() =
+        runTest(dispatcher) {
+            val viewModel = AppViewModel(FakeAuthRepository(hasSession = false))
+            advanceUntilIdle()
+            assertEquals(AppStart.Auth, viewModel.start.value)
+
+            viewModel.markSignedIn(isNewAccount = true)
+
+            assertEquals(AppStart.Onboarding, viewModel.start.value)
+        }
+
+    /**
+     * The other half of `routeShowTrackNavigation`'s `LibraryRoute` branch (round 1, task 9b.6 fix
+     * round): finishing onboarding calls this with `isNewAccount = false`, the same argument value
+     * an ordinary login uses, and it must move `start` on to `Library` from `Onboarding` just as
+     * readily as it does from `Auth`.
+     */
+    @Test
+    fun `markSignedIn promotes an Onboarding session to Library when onboarding finishes`() =
+        runTest(dispatcher) {
+            val viewModel = AppViewModel(FakeAuthRepository(hasSession = false))
+            advanceUntilIdle()
+            viewModel.markSignedIn(isNewAccount = true)
+            assertEquals(AppStart.Onboarding, viewModel.start.value)
+
+            viewModel.markSignedIn(isNewAccount = false)
 
             assertEquals(AppStart.Library, viewModel.start.value)
         }
@@ -84,7 +120,7 @@ class AppViewModelTest {
             advanceUntilIdle()
             assertEquals(AppStart.Library, viewModel.start.value)
 
-            viewModel.markSignedIn()
+            viewModel.markSignedIn(isNewAccount = false)
 
             assertEquals(AppStart.Library, viewModel.start.value)
         }
