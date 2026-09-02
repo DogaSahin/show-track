@@ -37,6 +37,15 @@ interface RecommendationRepository {
      * restore through here instead keeps [feed] the single list [loadMore] appends onto, so a row
      * put back by [restore] survives every later [loadMore] the same way a row taken out by
      * [remove] stays out.
+     *
+     * [index] is ABSOLUTE, not relative to any other in-flight operation: restoring two
+     * concurrently-removed rows out of ascending index order re-inserts the later one at a
+     * position computed against a [feed] that no longer matches what [index] was captured
+     * against, landing it in the wrong place. Callers restoring more than one row back must do so
+     * lowest index first. This repository does not enforce that itself — today it is safe only
+     * because `DiscoverViewModel.addInFlight` permits exactly one outstanding remove/restore pair
+     * at a time, a guarantee that lives in the CALLER, not here; a future caller with per-row
+     * in-flight state (or a second caller of this repository) would need to preserve it.
      */
     fun restore(
         index: Int,

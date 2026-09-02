@@ -20,13 +20,16 @@ private const val DEFAULT_THRESHOLD = 3
  *
  * **This changed `:feature:library`'s own firing point, not merely its implementation.** Before
  * this extraction, `LibraryList`'s inline condition fired only once the LAST row itself was
- * visible (`lastVisibleIndex >= entries.lastIndex`, equivalent to `threshold = 0`). Every call site
+ * visible: `lastVisibleIndex >= entries.lastIndex`, i.e. `>= itemCount - 1`, equivalent to
+ * `threshold = 1` in this function's own `lastVisibleIndex >= itemCount - threshold` terms — NOT
+ * `threshold = 0` (fix round 2: a first pass at this comment got that off by one). Every call site
  * that does not pass [threshold] explicitly — `LibraryList` included — now gets [DEFAULT_THRESHOLD]
- * (3), so Library prefetches three rows earlier than it used to. That is the shape the task brief
- * specified verbatim and is benign (`LibraryViewModel.loadMore`'s re-entrancy guard and
- * `CursorPaginator`'s own exhaustion check both still hold at the new firing point), but it is a
- * real behaviour change, not a like-for-like refactor — no `:feature:library` test exercised the
- * composable's scroll trigger before or after, so nothing would have gone red either way.
+ * (3), so Library prefetches two rows earlier than it used to (`(itemCount - 1) - (itemCount - 3)
+ * = 2`), not three. That is the shape the task brief specified verbatim and is benign
+ * (`LibraryViewModel.loadMore`'s re-entrancy guard and `CursorPaginator`'s own exhaustion check
+ * both still hold at the new firing point), but it is a real behaviour change, not a
+ * like-for-like refactor — no `:feature:library` test exercised the composable's scroll trigger
+ * before or after, so nothing would have gone red either way.
  *
  * `itemCount: Int` rather than the list itself (decision D-H, extracted from `:feature:library`):
  * the primitive key is behaviourally equivalent to keying on the list reference for THIS
