@@ -22,6 +22,7 @@ import com.anarky.showtrack.core.network.dto.LibraryPageDto
 import com.anarky.showtrack.core.network.dto.MediaDto
 import com.anarky.showtrack.core.network.dto.MediaSearchResponseDto
 import com.anarky.showtrack.core.network.dto.PushTargetDto
+import com.anarky.showtrack.core.network.dto.RecommendationPageDto
 import com.anarky.showtrack.core.network.dto.RegisterTargetRequest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
@@ -594,4 +595,9 @@ private class FakeShowTrackApi(
 
     override suspend fun deletePushTarget(id: String): Unit =
         error("the library repository must not touch push registration")
+
+    override suspend fun recommendations(
+        cursor: String?,
+        limit: Int,
+    ): RecommendationPageDto = error("the library repository must not touch recommendations")
 }

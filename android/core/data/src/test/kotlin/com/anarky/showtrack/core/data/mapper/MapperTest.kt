@@ -7,6 +7,9 @@ import com.anarky.showtrack.core.model.MediaType
 import com.anarky.showtrack.core.model.UserMediaStatus
 import com.anarky.showtrack.core.network.dto.LibraryEntryDto
 import com.anarky.showtrack.core.network.dto.MediaDto
+import com.anarky.showtrack.core.network.dto.PersistedMediaDto
+import com.anarky.showtrack.core.network.dto.RecommendationDto
+import com.anarky.showtrack.core.network.dto.RecommendationReasonDto
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -124,6 +127,64 @@ class MapperTest {
         assertEquals("https://example.com/cached.jpg", entity.coverUrl)
         assertEquals(5, entity.daysUntilNextEpisode)
     }
+
+    /**
+     * `PersistedMediaDto` carries no status and no next-episode block at all, unlike `MediaDto` —
+     * this pins the mapper's own documented DEFAULT for those fields (NOT_YET_AIRED / all-null),
+     * literally, rather than merely asserting the fields the DTO does carry. A mapper that started
+     * defaulting `status` to `AIRING` instead would pass every other test in this file and would
+     * have a recommendation row rendering an airing badge it has no data to back.
+     */
+    @Test
+    fun `a persisted media dto maps into a media with unpopulated airing fields`() {
+        val media = persistedMediaDto().toDomain()
+
+        assertEquals("media-1", media.id)
+        assertEquals(MediaSource.ANILIST, media.source)
+        assertEquals(MediaType.ANIME, media.type)
+        assertEquals("21", media.externalId)
+        assertEquals("One Piece", media.title)
+        assertEquals(1999, media.year)
+        assertEquals(listOf("action", "adventure"), media.genres)
+        assertEquals("https://example.com/1.jpg", media.coverImageUrl)
+        assertEquals(MediaStatus.NOT_YET_AIRED, media.status)
+        assertNull(media.nextEpisodeSeason)
+        assertNull(media.nextEpisodeNumber)
+        assertNull(media.nextEpisodeDate)
+        assertNull(media.daysUntilNextEpisode)
+    }
+
+    /** The reason maps through untouched — no default-substitution risk here, unlike the media half. */
+    @Test
+    fun `a recommendation dto maps its media and its one seed reason`() {
+        val recommendation =
+            RecommendationDto(
+                media = persistedMediaDto(),
+                reason =
+                    RecommendationReasonDto(
+                        seedMediaId = "seed-1",
+                        seedTitle = "Made in Abyss",
+                        matchedGenres = listOf("fantasy", "adventure"),
+                    ),
+            ).toDomain()
+
+        assertEquals("media-1", recommendation.media.id)
+        assertEquals("seed-1", recommendation.reason.seedMediaId)
+        assertEquals("Made in Abyss", recommendation.reason.seedTitle)
+        assertEquals(listOf("fantasy", "adventure"), recommendation.reason.matchedGenres)
+    }
+
+    private fun persistedMediaDto() =
+        PersistedMediaDto(
+            id = "media-1",
+            source = "anilist",
+            externalId = "21",
+            type = "anime",
+            title = "One Piece",
+            year = 1999,
+            genres = listOf("action", "adventure"),
+            coverImageUrl = "https://example.com/1.jpg",
+        )
 
     private fun libraryEntryDto() =
         LibraryEntryDto(

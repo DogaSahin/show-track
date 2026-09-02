@@ -12,6 +12,8 @@ import com.anarky.showtrack.core.data.repository.LibraryRepository
 import com.anarky.showtrack.core.data.repository.LibraryRepositoryImpl
 import com.anarky.showtrack.core.data.repository.MediaRepository
 import com.anarky.showtrack.core.data.repository.MediaRepositoryImpl
+import com.anarky.showtrack.core.data.repository.RecommendationRepository
+import com.anarky.showtrack.core.data.repository.RecommendationRepositoryImpl
 import dagger.Binds
 import dagger.Module
 import dagger.hilt.InstallIn
@@ -92,4 +94,12 @@ abstract class DataModule {
      */
     @Binds
     abstract fun mediaRepository(impl: MediaRepositoryImpl): MediaRepository
+
+    /**
+     * No `@Singleton` on the method, same reasoning as the others above: the scope sits on
+     * [RecommendationRepositoryImpl], which is where the recommendations paginator's in-memory
+     * state actually lives.
+     */
+    @Binds
+    abstract fun recommendationRepository(impl: RecommendationRepositoryImpl): RecommendationRepository
 }

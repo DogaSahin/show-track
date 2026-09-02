@@ -6,6 +6,7 @@ import com.anarky.showtrack.core.network.dto.LibraryPageDto
 import com.anarky.showtrack.core.network.dto.MediaDto
 import com.anarky.showtrack.core.network.dto.MediaSearchResponseDto
 import com.anarky.showtrack.core.network.dto.PushTargetDto
+import com.anarky.showtrack.core.network.dto.RecommendationPageDto
 import com.anarky.showtrack.core.network.dto.RegisterTargetRequest
 import kotlinx.serialization.json.JsonObject
 import retrofit2.http.Body
@@ -93,4 +94,15 @@ interface ShowTrackApi {
     suspend fun deletePushTarget(
         @Path("id") id: String,
     )
+
+    /**
+     * `GET /v1/recommendations`. Cursor-paginated (architecture rule 4): pass the previous page's
+     * `next_cursor`, or null for the first page. No `score` query or field anywhere here — the
+     * ordering of the returned `items` IS the ranking (backend decision 7-K).
+     */
+    @GET("v1/recommendations")
+    suspend fun recommendations(
+        @Query("cursor") cursor: String?,
+        @Query("limit") limit: Int,
+    ): RecommendationPageDto
 }

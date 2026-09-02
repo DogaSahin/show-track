@@ -9,6 +9,7 @@ import com.anarky.showtrack.core.network.dto.MediaDto
 import com.anarky.showtrack.core.network.dto.MediaSearchResponseDto
 import com.anarky.showtrack.core.network.dto.MediaSummaryDto
 import com.anarky.showtrack.core.network.dto.PushTargetDto
+import com.anarky.showtrack.core.network.dto.RecommendationPageDto
 import com.anarky.showtrack.core.network.dto.RegisterTargetRequest
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
@@ -194,5 +195,10 @@ class MediaRepositoryTest {
         override suspend fun registerPushTarget(request: RegisterTargetRequest): PushTargetDto = TODO("not used")
 
         override suspend fun deletePushTarget(id: String): Unit = TODO("not used")
+
+        override suspend fun recommendations(
+            cursor: String?,
+            limit: Int,
+        ): RecommendationPageDto = TODO("not used")
     }
 }

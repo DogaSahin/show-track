@@ -1,0 +1,26 @@
+<resources>
+    <string name="discover_title">Discover</string>
+
+    <string name="discover_empty_message">No recommendations right now — add a few titles to your library and check back</string>
+
+    <string name="discover_error_message">Couldn\'t load recommendations right now. Check your connection and try again.</string>
+
+    <!-- A failed loadMore() (DiscoverUiState.Success.pageError) — the already-loaded rows stay on
+         screen underneath this footer, mirroring library_page_error/search_page_error. -->
+    <string name="discover_page_error">Couldn\'t load more. Tap to retry.</string>
+
+    <!-- The reason row: "Because you watched Frieren — fantasy, adventure". %1$s is the ONE seed
+         title, %2$s the comma-joined matched genres — deliberately one seed, never all of them
+         (RecommendationReason's KDoc: "because you liked these four things a little" is not
+         something a user can act on). -->
+    <string name="discover_reason">Because you watched %1$s — %2$s</string>
+
+    <!-- The one-tap add affordance (decision D-I). %1$s is the title, so two rows on screen never
+         share an indistinguishable contentDescription (decision C-E). -->
+    <string name="discover_add_content_description">Add %1$s to your library</string>
+
+    <!-- add() failed and the row has already been put back on screen (D-I's restore-on-failure),
+         so this reports BESIDE the row rather than replacing it. Tapping it retries via the same
+         add action. -->
+    <string name="discover_add_error">Couldn\'t add this title. Tap to try again.</string>
+</resources>

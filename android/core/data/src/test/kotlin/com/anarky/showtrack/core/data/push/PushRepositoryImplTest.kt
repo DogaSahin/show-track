@@ -7,6 +7,7 @@ import com.anarky.showtrack.core.network.dto.LibraryPageDto
 import com.anarky.showtrack.core.network.dto.MediaDto
 import com.anarky.showtrack.core.network.dto.MediaSearchResponseDto
 import com.anarky.showtrack.core.network.dto.PushTargetDto
+import com.anarky.showtrack.core.network.dto.RecommendationPageDto
 import com.anarky.showtrack.core.network.dto.RegisterTargetRequest
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
@@ -76,6 +77,11 @@ private class FakeApi : ShowTrackApi {
         deleteFailure?.let { throw it }
         deletions += id
     }
+
+    override suspend fun recommendations(
+        cursor: String?,
+        limit: Int,
+    ): RecommendationPageDto = error("not used")
 }
 
 /**

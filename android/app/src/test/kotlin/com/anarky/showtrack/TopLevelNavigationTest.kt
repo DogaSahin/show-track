@@ -7,9 +7,11 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.ComposeNavigator
 import androidx.navigation.createGraph
 import androidx.test.core.app.ApplicationProvider
+import com.anarky.showtrack.core.navigation.DiscoverRoute
 import com.anarky.showtrack.core.navigation.FavoritesRoute
 import com.anarky.showtrack.core.navigation.LibraryRoute
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -46,6 +48,44 @@ class TopLevelNavigationTest {
         controller.navigateToTopLevelDestination(LibraryRoute)
 
         assertEquals(listOf(null, LibraryRoute::class.qualifiedName), controller.backStackRoutes())
+    }
+
+    /**
+     * The regression guard task 9b.3 exists to add: `TopLevelDestination` gained a `DISCOVER` entry
+     * this task (`MainActivity.kt`'s own KDoc explains why), and a route can sit in that enum,
+     * compile, and still never be reached if `showTrackDestinations` (built from `appDestinations`,
+     * asserted by `NavGraphRegistrationTest`) does not actually register a matching destination —
+     * exactly the Gap 1/Gap 2 failure mode this file's sibling test already guards for Favorites.
+     * Tapping Discover must land ON `DiscoverRoute`, not silently no-op or crash.
+     */
+    @Test
+    fun `Discover is registered as a top-level destination`() {
+        assertTrue(TopLevelDestination.entries.any { it.route == DiscoverRoute })
+    }
+
+    /**
+     * `popUpTo(findStartDestination().id)` targets the graph's START destination (`LibraryRoute`)
+     * without `inclusive`, so it pops everything ABOVE that entry and leaves the start destination
+     * itself in place — swapping Favorites for Discover collapses to [Library, Discover], not to
+     * [Discover] alone the way the sibling test's [LibraryRoute, LibraryRoute] case does. That
+     * sibling test's two-entry result is specific to its FINAL tap landing back on the start
+     * destination itself, where `launchSingleTop`/`restoreState` dedup it into the existing entry
+     * rather than pushing a second one — not "any tab swap collapses to one entry". A first draft
+     * of this test asserted the wrong shape (`[Discover]`) by generalising from that one case; this
+     * is the actual failure message that caught it: `expected:<[null, DiscoverRoute]> but
+     * was:<[null, LibraryRoute, DiscoverRoute]>`.
+     */
+    @Test
+    fun `tapping Discover after Favorites lands on Discover above the start destination`() {
+        val controller = controllerWith { defaultGraph() }
+
+        controller.navigateToTopLevelDestination(FavoritesRoute)
+        controller.navigateToTopLevelDestination(DiscoverRoute)
+
+        assertEquals(
+            listOf(null, LibraryRoute::class.qualifiedName, DiscoverRoute::class.qualifiedName),
+            controller.backStackRoutes(),
+        )
     }
 
     private fun controllerWith(graph: NavHostController.() -> NavGraph): NavHostController =

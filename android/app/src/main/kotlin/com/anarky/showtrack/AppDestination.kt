@@ -48,14 +48,17 @@ internal class AppDestination(
  * `startDestination` is what decides where the graph opens.
  *
  * The entries that ignore `onNavigate` are the screens with nowhere to go yet — their feature
- * modules declare no such parameter at all rather than accepting one and dropping it.
+ * modules declare no such parameter at all rather than accepting one and dropping it. `Discover`
+ * moved out of that set this task: a recommendation row now opens Detail directly (its `media` is
+ * persisted and carries a real id — no add-first workaround), so `discoverEntry` gained the same
+ * `onNavigate` parameter `libraryEntry`/`searchEntry` already have.
  */
 internal val appDestinations: List<AppDestination> =
     listOf(
         AppDestination(AuthRoute::class) { onNavigate -> authEntry(onNavigate) },
         AppDestination(LibraryRoute::class) { onNavigate -> libraryEntry(onNavigate) },
         AppDestination(DetailRoute::class) { detailEntry() },
-        AppDestination(DiscoverRoute::class) { discoverEntry() },
+        AppDestination(DiscoverRoute::class) { onNavigate -> discoverEntry(onNavigate) },
         AppDestination(FavoritesRoute::class) { favoritesEntry() },
         AppDestination(ProfileRoute::class) { onNavigate -> profileEntry(onNavigate) },
         AppDestination(SearchRoute::class) { onNavigate -> searchEntry(onNavigate) },

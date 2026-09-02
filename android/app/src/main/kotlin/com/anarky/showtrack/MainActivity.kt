@@ -30,6 +30,7 @@ import com.anarky.showtrack.core.designsystem.theme.ShowTrackTheme
 import com.anarky.showtrack.core.model.AuthEvent
 import com.anarky.showtrack.core.navigation.AppRoute
 import com.anarky.showtrack.core.navigation.AuthRoute
+import com.anarky.showtrack.core.navigation.DiscoverRoute
 import com.anarky.showtrack.core.navigation.FavoritesRoute
 import com.anarky.showtrack.core.navigation.LibraryRoute
 import com.anarky.showtrack.core.navigation.ProfileRoute
@@ -233,9 +234,17 @@ internal fun shouldShowNavigationTabs(
 ): Boolean = start != AppStart.Undecided && currentDestination?.hasRoute(AuthRoute::class) == false
 
 /**
- * The three top-level destinations the navigation suite offers. A subset of the nine routes on
- * purpose: Detail and Auth are pushed onto the stack rather than tabbed to, and Discover, Search,
- * Groups and Feed have no chrome yet — Phase 9 decides where they surface.
+ * The four top-level destinations the navigation suite offers. A subset of the nine routes on
+ * purpose: Detail and Auth are pushed onto the stack rather than tabbed to, and Search, Groups and
+ * Feed still have no chrome — Phase 9 decides where the rest surface.
+ *
+ * **Discover joined this set in task 9b.3**, not earlier: `:feature:discover` shipped in Phase 9a
+ * as a registered-but-unreachable placeholder (the exact Gap 1/Gap 2 shape `LibraryNavigation.kt`
+ * documents at length — a route wired into the graph with no door in, which is invisible to a
+ * diff-scoped review because no individual diff is wrong). Once the feed had real rows and a real
+ * one-tap add, it needed an actual door; unlike Search (reached from Library's header icon) or
+ * Groups/Feed (still undecided), Discover has no natural secondary entry point, so it became a
+ * fourth tab rather than staying an icon bolted onto some other screen's chrome.
  *
  * Renamed from `AppDestinations`: with [AppDestination] now naming a row in the nav graph's
  * registration table, two types one plural apart meant two different things in the same package.
@@ -248,6 +257,7 @@ enum class TopLevelDestination(
     val route: AppRoute,
 ) {
     HOME(R.string.destination_home, R.drawable.ic_home, LibraryRoute),
+    DISCOVER(R.string.destination_discover, R.drawable.ic_explore, DiscoverRoute),
     FAVORITES(R.string.destination_favorites, R.drawable.ic_favorite, FavoritesRoute),
     PROFILE(R.string.destination_profile, R.drawable.ic_account_box, ProfileRoute),
 }

@@ -20,8 +20,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -37,6 +35,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.anarky.showtrack.core.designsystem.component.CountdownBadge
 import com.anarky.showtrack.core.designsystem.component.EmptyState
+import com.anarky.showtrack.core.designsystem.component.EndOfListTrigger
 import com.anarky.showtrack.core.designsystem.component.ErrorState
 import com.anarky.showtrack.core.designsystem.component.LoadingState
 import com.anarky.showtrack.core.designsystem.component.MediaCard
@@ -240,6 +239,13 @@ private fun LibrarySort.labelRes(): Int =
  *
  * [LibraryUiState.Success.pageError] renders as a small footer row rather than replacing the list
  * (see its KDoc for why it must never do that) — tapping it retries by calling [onLoadMore] again.
+ *
+ * The end-of-list detection itself moved to [EndOfListTrigger] in `:core:designsystem` (decision
+ * D-H, task 9b.3): `:feature:discover`'s own list needed the identical shape, and "list scrolled
+ * near its end" is not something either screen should reimplement — see that composable's own KDoc
+ * for the `remember(itemCount)` reasoning this file used to carry directly, including why an `Int`
+ * key is safe here even though this file's list can change size for two different reasons (a fresh
+ * page appended, or a filter swap replacing it outright).
  */
 @Composable
 private fun LibraryList(
@@ -251,22 +257,7 @@ private fun LibraryList(
     val entries = success.entries
     val listState = rememberLazyListState()
 
-    // `remember(entries)`, not a bare `remember { }`: entries is a new List reference every time
-    // it changes (a fresh page appended, or a filter swapping it out entirely), and a
-    // derivedStateOf whose calculation lambda closed over a STALE `entries` from the first
-    // composition would keep comparing the scroll position against a list that no longer matches
-    // what's on screen — a classic stale-closure trap with LaunchedEffect/derivedStateOf.
-    val shouldLoadMore by
-        remember(entries) {
-            derivedStateOf {
-                val visibleItems = listState.layoutInfo.visibleItemsInfo
-                val lastVisibleIndex = visibleItems.lastOrNull()?.index ?: -1
-                entries.isNotEmpty() && lastVisibleIndex >= entries.lastIndex
-            }
-        }
-    LaunchedEffect(shouldLoadMore) {
-        if (shouldLoadMore) onLoadMore()
-    }
+    EndOfListTrigger(listState = listState, itemCount = entries.size, onTriggered = onLoadMore)
 
     LazyColumn(
         state = listState,
