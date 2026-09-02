@@ -1,21 +1,10 @@
 package com.anarky.showtrack.feature.profile
 
-import com.anarky.showtrack.core.data.repository.AuthRepository
-import com.anarky.showtrack.core.data.repository.LibraryRepository
-import com.anarky.showtrack.core.model.LibraryEntry
-import com.anarky.showtrack.core.model.LibraryFilter
-import com.anarky.showtrack.core.model.LibraryPatch
 import com.anarky.showtrack.core.model.LibraryStats
-import com.anarky.showtrack.core.model.MediaSource
 import com.anarky.showtrack.core.model.UserMediaStatus
-import com.anarky.showtrack.feature.profile.push.DistributorSource
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -33,120 +22,6 @@ import org.robolectric.annotation.Config
 import java.io.IOException
 
 private const val NTFY = "io.heckel.ntfy"
-
-private class FakeDistributors(
-    var installed: List<String> = emptyList(),
-    var saved: String? = null,
-) : DistributorSource {
-    var unregistered = false
-
-    override fun available(): List<String> = installed
-
-    override fun selected(): String? = saved
-
-    override fun register(packageName: String) {
-        saved = packageName
-    }
-
-    override fun unregister() {
-        saved = null
-        unregistered = true
-    }
-}
-
-/**
- * Exercised against a fake, the same way `AuthViewModelTest`'s `FakeAuthRepository` is used.
- * [onLogout] runs AFTER [logoutCalled] is recorded but BEFORE `logout()` returns, so a test can
- * make it suspend (to observe `signOut()` mid-flight) or throw (to exercise the failure guard).
- */
-private class FakeAuthRepository(
-    private val onLogout: suspend () -> Unit = {},
-) : AuthRepository {
-    var logoutCalled: Boolean = false
-
-    override suspend fun hasSession(): Boolean = true
-
-    override suspend fun login(
-        email: String,
-        password: String,
-    ) = Unit
-
-    override suspend fun register(
-        username: String,
-        email: String,
-        password: String,
-        inviteCode: String,
-    ) = Unit
-
-    override suspend fun logout() {
-        logoutCalled = true
-        onLogout()
-    }
-}
-
-/**
- * Only [libraryStats] is functional — every other member `error(...)`, the same discrimination
- * `:feature:favorites`' own `FakeLibraryRepository` uses: a [ProfileViewModel] that accidentally
- * reached the general library surface instead of [LibraryRepository.libraryStats] fails LOUDLY,
- * with that message, rather than silently returning the wrong thing.
- *
- * [statsGate], when set, is what lets a test observe [ProfileViewModel.statsState] WHILE
- * [libraryStats] is suspended — mirroring `FavoritesViewModelTest`'s `FakeLibraryRepository.refreshGate`,
- * needed for the identical reason: a fake that always resolves synchronously can never make a
- * wrongly-shown [LibraryStatsUiState.Loading] (or a wrongly-replaced [LibraryStatsUiState.Error])
- * observable mid-flight.
- */
-private class FakeLibraryRepository(
-    var statsResult: LibraryStats = EMPTY_STATS,
-    var statsFailure: Throwable? = null,
-) : LibraryRepository {
-    var statsGate: CompletableDeferred<Unit>? = null
-
-    // Round 1's own regression guard: proves `init`/push toggles reach `libraryStats()` zero
-    // times, which a state-only assertion (`statsState.value`, still `Loading`) cannot — a
-    // ViewModel that fetched and then discarded the result would look identical to one that
-    // never fetched at all if only the resulting state were checked.
-    var statsCalls = 0
-        private set
-
-    override fun observeLibrary(): Flow<List<LibraryEntry>> = error("not exercised by ProfileViewModel")
-
-    override suspend fun refresh(): Unit = error("not exercised by ProfileViewModel")
-
-    override suspend fun loadMore(): Unit = error("not exercised by ProfileViewModel")
-
-    override suspend fun applyFilter(filter: LibraryFilter): Unit = error("not exercised by ProfileViewModel")
-
-    override suspend fun add(
-        source: MediaSource,
-        externalId: String,
-    ): LibraryEntry = error("not exercised by ProfileViewModel")
-
-    override suspend fun update(
-        entryId: String,
-        patch: LibraryPatch,
-    ): LibraryEntry = error("not exercised by ProfileViewModel")
-
-    override suspend fun entryForMedia(mediaId: String): LibraryEntry? = error("not exercised by ProfileViewModel")
-
-    override val favoriteEntries: StateFlow<List<LibraryEntry>> =
-        MutableStateFlow(emptyList<LibraryEntry>()).asStateFlow()
-
-    override suspend fun refreshFavorites(): Unit = error("not exercised by ProfileViewModel")
-
-    override suspend fun loadMoreFavorites(): Unit = error("not exercised by ProfileViewModel")
-
-    override suspend fun libraryStats(): LibraryStats {
-        statsCalls++
-        statsGate?.await()
-        statsFailure?.let { throw it }
-        return statsResult
-    }
-
-    private companion object {
-        val EMPTY_STATS = LibraryStats(total = 0, byStatus = emptyMap(), averageScore = null, ratedCount = 0)
-    }
-}
 
 /**
  * Robolectric for the same reason `core/data`'s `AuthRepositoryTest` needs it: `signOut()`'s

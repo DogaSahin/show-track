@@ -41,7 +41,12 @@ class ProfileScreenTest {
     /**
      * The exact statement the brief forbids: replace `StatsContent`'s null-average branch with
      * `average?.toPlainString() ?: "0.0"` and this renders "Average score: 0.0 across 0 rated
-     * titles" — "you rate everything zero" — instead of "No ratings yet".
+     * titles" — "you rate everything zero" — instead of "No ratings yet". The first assertion
+     * below is what actually catches that mutant (the "No ratings yet" node stops existing); the
+     * second is a belt-and-braces check for the same mutant with `substring = true` (review
+     * finding, round 2 — `onNodeWithText` defaults to an EXACT match, so a bare
+     * `onNodeWithText("0.0")` would only ever match a node whose entire text was "0.0" and would
+     * sail straight past "Average score: 0.0 across 0 rated titles").
      */
     @Test
     fun `an unrated library shows no average rather than zero`() {
@@ -61,7 +66,7 @@ class ProfileScreenTest {
         composeRule
             .onNodeWithText(context.getString(R.string.profile_stats_no_ratings))
             .assertIsDisplayed()
-        composeRule.onNodeWithText("0.0").assertDoesNotExist()
+        composeRule.onNodeWithText("0.0", substring = true).assertDoesNotExist()
     }
 
     /**
