@@ -203,7 +203,7 @@ class TokenRefreshAuthenticatorTest {
 
     /** Every filter left null: these tests exercise the auth stack, not the library filters. */
     private suspend fun callLibrary() =
-        api.library(cursor = null, limit = 20, status = null, sort = null, mediaId = null)
+        api.library(cursor = null, limit = 20, status = null, sort = null, mediaId = null, favorite = null)
 
     /**
      * A stateful dispatcher rather than a queue of canned responses: with five calls in flight

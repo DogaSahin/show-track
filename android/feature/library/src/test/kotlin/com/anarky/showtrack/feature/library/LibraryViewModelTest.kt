@@ -15,6 +15,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -519,6 +520,12 @@ class LibraryViewModelTest {
         ): LibraryEntry = error("not exercised by LibraryViewModel")
 
         override suspend fun entryForMedia(mediaId: String): LibraryEntry? = error("not exercised by LibraryViewModel")
+
+        override val favoriteEntries: StateFlow<List<LibraryEntry>> = MutableStateFlow(emptyList())
+
+        override suspend fun refreshFavorites(): Unit = error("not exercised by LibraryViewModel")
+
+        override suspend fun loadMoreFavorites(): Unit = error("not exercised by LibraryViewModel")
     }
 
     private companion object {

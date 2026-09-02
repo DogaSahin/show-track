@@ -6,6 +6,8 @@ import com.anarky.showtrack.core.model.LibraryFilter
 import com.anarky.showtrack.core.model.LibraryPatch
 import com.anarky.showtrack.core.model.MediaSource
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flowOf
 import javax.inject.Inject
 
@@ -43,4 +45,10 @@ internal class FakeLibraryRepository
 
         override suspend fun entryForMedia(mediaId: String): LibraryEntry? =
             error("not exercised by LibraryEntryHiltTest")
+
+        override val favoriteEntries: StateFlow<List<LibraryEntry>> = MutableStateFlow(emptyList())
+
+        override suspend fun refreshFavorites() = Unit
+
+        override suspend fun loadMoreFavorites() = Unit
     }

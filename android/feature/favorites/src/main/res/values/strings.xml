@@ -1,0 +1,14 @@
+<resources>
+    <string name="favorites_title">Favorites</string>
+
+    <!-- Deliberately NOT "Nothing in your library yet" (library_empty_default) — that claim is
+         false here and reads as data loss. This screen shows only favourited titles, so an empty
+         library and an unfavourited-everything library look identical and must not share copy. -->
+    <string name="favorites_empty_message">You haven\'t favourited anything yet</string>
+
+    <string name="favorites_error_message">Couldn\'t load your favourites. Check your connection and try again.</string>
+
+    <!-- A failed loadMore() (FavoritesUiState.Success.pageError) — the already-loaded list stays
+         on screen underneath this footer, mirroring library_page_error/discover_page_error. -->
+    <string name="favorites_page_error">Couldn\'t load more. Tap to retry.</string>
+</resources>

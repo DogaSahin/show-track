@@ -17,6 +17,7 @@ import com.anarky.showtrack.core.network.dto.LibraryEntryDto
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -64,9 +65,36 @@ class LibraryRepositoryImpl
                         status = current.status?.name?.lowercase(),
                         sort = current.sort.wire,
                         mediaId = null,
+                        favorite = null,
                     )
                 Page(page.items.map(LibraryEntryDto::toDomain), page.nextCursor)
             }
+
+        // A SEPARATE CursorPaginator from [paginator] above (this class's own KDoc / task 9b.4,
+        // decision D-H): Library and Favorites are both `TopLevelDestination`s with saved state
+        // and can be open at once, so sharing one paginator would make switching tabs reset the
+        // OTHER screen's scroll position and page counter. `favorite = true` is the only filter
+        // this fetch ever sends — status/sort/mediaId stay null/default because Favorites has no
+        // tabs or sort control (decision D-H's "layout is duplicated, the trap is not").
+        private val favoritesPaginator =
+            CursorPaginator<LibraryEntry> { cursor ->
+                val page =
+                    api.library(
+                        cursor = cursor,
+                        limit = PAGE_SIZE,
+                        status = null,
+                        sort = null,
+                        mediaId = null,
+                        favorite = true,
+                    )
+                Page(page.items.map(LibraryEntryDto::toDomain), page.nextCursor)
+            }
+
+        // Published straight from `favoritesPaginator.items` — unlike `RecommendationRepositoryImpl.feed`,
+        // nothing here ever mutates this list in place (there is no in-screen remove/restore for
+        // Favorites, per task 9b.4's brief: "no add here"), so a second, separately-mutated
+        // `MutableStateFlow` would only be indirection with no behavioural difference.
+        override val favoriteEntries: StateFlow<List<LibraryEntry>> = favoritesPaginator.items
 
         /**
          * The cache wins only before the first network page arrives, and only for the default
@@ -180,10 +208,24 @@ class LibraryRepositoryImpl
          */
         override suspend fun entryForMedia(mediaId: String): LibraryEntry? =
             api
-                .library(cursor = null, limit = 1, status = null, sort = null, mediaId = mediaId)
+                .library(cursor = null, limit = 1, status = null, sort = null, mediaId = mediaId, favorite = null)
                 .items
                 .firstOrNull()
                 ?.toDomain()
+
+        /**
+         * `favoritesPaginator.restart()`'s return value is discarded deliberately: [favoriteEntries]
+         * is [favoritesPaginator.items] itself, which `restart()` already writes as part of
+         * fetching — re-reading it here would just be [favoriteEntries]'s own current value one
+         * statement later, with nothing gained (unlike [refresh] above, this repository publishes
+         * NOTHING beyond the paginator's own list — there is no Room cache row to conditionally
+         * write for the favourites view).
+         */
+        override suspend fun refreshFavorites() {
+            favoritesPaginator.restart()
+        }
+
+        override suspend fun loadMoreFavorites() = favoritesPaginator.loadMore()
     }
 
 /**

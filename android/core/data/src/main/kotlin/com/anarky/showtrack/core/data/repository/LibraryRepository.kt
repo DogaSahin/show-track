@@ -5,6 +5,7 @@ import com.anarky.showtrack.core.model.LibraryFilter
 import com.anarky.showtrack.core.model.LibraryPatch
 import com.anarky.showtrack.core.model.MediaSource
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.StateFlow
 
 /**
  * The only data-layer type any `:feature:*` module ever sees. Everything behind it — Retrofit,
@@ -41,4 +42,22 @@ interface LibraryRepository {
 
     /** Null means "not in your library" — not an error (decision C-C). */
     suspend fun entryForMedia(mediaId: String): LibraryEntry?
+
+    /**
+     * `GET /v1/library?favorite=true`'s accumulated pages, for `:feature:favorites` (task 9b.4,
+     * decision D-H). Backed by its OWN [com.anarky.showtrack.core.data.paging.CursorPaginator]
+     * instance, entirely separate from the one behind [observeLibrary]/[refresh]/[loadMore]/
+     * [applyFilter]: Library and Favorites are both `TopLevelDestination`s with saved state and
+     * can be open at once, so sharing one paginator would make switching tabs reset the OTHER
+     * screen's scroll position and page counter.
+     *
+     * Network-only, no Room cache — see [LibraryRepositoryImpl]'s KDoc on the field backing this.
+     */
+    val favoriteEntries: StateFlow<List<LibraryEntry>>
+
+    /** Reload the favourites view from the first page, replacing whatever [favoriteEntries] holds. */
+    suspend fun refreshFavorites()
+
+    /** Appends the next page of [favoriteEntries], or does nothing once it is exhausted. */
+    suspend fun loadMoreFavorites()
 }

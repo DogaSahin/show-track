@@ -412,6 +412,12 @@ class DiscoverViewModelTest {
         ): LibraryEntry = error("not exercised by DiscoverViewModel")
 
         override suspend fun entryForMedia(mediaId: String): LibraryEntry? = error("not exercised by DiscoverViewModel")
+
+        override val favoriteEntries: StateFlow<List<LibraryEntry>> = MutableStateFlow(emptyList())
+
+        override suspend fun refreshFavorites(): Unit = error("not exercised by DiscoverViewModel")
+
+        override suspend fun loadMoreFavorites(): Unit = error("not exercised by DiscoverViewModel")
     }
 
     private companion object {

@@ -30,7 +30,22 @@ interface ShowTrackApi {
      *
      * [mediaId] answers "is this title in my library?" in one request (decision C-C); the answer
      * is `items.firstOrNull()`, where null means "not in your library".
+     *
+     * [favorite] is task 9b.2's filter (decision D-F). The backend resolves it with `is not None`,
+     * so `false` is a REAL filter meaning "non-favourites", not "unset" — passing `false` here is
+     * never equivalent to omitting the parameter. Every parameter on this method is explicit with
+     * no Kotlin default (this file's own long-standing convention), so every call site — including
+     * every one that predates [favorite] — must now pass it, `null` unless it is genuinely filtering
+     * on favourite status.
+     *
+     * Six parameters trips detekt's `LongParameterList` (threshold 6); suppressed rather than
+     * bundling them into a request object, which would exist for this one method (plus its wire
+     * tests) only, and would undo the "every parameter explicit, no Kotlin default" convention
+     * this KDoc leans on to force every call site to consider a new filter rather than silently
+     * default it away — `LibraryScreen`/`DiscoverScreen` carry the identical suppression for the
+     * identical reason.
      */
+    @Suppress("LongParameterList")
     @GET("v1/library")
     suspend fun library(
         @Query("cursor") cursor: String?,
@@ -38,6 +53,7 @@ interface ShowTrackApi {
         @Query("status") status: String?,
         @Query("sort") sort: String?,
         @Query("media_id") mediaId: String?,
+        @Query("favorite") favorite: Boolean?,
     ): LibraryPageDto
 
     @POST("v1/library")

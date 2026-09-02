@@ -323,6 +323,55 @@ class LibraryRepositoryImplTest {
             assertEquals("media-1", api.requestedMediaIds.last())
         }
 
+    /**
+     * Task 9b.4's own view (decision D-F/D-H). `favorite = true` is the whole point of this
+     * fetch — status/sort/mediaId stay unset because Favorites has no tabs or sort control.
+     */
+    @Test
+    fun `refreshFavorites requests favorite = true and publishes the page`() =
+        runTest {
+            api.enqueueLibraryPage(pageOf("Favourite title"))
+
+            repository.refreshFavorites()
+
+            assertEquals(true, api.requestedFavorites.last())
+            assertNull(api.requestedStatuses.last())
+            assertNull(api.requestedSorts.last())
+            assertEquals(listOf("Favourite title"), repository.favoriteEntries.value.map { it.media.title })
+        }
+
+    /**
+     * Decision D-H, made real: Library and Favorites are both `TopLevelDestination`s with saved
+     * state and can be open at once, so [LibraryRepositoryImpl] gives the favourites view its OWN
+     * `CursorPaginator` rather than reusing the one behind [LibraryRepository.observeLibrary].
+     * Confirmed both directions — driving the main view's paginator through two pages first, then
+     * loading favourites, must not disturb what `observeLibrary()` still emits; and paging
+     * favourites forward must accumulate on `favoriteEntries` alone.
+     */
+    @Test
+    fun `the favourites view has its own paginator, independent of the main library view`() =
+        runTest {
+            repository.refresh()
+            repository.loadMore()
+            assertEquals(listOf("1", "2"), repository.observeLibrary().first().map { it.id })
+
+            api.enqueueLibraryPage(pageOf("Favourite title", nextCursor = "fav-c2"))
+            repository.refreshFavorites()
+
+            assertEquals(listOf("Favourite title"), repository.favoriteEntries.value.map { it.media.title })
+            // The main view's own accumulated pages are untouched by the favourites fetch — a
+            // shared paginator would have reset this back to page one.
+            assertEquals(listOf("1", "2"), repository.observeLibrary().first().map { it.id })
+
+            api.enqueueLibraryPage(pageOf("Second favourite"))
+            repository.loadMoreFavorites()
+
+            assertEquals(
+                listOf("Favourite title", "Second favourite"),
+                repository.favoriteEntries.value.map { it.media.title },
+            )
+        }
+
     @Test
     fun `a non-default filter is NOT written to the cache`() =
         runTest {
@@ -522,6 +571,7 @@ private class FakeShowTrackApi(
     val requestedStatuses = mutableListOf<String?>()
     val requestedSorts = mutableListOf<String?>()
     val requestedMediaIds = mutableListOf<String?>()
+    val requestedFavorites = mutableListOf<Boolean?>()
     val addRequests = mutableListOf<AddLibraryEntryRequest>()
     val updateRequests = mutableListOf<Pair<String, JsonObject>>()
     private var shouldFail = false
@@ -551,12 +601,14 @@ private class FakeShowTrackApi(
         status: String?,
         sort: String?,
         mediaId: String?,
+        favorite: Boolean?,
     ): LibraryPageDto {
         requestedCursors += cursor
         requestedLimits += limit
         requestedStatuses += status
         requestedSorts += sort
         requestedMediaIds += mediaId
+        requestedFavorites += favorite
         if (shouldFail) {
             shouldFail = false
             throw IOException("simulated network failure")

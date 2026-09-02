@@ -79,13 +79,43 @@ class ShowTrackApiTest {
                     .build(),
             )
 
-            api.library(cursor = null, limit = 20, status = "watching", sort = "score", mediaId = "m-1")
+            api.library(
+                cursor = null,
+                limit = 20,
+                status = "watching",
+                sort = "score",
+                mediaId = "m-1",
+                favorite = true,
+            )
 
             val url = server.takeRequest().url
             assertEquals("watching", url.queryParameter("status"))
             assertEquals("score", url.queryParameter("sort"))
             assertEquals("m-1", url.queryParameter("media_id"))
+            assertEquals("true", url.queryParameter("favorite"))
             // The point of passing null rather than "null": an absent filter must not appear.
             assertNull(url.queryParameter("cursor"))
+        }
+
+    /**
+     * The half the test above cannot cover: [ShowTrackApi.library]'s KDoc warns that the backend
+     * resolves `favorite` with `is not None`, so `false` is a REAL filter ("non-favourites"), not
+     * "unset" — it must reach the wire as the literal string `"false"`, never be dropped the way a
+     * null parameter is.
+     */
+    @Test
+    fun `favorite = false is sent as a real filter, not omitted`() =
+        runTest {
+            server.enqueue(
+                MockResponse
+                    .Builder()
+                    .code(200)
+                    .body("""{"items":[],"next_cursor":null}""")
+                    .build(),
+            )
+
+            api.library(cursor = null, limit = 20, status = null, sort = null, mediaId = null, favorite = false)
+
+            assertEquals("false", server.takeRequest().url.queryParameter("favorite"))
         }
 }
