@@ -372,6 +372,27 @@ class LibraryRepositoryImplTest {
             )
         }
 
+    /**
+     * The `favoritesPaginator.hasMore.value` guard in `loadMoreFavorites` (review finding, round
+     * 2): without it, `CursorPaginator.loadMore()`'s own internal exhaustion check still stops the
+     * FETCH, but [lastFetchedFavoritesPage] would still hold the last page that WAS fetched, and
+     * `loadMoreFavorites` would keep appending that stale page onto [LibraryRepository.favoriteEntries]
+     * on every call — exactly the bug `RecommendationRepositoryImpl.loadMore`'s own KDoc names for
+     * the identical shape. A single-page favourites list (`nextCursor = null`) is the simplest way
+     * to exhaust the paginator on the very first fetch.
+     */
+    @Test
+    fun `loadMoreFavorites after the last page does not re-append it`() =
+        runTest {
+            api.enqueueLibraryPage(pageOf("Favourite title", nextCursor = null))
+            repository.refreshFavorites()
+            assertEquals(listOf("Favourite title"), repository.favoriteEntries.value.map { it.media.title })
+
+            repository.loadMoreFavorites()
+
+            assertEquals(listOf("Favourite title"), repository.favoriteEntries.value.map { it.media.title })
+        }
+
     @Test
     fun `a non-default filter is NOT written to the cache`() =
         runTest {

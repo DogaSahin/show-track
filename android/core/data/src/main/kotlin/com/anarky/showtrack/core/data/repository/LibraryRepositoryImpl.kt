@@ -76,9 +76,17 @@ class LibraryRepositoryImpl
         // returns `Unit`, so this is the only way [loadMoreFavorites] learns what a successful
         // fetch just added, as opposed to re-reading `favoritesPaginator.items.value` — which
         // `CursorPaginator.restart()`'s own KDoc warns against precisely because "[items] can have
-        // grown by the time the caller looks at it" (a concurrent `loadMoreFavorites()` racing a
-        // `refreshFavorites()`, in principle — this class does not rely on `favoriteEntries`
-        // still agreeing with what a just-finished fetch actually returned).
+        // grown by the time the caller looks at it".
+        //
+        // This trades that race for a DIFFERENT, narrower one, not a race-free design (review
+        // finding, round 2 — an earlier version of this comment overstated what this actually
+        // buys): [loadMoreFavorites] reads this field AFTER `favoritesPaginator.loadMore()`
+        // returns, so two genuinely overlapping calls could have the second call's fetch overwrite
+        // this field before the first call's `loadMoreFavorites()` reads it — losing one page and
+        // duplicating another, a window the old `favoriteEntries = favoritesPaginator.items`
+        // passthrough did not have. Unreachable today only because every caller serialises these
+        // calls — `FavoritesViewModel.loadMore`'s own `loadingMore` guard — the same way it is
+        // unreachable in `RecommendationRepositoryImpl`, whose identical shape this mirrors.
         private var lastFetchedFavoritesPage: List<LibraryEntry> = emptyList()
 
         // A SEPARATE CursorPaginator from [paginator] above (this class's own KDoc / task 9b.4,

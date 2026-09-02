@@ -5,6 +5,7 @@ import com.anarky.showtrack.core.model.LibraryEntry
 import com.anarky.showtrack.core.model.LibraryFilter
 import com.anarky.showtrack.core.model.LibraryPatch
 import com.anarky.showtrack.core.model.MediaSource
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -24,6 +25,18 @@ import kotlinx.coroutines.flow.asStateFlow
  * fails LOUDLY, with that message, rather than silently returning the wrong list — see
  * `FavoritesViewModelTest`'s "the feed reads the favourites surface, never the general library
  * one" for what this discrimination actually proves.
+ *
+ * [refreshGate], when set, is what lets a test observe [FavoritesViewModel.state] WHILE
+ * `refreshFavorites()` is suspended, rather than only before and after — every previous version of
+ * this fake resolved synchronously (no real suspension point), which is exactly why the
+ * `Loading`-on-every-resume bug (review finding, round 2) shipped unnoticed: a fake that never
+ * actually suspends can never make a wrongly-shown `Loading` state observable. Null (the default)
+ * behaves exactly as before — `refreshFavorites()` completes with no suspension of its own.
+ *
+ * A mutable `var`, not a constructor parameter (unlike `SearchViewModelTest`'s/
+ * `DiscoverViewModelTest`'s `addGate`): a test proving "a LATER `refresh()` over an already-loaded
+ * screen must not blank it" needs its FIRST call to complete normally and only its SECOND call to
+ * hang, which one fixed gate shared by every call cannot express.
  */
 internal class FakeLibraryRepository(
     var refreshResult: List<LibraryEntry> = emptyList(),
@@ -31,6 +44,7 @@ internal class FakeLibraryRepository(
     var loadMoreAppends: List<LibraryEntry> = emptyList(),
     var loadMoreFailure: Throwable? = null,
 ) : LibraryRepository {
+    var refreshGate: CompletableDeferred<Unit>? = null
     private val mutableFavorites = MutableStateFlow<List<LibraryEntry>>(emptyList())
     override val favoriteEntries: StateFlow<List<LibraryEntry>> = mutableFavorites.asStateFlow()
 
@@ -62,6 +76,7 @@ internal class FakeLibraryRepository(
 
     override suspend fun refreshFavorites() {
         refreshCalls++
+        refreshGate?.await()
         refreshFailure?.let { throw it }
         mutableFavorites.value = refreshResult
     }

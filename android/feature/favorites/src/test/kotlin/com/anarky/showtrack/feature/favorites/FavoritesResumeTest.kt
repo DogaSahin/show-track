@@ -55,15 +55,14 @@ class FavoritesResumeTest {
         composeRule.waitForIdle()
         composeRule.onNodeWithText(FRIEREN.media.title).assertIsDisplayed()
         composeRule.onNodeWithText(BEBOP.media.title).assertIsDisplayed()
-        // TWO calls already, not one: `createAndroidComposeRule` launches its Activity straight to
-        // RESUMED, so by the time `setContent` composes `LifecycleResumeEffect` for the first
-        // time, the Lifecycle it observes is ALREADY resumed — `Lifecycle` replays ON_CREATE/
-        // ON_START/ON_RESUME to a freshly-registered observer, so the effect fires immediately on
-        // top of `init`'s own call. That double call on first appearance is real (and harmless —
-        // Favorites' `refresh()` is idempotent), not a test artefact; the initial value this
-        // asserts on was found empirically rather than assumed.
+        // ONE call, not two: `FavoritesViewModel` has no `init { refresh() }` (review finding,
+        // round 2 — see that class's own KDoc), so `LifecycleResumeEffect` firing on first
+        // composition (`createAndroidComposeRule` launches its Activity straight to RESUMED, and
+        // `Lifecycle` replays ON_CREATE/ON_START/ON_RESUME to a freshly-registered observer) is
+        // the ONLY thing that loads this screen at all — there is no second, redundant call to
+        // land on top of it any more.
         val callsAfterInitialCompose = repository.refreshCalls
-        assertEquals(2, callsAfterInitialCompose)
+        assertEquals(1, callsAfterInitialCompose)
 
         // FRIEREN was unfavourited from Detail while this screen sat backgrounded on the back
         // stack — the server no longer returns it under favorite=true.

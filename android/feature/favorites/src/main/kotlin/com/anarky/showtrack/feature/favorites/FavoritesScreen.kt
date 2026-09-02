@@ -40,18 +40,22 @@ import com.anarky.showtrack.core.model.LibraryEntry
  * translation belongs at the module's graph boundary (`FavoritesNavigation.kt`), not here.
  *
  * [LifecycleResumeEffect] is not decoration — it is the ENTIRE mechanism by which this screen ever
- * learns about a favourite/unfavourite made elsewhere. Every mutation this screen's content
- * depends on happens on Detail or Library, never here (this screen has no add/remove of its own —
- * task 9b.4's brief), and the [FavoritesViewModel] is scoped to this destination's
- * `NavBackStackEntry`: navigating to Detail and back, or switching tabs and back (`ShowTrackNavHost`
- * uses `saveState`/`restoreState`, which retains the `ViewModelStore`), leaves the SAME ViewModel
- * instance alive with `init` never running again. Without this effect, the exact round trip the
- * acceptance criterion names — Favorites -> tap a row -> Detail -> unfavourite -> Back — would
- * leave the unfavourited row on screen indefinitely, since nothing else re-collects
+ * learns about a favourite/unfavourite made elsewhere, AND the only place [FavoritesViewModel]
+ * ever loads at all — it has no `init` of its own (see that class's own KDoc for why one would be
+ * a redundant network call, not a gap this effect happens to also cover). Every mutation this
+ * screen's content depends on happens on Detail or Library, never here (this screen has no
+ * add/remove of its own — task 9b.4's brief), and [FavoritesViewModel] is scoped to this
+ * destination's `NavBackStackEntry`: navigating to Detail and back, or switching tabs and back
+ * (`ShowTrackNavHost` uses `saveState`/`restoreState`, which retains the `ViewModelStore`), leaves
+ * the SAME ViewModel instance alive with no code path of its own that re-fetches. Without this
+ * effect, the exact round trip the acceptance criterion names — Favorites -> tap a row -> Detail
+ * -> unfavourite -> Back — would leave the unfavourited row on screen indefinitely, since nothing
+ * else re-collects
  * [com.anarky.showtrack.core.data.repository.LibraryRepository.favoriteEntries]. `ProfileScreen`'s
  * own `LifecycleResumeEffect` KDoc documents the identical failure mode for the identical reason
- * (a ViewModel surviving a round trip its own `init` cannot see); this is that fix applied to the
- * same class of bug.
+ * (a ViewModel surviving a round trip its own `init` cannot see, where `ProfileViewModel` DOES
+ * still keep one — its own `refresh()` is a synchronous read, so a redundant call costs nothing,
+ * unlike here); this is that fix applied to the same class of bug.
  */
 @Composable
 fun FavoritesScreen(
