@@ -2,19 +2,31 @@ package com.anarky.showtrack.core.data.repository
 
 import com.anarky.showtrack.core.network.api.ShowTrackApi
 import com.anarky.showtrack.core.network.dto.AddLibraryEntryRequest
+import com.anarky.showtrack.core.network.dto.CreateGroupRequestDto
+import com.anarky.showtrack.core.network.dto.CreateReviewRequestDto
+import com.anarky.showtrack.core.network.dto.FeedPageDto
+import com.anarky.showtrack.core.network.dto.GroupDto
+import com.anarky.showtrack.core.network.dto.GroupWithInviteDto
 import com.anarky.showtrack.core.network.dto.ImportAniListRequest
 import com.anarky.showtrack.core.network.dto.ImportSummaryDto
+import com.anarky.showtrack.core.network.dto.JoinGroupRequestDto
 import com.anarky.showtrack.core.network.dto.LibraryEntryDto
 import com.anarky.showtrack.core.network.dto.LibraryPageDto
 import com.anarky.showtrack.core.network.dto.LibraryStatsDto
 import com.anarky.showtrack.core.network.dto.MediaDto
 import com.anarky.showtrack.core.network.dto.MediaSearchResponseDto
+import com.anarky.showtrack.core.network.dto.MemberDto
 import com.anarky.showtrack.core.network.dto.PersistedMediaDto
+import com.anarky.showtrack.core.network.dto.ProgressEntryDto
+import com.anarky.showtrack.core.network.dto.ProposeTitleRequestDto
 import com.anarky.showtrack.core.network.dto.PushTargetDto
 import com.anarky.showtrack.core.network.dto.RecommendationDto
 import com.anarky.showtrack.core.network.dto.RecommendationPageDto
 import com.anarky.showtrack.core.network.dto.RecommendationReasonDto
 import com.anarky.showtrack.core.network.dto.RegisterTargetRequest
+import com.anarky.showtrack.core.network.dto.ReviewDto
+import com.anarky.showtrack.core.network.dto.WatchlistItemDto
+import com.anarky.showtrack.core.network.dto.WatchlistPageDto
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
 import org.junit.Assert.assertEquals
@@ -345,5 +357,64 @@ class RecommendationRepositoryTest {
             error("this fake only serves refresh/loadMore/remove")
 
         override suspend fun deletePushTarget(id: String): Unit = error("this fake only serves refresh/loadMore/remove")
+
+        override suspend fun createGroup(request: CreateGroupRequestDto): GroupWithInviteDto =
+            error("this fake only serves refresh/loadMore/remove")
+
+        override suspend fun groups(): List<GroupDto> = error("this fake only serves refresh/loadMore/remove")
+
+        override suspend fun joinGroup(request: JoinGroupRequestDto): GroupWithInviteDto =
+            error("this fake only serves refresh/loadMore/remove")
+
+        override suspend fun groupMembers(groupId: String): List<MemberDto> =
+            error("this fake only serves refresh/loadMore/remove")
+
+        override suspend fun rotateGroupInvite(groupId: String): GroupWithInviteDto =
+            error("this fake only serves refresh/loadMore/remove")
+
+        override suspend fun removeGroupMember(
+            groupId: String,
+            userId: String,
+        ): Unit = error("this fake only serves refresh/loadMore/remove")
+
+        override suspend fun groupFeed(
+            groupId: String,
+            cursor: String?,
+            limit: Int,
+        ): FeedPageDto = error("this fake only serves refresh/loadMore/remove")
+
+        override suspend fun groupReviews(
+            groupId: String,
+            mediaId: String,
+        ): List<ReviewDto> = error("this fake only serves refresh/loadMore/remove")
+
+        override suspend fun groupWatchlist(
+            groupId: String,
+            cursor: String?,
+            limit: Int,
+        ): WatchlistPageDto = error("this fake only serves refresh/loadMore/remove")
+
+        override suspend fun proposeToWatchlist(
+            groupId: String,
+            request: ProposeTitleRequestDto,
+        ): WatchlistItemDto = error("this fake only serves refresh/loadMore/remove")
+
+        override suspend fun removeFromWatchlist(
+            groupId: String,
+            entryId: String,
+        ): Unit = error("this fake only serves refresh/loadMore/remove")
+
+        override suspend fun groupProgress(
+            groupId: String,
+            mediaId: String,
+        ): List<ProgressEntryDto> = error("this fake only serves refresh/loadMore/remove")
+
+        override suspend fun createReview(request: CreateReviewRequestDto): ReviewDto =
+            error("this fake only serves refresh/loadMore/remove")
+
+        override suspend fun updateReview(
+            id: String,
+            patch: JsonObject,
+        ): ReviewDto = error("this fake only serves refresh/loadMore/remove")
     }
 }

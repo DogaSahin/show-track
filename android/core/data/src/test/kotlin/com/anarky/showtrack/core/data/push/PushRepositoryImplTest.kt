@@ -2,16 +2,28 @@ package com.anarky.showtrack.core.data.push
 
 import com.anarky.showtrack.core.network.api.ShowTrackApi
 import com.anarky.showtrack.core.network.dto.AddLibraryEntryRequest
+import com.anarky.showtrack.core.network.dto.CreateGroupRequestDto
+import com.anarky.showtrack.core.network.dto.CreateReviewRequestDto
+import com.anarky.showtrack.core.network.dto.FeedPageDto
+import com.anarky.showtrack.core.network.dto.GroupDto
+import com.anarky.showtrack.core.network.dto.GroupWithInviteDto
 import com.anarky.showtrack.core.network.dto.ImportAniListRequest
 import com.anarky.showtrack.core.network.dto.ImportSummaryDto
+import com.anarky.showtrack.core.network.dto.JoinGroupRequestDto
 import com.anarky.showtrack.core.network.dto.LibraryEntryDto
 import com.anarky.showtrack.core.network.dto.LibraryPageDto
 import com.anarky.showtrack.core.network.dto.LibraryStatsDto
 import com.anarky.showtrack.core.network.dto.MediaDto
 import com.anarky.showtrack.core.network.dto.MediaSearchResponseDto
+import com.anarky.showtrack.core.network.dto.MemberDto
+import com.anarky.showtrack.core.network.dto.ProgressEntryDto
+import com.anarky.showtrack.core.network.dto.ProposeTitleRequestDto
 import com.anarky.showtrack.core.network.dto.PushTargetDto
 import com.anarky.showtrack.core.network.dto.RecommendationPageDto
 import com.anarky.showtrack.core.network.dto.RegisterTargetRequest
+import com.anarky.showtrack.core.network.dto.ReviewDto
+import com.anarky.showtrack.core.network.dto.WatchlistItemDto
+import com.anarky.showtrack.core.network.dto.WatchlistPageDto
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -90,6 +102,60 @@ private class FakeApi : ShowTrackApi {
         cursor: String?,
         limit: Int,
     ): RecommendationPageDto = error("not used")
+
+    override suspend fun createGroup(request: CreateGroupRequestDto): GroupWithInviteDto = error("not used")
+
+    override suspend fun groups(): List<GroupDto> = error("not used")
+
+    override suspend fun joinGroup(request: JoinGroupRequestDto): GroupWithInviteDto = error("not used")
+
+    override suspend fun groupMembers(groupId: String): List<MemberDto> = error("not used")
+
+    override suspend fun rotateGroupInvite(groupId: String): GroupWithInviteDto = error("not used")
+
+    override suspend fun removeGroupMember(
+        groupId: String,
+        userId: String,
+    ): Unit = error("not used")
+
+    override suspend fun groupFeed(
+        groupId: String,
+        cursor: String?,
+        limit: Int,
+    ): FeedPageDto = error("not used")
+
+    override suspend fun groupReviews(
+        groupId: String,
+        mediaId: String,
+    ): List<ReviewDto> = error("not used")
+
+    override suspend fun groupWatchlist(
+        groupId: String,
+        cursor: String?,
+        limit: Int,
+    ): WatchlistPageDto = error("not used")
+
+    override suspend fun proposeToWatchlist(
+        groupId: String,
+        request: ProposeTitleRequestDto,
+    ): WatchlistItemDto = error("not used")
+
+    override suspend fun removeFromWatchlist(
+        groupId: String,
+        entryId: String,
+    ): Unit = error("not used")
+
+    override suspend fun groupProgress(
+        groupId: String,
+        mediaId: String,
+    ): List<ProgressEntryDto> = error("not used")
+
+    override suspend fun createReview(request: CreateReviewRequestDto): ReviewDto = error("not used")
+
+    override suspend fun updateReview(
+        id: String,
+        patch: JsonObject,
+    ): ReviewDto = error("not used")
 }
 
 /**

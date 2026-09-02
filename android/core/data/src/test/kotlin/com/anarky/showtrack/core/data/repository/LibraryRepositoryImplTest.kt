@@ -18,16 +18,28 @@ import com.anarky.showtrack.core.model.ScoreChange
 import com.anarky.showtrack.core.model.UserMediaStatus
 import com.anarky.showtrack.core.network.api.ShowTrackApi
 import com.anarky.showtrack.core.network.dto.AddLibraryEntryRequest
+import com.anarky.showtrack.core.network.dto.CreateGroupRequestDto
+import com.anarky.showtrack.core.network.dto.CreateReviewRequestDto
+import com.anarky.showtrack.core.network.dto.FeedPageDto
+import com.anarky.showtrack.core.network.dto.GroupDto
+import com.anarky.showtrack.core.network.dto.GroupWithInviteDto
 import com.anarky.showtrack.core.network.dto.ImportAniListRequest
 import com.anarky.showtrack.core.network.dto.ImportSummaryDto
+import com.anarky.showtrack.core.network.dto.JoinGroupRequestDto
 import com.anarky.showtrack.core.network.dto.LibraryEntryDto
 import com.anarky.showtrack.core.network.dto.LibraryPageDto
 import com.anarky.showtrack.core.network.dto.LibraryStatsDto
 import com.anarky.showtrack.core.network.dto.MediaDto
 import com.anarky.showtrack.core.network.dto.MediaSearchResponseDto
+import com.anarky.showtrack.core.network.dto.MemberDto
+import com.anarky.showtrack.core.network.dto.ProgressEntryDto
+import com.anarky.showtrack.core.network.dto.ProposeTitleRequestDto
 import com.anarky.showtrack.core.network.dto.PushTargetDto
 import com.anarky.showtrack.core.network.dto.RecommendationPageDto
 import com.anarky.showtrack.core.network.dto.RegisterTargetRequest
+import com.anarky.showtrack.core.network.dto.ReviewDto
+import com.anarky.showtrack.core.network.dto.WatchlistItemDto
+import com.anarky.showtrack.core.network.dto.WatchlistPageDto
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonNull
@@ -781,4 +793,63 @@ private class FakeShowTrackApi(
         cursor: String?,
         limit: Int,
     ): RecommendationPageDto = error("the library repository must not touch recommendations")
+
+    override suspend fun createGroup(request: CreateGroupRequestDto): GroupWithInviteDto =
+        error("the library repository must not touch groups")
+
+    override suspend fun groups(): List<GroupDto> = error("the library repository must not touch groups")
+
+    override suspend fun joinGroup(request: JoinGroupRequestDto): GroupWithInviteDto =
+        error("the library repository must not touch groups")
+
+    override suspend fun groupMembers(groupId: String): List<MemberDto> =
+        error("the library repository must not touch groups")
+
+    override suspend fun rotateGroupInvite(groupId: String): GroupWithInviteDto =
+        error("the library repository must not touch groups")
+
+    override suspend fun removeGroupMember(
+        groupId: String,
+        userId: String,
+    ): Unit = error("the library repository must not touch groups")
+
+    override suspend fun groupFeed(
+        groupId: String,
+        cursor: String?,
+        limit: Int,
+    ): FeedPageDto = error("the library repository must not touch groups")
+
+    override suspend fun groupReviews(
+        groupId: String,
+        mediaId: String,
+    ): List<ReviewDto> = error("the library repository must not touch groups")
+
+    override suspend fun groupWatchlist(
+        groupId: String,
+        cursor: String?,
+        limit: Int,
+    ): WatchlistPageDto = error("the library repository must not touch groups")
+
+    override suspend fun proposeToWatchlist(
+        groupId: String,
+        request: ProposeTitleRequestDto,
+    ): WatchlistItemDto = error("the library repository must not touch groups")
+
+    override suspend fun removeFromWatchlist(
+        groupId: String,
+        entryId: String,
+    ): Unit = error("the library repository must not touch groups")
+
+    override suspend fun groupProgress(
+        groupId: String,
+        mediaId: String,
+    ): List<ProgressEntryDto> = error("the library repository must not touch groups")
+
+    override suspend fun createReview(request: CreateReviewRequestDto): ReviewDto =
+        error("the library repository must not touch groups")
+
+    override suspend fun updateReview(
+        id: String,
+        patch: JsonObject,
+    ): ReviewDto = error("the library repository must not touch groups")
 }

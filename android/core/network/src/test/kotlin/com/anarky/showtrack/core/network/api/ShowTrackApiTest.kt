@@ -1,5 +1,6 @@
 package com.anarky.showtrack.core.network.api
 
+import com.anarky.showtrack.core.network.dto.CreateGroupRequestDto
 import com.anarky.showtrack.core.network.dto.ImportAniListRequest
 import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
 import kotlinx.coroutines.test.runTest
@@ -11,6 +12,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import retrofit2.Retrofit
@@ -145,5 +147,58 @@ class ShowTrackApiTest {
             assertEquals(1, summary.skipped)
             assertEquals(0, summary.failed)
             assertFalse(summary.truncated)
+        }
+
+    /**
+     * `POST /v1/groups` — the request body's key must be `name`, matching
+     * `backend/app/groups/schemas.py`'s `CreateGroupRequest` exactly, and the response must
+     * decode `invite_code`/`invite_code_expires_at`, the fields `GET /v1/groups`'s plain
+     * `GroupRead` does NOT carry (design decision, §1.1 "the invite code is a credential").
+     */
+    @Test
+    fun `createGroup sends the name and decodes the invite fields`() =
+        runTest {
+            server.enqueue(
+                MockResponse
+                    .Builder()
+                    .code(201)
+                    .body(
+                        """{"id":"g-1","name":"Watch Party","created_at":"2026-09-01T10:00:00Z",""" +
+                            """"invite_code":"ABCD-1234","invite_code_expires_at":"2026-09-08T10:00:00Z"}""",
+                    ).build(),
+            )
+
+            val response = api.createGroup(CreateGroupRequestDto(name = "Watch Party"))
+
+            assertEquals("""{"name":"Watch Party"}""", server.takeRequest().body?.utf8())
+            assertEquals("ABCD-1234", response.inviteCode)
+            assertEquals("2026-09-08T10:00:00Z", response.inviteCodeExpiresAt)
+        }
+
+    /**
+     * `GET /v1/groups/{id}/feed` — the wire shape a real `imported` row actually has: `media: null`
+     * (decision S-A). A DTO that made `media` non-nullable would fail this decode outright, not
+     * merely map it wrong.
+     */
+    @Test
+    fun `a feed response decodes an imported row with no media`() =
+        runTest {
+            server.enqueue(
+                MockResponse
+                    .Builder()
+                    .code(200)
+                    .body(
+                        """{"items":[{"id":"f-1","actor":{"id":"u-1","username":"alex"},"kind":"imported",""" +
+                            """"media":null,"payload":{"count":42},"created_at":"2026-09-01T10:00:00Z"}],""" +
+                            """"next_cursor":null}""",
+                    ).build(),
+            )
+
+            val page = api.groupFeed(groupId = "group-1", cursor = null, limit = 20)
+
+            val item = page.items.single()
+            assertEquals("imported", item.kind)
+            assertNull(item.media)
+            assertTrue(item.payload.isNotEmpty())
         }
 }

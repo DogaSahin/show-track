@@ -2,12 +2,16 @@ package com.anarky.showtrack.core.data.di
 
 import com.anarky.showtrack.core.data.auth.AuthEventSource
 import com.anarky.showtrack.core.data.auth.AuthEventSourceImpl
+import com.anarky.showtrack.core.data.group.ActiveGroupStore
+import com.anarky.showtrack.core.data.group.DataStoreActiveGroupStore
 import com.anarky.showtrack.core.data.push.DataStorePushRegistrationStore
 import com.anarky.showtrack.core.data.push.PushRegistrationStore
 import com.anarky.showtrack.core.data.push.PushRepository
 import com.anarky.showtrack.core.data.push.PushRepositoryImpl
 import com.anarky.showtrack.core.data.repository.AuthRepository
 import com.anarky.showtrack.core.data.repository.AuthRepositoryImpl
+import com.anarky.showtrack.core.data.repository.GroupRepository
+import com.anarky.showtrack.core.data.repository.GroupRepositoryImpl
 import com.anarky.showtrack.core.data.repository.LibraryRepository
 import com.anarky.showtrack.core.data.repository.LibraryRepositoryImpl
 import com.anarky.showtrack.core.data.repository.MediaRepository
@@ -102,4 +106,19 @@ abstract class DataModule {
      */
     @Binds
     abstract fun recommendationRepository(impl: RecommendationRepositoryImpl): RecommendationRepository
+
+    /**
+     * No `@Singleton` on the method, same reasoning as the others above: [GroupRepositoryImpl]
+     * itself carries `@Singleton`.
+     */
+    @Binds
+    abstract fun groupRepository(impl: GroupRepositoryImpl): GroupRepository
+
+    /**
+     * `DataStoreActiveGroupStore` carries the `@Singleton`, same reasoning as
+     * [pushRegistrationStore] above: DataStore throws if two instances are constructed over the
+     * same file in one process.
+     */
+    @Binds
+    abstract fun activeGroupStore(impl: DataStoreActiveGroupStore): ActiveGroupStore
 }

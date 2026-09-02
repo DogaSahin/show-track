@@ -38,4 +38,13 @@ dependencies {
     testImplementation(libs.androidx.compose.ui.test.junit4)
     testImplementation(libs.robolectric)
     testImplementation(libs.androidx.test.core)
+
+    // TestNavHostController, so FavoritesEntryHiltTest can drive favoritesEntry() inside a real
+    // graph rather than the stateless FavoritesScreen() overload alone (task 9c.0, E-L).
+    testImplementation(libs.androidx.navigation.testing)
+
+    // Hilt's test harness — composing a hiltViewModel()-backed screen in a JVM test needs it, the
+    // same three lines :feature:library's build file carries.
+    testImplementation(libs.hilt.android.testing)
+    kspTest(libs.hilt.compiler)
 }
