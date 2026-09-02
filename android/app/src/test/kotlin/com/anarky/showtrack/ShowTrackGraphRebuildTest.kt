@@ -19,6 +19,7 @@ import com.anarky.showtrack.core.navigation.AuthRoute
 import com.anarky.showtrack.core.navigation.FavoritesRoute
 import com.anarky.showtrack.core.navigation.ImportRoute
 import com.anarky.showtrack.core.navigation.LibraryRoute
+import com.anarky.showtrack.core.navigation.ProfileRoute
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
@@ -105,7 +106,7 @@ class ShowTrackGraphRebuildTest {
         composeRule.waitForIdle()
 
         composeRule.runOnIdle {
-            navController.routeShowTrackNavigation(LibraryRoute, AppStart.Auth, appViewModel::markSignedIn)
+            navController.routeShowTrackNavigation(LibraryRoute, appViewModel::markSignedIn)
         }
         composeRule.waitForIdle()
 
@@ -155,7 +156,7 @@ class ShowTrackGraphRebuildTest {
 
         // A fresh registration: AuthNavigation's onAuthenticated routes here with isNewAccount = true.
         composeRule.runOnIdle {
-            navController.routeShowTrackNavigation(ImportRoute, AppStart.Auth, appViewModel::markSignedIn)
+            navController.routeShowTrackNavigation(ImportRoute, appViewModel::markSignedIn)
         }
         composeRule.waitForIdle()
 
@@ -167,7 +168,7 @@ class ShowTrackGraphRebuildTest {
 
         // ImportScreen's own skip/Done action routes on to LibraryRoute.
         composeRule.runOnIdle {
-            navController.routeShowTrackNavigation(LibraryRoute, AppStart.Onboarding, appViewModel::markSignedIn)
+            navController.routeShowTrackNavigation(LibraryRoute, appViewModel::markSignedIn)
         }
         composeRule.waitForIdle()
 
@@ -209,6 +210,109 @@ class ShowTrackGraphRebuildTest {
         assertEquals(listOf(null, LibraryRoute::class.qualifiedName), navController.backStackRoutes())
     }
 
+    /**
+     * **The round-2 blocking bug, tested exactly as the reviewer measured it: a composed `NavHost`
+     * and a real `AppViewModel`, chaining the real sequence.** Round 1's fix read
+     * `start == AppStart.Library` as "the Profile door's import screen is returning" and popped the
+     * back stack on that basis. That premise is false the moment a sign-out has happened:
+     * [AppViewModel.markSignedIn] is documented ONE-WAY and a runtime sign-out is navigation-only
+     * (`navigateToAuthClearingStack`), so `start` never moves back to `Auth` — it is STILL `Library`
+     * when the next login reaches `routeShowTrackNavigation`'s `LibraryRoute` branch. Round 1's
+     * guard called `popBackStack()` on `[null, AuthRoute]`, which has nothing to pop TO, leaving an
+     * empty stack and a `null` `currentDestination` — a blank screen with no way forward. This test
+     * chains Profile → sign out → sign in and asserts the stack is non-empty and back on
+     * `LibraryRoute`, the way `5a7d536` (pre-task-9b.6) behaved and round 1 silently broke.
+     */
+    @Test
+    fun `signing out from Profile and back in leaves a working stack on LibraryRoute`() {
+        val appViewModel = AppViewModel(FakeAuthRepository(hasSession = false))
+        lateinit var navController: TestNavHostController
+
+        composeRule.setContent {
+            val start by appViewModel.start.collectAsState()
+            navController = rememberTestNavController()
+            if (start != AppStart.Undecided) {
+                MarkerGraph(navController = navController, startDestination = startDestinationFor(start))
+            }
+        }
+        composeRule.waitForIdle()
+
+        // An ordinary login.
+        composeRule.runOnIdle {
+            navController.routeShowTrackNavigation(LibraryRoute, appViewModel::markSignedIn)
+        }
+        composeRule.waitForIdle()
+        assertEquals(listOf(null, LibraryRoute::class.qualifiedName), navController.backStackRoutes())
+        assertEquals(AppStart.Library, appViewModel.start.value)
+
+        // Visit Profile, then sign out — ProfileNavigation's own onNavigate(AuthRoute).
+        composeRule.runOnIdle { navController.navigate(ProfileRoute) }
+        composeRule.waitForIdle()
+        composeRule.runOnIdle {
+            navController.routeShowTrackNavigation(AuthRoute, appViewModel::markSignedIn)
+        }
+        composeRule.waitForIdle()
+        assertEquals(listOf(null, AuthRoute::class.qualifiedName), navController.backStackRoutes())
+        // The premise round 1 got wrong, asserted directly: start is STILL Library here.
+        assertEquals(AppStart.Library, appViewModel.start.value)
+
+        // Sign back in.
+        composeRule.runOnIdle {
+            navController.routeShowTrackNavigation(LibraryRoute, appViewModel::markSignedIn)
+        }
+        composeRule.waitForIdle()
+
+        // The blocking bug, made concrete: round 1 left this `[]` with a null currentDestination.
+        assertEquals(listOf(null, LibraryRoute::class.qualifiedName), navController.backStackRoutes())
+    }
+
+    /**
+     * The second symptom the same false premise produced: a SECOND registration, after a sign-out,
+     * with `start` still stuck at `Library` from the first account. Round 1's `ImportRoute` branch
+     * guard (`if (start == AppStart.Auth) onSignedIn(true)`) never promoted in this case — `start`
+     * was `Library`, not `Auth` — so the second account's session never reached `Onboarding`, and a
+     * rotation mid-onboarding would have pulled that user off `ImportRoute` back to whatever
+     * `Library`'s declared start destination already was. Round 2's fix keys the promotion on
+     * `currentDestination == AuthRoute` instead, which is true here regardless of what `start`
+     * carries over from a previous session.
+     */
+    @Test
+    fun `registering a second account after a sign-out is still promoted to Onboarding`() {
+        val appViewModel = AppViewModel(FakeAuthRepository(hasSession = false))
+        lateinit var navController: TestNavHostController
+
+        composeRule.setContent {
+            val start by appViewModel.start.collectAsState()
+            navController = rememberTestNavController()
+            if (start != AppStart.Undecided) {
+                MarkerGraph(navController = navController, startDestination = startDestinationFor(start))
+            }
+        }
+        composeRule.waitForIdle()
+
+        // First account: an ordinary login promotes start to Library.
+        composeRule.runOnIdle {
+            navController.routeShowTrackNavigation(LibraryRoute, appViewModel::markSignedIn)
+        }
+        composeRule.waitForIdle()
+        assertEquals(AppStart.Library, appViewModel.start.value)
+
+        // Sign out.
+        composeRule.runOnIdle {
+            navController.routeShowTrackNavigation(AuthRoute, appViewModel::markSignedIn)
+        }
+        composeRule.waitForIdle()
+
+        // A second, fresh registration — reached from AuthRoute exactly like the first time.
+        composeRule.runOnIdle {
+            navController.routeShowTrackNavigation(ImportRoute, appViewModel::markSignedIn)
+        }
+        composeRule.waitForIdle()
+
+        assertEquals(listOf(null, ImportRoute::class.qualifiedName), navController.backStackRoutes())
+        assertEquals(AppStart.Onboarding, appViewModel.start.value)
+    }
+
     @Composable
     private fun rememberTestNavController(): TestNavHostController {
         val context = ApplicationProvider.getApplicationContext<Context>()
@@ -235,6 +339,7 @@ class ShowTrackGraphRebuildTest {
             composable<LibraryRoute> { }
             composable<FavoritesRoute> { }
             composable<ImportRoute> { }
+            composable<ProfileRoute> { }
         }
     }
 

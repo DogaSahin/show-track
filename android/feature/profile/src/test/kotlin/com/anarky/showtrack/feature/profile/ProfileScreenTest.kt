@@ -169,7 +169,15 @@ class ProfileScreenTest {
         }
 
         val context = ApplicationProvider.getApplicationContext<Context>()
-        composeRule.onNodeWithText(context.getString(R.string.profile_import_action)).performClick()
+        // Round 2 (task 9b.6 fix round, minor): asserted displayed BEFORE clicking. A zero-height
+        // node collapsed by Robolectric's virtual window (the exact trap this test's own KDoc
+        // documents diagnosing) and a genuinely dead `onClick` produce IDENTICAL failures from
+        // `assertTrue(clicked)` alone — this line is what tells a future reader which one they are
+        // looking at if a later section change pushes the button off-window again.
+        composeRule
+            .onNodeWithText(context.getString(R.string.profile_import_action))
+            .assertIsDisplayed()
+            .performClick()
 
         assertTrue(clicked)
     }

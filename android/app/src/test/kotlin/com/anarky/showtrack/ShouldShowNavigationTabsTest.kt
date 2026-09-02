@@ -9,6 +9,7 @@ import androidx.navigation.createGraph
 import androidx.test.core.app.ApplicationProvider
 import com.anarky.showtrack.core.navigation.AuthRoute
 import com.anarky.showtrack.core.navigation.FavoritesRoute
+import com.anarky.showtrack.core.navigation.ImportRoute
 import com.anarky.showtrack.core.navigation.LibraryRoute
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -88,6 +89,40 @@ class ShouldShowNavigationTabsTest {
     }
 
     /**
+     * Round 2, task 9b.6 fix round — a blind review measured this live, and it had NO coverage at
+     * all before this test: `AppStart.Onboarding` maps to `ImportRoute` as the graph's declared
+     * start destination, and `findStartDestination()` (the tab bar's own `popUpTo` target) trusts
+     * that to be a real tab. Showing tabs here pins `ImportRoute` underneath every tab's own back
+     * stack (Back from any tab returns to onboarding instead of exiting), and a tab tap never
+     * promotes `start`, so a configuration change resets the graph back to a bare `ImportRoute`
+     * stack, discarding whatever tab the user was on. Hidden here even though the current
+     * destination genuinely is `ImportRoute`, not `AuthRoute` — this is the ONE case
+     * `shouldShowNavigationTabs` reads `start` for anything beyond the `Undecided` boundary.
+     */
+    @Test
+    fun `hidden on Onboarding even though the current destination is not AuthRoute`() {
+        val destination = controllerWith { onboardingOnlyGraph() }.currentDestination
+
+        assertFalse(shouldShowNavigationTabs(AppStart.Onboarding, destination))
+    }
+
+    /**
+     * The mirror of `shown as soon as navigation leaves AuthRoute, regardless of which route
+     * follows` below: unlike `Auth`, moving `start` itself is not enough to reveal the tab bar
+     * while still `Onboarding` — the exclusion is keyed on `start`, not on which destination is
+     * current, precisely because `ImportRoute` is a real, valid destination to be sitting on and
+     * tabs must stay hidden there regardless.
+     */
+    @Test
+    fun `still hidden on Onboarding even navigated away from ImportRoute`() {
+        val controller = controllerWith { onboardingOnlyGraph() }
+
+        controller.navigate(FavoritesRoute)
+
+        assertFalse(shouldShowNavigationTabs(AppStart.Onboarding, controller.currentDestination))
+    }
+
+    /**
      * The boundary a review round found live: `currentBackStackEntryAsState()` is
      * `currentBackStackEntryFlow.collectAsState(null)`, so it SEEDS at `null` — before any graph
      * exists — and stays `null` through the composition pass where `start` first flips off
@@ -146,4 +181,7 @@ class ShouldShowNavigationTabsTest {
 
     private fun NavHostController.authOnlyGraph() =
         createGraph(startDestination = AuthRoute) { showTrackDestinations(onNavigate = { }) }
+
+    private fun NavHostController.onboardingOnlyGraph() =
+        createGraph(startDestination = ImportRoute) { showTrackDestinations(onNavigate = { }) }
 }

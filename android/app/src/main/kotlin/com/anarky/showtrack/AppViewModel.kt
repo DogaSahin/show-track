@@ -82,6 +82,34 @@ class AppViewModel
          * this instant". Calling this with a value [start] already holds (a second login after a
          * mid-session logout, or a second call reaching `Library` from `Library`) is a same-value
          * `StateFlow` write — no-op, no recomposition.
+         *
+         * Round 2 (task 9b.6 fix round) considered, and REJECTED, guarding this function itself
+         * against `isNewAccount = true` once `start` has moved past `Auth` — a suggestion aimed at
+         * making the "never moves from `Library` back to `Onboarding`" sentence above structural
+         * rather than resting on `routeShowTrackNavigation`'s own `ImportRoute`-branch guard.
+         * Measured, not assumed, to be unsound: a REAL, required scenario calls this with
+         * `isNewAccount = true` while `start` already reads `Library` — a SECOND registration,
+         * after a sign-out. A runtime sign-out is navigation-only and never moves `start` backward
+         * (that is the whole point of the paragraph above), so `start` is genuinely `Library`,
+         * left over from the FIRST account, at the exact moment the second account's registration
+         * legitimately needs to reach `Onboarding`. A guard reading `isNewAccount && start != Auth
+         * → refuse` cannot tell that call apart from the demotion bug it is trying to prevent —
+         * both present as "`markSignedIn(true)` called while `start == Library`" — because `start`
+         * alone does not carry the information that distinguishes them, which is exactly the same
+         * defect that made `start` the wrong signal for `routeShowTrackNavigation`'s own routing
+         * decision (see that function's KDoc). Confirmed empirically: adding the guard broke
+         * `` `registering a second account after a sign-out is still promoted to Onboarding` ``
+         * (`ShowTrackGraphRebuildTest`) with `expected:<Onboarding> but was:<Library>` — the guard
+         * silently ate a legitimate registration.
+         *
+         * The actual safeguard against the demotion bug lives one layer up, where the information
+         * needed to tell the two apart actually is: `routeShowTrackNavigation`'s `ImportRoute`
+         * branch only ever calls this with `isNewAccount = true` when `currentDestination ==
+         * AuthRoute` — Profile's own door to `ImportRoute` never reaches that branch's `true` case
+         * at all (`` `routing to ImportRoute from Profile does not call onSignedIn` ``,
+         * `ShowTrackGraphRoutingTest`), regardless of what `start` currently holds. This function
+         * stays a plain, unconditional promotion — the caller is where "is this navigation actually
+         * arriving from sign-in" is a decidable question, and this function is not.
          */
         fun markSignedIn(isNewAccount: Boolean) {
             mutableStart.value = if (isNewAccount) AppStart.Onboarding else AppStart.Library

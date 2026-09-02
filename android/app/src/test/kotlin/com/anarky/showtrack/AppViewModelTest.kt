@@ -125,6 +125,45 @@ class AppViewModelTest {
             assertEquals(AppStart.Library, viewModel.start.value)
         }
 
+    /**
+     * Round 2, task 9b.6 fix round: the reviewer asked for a guard here rejecting
+     * `isNewAccount = true` once `start` had moved past `Auth`, "so the property is structural
+     * rather than call-site-dependent". Implemented, tested, and REVERTED after this exact test
+     * (in its rejected form, asserting the promotion was refused) turned out to conflict with a
+     * BLOCKING requirement of this same round: a second registration, after a sign-out, legitimately
+     * calls this with `isNewAccount = true` while `start` is still `Library` (sign-out is
+     * navigation-only and never moves `start` back — see [AppViewModel.markSignedIn]'s own KDoc).
+     * This test now pins the CORRECT behaviour — the promotion succeeds — and stands as the
+     * regression guard for why no such guard belongs in this function; the equivalent scenario is
+     * also covered end-to-end in `ShowTrackGraphRebuildTest`'s
+     * `` `registering a second account after a sign-out is still promoted to Onboarding` ``.
+     */
+    @Test
+    fun `markSignedIn promotes to Onboarding from Library — a second registration after a sign-out`() =
+        runTest(dispatcher) {
+            val viewModel = AppViewModel(FakeAuthRepository(hasSession = true))
+            advanceUntilIdle()
+            assertEquals(AppStart.Library, viewModel.start.value)
+
+            viewModel.markSignedIn(isNewAccount = true)
+
+            assertEquals(AppStart.Onboarding, viewModel.start.value)
+        }
+
+    /** `isNewAccount = true` called again from `Onboarding` is a same-value write — idempotent, not a demotion. */
+    @Test
+    fun `markSignedIn is idempotent when isNewAccount true is called again from Onboarding`() =
+        runTest(dispatcher) {
+            val viewModel = AppViewModel(FakeAuthRepository(hasSession = false))
+            advanceUntilIdle()
+            viewModel.markSignedIn(isNewAccount = true)
+            assertEquals(AppStart.Onboarding, viewModel.start.value)
+
+            viewModel.markSignedIn(isNewAccount = true)
+
+            assertEquals(AppStart.Onboarding, viewModel.start.value)
+        }
+
     private class FakeAuthRepository(
         private val hasSession: Boolean,
     ) : AuthRepository {

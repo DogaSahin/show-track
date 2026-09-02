@@ -218,14 +218,21 @@ fun ShowTrackApp(authEvents: Flow<AuthEvent>) {
  * Activity recreation; see `ShowTrackNavHost`'s KDoc for why that regressed).
  *
  * That move from `Auth` to `Library` is exactly why this function's own truth table needed a
- * second look, and it survives it: [start]'s three decided values — [AppStart.Auth],
- * [AppStart.Library], and (task 9b.6) [AppStart.Onboarding] — are ALL `!= Undecided`, so
- * `start != AppStart.Undecided` reads identically across every one of them, before and after any
- * promotion between them — the condition below cannot distinguish, and is not supposed to
- * distinguish, "signed in from a `Library`-started session" from "signed in after being promoted
- * from `Auth`" from "signed in and currently offered the AniList import screen", which is exactly
- * the invariant this function is supposed to have (`shouldShowNavigationTabs` decides visibility
- * from *where the user currently is*, `currentDestination`, never from *how the session started*).
+ * second look, and it mostly survives it: [start]'s decided values other than [AppStart.Onboarding]
+ * — [AppStart.Auth] and [AppStart.Library] — are both `!= Undecided` and read identically here,
+ * before and after any promotion between them, because THAT distinction really is "how the session
+ * started" rather than "where the user currently is", which this function has no business reading.
+ *
+ * [AppStart.Onboarding] (task 9b.6) is the one exception, added in round 2 of that task's fix
+ * round, and it is a genuine exception rather than a fourth value this function ignores the same
+ * way: the condition below excludes it explicitly. Unlike `Auth`→`Library`, `Onboarding` is not
+ * "how the session started" — it is "the user is currently on a specific, modal screen"
+ * (`ImportRoute`, which `AppStart.Onboarding` maps to as the graph's declared start destination),
+ * and the tab bar's own `findStartDestination()` mechanism (`navigateToTopLevelDestination`) trusts
+ * that declared start destination to be a REAL tab. Showing tabs over `ImportRoute` — or worse,
+ * leaving it pinned under every tab's own back stack — was a measured regression (see this
+ * function's own KDoc, and `ShouldShowNavigationTabsTest`'s `Onboarding` cases), not a theoretical
+ * one, which is why this is the one place `start` genuinely is read past the `Undecided` boundary.
  * `shouldShowNavigationTabs` never touched `startDestinationId` before this change and still
  * doesn't — the fix lives entirely in [AppViewModel] and the navigation layer this function only
  * reads a destination from.
@@ -233,7 +240,23 @@ fun ShowTrackApp(authEvents: Flow<AuthEvent>) {
 internal fun shouldShowNavigationTabs(
     start: AppStart,
     currentDestination: NavDestination?,
-): Boolean = start != AppStart.Undecided && currentDestination?.hasRoute(AuthRoute::class) == false
+): Boolean =
+    start != AppStart.Undecided &&
+        start != AppStart.Onboarding &&
+        // Round 2 (task 9b.6 fix round, a blind review's own measurement): Onboarding is a modal
+        // step, not a tab-bar-visible one — `ImportRoute` is the graph's declared start
+        // destination while AppStart.Onboarding holds, so `findStartDestination()` (the tab bar's
+        // own `popUpTo` target — see navigateToTopLevelDestination's KDoc) resolves to `ImportRoute`
+        // for as long as this excludes it, and every tab tap then leaves ImportRoute PINNED
+        // underneath every tab's own back stack: Back from any tab lands on the import screen
+        // instead of exiting, and — worse — a tab tap never promotes `start`, so a configuration
+        // change (rotation, dark-mode toggle, multi-window resize) rebuilds the graph declaring
+        // ImportRoute as its start all over again and resets the stack to just `[null, ImportRoute]`,
+        // discarding whatever tab the user was on. Excluding Onboarding here makes the import
+        // screen's only exits Skip and Done (`ImportScreen`'s own two actions), which is also what
+        // makes `findStartDestination()`'s assumption — "the declared start destination is a real
+        // tab, not a modal step" — true again for the tab bar specifically.
+        currentDestination?.hasRoute(AuthRoute::class) == false
 
 /**
  * The four top-level destinations the navigation suite offers. A subset of the nine routes on

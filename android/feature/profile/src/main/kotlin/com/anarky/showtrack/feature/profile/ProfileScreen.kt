@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -127,8 +129,14 @@ internal fun ProfileScreen(
 ) {
     var showSignOutConfirmation by remember { mutableStateOf(false) }
 
+    // Round 2 (task 9b.6 fix round): `.verticalScroll` is new here, and it is load-bearing now
+    // that ImportSection sits between StatsSection and SignOutSection — on a short device or at a
+    // large font scale, sign-out (a functional necessity, not a nice-to-have) could fall off the
+    // bottom of this Column with no way to reach it. `ImportScreen` and the rest of this project's
+    // non-scrolling screens are deliberately left alone — this is scoped to the one screen this
+    // task actually made taller.
     Column(
-        modifier = modifier.fillMaxWidth().padding(all = 16.dp),
+        modifier = modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(all = 16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text(text = stringResource(R.string.profile_title), style = MaterialTheme.typography.headlineSmall)
