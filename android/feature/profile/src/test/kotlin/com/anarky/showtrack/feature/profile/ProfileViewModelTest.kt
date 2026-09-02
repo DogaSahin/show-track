@@ -24,7 +24,6 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -32,7 +31,6 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.io.IOException
-import java.math.BigDecimal
 
 private const val NTFY = "io.heckel.ntfy"
 
@@ -104,6 +102,13 @@ private class FakeLibraryRepository(
 ) : LibraryRepository {
     var statsGate: CompletableDeferred<Unit>? = null
 
+    // Round 1's own regression guard: proves `init`/push toggles reach `libraryStats()` zero
+    // times, which a state-only assertion (`statsState.value`, still `Loading`) cannot — a
+    // ViewModel that fetched and then discarded the result would look identical to one that
+    // never fetched at all if only the resulting state were checked.
+    var statsCalls = 0
+        private set
+
     override fun observeLibrary(): Flow<List<LibraryEntry>> = error("not exercised by ProfileViewModel")
 
     override suspend fun refresh(): Unit = error("not exercised by ProfileViewModel")
@@ -132,6 +137,7 @@ private class FakeLibraryRepository(
     override suspend fun loadMoreFavorites(): Unit = error("not exercised by ProfileViewModel")
 
     override suspend fun libraryStats(): LibraryStats {
+        statsCalls++
         statsGate?.await()
         statsFailure?.let { throw it }
         return statsResult
@@ -332,40 +338,20 @@ class ProfileViewModelTest {
             assertFalse(viewModel.signOutError.value)
         }
 
-    @Test
-    fun `an unrated library shows no average rather than zero`() =
-        runTest(dispatcher) {
-            // average_score null → the UI must not render 0.0. "You rate everything zero" is a
-            // different and wrong statement.
-            val stats =
-                LibraryStats(
-                    total = 5,
-                    byStatus = mapOf(UserMediaStatus.WATCHING to 5),
-                    averageScore = null,
-                    ratedCount = 0,
-                )
-            val viewModel = ProfileViewModel(FakeDistributors(), FakeAuthRepository(), FakeLibraryRepository(stats))
-            advanceUntilIdle()
-
-            val success = viewModel.statsState.value as LibraryStatsUiState.Success
-            assertNull(success.stats.averageScore)
-        }
-
-    @Test
-    fun `the average is labelled with what it is an average of`() =
-        runTest(dispatcher) {
-            // rated_count travels with average_score precisely so the screen can say "8.4 across
-            // 12 rated titles". An average over 12 of 400 is not "your average score".
-            val stats =
-                LibraryStats(total = 400, byStatus = emptyMap(), averageScore = BigDecimal("8.4"), ratedCount = 12)
-            val viewModel = ProfileViewModel(FakeDistributors(), FakeAuthRepository(), FakeLibraryRepository(stats))
-            advanceUntilIdle()
-
-            val success = viewModel.statsState.value as LibraryStatsUiState.Success
-            assertEquals(BigDecimal("8.4"), success.stats.averageScore)
-            assertEquals(12, success.stats.ratedCount)
-        }
-
+    /**
+     * The two ViewModel-level tests the brief originally named here — "an unrated library shows
+     * no average rather than zero" and "the average is labelled with what it is an average of" —
+     * were DELETED in round 1 (review finding, blocking 1), not repointed. Both only ever asserted
+     * that [ProfileViewModel.statsState] carried the exact [LibraryStats] the fake was constructed
+     * with — the pass-through `LibraryStatsUiState.Success(stats)` assignment in [ProfileViewModel.refreshStats]
+     * has no logic between the fake and the assertion for either test to discriminate. The actual
+     * behaviour those two names describe — which STRING renders for a null average, and that
+     * `rated_count` reaches the label the user reads — lives entirely inside `StatsContent` in
+     * `ProfileScreen.kt`, which no ViewModel test reaches; `ProfileScreenTest` (this module, round
+     * 1) pins both directly against the composed screen instead. Keeping the two ViewModel tests
+     * alongside the screen tests would be exactly the padded-suite failure mode the standing
+     * instructions warn about: green regardless of what `StatsContent` actually does.
+     */
     @Test
     fun `a failed stats load leaves the rest of the profile usable`() =
         runTest(dispatcher) {
@@ -376,13 +362,18 @@ class ProfileViewModelTest {
             val distributors = FakeDistributors(installed = listOf(NTFY))
             val authRepository = FakeAuthRepository()
             val viewModel = ProfileViewModel(distributors, authRepository, repository)
+            viewModel.refreshStats() // stands in for LifecycleResumeEffect's call — refreshStats()
+            // is no longer folded into init{}'s refresh() (round 1, blocking 2).
             advanceUntilIdle()
 
             assertEquals(LibraryStatsUiState.Error(failure), viewModel.statsState.value)
 
-            // Push is untouched by the stats failure — including a later refresh() re-triggering it.
+            // Push is untouched by the stats failure — including a later refresh() re-triggering
+            // it. refresh() no longer touches stats at all (round 1), so this also proves a push
+            // toggle does not re-issue the failing stats GET.
             viewModel.enablePush(NTFY)
             assertEquals(PushState.Registered(NTFY), viewModel.pushState.value)
+            assertEquals(LibraryStatsUiState.Error(failure), viewModel.statsState.value)
 
             // Sign-out is untouched too.
             viewModel.signOut()
@@ -409,6 +400,7 @@ class ProfileViewModelTest {
                 )
             val repository = FakeLibraryRepository(initial)
             val viewModel = ProfileViewModel(FakeDistributors(), FakeAuthRepository(), repository)
+            viewModel.refreshStats() // stands in for LifecycleResumeEffect's first call (round 1)
             advanceUntilIdle()
             assertEquals(LibraryStatsUiState.Success(initial), viewModel.statsState.value)
 
@@ -421,7 +413,7 @@ class ProfileViewModelTest {
                 )
             repository.statsResult = updated
             repository.statsGate = CompletableDeferred()
-            viewModel.refresh()
+            viewModel.refreshStats() // a later resume — refresh() no longer triggers this (round 1)
             advanceUntilIdle()
 
             // Still the OLD stats, and still Success — never LibraryStatsUiState.Loading — while
@@ -452,13 +444,14 @@ class ProfileViewModelTest {
                 )
             val repository = FakeLibraryRepository(initial)
             val viewModel = ProfileViewModel(FakeDistributors(), FakeAuthRepository(), repository)
+            viewModel.refreshStats() // stands in for LifecycleResumeEffect's first call (round 1)
             advanceUntilIdle()
             assertEquals(LibraryStatsUiState.Success(initial), viewModel.statsState.value)
 
             val failure = IOException("stats offline")
             repository.statsGate = CompletableDeferred()
             repository.statsFailure = failure
-            viewModel.refresh()
+            viewModel.refreshStats() // a later resume — refresh() no longer triggers this (round 1)
             advanceUntilIdle()
 
             // Still the OLD stats, and still Success — never LibraryStatsUiState.Error — while the
@@ -483,10 +476,11 @@ class ProfileViewModelTest {
                 )
             val repository = FakeLibraryRepository(initial)
             val viewModel = ProfileViewModel(FakeDistributors(), FakeAuthRepository(), repository)
+            viewModel.refreshStats() // stands in for LifecycleResumeEffect's first call (round 1)
             advanceUntilIdle()
 
             repository.statsFailure = IOException("stats offline")
-            viewModel.refresh()
+            viewModel.refreshStats()
             advanceUntilIdle()
             assertEquals(LibraryStatsUiState.Success(initial, isStale = true), viewModel.statsState.value)
 
@@ -499,9 +493,51 @@ class ProfileViewModelTest {
                 )
             repository.statsFailure = null
             repository.statsResult = updated
-            viewModel.refresh()
+            viewModel.refreshStats()
             advanceUntilIdle()
 
             assertEquals(LibraryStatsUiState.Success(updated, isStale = false), viewModel.statsState.value)
+        }
+
+    /**
+     * Round 1's own regression guard (blocking 2): `init` must stay a push-only, synchronous read
+     * — several tests above (e.g. `no installed distributor is reported as NoDistributor`) read
+     * `pushState.value` straight after construction with no `advanceUntilIdle()`, which only works
+     * if `init` never launches a coroutine. This pins the OTHER half: `init` must NOT also start
+     * fetching stats, because `ProfileScreen`'s `LifecycleResumeEffect` already calls
+     * [ProfileViewModel.refreshStats] once on the very first composition (the same `Lifecycle`
+     * replay `FavoritesViewModel`'s own KDoc measures) — if `init` fetched too, cold start would
+     * issue the stats GET twice with no ordering guarantee between them.
+     */
+    @Test
+    fun `init does not fetch stats — only an explicit refreshStats call does`() =
+        runTest(dispatcher) {
+            val repository = FakeLibraryRepository()
+            ProfileViewModel(FakeDistributors(), FakeAuthRepository(), repository)
+            advanceUntilIdle()
+
+            assertEquals(0, repository.statsCalls)
+        }
+
+    /**
+     * The push-toggle half of the same finding: [ProfileViewModel.enablePush]/[ProfileViewModel.disablePush]
+     * call [ProfileViewModel.refresh] to re-read push state, and before round 1 that function also
+     * fetched stats — so every push toggle silently re-issued `GET /v1/library/stats`, a regression
+     * against pre-9b.5 behaviour. `enablePush`/`disablePush` share one `refresh()` call, so exercising
+     * either is enough to pin that neither reaches [LibraryRepository.libraryStats] any more.
+     */
+    @Test
+    fun `toggling push does not fetch stats`() =
+        runTest(dispatcher) {
+            val distributors = FakeDistributors(installed = listOf(NTFY))
+            val repository = FakeLibraryRepository()
+            val viewModel = ProfileViewModel(distributors, FakeAuthRepository(), repository)
+            advanceUntilIdle()
+
+            viewModel.enablePush(NTFY)
+            viewModel.disablePush()
+            advanceUntilIdle()
+
+            assertEquals(0, repository.statsCalls)
         }
 }

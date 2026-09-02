@@ -70,11 +70,58 @@ fun ProfileScreen(
     // LifecycleResumeEffect rather than LaunchedEffect(Unit): the state is a function of what is
     // installed on the DEVICE, and PackageManager offers no flow to observe. Resume is exactly
     // when the answer can have changed.
+    //
+    // Two calls, not one (review finding, round 1): `refresh()` is push's synchronous read;
+    // `refreshStats()` is the stats network fetch. They used to be one function — folding the
+    // stats fetch into `refresh()` made `init` (below) and this effect both fire it on cold start
+    // with no ordering guarantee between the two, and made every push toggle silently re-fetch
+    // stats too. See `ProfileViewModel`'s own KDoc for the full account.
     LifecycleResumeEffect(viewModel) {
         viewModel.refresh()
+        viewModel.refreshStats()
         onPauseOrDispose { }
     }
 
+    ProfileScreen(
+        pushState = pushState,
+        statsState = statsState,
+        signOutError = signOutError,
+        onEnablePush = viewModel::enablePush,
+        onDisablePush = viewModel::disablePush,
+        onStatsRetry = viewModel::refreshStats,
+        onSignOut = viewModel::signOut,
+        modifier = modifier,
+    )
+}
+
+/**
+ * The stateless half, split out so it can be previewed and driven by a test without a graph, a
+ * ViewModel, or Hilt — `LibraryScreen`/`FavoritesScreen`'s pattern. `ProfileScreenTest` drives
+ * this directly to pin the two behaviours no ViewModel test can see: which STRING an unrated
+ * library renders (never "0.0" — see [StatsContent]'s own KDoc) and that an absent status renders
+ * as absent, not zero.
+ *
+ * The sign-out confirmation dialog's own `showSignOutConfirmation` flag lives here, not in the
+ * caller above: it is pure Compose UI state with no ViewModel counterpart, the same way
+ * `LibraryScreen`'s stateless overload owns whatever purely-visual state it needs.
+ *
+ * Eight parameters trips detekt's `LongParameterList` (threshold 6); suppressed rather than
+ * bundling the callbacks into an `Actions` holder class, matching `LibraryScreen`/`DiscoverScreen`'s
+ * own identical suppression for the identical reason — a holder that exists for this one call site
+ * only is indirection without fewer moving parts.
+ */
+@Suppress("LongParameterList")
+@Composable
+internal fun ProfileScreen(
+    pushState: PushState,
+    statsState: LibraryStatsUiState,
+    signOutError: Boolean,
+    onEnablePush: (String) -> Unit,
+    onDisablePush: () -> Unit,
+    onStatsRetry: () -> Unit,
+    onSignOut: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     var showSignOutConfirmation by remember { mutableStateOf(false) }
 
     Column(
@@ -84,12 +131,12 @@ fun ProfileScreen(
         Text(text = stringResource(R.string.profile_title), style = MaterialTheme.typography.headlineSmall)
         PushSection(
             state = pushState,
-            onEnable = viewModel::enablePush,
-            onDisable = viewModel::disablePush,
+            onEnable = onEnablePush,
+            onDisable = onDisablePush,
         )
         StatsSection(
             state = statsState,
-            onRetry = viewModel::refresh,
+            onRetry = onStatsRetry,
         )
         SignOutSection(
             error = signOutError,
@@ -105,7 +152,7 @@ fun ProfileScreen(
             onDismiss = { showSignOutConfirmation = false },
             onConfirm = {
                 showSignOutConfirmation = false
-                viewModel.signOut()
+                onSignOut()
             },
         )
     }

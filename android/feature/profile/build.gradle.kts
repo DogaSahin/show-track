@@ -41,6 +41,11 @@ dependencies {
     // convention plugin: this is the only screen that asks for a runtime permission.
     implementation(libs.androidx.activity.compose)
 
+    // ProfileScreenTest (task 9b.5, round 1) drives the stateless ProfileScreen() overload
+    // through a real Compose test rule on the JVM — the same setup :feature:library/
+    // :feature:favorites/:feature:discover use.
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.androidx.compose.ui.test.junit4)
     testImplementation(libs.robolectric)
     testImplementation(libs.androidx.test.core)
 }

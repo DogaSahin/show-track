@@ -81,16 +81,19 @@ sealed interface LibraryStatsUiState {
  * NavBackStackEntry, so it survives the trip to the Play Store and back that the NoDistributor
  * prompt asks the user to make.
  *
- * [statsState] rides along on the SAME [refresh] rather than its own resume effect (ruling, task
- * 9b.5's brief): the library changes on OTHER screens, so a stats block that only loaded once on
- * `init` would be stale exactly when a user navigates back here to check it. The one accepted
- * consequence: unlike push's synchronous `PackageManager` read, a stats fetch is a real network
- * round trip, so [enablePush]/[disablePush] now also re-issue one by calling [refresh] — and the
- * `init` below plus `ProfileScreen`'s `LifecycleResumeEffect` firing on the very first composition
- * (the same replay `FavoritesViewModel`'s own KDoc measures) means the FIRST open fetches stats
- * twice. Both are harmless — a stats re-fetch is idempotent and the second call's [Loading] guard
- * never fires over a populated screen — not free, so worth naming rather than leaving as a silent
- * side effect of this ruling.
+ * [statsState] is refreshed by a SEPARATE [refreshStats], not folded into [refresh] (review
+ * finding, round 1 — an earlier version of this class folded the stats fetch into [refresh]
+ * itself). [refresh] is what `init` calls AND what [enablePush]/[disablePush] call on every push
+ * toggle; if it also fetched stats, the ViewModel's own `init` and `ProfileScreen`'s
+ * `LifecycleResumeEffect` firing on the very first composition (the same replay
+ * `FavoritesViewModel`'s own KDoc measures) would issue the stats GET TWICE on cold start with no
+ * ordering guarantee between them — a genuine race, not a hypothetical one: the later-landing
+ * response wins regardless of which one actually reflects the current library, and a transient
+ * failure on the second call could mark a screen that just loaded fine as [LibraryStatsUiState.Success.isStale].
+ * Every push toggle would also silently re-fetch stats, which it never did before stats existed.
+ * Splitting the two removes all three: `init` stays a synchronous, free push-only read (unchanged
+ * from before task 9b.5), [refreshStats] is called exactly once per resume by `ProfileScreen`, and
+ * a push toggle touches only [pushState].
  */
 @HiltViewModel
 class ProfileViewModel
@@ -127,27 +130,11 @@ class ProfileViewModel
         }
 
         /**
-         * Push's half is unchanged from before task 9b.5: a synchronous `PackageManager` read,
-         * still not wrapped in `viewModelScope.launch`.
-         *
-         * The stats half is new and asynchronous — see this class's own KDoc for why it lives here
-         * rather than behind its own resume effect, and for the accepted duplicate-fetch-on-first-
-         * open consequence. [LibraryStatsUiState.Loading] is written ONLY when nothing is on screen
-         * yet (`!is Success`) — carried forward from `FavoritesViewModel.refresh`'s round-1 fix:
-         * writing it unconditionally would blank a populated stats block to a spinner on every
-         * single resume, the exact bug that cost that task three fix rounds. On failure, an
-         * already-[LibraryStatsUiState.Success] state is marked [LibraryStatsUiState.Success.isStale]
-         * instead of being replaced by [LibraryStatsUiState.Error] — `FavoritesViewModel.refresh`'s
-         * round-2 fix, applied here: a failed background resume must not destroy numbers the user
-         * is already reading. [LibraryStatsUiState.Error] stays reachable for the case it always
-         * covered: nothing usable is on screen yet.
-         *
-         * A stats failure never touches [pushState]/[signedOut]/[signOutError] — its own `catch`,
-         * scoped to its own `mutableStatsState` (decision C-S) — so a broken `/v1/library/stats`
-         * leaves push opt-in and sign-out fully usable, which is exactly what
-         * `a failed stats load leaves the rest of the profile usable` pins.
+         * Push only — unchanged from before task 9b.5: a synchronous `PackageManager` read, not
+         * wrapped in `viewModelScope.launch`, safe to call from `init` and from every push toggle.
+         * See this class's own KDoc for why the stats fetch is NOT folded in here any more
+         * (review finding, round 1) — that is [refreshStats]'s job.
          */
-        @Suppress("TooGenericExceptionCaught")
         fun refresh() {
             val installed = distributors.available()
             mutablePushState.value =
@@ -161,7 +148,31 @@ class ProfileViewModel
                         distributors.selected()?.takeIf { it in installed }?.let(PushState::Registered)
                             ?: PushState.Available(installed)
                 }
+        }
 
+        /**
+         * The stats half of what [refresh] used to do in one function (review finding, round 1 —
+         * see this class's own KDoc for the race and the duplicate-GET-on-cold-start it caused).
+         * Called once per resume by `ProfileScreen`, alongside [refresh] — never from `init`, and
+         * never from [enablePush]/[disablePush]: a push toggle has nothing to do with the library.
+         *
+         * [LibraryStatsUiState.Loading] is written ONLY when nothing is on screen yet
+         * (`!is Success`) — carried forward from `FavoritesViewModel.refresh`'s round-1 fix: writing
+         * it unconditionally would blank a populated stats block to a spinner on every single
+         * resume, the exact bug that cost that task three fix rounds. On failure, an
+         * already-[LibraryStatsUiState.Success] state is marked [LibraryStatsUiState.Success.isStale]
+         * instead of being replaced by [LibraryStatsUiState.Error] — `FavoritesViewModel.refresh`'s
+         * round-2 fix, applied here: a failed background resume must not destroy numbers the user
+         * is already reading. [LibraryStatsUiState.Error] stays reachable for the case it always
+         * covered: nothing usable is on screen yet.
+         *
+         * A stats failure never touches [pushState]/[signedOut]/[signOutError] — its own `catch`,
+         * scoped to its own `mutableStatsState` (decision C-S) — so a broken `/v1/library/stats`
+         * leaves push opt-in and sign-out fully usable, which is exactly what
+         * `a failed stats load leaves the rest of the profile usable` pins.
+         */
+        @Suppress("TooGenericExceptionCaught")
+        fun refreshStats() {
             if (mutableStatsState.value !is LibraryStatsUiState.Success) {
                 mutableStatsState.value = LibraryStatsUiState.Loading
             }
