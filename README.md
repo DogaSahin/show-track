@@ -18,17 +18,22 @@ shared activity feed, reviews, a shared "we should watch this" watchlist, and si
 on a title.
 
 The **Android client is a 16-module app you can actually use** — register, search, add a title,
-browse and filter your library, and open one to score, progress and favourite it. A design system,
-the HTTP stack with encrypted token storage and refresh, a Room cache, the repository layer,
-type-safe navigation, Hilt across the whole graph, and push over UnifiedPush sit under four working
-screens: **`:feature:auth`** (login, four-field registration, a startup session check),
-**`:feature:library`** (status tabs, sorting, cursor paging), **`:feature:detail`** (score, progress,
-status and favourite editing, plus Add when a title is not yet tracked) and **`:feature:search`**
-(debounced search that adds a result straight into your library, reachable from a search action in
-the library screen's header), alongside `:feature:profile`'s push-registration screen from Phase
-8.9, which gained a sign-out action in 9a. Four of the nine feature modules —
-`:feature:discover`, `:feature:favorites`, `:feature:groups`, `:feature:feed` — are still one-line
-placeholders. **Registering needs an invite code** (either your server's `REGISTRATION_CODE` or a
+browse and filter your library, favourite and score it, see recommendations, browse your favourites,
+check your library's statistics and import an existing AniList list, either right after registering
+or later from Profile. A design system, the HTTP stack with encrypted token storage and refresh, a
+Room cache (which now also renders the library **offline**, with a staleness banner rather than an
+error — decision C-B), the repository layer, type-safe navigation, Hilt across the whole graph, and
+push over UnifiedPush sit under seven working screens: **`:feature:auth`** (login, four-field
+registration, a startup session check), **`:feature:library`** (status tabs, sorting, cursor paging,
+offline-first rendering), **`:feature:detail`** (score, progress, status and favourite editing, plus
+Add when a title is not yet tracked), **`:feature:search`** (debounced search that adds a result
+straight into your library, reachable from a search action in the library screen's header),
+**`:feature:discover`** (content-based recommendations with an optimistic add — a row disappears the
+moment you tap Add and only reappears if the request actually fails), **`:feature:favorites`** (every
+favourited title, kept in sync with Detail and Library) and **`:feature:profile`** (push registration
+from Phase 8.9, a sign-out action from 9a, and — new this phase — library statistics and the AniList
+import screen). Two of the nine feature modules — `:feature:groups` and `:feature:feed` — are still
+one-line placeholders. **Registering needs an invite code** (either your server's `REGISTRATION_CODE` or a
 group's invite code — see the **Settings** list under [Backend](#backend) below), and **receiving push needs a UnifiedPush
 distributor app** installed separately — see [Push needs a second app
 installed](#push-needs-a-second-app-installed--read-this-before-concluding-push-is-broken).
@@ -96,11 +101,12 @@ probe rather than client contract.
 `:feature:*`, one per screen (`auth`, `library`, `detail`, `discover`, `favorites`, `profile`,
 `search`, `groups`, `feed`). Two of the core modules — `:core:model` and `:core:navigation` — are
 **pure Kotlin/JVM**, with no AGP and no Android dependency at all; the other four are Android
-libraries. Five of the nine feature modules carry a real screen: `:feature:profile` (push
-registration, Phase 8.9) and — new this phase — `:feature:auth`, `:feature:library`,
-`:feature:detail` and `:feature:search`. The remaining four (`discover`, `favorites`, `groups`,
-`feed`) still render a single `Text` and exist so the navigation graph, the dependency rules and the
-DI wiring are exercised against the shape the finished app will have.
+libraries. Seven of the nine feature modules carry a real screen: `:feature:profile` (push
+registration from Phase 8.9, plus library statistics and the AniList import screen from Phase 9b),
+`:feature:auth`, `:feature:library`, `:feature:detail` and `:feature:search` from Phase 9a, and —
+new this phase — `:feature:discover` and `:feature:favorites`. The remaining two (`groups`, `feed`)
+still render a single `Text` and exist so the navigation graph, the dependency rules and the DI
+wiring are exercised against the shape the finished app will have.
 Feature modules never depend on each other, and never on `:core:network` or `:core:database` — all
 data access goes through `:core:data`, which is the only module that knows Retrofit and Room exist.
 That is what keeps "Room is a cache, never the source of truth" structural rather than a convention
@@ -476,7 +482,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   'localhost:8000/v1/library?sort=next_episode_date&limit=20'
 ```
 
-`GET /v1/library` takes three filter/sort query parameters, all optional:
+`GET /v1/library` takes four filter/sort query parameters, all optional:
 
 - **`status`** — one of `watching`, `completed`, `dropped`, `planned`, `paused`. Narrows the page to
   entries in that status; omitted, every status is included. This is what the Android library
@@ -488,7 +494,12 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   request: a page containing that one entry if it is tracked, `{"items":[],"next_cursor":null}` if
   it is not — never a `404`, since "not in your library" is an ordinary, expected answer rather than
   an error. This is what the Android detail screen uses to decide whether to show Add or the
-  score/progress/status editor (decision C-C), and it is the phase's only backend change:
+  score/progress/status editor (decision C-C). Added in Phase 9a.
+- **`favorite`** — `true` or `false`. `true` narrows to favourited entries; `false` narrows to
+  non-favourited ones; omitted, favourite status is not filtered at all. `bool | None`, not a plain
+  `bool` defaulting to `False` — that would make "no filter" and "only non-favourites" the same
+  request. This is what the Android favourites screen sends (`favorite=true`), reusing the library's
+  envelope, cursor and sorts rather than a separate collection. Added in Phase 9b.
 
 ```bash
 BODY=$(curl -s -H "Authorization: Bearer $TOKEN" localhost:8000/v1/library)
@@ -506,7 +517,30 @@ ENTRY=$(echo "$BODY" | python3 -c 'import json,sys; print(json.load(sys.stdin)["
 curl -s -X PATCH "localhost:8000/v1/library/$ENTRY" \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -d '{"score":8.5,"progress":12,"status":"watching"}'
+
+# favourite it, then list only favourites
+curl -s -X PATCH "localhost:8000/v1/library/$ENTRY" \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"favorite":true}'
+curl -s -H "Authorization: Bearer $TOKEN" 'localhost:8000/v1/library?favorite=true'
 ```
+
+`GET /v1/library/stats` reports four numbers over your whole library, computed in SQL rather than by
+paging the library client-side — the client holds one page at a time (decision C-B), and
+re-downloading everything to show four numbers gets worse as the library grows:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" localhost:8000/v1/library/stats
+# -> {"total":42,"by_status":{"watching":10,"completed":25,"dropped":2,"planned":4,"paused":1},
+#     "average_score":"7.8","rated_count":30}
+```
+
+`average_score` is a JSON **string**, for the same reason `LibraryEntry.score` is (decision 4-N): a
+JSON number is an IEEE 754 double and this is a `NUMERIC` average, and it is `null` — not `0` —
+when nothing in the library is rated yet, so a client can tell "no ratings" from "rated zero"
+without inspecting `rated_count` first. `by_status` is a `GROUP BY`, so a status with no entries is
+**absent from the map, not present at `0`** — a client renders what it is given rather than assuming
+every `UserMediaStatus` key exists.
 
 ```bash
 # import a public AniList profile — read-only, one-way, and local edits always win
@@ -869,12 +903,16 @@ know why it is there:
   more than the line reads.** `HardcodedText`/`ContentDescription` are the classic Android Lint
   checks for XML `android:text="literal"` / `android:contentDescription="literal"` attributes,
   and this project has no XML layouts — neither id understands Compose's `Text(text = "literal")`
-  or `contentDescription = "literal"` *parameters*. Confirmed empirically, not assumed: three
-  known literal `Text("Discover"|"Favorites"|"Groups")` calls in the Phase 9b/9c placeholder
-  screens go unflagged under this exact config, in the same `lintDebug` run where
+  or `contentDescription = "literal"` *parameters*. Confirmed empirically, not assumed: at the time
+  this was measured (task 9b.0), three known literal `Text("Discover"|"Favorites"|"Groups")` calls
+  in what were then placeholder screens went unflagged under this exact config, in the same
+  `lintDebug` run where
   `ModifierParameter` — a genuine Compose-aware check bundled with `androidx.compose.ui` — fires
   correctly elsewhere, so Compose analysis is active and simply has no built-in rule watching this
-  failure mode. Left as specified rather than swapped for something else unreviewed; a
+  failure mode. `:feature:discover` and `:feature:favorites` gained real screens in Phase 9b and no
+  longer carry that literal; `:feature:groups` and `:feature:feed` (`Text("Groups")`,
+  `Text("Feed")`) still do, and are still unflagged for the identical reason. Left as specified
+  rather than swapped for something else unreviewed; a
   Compose-aware replacement (a custom detekt rule, or a third-party ruleset) is an open follow-up,
   not a silent substitution. **What it DOES still enforce:** decision C-E for any XML this project
   ever gains, and for the rare literal that happens to reach a lint-visible surface —
@@ -950,10 +988,11 @@ The Android client has never been run on a phone or an emulator, because there i
 environment it was built in. That is a real boundary rather than an oversight, and this section
 exists so nobody reads "done" in the table below as "seen working". Three tiers:
 
-**Executed.** The backend suite — **734 tests**, against a real PostgreSQL schema built by the
-migrations rather than by `create_all`. The Android JVM suite — **234 tests** under
-`./gradlew testDebugUnitTest`: **205** across the app and feature/core modules (up from 117 before
-this phase's four new screens and their ViewModels), plus 29 in `build-logic`,
+**Executed.** The backend suite — **741 tests**, against a real PostgreSQL schema built by the
+migrations rather than by `create_all`. The Android JVM suite — **386 tests**: **357** under
+`./gradlew testDebugUnitTest` across the app and feature/core modules (up from 220 before Phase 9b's
+Hilt/lint foundations, offline-first library rendering, discover, favorites, profile statistics and
+AniList import screen), plus **29** in `build-logic`,
 including the Gradle TestKit runs that drive a real build into each architecture-rule violation and
 one **positive control** that must succeed, so a rule passing can be told apart from a build that
 never configured. The UnifiedPush transport was also driven against a real ntfy in `docker compose`
@@ -1007,13 +1046,32 @@ Nothing in this repository claims any of those seven has happened. [Device
 walkthroughs](#device-walkthroughs) below turns each one into a step-by-step check now that the app
 has screens to run them from.
 
+**Known follow-ups from Phase 9b, recorded rather than fixed.** None of these are regressions in the
+sense the walkthroughs above check for — they are known, minor, and deliberately left for a later
+task rather than expanding this one:
+
+- **Double-tapping Profile's Import button stacks a duplicate import screen.** Nothing debounces the
+  tap, so two fast taps push `ImportRoute` twice; Back from the (empty) second copy lands on the
+  first rather than on Profile. (The onboarding door's own Skip/Done buttons *are* debounced against
+  the equivalent double-tap — this is specifically the Profile door's plain import button.)
+- **The tab bar stays visible over the import screen when it is opened from Profile.** It is hidden
+  only while `AppStart.Onboarding` holds, and the Profile door never sets that — by design, since the
+  Profile door is an ordinary screen, not a mandatory first step. The consequence is real, though: a
+  tab tap while an import is in flight discards it silently, with no confirmation.
+- **Neither `FavoritesViewModel.refresh()` nor `ProfileViewModel.refreshStats()` guards against
+  re-entrancy.** A manual retry tap racing a resume-triggered fetch is last-write-wins, not queued
+  or ignored — whichever request's response arrives last is what ends up on screen, which could
+  under-count if the fetch that landed second was slower and reading interleaved data. (Distinct from
+  `LibraryViewModel.loadMore()` and `DiscoverViewModel.add()`, both of which already guard against
+  this — those are the settled shape for it, not an unsolved problem.)
+
 ## Device walkthroughs
 
-Every walkthrough below was decided by an agent that could not see a screen — either this phase's or
-Phase 8's. Each step names what to tap, what should appear, and what it means if it does not: that
-last clause is what makes this a test rather than a tour. None of these have been run — there is no
-phone or emulator in the environment this was written in — so **this section is unverified
-instructions, not a report of what happened.**
+Every walkthrough below was decided by an agent that could not see a screen — Phase 8, 9a or 9b, none
+of which had a phone or emulator in the environment they were written in. Each step names what to
+tap, what should appear, and what it means if it does not: that last clause is what makes this a test
+rather than a tour. **None of these have been run — this section is unverified instructions, not a
+report of what happened.**
 
 **Setup, once:**
 
@@ -1132,7 +1190,8 @@ because both are showing the same full-screen error at that point.
 ### 6. Adaptive navigation on a wide layout
 
 1. On a tablet, a foldable opened flat, or an emulator resized to a large window/landscape,
-   sign in and look at the three-tab navigation (Home / Favorites / Profile). **Expect:** it
+   sign in and look at the four-tab navigation (Home / Discover / Favorites / Profile — Discover
+   joined the tab bar in Phase 9b; it was Home / Favorites / Profile before). **Expect:** it
    presents as a **rail** on the leading edge of the screen (icons in a vertical column), not a
    bottom bar. *A bottom bar on a wide layout means the explicit `layoutType` passed to
    `NavigationSuiteScaffold` is not actually reproducing the library's own adaptive default — see
@@ -1252,6 +1311,173 @@ real hardware — three independently-tested pieces (`PushNotifierTest`, `Merged
    from, then the manifest's intent filter, then `:feature:detail`'s `navDeepLink` registration —
    the three things `MergedManifestTest`/`NavGraphRegistrationTest`/`PushNotifierTest` each pin
    individually but that only this walkthrough exercises together.
+
+Walkthroughs 1–10 above are Phase 8's and 9a's (see each one's own heading); **they have still never
+been run either.** The eleven below are Phase 9b's — one per row of the phase's acceptance table,
+plus four written against bugs this phase's own review rounds actually shipped and caught, because a
+fresh regression of one of those is exactly the failure mode a walkthrough exists to catch.
+
+### 11. The offline default tab (decision C-B)
+
+This is the whole point of C-B, and it has never worked on a device — only in Robolectric.
+
+1. Sign in, add a few titles, and let the library screen load normally at least once (so Room has
+   something cached).
+2. Turn on airplane mode. Force-stop and relaunch the app.
+3. **Expect:** the library screen still shows your saved titles, with the `StaleDataBanner` reading
+   "Showing saved titles. Tap Retry to check for updates." at the top — not a blank screen, not a
+   spinner that never resolves, and not an error.
+   *If you see an error screen instead of your saved rows, `LibraryViewModel` is treating the Room
+   read itself as having failed rather than falling back to it — decision C-B's cache-first path is
+   broken, not merely slow.*
+4. Tap **Retry** with airplane mode still on. **Expect:** the banner stays, the rows stay, nothing
+   is cleared. *Losing the rows on a failed retry means the retry path replaces the cache render
+   instead of layering an error over it.*
+
+### 12. A failed filter switch stays honest about what's on screen
+
+1. With airplane mode still on from walkthrough 11, tap a different status tab (e.g. **Watching**).
+2. **Expect:** an error state under the **Watching** header — never the **All** tab's rows still
+   showing while the header now reads **Watching**. *Rows from the old filter surviving under the
+   new filter's header is a stale-render bug, not a cosmetic one: it would tell you a title is
+   "Watching" when the app never actually confirmed that filter's contents.*
+3. Turn airplane mode back off and tap **Watching** again. **Expect:** it loads normally.
+
+### 13. Tabs swap rather than stack (task 9b.0)
+
+1. Sign out if you are signed in, then sign back in — a fresh session, not a restored one.
+2. Tap **Favorites**, then tap **Home** (the library tab).
+3. Press the system **Back** button. **Expect:** the app exits (or returns to the previous app) —
+   not a navigation back to Favorites. *If Back walks you through Favorites first, the tab
+   navigation is using `navigate()`'s default back-stack-accumulating behaviour instead of the
+   `popUpTo`/`launchSingleTop` swap task 9b.0 fixed — the bug the task's title names.*
+
+### 14. Discover's optimistic add
+
+1. Tap the **Discover** tab (new to the tab bar this phase — see walkthrough 6).
+2. With a normal connection, tap **Add** on a recommendation. **Expect:** the row disappears
+   immediately, before any network delay is visible — that is the "optimistic" part, decision D-I.
+3. Turn on airplane mode. Tap **Add** on a different recommendation. **Expect:** the row disappears
+   immediately as before, then reappears **at the same position in the list** a moment later, with
+   "Couldn't add this title. Tap to try again." showing under it. *A row that reappears at the
+   bottom of the list, or does not reappear at all, means the failure path is not restoring through
+   `RecommendationRepository.restore` — the row is lost from the feed until the screen is refreshed.*
+4. Look at the reason line under any recommendation ("Because you watched *X*" or "Because you
+   watched *X* — genre, genre"). **Expect:** it names a real title from your library and, when
+   present, genres that plausibly relate to the recommended title. *A reason that names a title you
+   never watched, or reads as a placeholder, means the seed data feeding the recommendation is
+   wrong, not just its wording.*
+
+### 15. Favouriting on Detail reaches the Favorites screen
+
+The favourite toggle lives only on Detail (Library and Favorites both list titles but neither
+exposes its own toggle), so this checks that a change made there is picked up elsewhere.
+`:feature:favorites` has no add/remove of its own (task 9b.4's brief) and no `init` — it only loads
+on `LifecycleResumeEffect`, so this walkthrough is also the only way to notice if that resume trigger
+stops firing.
+
+1. On the **Home** tab, open a title's Detail screen (a title not yet favourited) and mark it a
+   favourite.
+2. Navigate to the **Favorites** tab. **Expect:** the title is already there — no manual
+   pull-to-refresh needed.
+3. Tap that same title from the **Favorites** screen to reopen Detail, and unfavourite it there.
+   Switch back to **Favorites**. **Expect:** it is gone. *If a change made on Detail is not
+   reflected here without leaving and re-entering the tab, the `LifecycleResumeEffect` that is this
+   screen's only loading mechanism did not fire.*
+
+### 16. Profile's library statistics
+
+1. Open the **Profile** tab. **Expect:** a statistics section showing your library total, a
+   breakdown by status, and — if you have rated anything — "Average score: *N* across *M* rated
+   title(s)".
+2. Compare the total and per-status counts against what the **Home** tab's status tabs show for the
+   same account. **Expect:** they match. *A mismatch means `GET /v1/library/stats`' SQL aggregation
+   and `GET /v1/library`'s paged list have drifted apart — they are two independent queries over the
+   same table by design (see the backend section above), so nothing enforces agreement except this
+   check.*
+3. If you have never rated anything, **expect** no average-score line at all — not "Average score:
+   0" and not a blank space where a number should be. *A `0` here confuses "nothing rated" with
+   "rated a zero", which is exactly what the server's `null` vs `0` distinction exists to prevent
+   from happening on the wire; a value showing at all here means the client collapsed that
+   distinction back together.*
+4. Turn on airplane mode, pull to refresh (or leave and return to Profile). **Expect:** the numbers
+   already on screen stay visible with a retry affordance, not a blank statistics section.
+
+### 17. The AniList import, both entry points
+
+Use a real, public AniList username you control or know to be public — the import sends no
+credentials, so a private list 404s regardless of whether the username is spelled right.
+
+1. **From onboarding:** register a brand-new account (see walkthrough 1's registration flow, with a
+   username you have not used before). **Expect:** you land directly on the import screen described
+   below, before ever seeing the library.
+2. **From Profile:** on an existing signed-in account, open **Profile** and tap **Import**. **Expect:**
+   the same import screen.
+3. On the import screen either way, **expect** to see the public-profile requirement and the
+   one-way/no-write-back notice before typing anything, an AniList-username field, an **Import**
+   button, and a **Skip for now** button.
+4. Enter your AniList username and tap **Import**. **Expect:** a result screen reporting how many
+   titles were imported, skipped, and failed, plus a truncation notice only if your list is larger
+   than 10,000 entries. Tap **Done**. **Expect:** you land on the library screen, populated with the
+   imported titles.
+5. Repeat the import (Profile → Import, same username) a second time. **Expect:** the result reports
+   **everything skipped** (imported: 0) — re-running never duplicates or overwrites what is already
+   there. *A nonzero "imported" count on a repeat run, or an overwritten score/progress you had
+   already set locally, means the "local edits always win" guarantee documented in the backend
+   section above is not holding on the client's read of the response.*
+6. Try a private or nonexistent username. **Expect:** a message naming the problem ("Couldn't find a
+   public AniList list for that username...") — not a generic error, and not one that reads as a
+   server problem.
+
+### 18. The onboarding path, end to end
+
+This is the path that shipped broken twice during this phase — once landing a fresh registration on
+the library instead of the import screen, once resetting back to the import screen on every device
+rotation. Both are supposedly fixed; this is the check that would catch either regressing.
+
+1. Clear the app's data (or use a device/emulator with no stored session) and launch the app.
+2. Register a brand-new account. **Expect:** you land on the AniList import screen from walkthrough
+   17, and **the tab bar is not visible** — no Home/Discover/Favorites/Profile strip at the bottom
+   (or side, on a wide layout). *Landing anywhere else — the library screen, in particular — is
+   exactly the first bug this path shipped with: onboarding is supposed to be a mandatory stop
+   before the tab bar exists at all.*
+3. Tap **Skip for now**. **Expect:** you land on the library screen, and the tab bar is now visible.
+
+### 19. Sign out, then sign back in
+
+This exact path was briefly unrecoverable during this phase's work: it required a force-quit to
+escape. It is now supposed to route back to the library, not fail silently.
+
+1. From an ordinary signed-in session with the tab bar visible, go to **Profile → Sign out**,
+   confirm.
+2. Log back in with the same account.
+3. **Expect:** you land on the library screen with the tab bar visible, exactly as after the first
+   sign-in in walkthrough 1. *A blank screen with no tab bar and nothing tappable is the regression
+   this phase shipped and fixed — if it recurs, it needs a force-quit to escape, so note that before
+   doing anything else diagnostic.*
+
+### 20. Rotation does not throw you off the screen you're on
+
+1. Register a new account to reach the import screen (as in walkthrough 18), then rotate the device
+   (or toggle the emulator's rotation). **Expect:** you are still on the import screen, in the same
+   state you left it in (typed username preserved is a bonus, not required; *being on the screen at
+   all* is what matters). *Landing back on the library, or seeing the import screen reset, is the
+   second bug this path shipped with — a config change re-declaring the nav graph's start
+   destination used to silently discard wherever you actually were.*
+2. Skip or complete the import to reach the library, switch to any tab (e.g. Favorites), and rotate
+   again. **Expect:** you are still on that tab, not bounced back to the import screen or to Home.
+
+### 21. Profile stays scrollable at extreme sizes
+
+The import section sits between the statistics section and Sign out on the Profile screen — on a
+short device or a large system font scale, that pushes Sign out below the fold.
+
+1. On a device or emulator with a small screen (or Android's Display size / Font size settings
+   turned up to their largest), open **Profile**.
+2. Scroll to the bottom. **Expect:** you can reach **Sign out**, regardless of how much vertical
+   space the statistics and import sections take above it. *If Sign out cannot be reached no matter
+   how far you scroll, the screen is not actually scrolling — check that `ProfileScreen`'s content
+   column still carries `.verticalScroll(...)` and was not lost in a later edit to this file.*
 
 ## Contributing
 
@@ -1772,17 +1998,18 @@ and both get worse the longer they wait.
 | 8 | Android foundations — 16 modules, build-enforced dependency rules, design system, HTTP + token store, Room cache, repositories, navigation, Hilt | done |
 | 8.9 | Push over UnifiedPush — backend transport, Android receiver, deep-linked taps | in progress |
 | 9a | Feature modules, first pass — auth, library, detail and search screens; `media_id` filter on `GET /v1/library` | in progress |
-| 9 | Feature modules — five of nine screens now work end to end; discover, favorites, groups and feed remain placeholders | in progress |
+| 9b | Feature modules, second pass — offline-first library rendering, discover, favorites, profile statistics, AniList import screen (reachable from Profile and from post-registration onboarding); `favorite` filter and `GET /v1/library/stats` | in progress |
+| 9 | Feature modules — seven of nine screens now work end to end; groups and feed remain placeholders | in progress |
 | 10 | Polish and deployment | |
 
-**8.9 and 9a are both `in progress` on the code, not verified on the device**, and the distinction is
-the point. 8.9's acceptance criterion is "a test push notification is received and tapping it opens
-the correct title" — that has never been executed, because there is no device here. 9a's own
-acceptance criterion — "follow your own instructions from a clean directory and reach a working
-state" — is likewise unmet by this repository's own tooling; [Device
+**8.9, 9a and 9b are all `in progress` on the code, not verified on the device**, and the distinction
+is the point. 8.9's acceptance criterion is "a test push notification is received and tapping it
+opens the correct title" — that has never been executed, because there is no device here. 9a's and
+9b's own acceptance criterion — "follow your own instructions from a clean directory and reach a
+working state" — is likewise unmet by this repository's own tooling; [Device
 walkthroughs](#device-walkthroughs) is the instructions, not a report that they were followed. The
-code and its tests are complete and the gate is green in both cases; the device-level criterion is
-what remains open. See [What is proven, and what is not](#what-is-proven-and-what-is-not).
+code and its tests are complete and the gate is green in all three cases; the device-level criterion
+is what remains open. See [What is proven, and what is not](#what-is-proven-and-what-is-not).
 
 Architecture documentation lives outside this repository, alongside the working copy: a design doc, a
 phased task breakdown, and a decision record. This README is the orientation a fresh clone gets.
