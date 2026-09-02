@@ -122,16 +122,18 @@ together, which is what makes "features never depend on each other" possible at 
 allowed to depend on `:core:network` — the rule that forbids that constrains `:feature:*` modules
 only.
 
-Navigation is that stitching made concrete. `:core:navigation` declares nine `@Serializable` routes
+Navigation is that stitching made concrete. `:core:navigation` declares ten `@Serializable` routes
 on a `sealed interface AppRoute` — type-safe destinations, so `DetailRoute("abc")` is checked by the
 compiler where a `"detail/{mediaId}"` string route is checked by the user's crash report. Each
-`:feature:*` module contributes one `NavGraphBuilder.xEntry()` extension that registers its own
-destination and names, at most, another feature's *route*; `:app` is the only module that calls all
-nine. A feature that needs to reach another screen is handed an `onNavigate: (AppRoute) -> Unit` —
-not `(Any) -> Unit`, which would accept the string route back one module up from where it was
-removed.
+`:feature:*` module contributes at least one `NavGraphBuilder.xEntry()` extension that registers its
+own destination and names, at most, another feature's *route* — `:feature:profile` contributes two
+(`profileEntry` and, new this phase, `importEntry`), which is exactly what let the AniList import
+screen ship inside the existing profile module rather than forcing a tenth feature module into
+existence for one screen; `:app` is the only module that calls all ten. A feature that needs to reach
+another screen is handed an `onNavigate: (AppRoute) -> Unit` — not `(Any) -> Unit`, which would
+accept the string route back one module up from where it was removed.
 
-`:app` keeps that wiring as a list rather than as nine calls inline in the `NavHost`, because a list
+`:app` keeps that wiring as a list rather than as ten calls inline in the `NavHost`, because a list
 is inspectable: a JVM test enumerates `AppRoute::class.sealedSubclasses` by reflection and asserts
 every declared route has exactly one destination, and that the graph the entry functions actually
 build has one node per registration call. (`sealedSubclasses` throws
@@ -160,9 +162,16 @@ land in.
 The auth gate sits above the `NavHost` and outside it, collecting `AuthEvent` from `:core:data`. A
 collector inside a destination would be cancelled exactly when the user navigated away from it,
 which is when the request that 401s tends to happen. On `LoggedOut` it navigates to the auth route
-with `popUpTo(0) { inclusive = true }`: without clearing the whole back stack, *back* from the login
-screen returns to a screen whose every request 401s, and the app looks broken rather than logged
-out. `:app` takes that flow from `:core:data`, which re-exposes `:core:network`'s `AuthEventBus` as
+with `popUpTo(graph.id) { inclusive = true }`: without clearing the whole back stack, *back* from the
+login screen returns to a screen whose every request 401s, and the app looks broken rather than
+logged out. **Not `popUpTo(0)`** — task 9b.0 replaced that literal after finding it silently pops
+*nothing* the moment the graph is built from a `startDestination` with a route class rather than one
+with no route at all: a `NavGraph`'s id is 0 only in the no-route-class case, so `popUpTo(0)` matches
+by coincidence today and stops matching anything the first time a nested sub-graph gives the root
+graph a route. Reading the id off `graph` instead survives that refactor; `AuthNavigationTest`'s
+`` `logging out clears the back stack on a graph that has a route` `` pins the graph-with-a-route
+case specifically, the one `popUpTo(0)` gets wrong. `:app` takes that flow from `:core:data`, which
+re-exposes `:core:network`'s `AuthEventBus` as
 one delegating property — the build would permit the composition root to reach past it, but "`:core:data`
 is the only module aware of Retrofit and Room" stops being a rule and becomes a habit the moment the
 app shell names a network type.
@@ -967,11 +976,13 @@ newest level `robolectric:4.15.1` has a shadow for as of this writing — 36 fai
 above, not instrumentation tests — and so are `:app`'s nav-graph, deep-link and merged-manifest
 tests and `:feature:profile`'s push tests.
 
-The pin is written **two ways**, and both are in the tree: `:core:database`, `:core:data` and
-`:core:network` carry `src/test/resources/robolectric.properties` with `sdk=35`, which is the better
-form because a test class added later inherits it instead of rediscovering the failure; `:app` and
-`:feature:profile` write `@Config(sdk = [35])` per class. Whichever you copy, pin it — the default
-is `targetSdk`, which is 36, which fails.
+The pin is written **two ways**, and both are in the tree: `:core:data`, `:core:database`,
+`:core:designsystem`, `:core:network`, `:feature:library`, `:feature:discover`, `:feature:favorites`
+and — as of this phase's fix round — `:feature:profile` all carry
+`src/test/resources/robolectric.properties` with `sdk=35`, which is the better form because a test
+class added later inherits it instead of rediscovering the failure; `:app` is the one holdout,
+writing `@Config(sdk = [35])` per class (seven classes, repeated each time). Whichever you copy, pin
+it — the default is `targetSdk`, which is 36, which fails.
 
 The repository test builds a real in-memory database rather than a fake DAO, and that is a deliberate
 choice: a fake cannot have transaction semantics, so `LibraryDao.replaceAll`'s `@Transaction` would be
@@ -1390,18 +1401,25 @@ stops firing.
 1. Open the **Profile** tab. **Expect:** a statistics section showing your library total, a
    breakdown by status, and — if you have rated anything — "Average score: *N* across *M* rated
    title(s)".
-2. Compare the total and per-status counts against what the **Home** tab's status tabs show for the
-   same account. **Expect:** they match. *A mismatch means `GET /v1/library/stats`' SQL aggregation
-   and `GET /v1/library`'s paged list have drifted apart — they are two independent queries over the
-   same table by design (see the backend section above), so nothing enforces agreement except this
-   check.*
+2. On an account whose library is small enough that every status fits on one page (fewer than 20
+   entries each — `StatusTabRow`'s tabs are label-only, with no counts of their own, and the list is
+   cursor-paginated at 20 per page, so this check is only countable by hand within that limit), tap
+   through each status tab on the **Home** tab and count the rows under it. **Expect:** each count
+   matches the corresponding number in Profile's per-status breakdown, and their sum matches the
+   total. *A mismatch means `GET /v1/library/stats`' SQL aggregation and `GET /v1/library`'s paged
+   list have drifted apart — they are two independent queries over the same table by design (see the
+   backend section above), so nothing enforces agreement except this check.*
 3. If you have never rated anything, **expect** no average-score line at all — not "Average score:
    0" and not a blank space where a number should be. *A `0` here confuses "nothing rated" with
    "rated a zero", which is exactly what the server's `null` vs `0` distinction exists to prevent
    from happening on the wire; a value showing at all here means the client collapsed that
    distinction back together.*
-4. Turn on airplane mode, pull to refresh (or leave and return to Profile). **Expect:** the numbers
-   already on screen stay visible with a retry affordance, not a blank statistics section.
+4. With the stats already showing, turn on airplane mode, then switch to another tab and back to
+   **Profile** — that resume is the only automatic refresh trigger this screen has; there is no
+   pull-to-refresh gesture on it. **Expect:** the numbers already on screen stay visible with a
+   staleness banner and its own Retry button above them, not a blank statistics section. *A blank
+   section means `refreshStats()`'s guard against overwriting a `Success` with `Loading` — the same
+   discipline `FavoritesViewModel.refresh()` uses — regressed.*
 
 ### 17. The AniList import, both entry points
 

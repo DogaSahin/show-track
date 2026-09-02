@@ -9,7 +9,6 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
-import org.robolectric.annotation.Config
 
 private const val ENDPOINT = "https://push.example.test/UPabcdef0123456789"
 
@@ -50,7 +49,6 @@ private class FakeRepository(
  * android.* call anyone adds here, including one whose real behaviour a test depended on.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [35])
 class PushRegistrarTest {
     @Test
     fun `submitting forwards the endpoint`() =

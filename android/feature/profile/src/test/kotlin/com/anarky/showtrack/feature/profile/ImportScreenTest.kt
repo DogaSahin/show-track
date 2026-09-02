@@ -18,7 +18,6 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
-import org.robolectric.annotation.Config
 import com.anarky.showtrack.core.designsystem.R as DesignSystemR
 
 /**
@@ -34,7 +33,6 @@ import com.anarky.showtrack.core.designsystem.R as DesignSystemR
  * own state either way; only a composed screen can pin whether the extra notice actually renders.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [35])
 class ImportScreenTest {
     @get:Rule
     val composeRule = createComposeRule()

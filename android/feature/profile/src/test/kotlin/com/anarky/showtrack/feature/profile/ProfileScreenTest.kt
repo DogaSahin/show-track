@@ -34,12 +34,13 @@ import java.math.BigDecimal
  * Drives the `internal` stateless [ProfileScreen] overload directly — `LibraryScreen`/
  * `FavoritesScreen`'s pattern — so no `ViewModel` and no Hilt graph is needed. `createComposeRule`,
  * not `createAndroidComposeRule`: no Activity is needed. Robolectric supplies the Android runtime
- * `stringResource`/`pluralStringResource` need; `sdk = 35` is pinned per-class here, matching this
- * module's existing `PushNotifierTest`/`PushRegistrarTest`/`ProfileViewModelTest` convention
- * rather than introducing a module-wide `robolectric.properties` this task did not ask for.
+ * `stringResource`/`pluralStringResource` need; `sdk = 35` comes from this module's
+ * `src/test/resources/robolectric.properties` (whole-branch review fix round — this class and its
+ * five siblings previously each carried their own `@Config(sdk = [35])`, the one thing in this
+ * module that left the NEXT Robolectric test class silently defaulting to `targetSdk` and failing
+ * unexplained), matching every other Robolectric-using module in this repo except `:app`.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [35])
 class ProfileScreenTest {
     @get:Rule
     val composeRule = createComposeRule()
@@ -150,13 +151,15 @@ class ProfileScreenTest {
      * clickable, and unambiguously matched (`onNodeWithText` found exactly one node) — with
      * `t=454.0, b=454.0`, collapsed to zero height by the 470px floor; Compose's own hit-testing
      * cannot route a synthetic tap to a zero-area node, so `performClick()` silently found nothing
-     * to click rather than throwing. A Pixel-sized qualifier gives this test room the production
-     * screen already has on any real device — `ProfileScreen`'s `Column` has no `verticalScroll` of
-     * its own, so a real device narrower/shorter than this would show the identical clipping,
-     * which is a UX question for the actual screen, not something to paper over in the test.
+     * to click rather than throwing. A Pixel-sized qualifier gives this test enough visible height
+     * that the button lands within it without needing to scroll first — `ProfileScreen`'s `Column`
+     * gained a `.verticalScroll` in round 3 below (this test predates it), so a real device
+     * shorter than this qualifier now genuinely scrolls to reach the button rather than clipping
+     * it away entirely; `` `sign-out is reachable by scrolling…` `` below is what tests that path
+     * directly, by constraining the viewport on purpose rather than widening it.
      */
     @Test
-    @Config(sdk = [35], qualifiers = "w411dp-h891dp")
+    @Config(qualifiers = "w411dp-h891dp")
     fun `tapping the import action invokes onImportClick`() {
         var clicked = false
         composeRule.setContent {

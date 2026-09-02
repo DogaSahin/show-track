@@ -18,7 +18,6 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
-import org.robolectric.annotation.Config
 import java.io.IOException
 
 private const val NTFY = "io.heckel.ntfy"
@@ -32,7 +31,6 @@ private const val NTFY = "io.heckel.ntfy"
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [35])
 class ProfileViewModelTest {
     // viewModelScope is hard-wired to Dispatchers.Main, which has no implementation on a plain
     // JVM. Substituting a TestDispatcher is what makes the launch inside `signOut` run at all —

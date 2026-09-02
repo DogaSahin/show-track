@@ -13,7 +13,6 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
-import org.robolectric.annotation.Config
 import java.io.IOException
 import com.anarky.showtrack.core.designsystem.R as DesignSystemR
 
@@ -42,7 +41,6 @@ import com.anarky.showtrack.core.designsystem.R as DesignSystemR
  * `ComponentActivity` is enough.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [35])
 class ProfileResumeTest {
     @get:Rule
     val composeRule = createAndroidComposeRule<ComponentActivity>()

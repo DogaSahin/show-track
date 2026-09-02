@@ -141,11 +141,15 @@ class LibraryViewModel
          * purpose: a reload that just failed always finishes by flipping `loading` back to
          * `false` (see [guard]), and if a stale `Error` outranked a fresh `false` loading flag the
          * screen would flash back to the OLD error for one frame before the new attempt's
-         * `Loading` (or a genuine failure) took over. [applyCurrentFilter] clears [mutableError]
-         * itself, before it ever launches a coroutine, which is what actually prevents that flash
-         * (a retry no longer shows the stale error for the round trip's whole duration — see
-         * [applyCurrentFilter]'s KDoc) — the ordering in `guard` is a second line of defence, not
-         * the fix.
+         * `Loading` (or a genuine failure) took over. `applyCurrentFilter(blank = true)` clears
+         * [mutableError] itself, before it ever launches a coroutine, which is what actually
+         * prevents that flash for a retry FROM A GENUINE [LibraryUiState.Error] (a tab switch
+         * always passes `blank = true` too, for its own, structural reason — see
+         * [selectStatus]'s KDoc) — the ordering in `guard` is a second line of defence, not the
+         * fix. A retry from the `isStale = true` cache-fallback shape below is the one case that
+         * does NOT blank at all — see [LibraryViewModel.refresh]'s KDoc for why leaving
+         * [mutableError] untouched there is itself correct rather than an oversight this
+         * paragraph's reasoning would otherwise call out.
          *
          * Decision C-B, made real: an error wins UNLESS this is the default filter, the network
          * has never once answered this session ([LoadState.hasLoaded] is false), and there are
@@ -220,18 +224,58 @@ class LibraryViewModel
         // Neither of these touches `mutableLoadState.hasLoaded` — see its KDoc for why resetting
         // it per selection would re-open the stale-rows trap from the one direction `isDefault`
         // cannot guard.
+        //
+        // `blank = true`, always — not merely "the current default", but structurally required:
+        // [state]'s `combine` does not carry [mutableFilter] as a source at all (read directly in
+        // the lambda instead — see [state]'s KDoc on why that is safe), so changing the filter
+        // ALONE would never trigger a re-evaluation of that lambda. `applyCurrentFilter(blank =
+        // true)` is what forces one, by writing to [mutableError]/[mutableLoadState], both of
+        // which the `combine` DOES watch. Passing `false` here would not just show the old tab's
+        // rows under the new header (the walkthrough 12 bug) — with nothing left to force a
+        // recombination, the tab row would visibly select PLANNED while the screen kept
+        // rendering whatever it last rendered, indefinitely, until something UNRELATED happened
+        // to touch one of the real combine sources.
         fun selectStatus(status: UserMediaStatus?) {
             mutableFilter.value = mutableFilter.value.copy(status = status)
-            applyCurrentFilter()
+            applyCurrentFilter(blank = true)
         }
 
         fun selectSort(sort: LibrarySort) {
             mutableFilter.value = mutableFilter.value.copy(sort = sort)
-            applyCurrentFilter()
+            applyCurrentFilter(blank = true)
         }
 
-        /** Re-fetches under whatever [filter] currently holds — the initial load, and a retry. */
-        fun refresh() = applyCurrentFilter()
+        /**
+         * Re-fetches under whatever [filter] currently holds — the initial load, and a retry.
+         * `ErrorState`'s and `StaleDataBanner`'s Retry buttons are both wired to this exact
+         * function, undifferentiated (`LibraryScreen.kt`'s `onRetry = viewModel::refresh`), so
+         * this function is the only place that CAN tell the two apart, and it does so from
+         * [state] rather than from the caller — there is nothing at the call site to
+         * parameterise with, since both buttons call the identical no-arg function.
+         *
+         * `blank = `[state]`.value !is `[LibraryUiState.Success]. A genuine [LibraryUiState.Error]
+         * (nothing worth keeping on screen) still blanks to [LibraryUiState.Loading] immediately,
+         * same as before this fix — see the retry-from-a-real-error test, unchanged. A
+         * [LibraryUiState.Success] — INCLUDING the `isStale = true` cache-fallback shape decision
+         * C-B renders — does not: [applyCurrentFilter]`(blank = false)` leaves [mutableError] and
+         * [mutableLoadState] exactly as they are, so the `combine` in [state] does not re-emit at
+         * all until the retry actually resolves, and the rows plus the stale banner stay on
+         * screen, unchanged, for the whole round trip. Before this fix, `refresh()` blanked
+         * unconditionally, so tapping Retry on the offline-cold-start banner replaced it with a
+         * full-screen spinner and then, on a hung connection, nothing at all until the socket
+         * timed out — walkthrough 11 step 4 in the README documents the fixed behaviour.
+         *
+         * Reading `state.value` here — rather than threading a boolean through from the UI, the
+         * way [selectStatus]/[selectSort] pass `blank = true` — is safe for the same reason
+         * reading [mutableFilter]`.value` directly in [state]'s `combine` lambda is (see that
+         * KDoc): `refresh()` is only ever invoked from composition that is already collecting
+         * [state] (`collectAsStateWithLifecycle`), so `.value` reflects the latest render rather
+         * than [state]'s `initialValue`. A `refresh()` called with nothing collecting (a bare test
+         * that never subscribes) reads `initialValue` (`Loading`) and blanks — the same
+         * conservative fallback [state]'s own `WhileSubscribed` gate already assumes elsewhere in
+         * this class.
+         */
+        fun refresh() = applyCurrentFilter(blank = state.value !is LibraryUiState.Success)
 
         /**
          * Re-entrant calls are dropped up front rather than left to [LibraryRepository]'s own
@@ -270,21 +314,43 @@ class LibraryViewModel
          * user's chosen tab selected and an [LibraryUiState.Error] underneath it; retrying calls
          * this again with the SAME [mutableFilter] value, which is exactly what should happen.
          *
-         * [mutableError] and [mutableLoadMoreError] are both cleared HERE, synchronously, before
-         * [mutableLoadState]'s `loading` is even set — not left to `guard`'s success path to clear
-         * later. A previous version of this function only set the loading flag and left the stale
-         * `mutableError` in place until the fetch resolved; since `error != null` outranks
-         * `loading` in [state]'s `when`, that meant a retry (or a tab switch made while already
-         * showing an error) displayed the IDENTICAL, now-stale `ErrorState` for the entire round
-         * trip instead of `Loading` — worse than doing nothing, since it looked like the retry had
-         * been silently ignored. [mutableLoadMoreError] is cleared too: it describes a page-fetch
-         * failure on the list this call is about to REPLACE, and would otherwise survive as a
-         * stale footer message on a list it was never about.
+         * [mutableError] and [mutableLoadState]'s `loading` are cleared/set HERE, synchronously,
+         * before the fetch is even launched — not left to `guard`'s success path to clear later —
+         * but only when [blank] is true. A previous version of this function did this
+         * unconditionally, on the theory that ANY reload should blank; that theory is right for
+         * [selectStatus]/[selectSort] (see their KDoc: they have no other way to force a
+         * recombination at all) and wrong for [refresh]'s retry-from-a-stale-cache case, where
+         * blanking synchronously replaced the cached rows and the `StaleDataBanner` with a
+         * full-screen spinner for the whole round trip — on a hung connection, with nothing on
+         * screen until the socket timed out. [refresh] is the only caller that ever passes
+         * `blank = false`, and only when [state] already holds a [LibraryUiState.Success] worth
+         * keeping — see its KDoc for the exact condition and for why leaving [mutableError] and
+         * [mutableLoadState] untouched in that branch is itself the fix: with neither combine
+         * source touched, [state] simply does not re-emit until the retry resolves, which is
+         * indistinguishable, from the screen's point of view, from "the round trip changed
+         * nothing yet."
+         *
+         * Before this file had a `blank` parameter at all, an even earlier version of this
+         * function only set the loading flag and left the stale `mutableError` in place until the
+         * fetch resolved; since `error != null` outranks `loading` in [state]'s `when`, that meant
+         * a retry (or a tab switch made while already showing an error) displayed the IDENTICAL,
+         * now-stale `ErrorState` for the entire round trip instead of `Loading` — worse than doing
+         * nothing, since it looked like the retry had been silently ignored. That failure mode is
+         * why `blank = true` clears [mutableError] BEFORE setting `loading`, not after.
+         *
+         * [mutableLoadMoreError] is cleared unconditionally, [blank] or not: it describes a
+         * page-fetch failure on the list this call is about to REPLACE via a full reload either
+         * way, and would otherwise survive as a stale footer message on a list it was never about.
+         * Clearing it does not blank the whole screen — it only ever fed a footer, never [state]'s
+         * top-level branch — so it carries none of the risk the rest of this function's blanking
+         * does.
          */
-        private fun applyCurrentFilter() {
-            mutableError.value = null
+        private fun applyCurrentFilter(blank: Boolean) {
+            if (blank) {
+                mutableError.value = null
+                mutableLoadState.value = mutableLoadState.value.copy(loading = true)
+            }
             mutableLoadMoreError.value = null
-            mutableLoadState.value = mutableLoadState.value.copy(loading = true)
             guard(errorSink = mutableError, trackLoading = true) { repository.applyFilter(mutableFilter.value) }
         }
 
