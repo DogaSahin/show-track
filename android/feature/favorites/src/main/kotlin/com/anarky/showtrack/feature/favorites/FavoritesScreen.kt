@@ -28,6 +28,7 @@ import com.anarky.showtrack.core.designsystem.component.EndOfListTrigger
 import com.anarky.showtrack.core.designsystem.component.ErrorState
 import com.anarky.showtrack.core.designsystem.component.LoadingState
 import com.anarky.showtrack.core.designsystem.component.MediaCard
+import com.anarky.showtrack.core.designsystem.component.StaleDataBanner
 import com.anarky.showtrack.core.model.LibraryEntry
 
 /**
@@ -109,13 +110,24 @@ internal fun FavoritesScreen(
                         modifier = Modifier.fillMaxSize(),
                     )
                 is FavoritesUiState.Success ->
-                    if (state.entries.isEmpty()) {
-                        EmptyState(
-                            message = stringResource(R.string.favorites_empty_message),
-                            modifier = Modifier.fillMaxSize(),
-                        )
-                    } else {
-                        FavoritesList(success = state, onLoadMore = onLoadMore, onEntryClick = onEntryClick)
+                    // `isStale` (decision C-B made real, review finding round 3): the banner sits
+                    // ABOVE the content rather than replacing it — a resume's failed background
+                    // re-fetch leaves rows that are still worth showing, just not guaranteed
+                    // current, which is exactly what the banner says — mirroring `LibraryScreen`.
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        if (state.isStale) {
+                            StaleDataBanner(onRetry = onRetry)
+                        }
+                        Box(modifier = Modifier.weight(weight = 1f).fillMaxWidth()) {
+                            if (state.entries.isEmpty()) {
+                                EmptyState(
+                                    message = stringResource(R.string.favorites_empty_message),
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            } else {
+                                FavoritesList(success = state, onLoadMore = onLoadMore, onEntryClick = onEntryClick)
+                            }
+                        }
                     }
             }
         }

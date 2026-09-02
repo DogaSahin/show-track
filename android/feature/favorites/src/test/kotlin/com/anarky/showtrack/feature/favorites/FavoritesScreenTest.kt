@@ -86,6 +86,55 @@ class FavoritesScreenTest {
         assertEquals(FRIEREN, clicked)
     }
 
+    /**
+     * Decision C-B made real (review finding, round 3): a stale [FavoritesUiState.Success] must
+     * show the `StaleDataBanner` ABOVE the rows, not replace them and not render them silently
+     * unmarked — either of those was the actual bug this state exists to fix. `StaleDataBanner`'s
+     * own retry action is wired straight to [onRetry], the same button `ErrorState`'s uses.
+     */
+    @Test
+    fun `a stale success shows the stale banner above the entries, and its retry invokes onRetry`() {
+        var retried = false
+
+        composeRule.setContent {
+            FavoritesScreen(
+                state = FavoritesUiState.Success(entries = listOf(FRIEREN), isStale = true),
+                onRetry = { retried = true },
+                onLoadMore = {},
+                onEntryClick = {},
+            )
+        }
+
+        composeRule.onNodeWithText(FRIEREN.media.title).assertIsDisplayed()
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule
+            .onNodeWithText(context.getString(DesignSystemR.string.stale_data_notice))
+            .assertIsDisplayed()
+        composeRule
+            .onNodeWithText(context.getString(DesignSystemR.string.action_retry))
+            .performClick()
+
+        assertTrue(retried)
+    }
+
+    @Test
+    fun `a non-stale success shows no stale banner`() {
+        composeRule.setContent {
+            FavoritesScreen(
+                state = FavoritesUiState.Success(entries = listOf(FRIEREN), isStale = false),
+                onRetry = {},
+                onLoadMore = {},
+                onEntryClick = {},
+            )
+        }
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule
+            .onNodeWithText(context.getString(DesignSystemR.string.stale_data_notice))
+            .assertDoesNotExist()
+    }
+
     @Test
     fun `an error state's retry action invokes onRetry`() {
         var retried = false

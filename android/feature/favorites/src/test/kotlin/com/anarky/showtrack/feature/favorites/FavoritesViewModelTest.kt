@@ -170,26 +170,68 @@ class FavoritesViewModelTest {
         }
 
     /**
-     * The other half of decision C-S, unchanged by this fix: the FIRST load (nothing shown yet)
-     * still writes [FavoritesUiState.Loading] wholesale, and stays there for the fetch's whole
-     * duration — a gate is what proves that holds across the round trip, not just before and
-     * after it.
+     * The Important finding round 3 exists to close: a resume's FAILED background re-fetch used
+     * to replace a working, populated screen with [FavoritesUiState.Error] wholesale — a train
+     * entering a tunnel while the user is reading 40 rows would blank them to a centred error and
+     * a Retry button, for a request the user never asked for. Decision C-B's objection was never
+     * to showing older rows — only to showing them UNMARKED — and this fix had already accepted
+     * showing possibly-stale rows with no marker at all (the round-2 fix's own in-flight window),
+     * so a bare `Error` on failure was the wrong direction on both axes: it REMOVES information
+     * instead of adding the marker that was missing. `isStale = true` is that marker.
      */
     @Test
-    fun `the first load shows Loading for the whole round trip, not only before it starts`() =
+    fun `a failed resume over an already-populated screen marks it stale instead of replacing it`() =
         runTest(dispatcher) {
             val repository = FakeLibraryRepository(refreshResult = listOf(FRIEREN))
-            repository.refreshGate = CompletableDeferred()
             val viewModel = FavoritesViewModel(repository)
+            viewModel.refresh() // stands in for LifecycleResumeEffect's first call — see class KDoc
+            advanceUntilIdle()
+            assertEquals(FavoritesUiState.Success(entries = listOf(FRIEREN)), viewModel.state.value)
+
+            val failure = IOException("offline")
+            repository.refreshGate = CompletableDeferred()
+            repository.refreshFailure = failure
             viewModel.refresh()
             advanceUntilIdle()
 
-            assertEquals(FavoritesUiState.Loading, viewModel.state.value)
+            // Still the OLD entries, and still Success — never FavoritesUiState.Error — while the
+            // failing round trip is genuinely still in flight.
+            assertEquals(FavoritesUiState.Success(entries = listOf(FRIEREN)), viewModel.state.value)
 
             repository.refreshGate?.complete(Unit)
             advanceUntilIdle()
 
-            assertEquals(FavoritesUiState.Success(entries = listOf(FRIEREN)), viewModel.state.value)
+            assertEquals(
+                FavoritesUiState.Success(entries = listOf(FRIEREN), isStale = true),
+                viewModel.state.value,
+            )
+        }
+
+    @Test
+    fun `a successful resume clears a previous stale mark`() =
+        runTest(dispatcher) {
+            val repository = FakeLibraryRepository(refreshResult = listOf(FRIEREN))
+            val viewModel = FavoritesViewModel(repository)
+            viewModel.refresh() // stands in for LifecycleResumeEffect's first call — see class KDoc
+            advanceUntilIdle()
+
+            repository.refreshFailure = IOException("offline")
+            viewModel.refresh()
+            advanceUntilIdle()
+            assertEquals(
+                FavoritesUiState.Success(entries = listOf(FRIEREN), isStale = true),
+                viewModel.state.value,
+            )
+
+            repository.refreshFailure = null
+            repository.refreshResult = listOf(FRIEREN, BEBOP)
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            assertEquals(
+                FavoritesUiState.Success(entries = listOf(FRIEREN, BEBOP), isStale = false),
+                viewModel.state.value,
+            )
         }
 
     @Test

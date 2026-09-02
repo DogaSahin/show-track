@@ -28,8 +28,10 @@ import javax.inject.Inject
  * than `LibraryViewModel`'s.
  *
  * **Two failure channels, not one** (decision C-S) — see [FavoritesUiState]'s KDoc: a failed
- * [refresh] may replace the whole screen with [FavoritesUiState.Error]; a failed [loadMore] must
- * leave [FavoritesUiState.Success.entries] standing and surface beside the list instead.
+ * [refresh] may replace the whole screen with [FavoritesUiState.Error], OR mark a populated screen
+ * [FavoritesUiState.Success.isStale] instead of destroying it — see [refresh]'s own KDoc for which
+ * and why. A failed [loadMore] must leave [FavoritesUiState.Success.entries] standing and surface
+ * beside the list instead, in either case.
  *
  * No `add` here, unlike `DiscoverViewModel` — favouriting happens on Detail or Library, and this
  * screen only ever reflects it, on the next [refresh].
@@ -56,14 +58,12 @@ class FavoritesViewModel
         val state: StateFlow<FavoritesUiState> = mutableState.asStateFlow()
 
         /**
-         * The only operation allowed to replace [state] with [FavoritesUiState.Error] wholesale —
-         * see [FavoritesUiState]'s KDoc for why that is safe here. Called from the initial resume
-         * (there is no `init` — see this class's own KDoc) and from [FavoritesUiState.Error]'s
-         * retry action.
+         * Called from the initial resume (there is no `init` — see this class's own KDoc) and from
+         * [FavoritesUiState.Error]'s retry action.
          *
          * [FavoritesUiState.Loading] is written wholesale ONLY when [state] is not already
-         * [FavoritesUiState.Success] (review finding, round 2). Writing it unconditionally — the
-         * previous version of this function did — is exactly right for the first load and for a
+         * [FavoritesUiState.Success] (review finding, round 2). Writing it unconditionally — an
+         * earlier version of this function did — is exactly right for the first load and for a
          * retry from [FavoritesUiState.Error] (decision C-S: clear the error before launching a
          * retry, not only on success, the same discipline `DiscoverViewModel.refresh` follows),
          * but is wrong for the case this function exists to serve on every OTHER call: a resume
@@ -71,13 +71,38 @@ class FavoritesViewModel
          * trip in production (unlike the non-suspending fakes this class's own tests originally
          * used, which is why this bug shipped unnoticed) — blanking a populated list to a
          * full-screen spinner for that round trip on every Favorites -> Detail -> Back, or every
-         * tab switch back to Favorites, also `restart()`s the paginator (dropping pages 2..n) and
-         * throws away `FavoritesList`'s `rememberLazyListState()` (`FavoritesList` leaves
-         * composition while `Loading` renders), resetting scroll position — the EXACT class of bug
-         * this screen's own paginator was given its own instance to avoid (this class's own KDoc,
-         * task 9b.4's brief), reintroduced here by a different route. A resume over [Success] is
-         * now a silent re-fetch that swaps `entries` in place once it lands, with the stale list
-         * still on screen for the round trip's duration.
+         * tab switch back to Favorites, meant `FavoritesList` left composition while `Loading`
+         * rendered, which recreated `rememberLazyListState()` and reset scroll position; that part
+         * is fixed by this condition — `FavoritesList` now stays composed across a resume that
+         * starts from [FavoritesUiState.Success], since [state] never passes through [FavoritesUiState.Loading]
+         * to get there. **What this condition does NOT fix, and was never asked to (review finding,
+         * round 3): `refreshFavorites()` still calls `CursorPaginator.restart()` under the hood,
+         * which still drops pages 2..n on every resume.** A user paged to 60 entries and scrolled
+         * to ~55 still lands on `Success(20)` when a resume's fetch succeeds — the SAME
+         * `rememberLazyListState()` instance survives (unlike before this fix), but the DATA under
+         * it shrinks, so the list clamps toward its own end, `EndOfListTrigger` immediately
+         * re-fires, and the user ends up somewhere near index 19 after the ensuing `loadMore()`
+         * calls rather than back at 55. Multi-page resume is a real, open design question (does a
+         * resume re-fetch page 1 only, all previously-loaded pages, or nothing beyond a background
+         * favourite/unfavourite diff?) that this task does not answer — this condition only fixes
+         * the single-page case (composition survives; no data truncation to notice) and the
+         * COMPOSITION-level reset for a multi-page one (no `LazyListState` recreation), not the
+         * data-level one.
+         *
+         * A resume over [FavoritesUiState.Success] is now a silent re-fetch that swaps `entries` in
+         * place once it lands, with the stale list still on screen for the round trip's duration.
+         *
+         * **On failure** (review finding, round 3): the `catch` re-reads [mutableState] rather than
+         * trusting whether THIS call started from [FavoritesUiState.Success], so it also catches a
+         * list a concurrent [loadMore] extended while this fetch was failing. If [state] is still a
+         * [FavoritesUiState.Success] when the failure lands, this marks it
+         * [FavoritesUiState.Success.isStale] instead of replacing it with [FavoritesUiState.Error] —
+         * decision C-B's objection was never to showing older rows, only to showing them UNMARKED;
+         * blanking a working, populated screen to a full-screen error over a background resume the
+         * user never asked for would trade "possibly stale, marked" for "nothing, with a Retry
+         * button that itself re-enters [FavoritesUiState.Loading]" — worse on both axes. The
+         * full-screen [FavoritesUiState.Error] stays exactly for the case it always covered: nothing
+         * usable is on screen yet.
          *
          * This is also the acceptance path for "unfavouriting elsewhere removes the entry from
          * this view": [repository.refreshFavorites] re-fetches `favorite=true` from the server, so
@@ -96,7 +121,8 @@ class FavoritesViewModel
                 } catch (cancellation: CancellationException) {
                     throw cancellation
                 } catch (failure: Exception) {
-                    mutableState.value = FavoritesUiState.Error(failure)
+                    val stillShowing = mutableState.value as? FavoritesUiState.Success
+                    mutableState.value = stillShowing?.copy(isStale = true) ?: FavoritesUiState.Error(failure)
                 }
             }
         }
