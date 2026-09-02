@@ -49,6 +49,7 @@ import com.anarky.showtrack.core.model.UserMediaStatus
 @Composable
 fun ProfileScreen(
     onSignedOut: () -> Unit,
+    onImportClick: () -> Unit,
     modifier: Modifier = Modifier,
     viewModel: ProfileViewModel = hiltViewModel(),
 ) {
@@ -90,6 +91,7 @@ fun ProfileScreen(
         onDisablePush = viewModel::disablePush,
         onStatsRetry = viewModel::refreshStats,
         onSignOut = viewModel::signOut,
+        onImportClick = onImportClick,
         modifier = modifier,
     )
 }
@@ -120,6 +122,7 @@ internal fun ProfileScreen(
     onDisablePush: () -> Unit,
     onStatsRetry: () -> Unit,
     onSignOut: () -> Unit,
+    onImportClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var showSignOutConfirmation by remember { mutableStateOf(false) }
@@ -138,6 +141,7 @@ internal fun ProfileScreen(
             state = statsState,
             onRetry = onStatsRetry,
         )
+        ImportSection(onImportClick = onImportClick)
         SignOutSection(
             error = signOutError,
             onSignOutClick = { showSignOutConfirmation = true },
@@ -155,6 +159,22 @@ internal fun ProfileScreen(
                 onSignOut()
             },
         )
+    }
+}
+
+/**
+ * Profile's own door to `ImportRoute` (task 9b.6) — `:feature:auth`'s post-register onboarding is
+ * the other one (`AuthNavigation.kt`). A plain action row, not a card: unlike [PushSection]/
+ * [StatsSection], there is no state to render here — navigating away is the entire behaviour, and
+ * the two limitations (public profile, one-way) are said on the import screen itself, before the
+ * user types anything, not repeated on this teaser.
+ */
+@Composable
+private fun ImportSection(onImportClick: () -> Unit) {
+    Text(text = stringResource(R.string.profile_import_title), style = MaterialTheme.typography.titleMedium)
+    Text(text = stringResource(R.string.profile_import_body), style = MaterialTheme.typography.bodyMedium)
+    Button(onClick = onImportClick) {
+        Text(text = stringResource(R.string.profile_import_action))
     }
 }
 

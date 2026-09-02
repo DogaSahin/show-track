@@ -8,6 +8,7 @@ import com.anarky.showtrack.core.navigation.DiscoverRoute
 import com.anarky.showtrack.core.navigation.FavoritesRoute
 import com.anarky.showtrack.core.navigation.FeedRoute
 import com.anarky.showtrack.core.navigation.GroupsRoute
+import com.anarky.showtrack.core.navigation.ImportRoute
 import com.anarky.showtrack.core.navigation.LibraryRoute
 import com.anarky.showtrack.core.navigation.ProfileRoute
 import com.anarky.showtrack.core.navigation.SearchRoute
@@ -18,6 +19,7 @@ import com.anarky.showtrack.feature.favorites.favoritesEntry
 import com.anarky.showtrack.feature.feed.feedEntry
 import com.anarky.showtrack.feature.groups.groupsEntry
 import com.anarky.showtrack.feature.library.libraryEntry
+import com.anarky.showtrack.feature.profile.importEntry
 import com.anarky.showtrack.feature.profile.profileEntry
 import com.anarky.showtrack.feature.search.searchEntry
 import kotlin.reflect.KClass
@@ -66,6 +68,7 @@ internal val appDestinations: List<AppDestination> =
         AppDestination(SearchRoute::class) { onNavigate -> searchEntry(onNavigate) },
         AppDestination(GroupsRoute::class) { groupsEntry() },
         AppDestination(FeedRoute::class) { onNavigate -> feedEntry(onNavigate) },
+        AppDestination(ImportRoute::class) { onNavigate -> importEntry(onNavigate) },
     )
 
 /**

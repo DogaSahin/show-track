@@ -3,6 +3,8 @@ package com.anarky.showtrack.core.data.repository
 import com.anarky.showtrack.core.model.MediaSource
 import com.anarky.showtrack.core.network.api.ShowTrackApi
 import com.anarky.showtrack.core.network.dto.AddLibraryEntryRequest
+import com.anarky.showtrack.core.network.dto.ImportAniListRequest
+import com.anarky.showtrack.core.network.dto.ImportSummaryDto
 import com.anarky.showtrack.core.network.dto.LibraryEntryDto
 import com.anarky.showtrack.core.network.dto.LibraryPageDto
 import com.anarky.showtrack.core.network.dto.LibraryStatsDto
@@ -178,6 +180,8 @@ class MediaRepositoryTest {
         override suspend fun addLibraryEntry(request: AddLibraryEntryRequest): LibraryEntryDto = TODO("not used")
 
         override suspend fun libraryStats(): LibraryStatsDto = TODO("not used")
+
+        override suspend fun importAniList(request: ImportAniListRequest): ImportSummaryDto = TODO("not used")
 
         override suspend fun updateLibraryEntry(
             id: String,

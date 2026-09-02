@@ -1,6 +1,8 @@
 package com.anarky.showtrack.core.network.api
 
 import com.anarky.showtrack.core.network.dto.AddLibraryEntryRequest
+import com.anarky.showtrack.core.network.dto.ImportAniListRequest
+import com.anarky.showtrack.core.network.dto.ImportSummaryDto
 import com.anarky.showtrack.core.network.dto.LibraryEntryDto
 import com.anarky.showtrack.core.network.dto.LibraryPageDto
 import com.anarky.showtrack.core.network.dto.LibraryStatsDto
@@ -80,6 +82,22 @@ interface ShowTrackApi {
      */
     @GET("v1/library/stats")
     suspend fun libraryStats(): LibraryStatsDto
+
+    /**
+     * `POST /v1/library/import/anilist` (task 9b.6, backend decision 4-H). Synchronous — a typical
+     * list is a few hundred titles and one or two upstream GraphQL requests, so this suspends for
+     * seconds rather than returning a task to poll.
+     *
+     * A non-2xx arrives as an `HttpException`: 404 means no PUBLIC AniList list for that
+     * username — the server does not distinguish "no such user" from "list is private" (its own
+     * `UserListNotAvailable` docstring), so neither does this call — 422 a malformed username,
+     * and 502/504/429 an upstream failure. `:core:data` translates all of these into
+     * [com.anarky.showtrack.core.model.ImportFailure] at the repository boundary (decision C-R).
+     */
+    @POST("v1/library/import/anilist")
+    suspend fun importAniList(
+        @Body request: ImportAniListRequest,
+    ): ImportSummaryDto
 
     @GET("v1/media/search")
     suspend fun searchMedia(

@@ -12,6 +12,7 @@ import com.anarky.showtrack.core.designsystem.component.LoadingState
 import com.anarky.showtrack.core.model.AuthEvent
 import com.anarky.showtrack.core.navigation.AppRoute
 import com.anarky.showtrack.core.navigation.AuthRoute
+import com.anarky.showtrack.core.navigation.ImportRoute
 import com.anarky.showtrack.core.navigation.LibraryRoute
 import kotlinx.coroutines.flow.Flow
 
@@ -145,6 +146,17 @@ internal fun NavHostController.routeShowTrackNavigation(
             onSignedIn()
         }
 
+        // Task 9b.6: a FRESH registration lands here instead (AuthNavigation's onAuthenticated),
+        // offering the AniList import screen as the alternative to an empty library. The same two
+        // effects as the LibraryRoute branch above apply for the identical reason — Back must not
+        // return to a login form that already succeeded, and the session must be promoted the
+        // same way regardless of which screen a successful auth lands on — so this shares
+        // [navigateToImportClearingAuth] and [onSignedIn] rather than skipping either.
+        is ImportRoute -> {
+            navigateToImportClearingAuth()
+            onSignedIn()
+        }
+
         // Navigating TO AuthRoute through this table happens from ProfileNavigation on sign-out
         // (Gap 2, Phase 9a device walkthroughs). AuthRepository.logout() clears the session
         // without emitting AuthEvent.LoggedOut — that event is reserved for a token REFRESH
@@ -202,6 +214,21 @@ internal fun NavHostController.navigateToAuthClearingStack() {
  */
 internal fun NavHostController.navigateToLibraryClearingAuth() {
     navigate(LibraryRoute) {
+        popUpTo<AuthRoute> { inclusive = true }
+    }
+}
+
+/**
+ * The same trip as [navigateToLibraryClearingAuth], for a fresh registration (task 9b.6):
+ * `AuthRoute` must not survive on the back stack under the import screen either, for the
+ * identical reason — Back from `ImportRoute` must not return to a login form that already
+ * succeeded. `ImportScreen`'s own skip action, and its terminal success screen's "Done" button,
+ * both then navigate on to `LibraryRoute` through the ordinary [LibraryRoute] branch above, which
+ * only pushes at that point since `AuthRoute` is already gone from the stack by the time either
+ * fires.
+ */
+internal fun NavHostController.navigateToImportClearingAuth() {
+    navigate(ImportRoute) {
         popUpTo<AuthRoute> { inclusive = true }
     }
 }

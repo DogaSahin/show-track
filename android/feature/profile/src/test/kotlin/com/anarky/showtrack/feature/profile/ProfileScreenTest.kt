@@ -59,6 +59,7 @@ class ProfileScreenTest {
                 onDisablePush = {},
                 onStatsRetry = {},
                 onSignOut = {},
+                onImportClick = {},
             )
         }
 
@@ -87,6 +88,7 @@ class ProfileScreenTest {
                 onDisablePush = {},
                 onStatsRetry = {},
                 onSignOut = {},
+                onImportClick = {},
             )
         }
 
@@ -114,6 +116,7 @@ class ProfileScreenTest {
                 onDisablePush = {},
                 onStatsRetry = {},
                 onSignOut = {},
+                onImportClick = {},
             )
         }
 

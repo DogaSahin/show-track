@@ -60,7 +60,7 @@ class AuthViewModel
             viewModelScope.launch {
                 try {
                     block()
-                    mutableState.value = AuthUiState.Authenticated
+                    mutableState.value = AuthUiState.Authenticated(isNewAccount = mode == AuthMode.REGISTER)
                 } catch (cancellation: CancellationException) {
                     throw cancellation
                 } catch (failure: Exception) {

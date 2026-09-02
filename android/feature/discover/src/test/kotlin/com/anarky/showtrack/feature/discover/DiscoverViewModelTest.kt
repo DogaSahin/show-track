@@ -420,6 +420,8 @@ class DiscoverViewModelTest {
         override suspend fun loadMoreFavorites(): Unit = error("not exercised by DiscoverViewModel")
 
         override suspend fun libraryStats() = error("not exercised by DiscoverViewModel")
+
+        override suspend fun importAniList(username: String) = error("not exercised by DiscoverViewModel")
     }
 
     private companion object {

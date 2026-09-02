@@ -48,6 +48,18 @@ data object GroupsRoute : AppRoute
 data object FeedRoute : AppRoute
 
 /**
+ * The AniList import screen (task 9b.6). Lives in `:feature:profile` — the module already owns
+ * account-level actions (push opt-in, sign-out) — but the route sits here in `:core:navigation`
+ * rather than as a `:feature:profile`-only concept, because `:app` reaches it from TWO places that
+ * must not depend on each other: `:feature:profile` itself (an ordinary settings action) and
+ * `:feature:auth`'s post-register success (onboarding, offered as the alternative to an empty
+ * library). Routing `:feature:auth` straight to a `:feature:profile` screen would violate
+ * architecture rule 1; routing it through this shared route contract does not.
+ */
+@Serializable
+data object ImportRoute : AppRoute
+
+/**
  * The app's private deep-link scheme, and the one route reachable through it.
  *
  * This is what makes "the notification opens the title it is about" possible ACROSS modules

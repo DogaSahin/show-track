@@ -528,6 +528,8 @@ class LibraryViewModelTest {
         override suspend fun loadMoreFavorites(): Unit = error("not exercised by LibraryViewModel")
 
         override suspend fun libraryStats() = error("not exercised by LibraryViewModel")
+
+        override suspend fun importAniList(username: String) = error("not exercised by LibraryViewModel")
     }
 
     private companion object {

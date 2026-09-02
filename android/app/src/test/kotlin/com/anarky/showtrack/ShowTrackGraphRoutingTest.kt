@@ -10,6 +10,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.anarky.showtrack.core.navigation.AuthRoute
 import com.anarky.showtrack.core.navigation.DetailRoute
 import com.anarky.showtrack.core.navigation.FavoritesRoute
+import com.anarky.showtrack.core.navigation.ImportRoute
 import com.anarky.showtrack.core.navigation.LibraryRoute
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -69,6 +70,49 @@ class ShowTrackGraphRoutingTest {
         controller.routeShowTrackNavigation(LibraryRoute, onSignedIn = { signedIn = true })
 
         assertTrue(signedIn)
+    }
+
+    /**
+     * Task 9b.6's fresh-registration path — the mirror of
+     * `routing to LibraryRoute pops the auth screen off the stack`.
+     */
+    @Test
+    fun `routing to ImportRoute pops the auth screen off the stack`() {
+        val controller = controllerWith { authOnlyGraph() }
+
+        controller.routeShowTrackNavigation(ImportRoute)
+
+        assertEquals(listOf(null, ImportRoute::class.qualifiedName), controller.backStackRoutes())
+    }
+
+    @Test
+    fun `routing to ImportRoute fires onSignedIn`() {
+        val controller = controllerWith { authOnlyGraph() }
+        var signedIn = false
+
+        controller.routeShowTrackNavigation(ImportRoute, onSignedIn = { signedIn = true })
+
+        assertTrue(signedIn)
+    }
+
+    /**
+     * What `ImportScreen`'s own skip action and its terminal "Done" button both do next, once
+     * `AuthRoute` is already off the stack from the transition above — proof that
+     * `navigateToLibraryClearingAuth`'s `popUpTo<AuthRoute>` does not throw or otherwise misbehave
+     * when `AuthRoute` is a real destination in the graph but is NOT currently on the back stack,
+     * which is exactly the state this table leaves the app in immediately after the test above.
+     */
+    @Test
+    fun `routing on to LibraryRoute after ImportRoute is an ordinary push`() {
+        val controller = controllerWith { authOnlyGraph() }
+        controller.routeShowTrackNavigation(ImportRoute)
+
+        controller.routeShowTrackNavigation(LibraryRoute)
+
+        assertEquals(
+            listOf(null, ImportRoute::class.qualifiedName, LibraryRoute::class.qualifiedName),
+            controller.backStackRoutes(),
+        )
     }
 
     @Test

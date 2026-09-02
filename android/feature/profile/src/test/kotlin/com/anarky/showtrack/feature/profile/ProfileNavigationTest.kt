@@ -2,6 +2,7 @@ package com.anarky.showtrack.feature.profile
 
 import com.anarky.showtrack.core.navigation.AppRoute
 import com.anarky.showtrack.core.navigation.AuthRoute
+import com.anarky.showtrack.core.navigation.ImportRoute
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -48,5 +49,15 @@ class ProfileNavigationTest {
         signOutNavigation(onNavigate = navigated::add).invoke()
 
         assertEquals(listOf(AuthRoute), navigated)
+    }
+
+    /** Task 9b.6, Profile's own door to the import screen — see [importNavigation]'s own KDoc. */
+    @Test
+    fun `the import action navigates to ImportRoute`() {
+        val navigated = mutableListOf<AppRoute>()
+
+        importNavigation(onNavigate = navigated::add).invoke()
+
+        assertEquals(listOf(ImportRoute), navigated)
     }
 }

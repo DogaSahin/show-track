@@ -1,6 +1,7 @@
 package com.anarky.showtrack.feature.profile
 
 import com.anarky.showtrack.core.data.repository.LibraryRepository
+import com.anarky.showtrack.core.model.ImportSummary
 import com.anarky.showtrack.core.model.LibraryEntry
 import com.anarky.showtrack.core.model.LibraryFilter
 import com.anarky.showtrack.core.model.LibraryPatch
@@ -18,22 +19,30 @@ import kotlinx.coroutines.flow.asStateFlow
  * [com.anarky.showtrack.core.data.repository.LibraryRepositoryImpl], which would need Retrofit,
  * neither on this module's compile classpath (architecture rule 2).
  *
- * Only [libraryStats] is functional — every other member `error(...)`, the same discrimination
- * `:feature:favorites`' own `FakeLibraryRepository` uses: a [ProfileViewModel] that accidentally
- * reached the general library surface instead of [LibraryRepository.libraryStats] fails LOUDLY,
- * with that message, rather than silently returning the wrong thing.
+ * [libraryStats] and, since task 9b.6, [importAniList] are functional — every other member
+ * `error(...)`, the same discrimination `:feature:favorites`' own `FakeLibraryRepository` uses: a
+ * [ProfileViewModel] or [ImportViewModel] that accidentally reached the general library surface
+ * fails LOUDLY, with that message, rather than silently returning the wrong thing. Shared by
+ * [ProfileViewModelTest]/[ProfileResumeTest] (stats) and [ImportViewModelTest] (import) — the two
+ * ViewModels never touch the same members, so nothing here has to distinguish which one is asking.
  *
  * [statsGate], when set, is what lets a test observe [ProfileViewModel.statsState] WHILE
  * [libraryStats] is suspended — mirroring `FavoritesViewModelTest`'s `FakeLibraryRepository.refreshGate`,
  * needed for the identical reason: a fake that always resolves synchronously can never make a
  * wrongly-shown [LibraryStatsUiState.Loading] (or a wrongly-replaced [LibraryStatsUiState.Error])
- * observable mid-flight.
+ * observable mid-flight. [importAniList] has no equivalent gate: no [ImportViewModel] test needs
+ * to observe mid-flight state, unlike the stats resume behaviour this gate exists for.
  */
 internal class FakeLibraryRepository(
     var statsResult: LibraryStats = EMPTY_STATS,
     var statsFailure: Throwable? = null,
+    var importResult: ImportSummary = ImportSummary(imported = 0, skipped = 0, failed = 0, truncated = false),
+    var importFailure: Throwable? = null,
 ) : LibraryRepository {
     var statsGate: CompletableDeferred<Unit>? = null
+
+    var importCalls = 0
+        private set
 
     // Round 1's own regression guard: proves `init`/push toggles reach `libraryStats()` zero
     // times, which a state-only assertion (`statsState.value`, still `Loading`) cannot — a
@@ -76,6 +85,12 @@ internal class FakeLibraryRepository(
         statsGate?.await()
         statsFailure?.let { throw it }
         return statsResult
+    }
+
+    override suspend fun importAniList(username: String): ImportSummary {
+        importCalls++
+        importFailure?.let { throw it }
+        return importResult
     }
 
     private companion object {

@@ -1,5 +1,6 @@
 package com.anarky.showtrack.core.data.repository
 
+import com.anarky.showtrack.core.model.ImportSummary
 import com.anarky.showtrack.core.model.LibraryEntry
 import com.anarky.showtrack.core.model.LibraryFilter
 import com.anarky.showtrack.core.model.LibraryPatch
@@ -16,7 +17,16 @@ import kotlinx.coroutines.flow.StateFlow
  *
  * There is no use-case layer between this and a ViewModel by decision: a use case per method
  * would be one class each forwarding a single call.
+ *
+ * `@Suppress("TooManyFunctions")` (task 9b.6 added the eleventh, [importAniList]): this interface
+ * is the WHOLE library domain's single seam into `:core:data` — list, favourites, stats, and now
+ * import — not eleven unrelated concerns. Splitting it into several interfaces bound to the same
+ * [LibraryRepositoryImpl] singleton would fragment one cohesive piece of state (the paginator, the
+ * cache, the favourites view) across artificial boundaries for no reader's benefit; the same
+ * suppression [com.anarky.showtrack.core.network.api.ShowTrackApi.library]'s `LongParameterList`
+ * carries for the identical reason — a split that exists only to satisfy the linter.
  */
+@Suppress("TooManyFunctions")
 interface LibraryRepository {
     /** Cold-start content, from the cache, then whatever [refresh] last wrote over it. */
     fun observeLibrary(): Flow<List<LibraryEntry>>
@@ -69,4 +79,17 @@ interface LibraryRepository {
      * [add]/[update]/[entryForMedia] already have.
      */
     suspend fun libraryStats(): LibraryStats
+
+    /**
+     * `POST /v1/library/import/anilist` (task 9b.6, backend decision 4-H). One-shot, the same
+     * shape [libraryStats] has: no cache, no `StateFlow` upstream — the caller (`ImportViewModel`)
+     * drives it once per submit and holds the result itself.
+     *
+     * Throws [com.anarky.showtrack.core.model.ImportFailure] on any failure, translated at the
+     * `LibraryRepositoryImpl` boundary (decision C-R) — never a raw `retrofit2.HttpException`.
+     *
+     * Architecture rule 7: read-only and one-way, permanently. Nothing on this side, or on the
+     * server, ever writes back to AniList as a consequence of calling this.
+     */
+    suspend fun importAniList(username: String): ImportSummary
 }

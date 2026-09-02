@@ -34,7 +34,7 @@ class AuthViewModelTest {
     fun tearDown() = Dispatchers.resetMain()
 
     @Test
-    fun `a successful login moves to Authenticated`() =
+    fun `a successful login moves to Authenticated with isNewAccount false`() =
         runTest(dispatcher) {
             val repository = FakeAuthRepository()
             val viewModel = AuthViewModel(repository)
@@ -42,7 +42,24 @@ class AuthViewModelTest {
             viewModel.submitLogin("a@example.com", "hunter2hunter2")
             advanceUntilIdle()
 
-            assertEquals(AuthUiState.Authenticated, viewModel.state.value)
+            assertEquals(AuthUiState.Authenticated(isNewAccount = false), viewModel.state.value)
+        }
+
+    /**
+     * Task 9b.6: this is the flag `:app` routes a fresh registration to the AniList import screen
+     * on, instead of straight to the library — see `AuthNavigation.kt`. Before this task,
+     * `Authenticated` carried nothing, and login/register were indistinguishable to the caller.
+     */
+    @Test
+    fun `a successful registration moves to Authenticated with isNewAccount true`() =
+        runTest(dispatcher) {
+            val repository = FakeAuthRepository()
+            val viewModel = AuthViewModel(repository)
+
+            viewModel.submitRegister("someone", "a@example.com", "hunter2hunter2", "CODE")
+            advanceUntilIdle()
+
+            assertEquals(AuthUiState.Authenticated(isNewAccount = true), viewModel.state.value)
         }
 
     @Test

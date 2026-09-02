@@ -46,4 +46,48 @@
     </plurals>
     <string name="profile_stats_no_ratings">No ratings yet</string>
     <string name="profile_stats_error">Couldn\'t load your library stats.</string>
+
+    <!-- Profile's own door to the AniList import screen (task 9b.6, ImportRoute). The two
+         limitations live on the import screen itself, not repeated here. -->
+    <string name="profile_import_title">Import from AniList</string>
+    <string name="profile_import_body">Bring the titles from your AniList list into ShowTrack.</string>
+    <string name="profile_import_action">Import</string>
+
+    <!-- The AniList import screen itself. import_public_requirement/import_one_way_notice are
+         shown BEFORE the username field, on every render of the form — the task brief requires
+         stating both limitations up front rather than only after a failed attempt. -->
+    <string name="import_title">Import from AniList</string>
+    <string name="import_public_requirement">Your AniList profile\'s list must be set to public — ShowTrack cannot read a private one.</string>
+    <string name="import_one_way_notice">This is a one-time, one-way copy: nothing you do in ShowTrack is ever written back to AniList.</string>
+    <string name="import_username_label">AniList username</string>
+    <string name="import_submit">Import</string>
+    <string name="import_submitting">Importing…</string>
+    <string name="import_skip">Skip for now</string>
+
+    <!-- The server returns the same 404 whether the username does not exist or the list is
+         private (ImportFailure.ListNotPublic's own KDoc) — this copy covers both honestly rather
+         than guessing which one happened. -->
+    <string name="import_error_not_public">Couldn\'t find a public AniList list for that username. Double-check the spelling, and make sure the list is set to public in AniList\'s settings.</string>
+    <string name="import_error_invalid_username">That username isn\'t valid.</string>
+    <string name="import_error_upstream_unavailable">AniList isn\'t responding right now. Try again in a moment.</string>
+    <string name="import_error_offline">You\'re offline. Check your connection and try again.</string>
+    <string name="import_error_unknown">Something went wrong. Try again.</string>
+
+    <string name="import_success_title">Import complete</string>
+    <plurals name="import_result_imported">
+        <item quantity="one">%1$d title imported</item>
+        <item quantity="other">%1$d titles imported</item>
+    </plurals>
+    <plurals name="import_result_skipped">
+        <item quantity="one">%1$d title skipped (already in your library)</item>
+        <item quantity="other">%1$d titles skipped (already in your library)</item>
+    </plurals>
+    <plurals name="import_result_failed">
+        <item quantity="one">%1$d title failed to import</item>
+        <item quantity="other">%1$d titles failed to import</item>
+    </plurals>
+    <!-- Decision 4-L: a list truncated at the backend's chunk cap must be distinguishable from a
+         complete one — an identical set of counts can describe either. -->
+    <string name="import_truncated_notice">Your AniList list is large — only part of it was imported this time.</string>
+    <string name="import_done">Done</string>
 </resources>

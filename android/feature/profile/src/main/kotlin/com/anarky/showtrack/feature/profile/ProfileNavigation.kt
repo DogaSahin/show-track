@@ -4,6 +4,7 @@ import androidx.navigation.NavGraphBuilder
 import androidx.navigation.compose.composable
 import com.anarky.showtrack.core.navigation.AppRoute
 import com.anarky.showtrack.core.navigation.AuthRoute
+import com.anarky.showtrack.core.navigation.ImportRoute
 import com.anarky.showtrack.core.navigation.ProfileRoute
 
 /**
@@ -18,10 +19,17 @@ import com.anarky.showtrack.core.navigation.ProfileRoute
  * one to `LibraryRoute`: it reuses `navigateToAuthClearingStack()`, the same extension the
  * reactive `AuthGate` calls on a failed token refresh, so Back cannot return to a screen whose
  * session is already gone regardless of which path triggered the navigation.
+ *
+ * [onImportClick] (task 9b.6) is Profile's own door to [ImportRoute] — the other one is
+ * `:feature:auth`'s post-register onboarding, wired in `AuthNavigation.kt`. Both go through this
+ * shared route contract rather than one feature depending on the other (architecture rule 1).
  */
 fun NavGraphBuilder.profileEntry(onNavigate: (AppRoute) -> Unit) {
     composable<ProfileRoute> {
-        ProfileScreen(onSignedOut = signOutNavigation(onNavigate))
+        ProfileScreen(
+            onSignedOut = signOutNavigation(onNavigate),
+            onImportClick = importNavigation(onNavigate),
+        )
     }
 }
 
@@ -60,3 +68,11 @@ fun NavGraphBuilder.profileEntry(onNavigate: (AppRoute) -> Unit) {
  *      as covering this file too.
  */
 internal fun signOutNavigation(onNavigate: (AppRoute) -> Unit): () -> Unit = { onNavigate(AuthRoute) }
+
+/**
+ * The mapping [ProfileScreen]'s import action drives (task 9b.6) — [signOutNavigation]'s own
+ * reasoning applies identically: pulled out of [profileEntry]'s lambda so it is reachable by a
+ * plain unit test, since [profileEntry] constructs `ProfileScreen` WITHOUT passing `viewModel`
+ * and this module has no Hilt test harness.
+ */
+internal fun importNavigation(onNavigate: (AppRoute) -> Unit): () -> Unit = { onNavigate(ImportRoute) }

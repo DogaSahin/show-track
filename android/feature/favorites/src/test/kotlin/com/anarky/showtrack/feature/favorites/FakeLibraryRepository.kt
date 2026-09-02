@@ -77,6 +77,8 @@ internal class FakeLibraryRepository(
 
     override suspend fun libraryStats(): LibraryStats = error("not exercised by FavoritesViewModel")
 
+    override suspend fun importAniList(username: String) = error("not exercised by FavoritesViewModel")
+
     override suspend fun refreshFavorites() {
         refreshCalls++
         refreshGate?.await()

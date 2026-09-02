@@ -58,7 +58,7 @@ class ProfileResumeTest {
         val viewModel = ProfileViewModel(FakeDistributors(), FakeAuthRepository(), repository)
 
         composeRule.setContent {
-            ProfileScreen(onSignedOut = {}, viewModel = viewModel)
+            ProfileScreen(onSignedOut = {}, onImportClick = {}, viewModel = viewModel)
         }
         composeRule.waitForIdle()
 

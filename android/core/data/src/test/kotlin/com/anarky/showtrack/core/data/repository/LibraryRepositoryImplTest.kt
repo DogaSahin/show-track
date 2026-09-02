@@ -9,6 +9,7 @@ import com.anarky.showtrack.core.data.mapper.toEntity
 import com.anarky.showtrack.core.database.LibraryDao
 import com.anarky.showtrack.core.database.LibraryEntryEntity
 import com.anarky.showtrack.core.database.ShowTrackDatabase
+import com.anarky.showtrack.core.model.ImportFailure
 import com.anarky.showtrack.core.model.LibraryFilter
 import com.anarky.showtrack.core.model.LibraryPatch
 import com.anarky.showtrack.core.model.LibrarySort
@@ -17,6 +18,8 @@ import com.anarky.showtrack.core.model.ScoreChange
 import com.anarky.showtrack.core.model.UserMediaStatus
 import com.anarky.showtrack.core.network.api.ShowTrackApi
 import com.anarky.showtrack.core.network.dto.AddLibraryEntryRequest
+import com.anarky.showtrack.core.network.dto.ImportAniListRequest
+import com.anarky.showtrack.core.network.dto.ImportSummaryDto
 import com.anarky.showtrack.core.network.dto.LibraryEntryDto
 import com.anarky.showtrack.core.network.dto.LibraryPageDto
 import com.anarky.showtrack.core.network.dto.LibraryStatsDto
@@ -32,6 +35,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonPrimitive
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -41,10 +45,18 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import retrofit2.HttpException
+import retrofit2.Response
 import java.io.IOException
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.Instant
+
+/**
+ * Builds an `HttpException` the way Retrofit itself does, for a non-2xx response —
+ * `AuthRepositoryTest`'s own helper.
+ */
+private fun httpError(code: Int): HttpException = HttpException(Response.error<Any>(code, "".toResponseBody(null)))
 
 /**
  * A REAL in-memory Room database, not a hand-written fake DAO — which is a test-design decision
@@ -556,6 +568,69 @@ class LibraryRepositoryImplTest {
             assertEquals(BigDecimal("8.4"), stats.averageScore)
         }
 
+    /** The pass-through half of task 9b.6: a successful import maps every field, `truncated` included. */
+    @Test
+    fun `importAniList reads through the three counts and the truncated flag`() =
+        runTest {
+            api.importResponse = ImportSummaryDto(imported = 40, skipped = 5, failed = 2, truncated = true)
+
+            val summary = repository.importAniList("someone")
+
+            assertEquals(40, summary.imported)
+            assertEquals(5, summary.skipped)
+            assertEquals(2, summary.failed)
+            assertTrue(summary.truncated)
+            assertEquals("someone", api.lastImportUsername)
+        }
+
+    /**
+     * Decision C-R made concrete for import: a 404 must arrive at the caller as
+     * [ImportFailure.ListNotPublic], never as a raw `HttpException` a `:feature:profile` ViewModel
+     * has no way to see (architecture rule 2).
+     */
+    @Test
+    fun `a 404 from the import endpoint surfaces as ListNotPublic`() =
+        runTest {
+            api.importFailure = httpError(404)
+
+            val failure = runCatching { repository.importAniList("someone") }.exceptionOrNull()
+
+            assertTrue(failure is ImportFailure.ListNotPublic)
+        }
+
+    @Test
+    fun `a 422 from the import endpoint surfaces as InvalidUsername`() =
+        runTest {
+            api.importFailure = httpError(422)
+
+            val failure = runCatching { repository.importAniList("") }.exceptionOrNull()
+
+            assertTrue(failure is ImportFailure.InvalidUsername)
+        }
+
+    /** 429/502/504 all mean "the upstream AniList API itself failed" — collapsed into one case. */
+    @Test
+    fun `a 429, 502 or 504 from the import endpoint surfaces as UpstreamUnavailable`() =
+        runTest {
+            for (code in listOf(429, 502, 504)) {
+                api.importFailure = httpError(code)
+
+                val failure = runCatching { repository.importAniList("someone") }.exceptionOrNull()
+
+                assertTrue("expected UpstreamUnavailable for $code", failure is ImportFailure.UpstreamUnavailable)
+            }
+        }
+
+    @Test
+    fun `being offline during import surfaces as Offline`() =
+        runTest {
+            api.importFailure = IOException("offline")
+
+            val failure = runCatching { repository.importAniList("someone") }.exceptionOrNull()
+
+            assertTrue(failure is ImportFailure.Offline)
+        }
+
     private fun dto(
         id: String,
         score: String? = null,
@@ -616,6 +691,10 @@ private class FakeShowTrackApi(
     val addRequests = mutableListOf<AddLibraryEntryRequest>()
     val updateRequests = mutableListOf<Pair<String, JsonObject>>()
     var statsResponse = LibraryStatsDto(total = 0, byStatus = emptyMap(), averageScore = null, ratedCount = 0)
+    var importResponse = ImportSummaryDto(imported = 0, skipped = 0, failed = 0, truncated = false)
+    var importFailure: Throwable? = null
+    var lastImportUsername: String? = null
+        private set
     private var shouldFail = false
 
     // One-shot responses, consumed in FIFO order and taking priority over [pages] — the
@@ -664,6 +743,12 @@ private class FakeShowTrackApi(
     // PushRepositoryImplTest has its own fake for the push half; the search/detail methods stay
     // outside this repository's business.
     override suspend fun libraryStats(): LibraryStatsDto = statsResponse
+
+    override suspend fun importAniList(request: ImportAniListRequest): ImportSummaryDto {
+        lastImportUsername = request.username
+        importFailure?.let { throw it }
+        return importResponse
+    }
 
     override suspend fun addLibraryEntry(request: AddLibraryEntryRequest): LibraryEntryDto {
         addRequests += request

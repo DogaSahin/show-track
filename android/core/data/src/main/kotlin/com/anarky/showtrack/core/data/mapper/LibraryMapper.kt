@@ -1,6 +1,7 @@
 package com.anarky.showtrack.core.data.mapper
 
 import com.anarky.showtrack.core.database.LibraryEntryEntity
+import com.anarky.showtrack.core.model.ImportSummary
 import com.anarky.showtrack.core.model.LibraryEntry
 import com.anarky.showtrack.core.model.LibraryStats
 import com.anarky.showtrack.core.model.Media
@@ -8,6 +9,7 @@ import com.anarky.showtrack.core.model.MediaSource
 import com.anarky.showtrack.core.model.MediaStatus
 import com.anarky.showtrack.core.model.MediaType
 import com.anarky.showtrack.core.model.UserMediaStatus
+import com.anarky.showtrack.core.network.dto.ImportSummaryDto
 import com.anarky.showtrack.core.network.dto.LibraryEntryDto
 import com.anarky.showtrack.core.network.dto.LibraryStatsDto
 import java.math.BigDecimal
@@ -70,6 +72,10 @@ fun LibraryStatsDto.toDomain(): LibraryStats =
         averageScore = averageScore?.let(::BigDecimal),
         ratedCount = ratedCount,
     )
+
+/** A plain field-for-field copy — `ImportSummaryDto`'s fields already share [ImportSummary]'s names and types. */
+fun ImportSummaryDto.toDomain(): ImportSummary =
+    ImportSummary(imported = imported, skipped = skipped, failed = failed, truncated = truncated)
 
 /**
  * The cache is a RENDER cache: it holds only what a list row draws, so the [Media] it

@@ -2,6 +2,8 @@ package com.anarky.showtrack.core.data.repository
 
 import com.anarky.showtrack.core.network.api.ShowTrackApi
 import com.anarky.showtrack.core.network.dto.AddLibraryEntryRequest
+import com.anarky.showtrack.core.network.dto.ImportAniListRequest
+import com.anarky.showtrack.core.network.dto.ImportSummaryDto
 import com.anarky.showtrack.core.network.dto.LibraryEntryDto
 import com.anarky.showtrack.core.network.dto.LibraryPageDto
 import com.anarky.showtrack.core.network.dto.LibraryStatsDto
@@ -323,6 +325,9 @@ class RecommendationRepositoryTest {
             error("this fake only serves refresh/loadMore/remove")
 
         override suspend fun libraryStats(): LibraryStatsDto = error("this fake only serves refresh/loadMore/remove")
+
+        override suspend fun importAniList(request: ImportAniListRequest): ImportSummaryDto =
+            error("this fake only serves refresh/loadMore/remove")
 
         override suspend fun updateLibraryEntry(
             id: String,

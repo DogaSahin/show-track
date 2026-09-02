@@ -1,5 +1,6 @@
 package com.anarky.showtrack.core.network.api
 
+import com.anarky.showtrack.core.network.dto.ImportAniListRequest
 import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
@@ -8,6 +9,7 @@ import mockwebserver3.MockWebServer
 import okhttp3.MediaType.Companion.toMediaType
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Test
@@ -117,5 +119,31 @@ class ShowTrackApiTest {
             api.library(cursor = null, limit = 20, status = null, sort = null, mediaId = null, favorite = false)
 
             assertEquals("false", server.takeRequest().url.queryParameter("favorite"))
+        }
+
+    /**
+     * Task 9b.6. The body key must be `username`, matching `backend/app/library/schemas.py`'s
+     * `ImportRequest` exactly — a `@SerialName` typo here would 422 every real import silently
+     * disguised as a passing test, since the fixture response below decodes regardless of what
+     * was actually sent.
+     */
+    @Test
+    fun `the import call sends the username as the request body`() =
+        runTest {
+            server.enqueue(
+                MockResponse
+                    .Builder()
+                    .code(200)
+                    .body("""{"imported":3,"skipped":1,"failed":0,"truncated":false}""")
+                    .build(),
+            )
+
+            val summary = api.importAniList(ImportAniListRequest(username = "someone"))
+
+            assertEquals("""{"username":"someone"}""", server.takeRequest().body?.utf8())
+            assertEquals(3, summary.imported)
+            assertEquals(1, summary.skipped)
+            assertEquals(0, summary.failed)
+            assertFalse(summary.truncated)
         }
 }

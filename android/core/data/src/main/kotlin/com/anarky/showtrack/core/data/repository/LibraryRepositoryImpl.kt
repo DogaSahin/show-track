@@ -6,6 +6,8 @@ import com.anarky.showtrack.core.data.paging.CursorPaginator
 import com.anarky.showtrack.core.data.paging.Page
 import com.anarky.showtrack.core.database.LibraryDao
 import com.anarky.showtrack.core.database.LibraryEntryEntity
+import com.anarky.showtrack.core.model.ImportFailure
+import com.anarky.showtrack.core.model.ImportSummary
 import com.anarky.showtrack.core.model.LibraryEntry
 import com.anarky.showtrack.core.model.LibraryFilter
 import com.anarky.showtrack.core.model.LibraryPatch
@@ -14,6 +16,7 @@ import com.anarky.showtrack.core.model.MediaSource
 import com.anarky.showtrack.core.model.ScoreChange
 import com.anarky.showtrack.core.network.api.ShowTrackApi
 import com.anarky.showtrack.core.network.dto.AddLibraryEntryRequest
+import com.anarky.showtrack.core.network.dto.ImportAniListRequest
 import com.anarky.showtrack.core.network.dto.LibraryEntryDto
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
@@ -27,10 +30,18 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import retrofit2.HttpException
+import java.io.IOException
 import javax.inject.Inject
 import javax.inject.Singleton
 
 private const val PAGE_SIZE = 20
+private const val HTTP_NOT_FOUND = 404
+private const val HTTP_UNPROCESSABLE_ENTITY = 422
+private const val HTTP_TOO_MANY_REQUESTS = 429
+private const val HTTP_BAD_GATEWAY = 502
+private const val HTTP_GATEWAY_TIMEOUT = 504
+private val UPSTREAM_FAILURE_CODES = setOf(HTTP_TOO_MANY_REQUESTS, HTTP_BAD_GATEWAY, HTTP_GATEWAY_TIMEOUT)
 
 /**
  * `@Singleton` here on the CLASS rather than on `DataModule`'s `@Binds` method: scoping the bind
@@ -39,7 +50,11 @@ private const val PAGE_SIZE = 20
  * [paginator] and [filter] carry the cursor, the accumulated pages and the active view as
  * instance state, so a per-consumer instance would restart pagination from page one for every
  * collector.
+ *
+ * `@Suppress("TooManyFunctions")`: mirrors [LibraryRepository]'s own suppression, for the same
+ * reason — see that interface's KDoc.
  */
+@Suppress("TooManyFunctions")
 @Singleton
 class LibraryRepositoryImpl
     @Inject
@@ -274,6 +289,42 @@ class LibraryRepositoryImpl
 
         /** A plain pass-through — no cache, no paginator, nothing to sequence. */
         override suspend fun libraryStats(): LibraryStats = api.libraryStats().toDomain()
+
+        /**
+         * A plain pass-through like [libraryStats] above, plus the one thing [libraryStats] never
+         * needs: translating a non-2xx into [ImportFailure] (decision C-R) — [mapImportFailure]
+         * does the actual translation, kept as a private top-level function rather than inlined
+         * here so it is unit-testable in isolation from the paginator/cache machinery this class
+         * otherwise carries.
+         */
+        @Suppress("TooGenericExceptionCaught")
+        override suspend fun importAniList(username: String): ImportSummary =
+            try {
+                api.importAniList(ImportAniListRequest(username = username)).toDomain()
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (failure: Exception) {
+                throw mapImportFailure(failure)
+            }
+    }
+
+/**
+ * 404 means no PUBLIC list for that username — [ImportFailure.ListNotPublic]'s own KDoc explains
+ * why that single case has to cover both "no such user" and "a private list" rather than picking
+ * one. 422 is a malformed username; 429/502/504 are the upstream AniList API itself failing,
+ * rate-limiting, or timing out (backend's `HANDLED` table, `app/errors.py`) — collapsed into one
+ * [ImportFailure.UpstreamUnavailable] case because none of the three distinguishes an action the
+ * screen would take differently from the others: all three mean "try again shortly".
+ */
+private fun mapImportFailure(failure: Throwable): ImportFailure =
+    when {
+        failure is HttpException && failure.code() == HTTP_NOT_FOUND -> ImportFailure.ListNotPublic(failure)
+        failure is HttpException && failure.code() == HTTP_UNPROCESSABLE_ENTITY ->
+            ImportFailure.InvalidUsername(failure)
+        failure is HttpException && failure.code() in UPSTREAM_FAILURE_CODES ->
+            ImportFailure.UpstreamUnavailable(failure)
+        failure is IOException -> ImportFailure.Offline(failure)
+        else -> ImportFailure.Unexpected(failure)
     }
 
 /**
