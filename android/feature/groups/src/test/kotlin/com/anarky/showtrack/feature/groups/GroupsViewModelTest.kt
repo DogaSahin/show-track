@@ -24,7 +24,9 @@ import java.time.Instant
  * [GroupsViewModel] has no `init { refresh() }` (that class's own KDoc): `GroupsScreen`'s
  * `LifecycleResumeEffect` is the only thing that ever calls [GroupsViewModel.refresh] in
  * production. Every test below calls it explicitly, once, right after construction — standing in
- * for that first resume.
+ * for that first resume — UNLESS the test is specifically about create/join working WITHOUT a
+ * successful `refresh()` ever having landed (fix round 1's BLOCKING 1 tests), which deliberately
+ * skip it or leave it failed.
  *
  * The brief's `` `the invite code is not shown for a group that came from the list` `` is
  * deliberately NOT reproduced here: [Group] carries no invite-code field at all (the server
@@ -36,11 +38,11 @@ import java.time.Instant
  *
  * The brief's `` `joining with a bad code shows an error and keeps the typed code` `` is split the
  * identical way: the invite-code text field is `JoinGroupDialog`'s own `remember`ed draft, owned by
- * `GroupsScreen`, not by this ViewModel or [GroupsUiState] — this ViewModel has no field for a
- * "typed code" to keep or clear. What THIS class can and does pin is the half it actually owns:
- * `` `joining with a bad code surfaces the error and leaves the loaded groups standing` `` below.
- * `GroupsScreenTest`'s `` `a failed join keeps the typed code in the field` `` pins the rendering
- * half.
+ * `GroupsScreen`, not by this ViewModel or [GroupsUiState]/[GroupsActionState] — this ViewModel has
+ * no field for a "typed code" to keep or clear. What THIS class can and does pin is the half it
+ * actually owns: `` `joining with a bad code surfaces the error and leaves the loaded groups
+ * standing` `` below. `GroupsScreenTest`'s `` `a failed join keeps the typed code in the field` ``
+ * pins the rendering half.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class GroupsViewModelTest {
@@ -84,6 +86,7 @@ class GroupsViewModelTest {
                 GroupsUiState.Success(groups = listOf(ALPHA, GAMMA), justCreated = created),
                 viewModel.state.value,
             )
+            assertEquals(GroupsActionState(), viewModel.actionState.value)
         }
 
     /**
@@ -136,10 +139,8 @@ class GroupsViewModelTest {
             viewModel.joinGroup("BADCODE0000000000000")
             advanceUntilIdle()
 
-            assertEquals(
-                GroupsUiState.Success(groups = listOf(ALPHA), joinError = failure),
-                viewModel.state.value,
-            )
+            assertEquals(GroupsUiState.Success(groups = listOf(ALPHA)), viewModel.state.value)
+            assertEquals(GroupsActionState(joinError = failure), viewModel.actionState.value)
         }
 
     /**
@@ -161,7 +162,7 @@ class GroupsViewModelTest {
             repository.createFailure = failure
             viewModel.createGroup("Gamma Watchers")
             advanceUntilIdle()
-            assertEquals(failure, (viewModel.state.value as GroupsUiState.Success).createError)
+            assertEquals(failure, viewModel.actionState.value.createError)
 
             repository.createFailure = null
             repository.createGate = CompletableDeferred()
@@ -170,11 +171,41 @@ class GroupsViewModelTest {
 
             // The gate has not been completed yet — the retry's own network round trip is still
             // suspended — but the error must already be gone and `creating` already true.
-            val midFlight = viewModel.state.value as GroupsUiState.Success
+            val midFlight = viewModel.actionState.value
             assertEquals(null, midFlight.createError)
             assertEquals(true, midFlight.creating)
 
             repository.createGate?.complete(Unit)
+            advanceUntilIdle()
+
+            assertEquals(GAMMA, (viewModel.state.value as GroupsUiState.Success).justCreated?.group)
+        }
+
+    /** [joinGroup]'s mirror of the create retry test above — SEPARATE channel, SEPARATE guard. */
+    @Test
+    fun `retrying join after a failure clears the previous error before the new attempt lands`() =
+        runTest(dispatcher) {
+            val repository = FakeGroupRepository(groupsResult = listOf(ALPHA))
+            val viewModel = GroupsViewModel(repository)
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            val failure = GroupFailure.Unknown(IllegalStateException("bad or expired code"))
+            repository.joinFailure = failure
+            viewModel.joinGroup("BADCODE0000000000000")
+            advanceUntilIdle()
+            assertEquals(failure, viewModel.actionState.value.joinError)
+
+            repository.joinFailure = null
+            repository.joinGate = CompletableDeferred()
+            repository.joinResult = invite(group = GAMMA)
+            viewModel.joinGroup("GOODCODE00000000000")
+
+            val midFlight = viewModel.actionState.value
+            assertEquals(null, midFlight.joinError)
+            assertEquals(true, midFlight.joining)
+
+            repository.joinGate?.complete(Unit)
             advanceUntilIdle()
 
             assertEquals(GAMMA, (viewModel.state.value as GroupsUiState.Success).justCreated?.group)
@@ -262,6 +293,143 @@ class GroupsViewModelTest {
             advanceUntilIdle()
 
             assertEquals(1, repository.createCalls)
+        }
+
+    /** [joinGroup]'s mirror of the create re-entrancy test above — a SEPARATE flag, SEPARATE guard. */
+    @Test
+    fun `join is not fired again while one is already in flight`() =
+        runTest(dispatcher) {
+            val repository = FakeGroupRepository(groupsResult = listOf(ALPHA), joinResult = invite(group = GAMMA))
+            val viewModel = GroupsViewModel(repository)
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            viewModel.joinGroup("GOODCODE00000000000")
+            viewModel.joinGroup("GOODCODE00000000000")
+            viewModel.joinGroup("GOODCODE00000000000")
+            advanceUntilIdle()
+
+            assertEquals(1, repository.joinCalls)
+        }
+
+    /**
+     * BLOCKING 1 (fix round 1 review): before this round, `createGroup`/`joinGroup` opened with
+     * `mutableState.value as? GroupsUiState.Success ?: return` — a guard that read as re-entrancy
+     * but was ALSO an undocumented "the list must have loaded first" precondition nothing asked
+     * for. [GroupsUiState.Error] is not transient (unlike `Loading`): a cold start with no
+     * connectivity leaves the screen there indefinitely, and a user holding a valid invite code
+     * has every reason to redeem it from exactly this screen. Before the fix, this exact sequence
+     * left `joinCalls == 0` forever — the dialog accepted input and the button was enabled, but
+     * tapping it did nothing.
+     */
+    @Test
+    fun `joining a group succeeds even when the initial load failed`() =
+        runTest(dispatcher) {
+            val repository = FakeGroupRepository(groupsFailure = GroupFailure.Network)
+            val viewModel = GroupsViewModel(repository)
+            viewModel.refresh()
+            advanceUntilIdle()
+            assertEquals(GroupsUiState.Error(GroupFailure.Network), viewModel.state.value)
+
+            val joined = invite(group = GAMMA)
+            repository.joinResult = joined
+            viewModel.joinGroup("GOODCODE00000000000")
+            advanceUntilIdle()
+
+            assertEquals(1, repository.joinCalls)
+            assertEquals(
+                GroupsUiState.Success(groups = listOf(GAMMA), justCreated = joined),
+                viewModel.state.value,
+            )
+        }
+
+    /** [createGroup]'s mirror of the BLOCKING 1 join test above. */
+    @Test
+    fun `creating a group succeeds even when the initial load failed`() =
+        runTest(dispatcher) {
+            val repository = FakeGroupRepository(groupsFailure = GroupFailure.Network)
+            val viewModel = GroupsViewModel(repository)
+            viewModel.refresh()
+            advanceUntilIdle()
+            assertEquals(GroupsUiState.Error(GroupFailure.Network), viewModel.state.value)
+
+            val created = invite(group = GAMMA)
+            repository.createResult = created
+            viewModel.createGroup("Gamma Watchers")
+            advanceUntilIdle()
+
+            assertEquals(1, repository.createCalls)
+            assertEquals(
+                GroupsUiState.Success(groups = listOf(GAMMA), justCreated = created),
+                viewModel.state.value,
+            )
+        }
+
+    /**
+     * BLOCKING 1's other half: the initial load's own fetch has not even ANSWERED yet
+     * ([GroupsUiState.Loading], not [GroupsUiState.Error]) when the user submits a join. The old
+     * `Success`-cast guard rejected this too.
+     */
+    @Test
+    fun `joining a group succeeds while the initial load is still in flight`() =
+        runTest(dispatcher) {
+            val repository = FakeGroupRepository()
+            repository.groupsGate = CompletableDeferred()
+            val viewModel = GroupsViewModel(repository)
+            viewModel.refresh()
+            // Nothing has advanced the dispatcher yet — refresh()'s own coroutine has not even
+            // started running, so this is genuinely still Loading, not merely "Loading and about
+            // to resolve".
+            assertEquals(GroupsUiState.Loading, viewModel.state.value)
+
+            val joined = invite(group = GAMMA)
+            repository.joinResult = joined
+            viewModel.joinGroup("GOODCODE00000000000")
+            advanceUntilIdle()
+
+            assertEquals(1, repository.joinCalls)
+            assertEquals(GAMMA, (viewModel.state.value as GroupsUiState.Success).justCreated?.group)
+        }
+
+    /**
+     * Small item 1 (fix round 1 review): a resume's OWN `refresh()` landing while a create is
+     * still in flight must not silently clear `creating`/let a second tap through. Before the
+     * fix, `refresh()`'s success wrote a brand new `Success` object — which is where `creating`
+     * used to live — discarding it mid-flight. [actionState] now lives outside [GroupsUiState]
+     * entirely, so `refresh()` structurally cannot reach it.
+     */
+    @Test
+    fun `a resume mid-create does not clear the in-flight flag or admit a duplicate submit`() =
+        runTest(dispatcher) {
+            val repository = FakeGroupRepository(groupsResult = listOf(ALPHA))
+            val viewModel = GroupsViewModel(repository)
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            repository.createGate = CompletableDeferred()
+            repository.createResult = invite(group = GAMMA)
+            viewModel.createGroup("Gamma Watchers")
+            assertEquals(true, viewModel.actionState.value.creating)
+
+            // The app was backgrounded and resumed while the create above is still suspended; the
+            // resume's OWN refresh() lands successfully before the create does.
+            repository.groupsResult = listOf(ALPHA)
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            // Still creating — the resume's refresh() must not have touched actionState.
+            assertEquals(true, viewModel.actionState.value.creating)
+
+            // A second tap while still (correctly) reported as creating must still be dropped.
+            viewModel.createGroup("Gamma Watchers")
+            advanceUntilIdle()
+            assertEquals(1, repository.createCalls)
+
+            repository.createGate?.complete(Unit)
+            advanceUntilIdle()
+
+            assertEquals(false, viewModel.actionState.value.creating)
+            assertEquals(GAMMA, (viewModel.state.value as GroupsUiState.Success).justCreated?.group)
         }
 
     private companion object {

@@ -101,9 +101,16 @@ internal fun JoinGroupDialog(
                     enabled = !submitting,
                     modifier = Modifier.fillMaxWidth(),
                 )
+                // unknownRes = groups_join_error_bad_code (fix round 1, small item 3): a bad or
+                // expired invite code is a 400 the backend deliberately does not distinguish
+                // (GroupRepository.joinGroup's own KDoc), so it surfaces as GroupFailure.Unknown —
+                // the SAME case every other Unknown failure hits. Left at the generic "something
+                // went wrong" copy, the single most common outcome of THIS form would never tell
+                // the user their code might be the problem. Says it MAY be wrong or expired,
+                // never WHICH — the server does not distinguish them either.
                 error?.let {
                     Text(
-                        text = stringResource(it.messageRes()),
+                        text = stringResource(it.messageRes(unknownRes = R.string.groups_join_error_bad_code)),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error,
                     )
@@ -130,19 +137,27 @@ internal fun JoinGroupDialog(
 
 /**
  * The one place a [GroupFailure] becomes copy — `ImportScreen`'s identical `ImportError.messageRes()`
- * pattern. Every case besides [GroupFailure.Network] folds to the same generic message: the other
- * five cases (`NotAMember`, `NotPermitted`, `NoSuchTitle`, `NoSuchEntry`, `AlreadyReviewed`) describe
- * failures from feed/watchlist/review endpoints this screen never calls — creating or joining a
- * group cannot produce them — so a dedicated string for each would name a case this form can never
- * actually reach. [GroupFailure.Unknown.cause] is deliberately not read here (that field is for
- * logging only — see its own KDoc): an `HttpException`'s message is the raw HTTP status line, never
- * fit for user-facing copy.
+ * pattern. Every case besides [GroupFailure.Network] and [GroupFailure.Unknown] folds to the same
+ * generic message: the remaining four (`NotAMember`, `NotPermitted`, `NoSuchTitle`, `NoSuchEntry`)
+ * plus [GroupFailure.AlreadyReviewed] describe failures from feed/watchlist/review endpoints this
+ * screen never calls — creating or joining a group cannot produce them — so a dedicated string for
+ * each would name a case this form can never actually reach. [GroupFailure.Unknown.cause] is
+ * deliberately not read here (that field is for logging only — see its own KDoc): an
+ * `HttpException`'s message is the raw HTTP status line, never fit for user-facing copy.
+ *
+ * [unknownRes] is decision C-S's "the sink is a parameter of the guard helper chosen by the
+ * caller" applied to copy, not just control flow — the same shape [GroupRepositoryImpl]'s own
+ * `guarded(notFound = …)` uses in `:core:data`. Added in fix round 1: [GroupFailure.Unknown] is
+ * NOT one generic case for every caller — a bad or expired invite code surfaces as exactly this
+ * case (see [JoinGroupDialog]'s own call site), and that is common and specific enough to deserve
+ * its own copy, while `CreateGroupDialog` and [GroupsUiState.Error]'s rendering in `GroupsScreen.kt`
+ * have no comparably specific story for it and keep the generic default.
  *
  * `internal`, not `private`: `GroupsScreen.kt`'s `GroupsContent` also needs it for
  * [GroupsUiState.Error]'s own message, and this file is where the mapping lives (split out to keep
  * `GroupsScreen.kt` under detekt's `TooManyFunctions` threshold — see this file's own KDoc).
  */
-internal fun GroupFailure.messageRes(): Int =
+internal fun GroupFailure.messageRes(unknownRes: Int = R.string.groups_error_unknown): Int =
     when (this) {
         GroupFailure.Network -> R.string.groups_error_network
         GroupFailure.NotAMember,
@@ -150,6 +165,6 @@ internal fun GroupFailure.messageRes(): Int =
         GroupFailure.NoSuchTitle,
         GroupFailure.NoSuchEntry,
         is GroupFailure.AlreadyReviewed,
-        is GroupFailure.Unknown,
         -> R.string.groups_error_unknown
+        is GroupFailure.Unknown -> unknownRes
     }

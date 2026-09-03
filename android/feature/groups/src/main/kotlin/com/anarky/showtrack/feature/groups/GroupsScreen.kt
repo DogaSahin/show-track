@@ -23,7 +23,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleResumeEffect
@@ -48,6 +50,9 @@ import com.anarky.showtrack.core.model.Group
  * the list and, structurally, clears any `justCreated` invite code left over from a create/join
  * that happened before this trip (`GroupsViewModel.refresh`'s own KDoc). `FavoritesScreen`'s
  * identical effect documents the same round-trip mechanism.
+ *
+ * Collects [GroupsViewModel.state] AND [GroupsViewModel.actionState] separately (fix round 1) —
+ * see [GroupsActionState]'s own KDoc for why they are two independent flows rather than one.
  */
 @Composable
 fun GroupsScreen(
@@ -60,8 +65,10 @@ fun GroupsScreen(
         onPauseOrDispose { }
     }
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val actionState by viewModel.actionState.collectAsStateWithLifecycle()
     GroupsScreen(
         state = state,
+        actionState = actionState,
         onRetry = viewModel::refresh,
         onCreateGroup = viewModel::createGroup,
         onJoinGroup = viewModel::joinGroup,
@@ -76,13 +83,19 @@ fun GroupsScreen(
  * no Hilt — `FavoritesScreen`/`ImportScreen`'s pattern.
  *
  * [showCreateDialog]/[showJoinDialog] are this composable's OWN `remember`ed state, not part of
- * [GroupsUiState] — dialog visibility is a rendering decision, not a fact about what the ViewModel
- * knows (mirroring `ImportForm`'s `username`, which lives in `ImportScreen`, not `ImportUiState`).
- * Each dialog owns the text field it collects (name for create, code for join) the identical way,
- * which is what makes "a failed join keeps the typed code" true with no code in either the
- * ViewModel or this function: a failure only ever changes [GroupsUiState.Success.joinError], and
- * nothing here resets the dialog's own `remember`ed draft in response to it — the dialog only
- * closes on [onDismiss] or on the [LaunchedEffect] below, neither of which a failure triggers.
+ * [GroupsUiState] or [GroupsActionState] — dialog visibility is a rendering decision, not a fact
+ * about what the ViewModel knows (mirroring `ImportForm`'s `username`, which lives in
+ * `ImportScreen`, not `ImportUiState`). Each dialog owns the text field it collects (name for
+ * create, code for join) the identical way, which is what makes "a failed join keeps the typed
+ * code" true with no code in either the ViewModel or this function: a failure only ever changes
+ * [GroupsActionState.joinError], and nothing here resets the dialog's own `remember`ed draft in
+ * response to it — the dialog only closes on [onDismiss] or on the [LaunchedEffect] below, neither
+ * of which a failure triggers.
+ *
+ * [actionState] (fix round 1) drives BOTH dialogs regardless of [state] — `submitting`/`error` for
+ * `CreateGroupDialog`/`JoinGroupDialog` no longer come from a `state as? GroupsUiState.Success`
+ * cast, which is what makes both forms usable from [GroupsUiState.Loading]/[GroupsUiState.Error]
+ * as well as [GroupsUiState.Success] (see [GroupsActionState]'s own KDoc for the bug this fixes).
  *
  * The [LaunchedEffect] closes whichever dialog is open the moment [GroupsUiState.Success.justCreated]
  * goes non-null — the create/join actually landed, so the form dialog's job is done and the invite
@@ -94,6 +107,7 @@ fun GroupsScreen(
 @Composable
 internal fun GroupsScreen(
     state: GroupsUiState,
+    actionState: GroupsActionState,
     onRetry: () -> Unit,
     onCreateGroup: (String) -> Unit,
     onJoinGroup: (String) -> Unit,
@@ -124,19 +138,17 @@ internal fun GroupsScreen(
     }
 
     if (showCreateDialog) {
-        val success = state as? GroupsUiState.Success
         CreateGroupDialog(
-            submitting = success?.creating == true,
-            error = success?.createError,
+            submitting = actionState.creating,
+            error = actionState.createError,
             onCreate = onCreateGroup,
             onDismiss = { showCreateDialog = false },
         )
     }
     if (showJoinDialog) {
-        val success = state as? GroupsUiState.Success
         JoinGroupDialog(
-            submitting = success?.joining == true,
-            error = success?.joinError,
+            submitting = actionState.joining,
+            error = actionState.joinError,
             onJoin = onJoinGroup,
             onDismiss = { showJoinDialog = false },
         )
@@ -179,6 +191,12 @@ private fun GroupsContent(
 /**
  * [GroupsUiState.Success]'s own rendering — isStale (decision C-B made real, `FavoritesScreen`'s
  * identical shape): the banner sits ABOVE the content rather than replacing it.
+ *
+ * `messageRes = R.string.groups_stale_notice` (fix round 1): `StaleDataBanner`'s own default copy
+ * ("Showing saved titles…") names the wrong noun for a list of groups — see
+ * [GroupsUiState.Success]'s own KDoc for why `isStale` is still meaningful here despite groups
+ * having no Room cache, and `StaleDataBanner`'s own KDoc for why the fix was a parameter on the
+ * shared component rather than a fork of it.
  */
 @Composable
 private fun GroupsSuccessContent(
@@ -189,7 +207,7 @@ private fun GroupsSuccessContent(
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
         if (state.isStale) {
-            StaleDataBanner(onRetry = onRetry)
+            StaleDataBanner(onRetry = onRetry, messageRes = R.string.groups_stale_notice)
         }
         state.justCreated?.let { invite ->
             InviteCodeCard(invite = invite, onDismiss = onDismissInvite)
@@ -234,6 +252,15 @@ private fun GroupsTopBar(
 /**
  * [GroupWithInvite.expiresAt] is deliberately not rendered — this task's scope is "the code is
  * shown once", not a countdown UI; a member who needs the code again rotates it.
+ *
+ * **Fix round 1 — copy-to-clipboard.** E-I shows the code exactly once and clears it on the very
+ * next [GroupsViewModel.refresh] (a resume, a tab switch, navigating to the new group and back).
+ * With no way to copy it, "once" effectively meant "never usable" for the actual job this card
+ * exists for: the code has to leave this screen — into a chat app, a text message — to reach
+ * whoever the group owner is inviting, and switching away to paste it is itself the kind of resume
+ * that clears it. [copied] is local, `remember`ed against [invite]'s own code so a SECOND
+ * create/join later in the session (a different code) starts the button fresh rather than still
+ * reading "Copied" from the last one.
  */
 @Composable
 private fun InviteCodeCard(
@@ -241,6 +268,8 @@ private fun InviteCodeCard(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var copied by remember(invite.inviteCode) { mutableStateOf(false) }
+    val clipboardManager = LocalClipboardManager.current
     Card(modifier = modifier.fillMaxWidth().padding(all = 12.dp)) {
         Column(
             modifier = Modifier.padding(all = 16.dp),
@@ -254,8 +283,23 @@ private fun InviteCodeCard(
                 text = stringResource(R.string.groups_invite_code_label, invite.inviteCode),
                 style = MaterialTheme.typography.bodyLarge,
             )
-            TextButton(onClick = onDismiss) {
-                Text(text = stringResource(R.string.groups_invite_dismiss))
+            Row(horizontalArrangement = Arrangement.spacedBy(space = 8.dp)) {
+                TextButton(
+                    onClick = {
+                        clipboardManager.setText(AnnotatedString(invite.inviteCode))
+                        copied = true
+                    },
+                ) {
+                    Text(
+                        text =
+                            stringResource(
+                                if (copied) R.string.groups_invite_copied else R.string.groups_invite_copy,
+                            ),
+                    )
+                }
+                TextButton(onClick = onDismiss) {
+                    Text(text = stringResource(R.string.groups_invite_dismiss))
+                }
             }
         }
     }

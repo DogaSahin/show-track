@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.anarky.showtrack.core.data.repository.GroupOperationException
 import com.anarky.showtrack.core.data.repository.GroupRepository
+import com.anarky.showtrack.core.data.repository.GroupWithInvite
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -12,15 +13,16 @@ import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 /**
- * The groups list screen (task 9c.1).
+ * The groups list screen (task 9c.1; state split into [state]/[actionState] in fix round 1 — see
+ * [GroupsActionState]'s own KDoc for the bug that forced the split).
  *
  * The constructor names ONE interface from `:core:data` — architecture rule 2, structural rather
  * than a review item, the same shape `FavoritesViewModel`/`ImportViewModel` use.
  *
- * `state` is a plain [MutableStateFlow], not `stateIn(WhileSubscribed(5_000))` (decision C-U):
- * [GroupRepository.groups]/[GroupRepository.createGroup]/[GroupRepository.joinGroup] are one-shot
- * suspend calls this ViewModel drives itself, with no Room-backed upstream to gate a subscription
- * against — `FavoritesViewModel`'s identical reasoning.
+ * [state] and [actionState] are both plain [MutableStateFlow]s, not `stateIn(WhileSubscribed(5_000))`
+ * (decision C-U): [GroupRepository.groups]/[GroupRepository.createGroup]/[GroupRepository.joinGroup]
+ * are one-shot suspend calls this ViewModel drives itself, with no Room-backed upstream to gate a
+ * subscription against — `FavoritesViewModel`'s identical reasoning.
  *
  * Every call this class makes into [repository] can only ever throw [GroupOperationException]
  * (or [kotlinx.coroutines.CancellationException], which is never caught here and so propagates
@@ -45,6 +47,9 @@ class GroupsViewModel
         private val mutableState = MutableStateFlow<GroupsUiState>(GroupsUiState.Loading)
         val state: StateFlow<GroupsUiState> = mutableState.asStateFlow()
 
+        private val mutableActionState = MutableStateFlow(GroupsActionState())
+        val actionState: StateFlow<GroupsActionState> = mutableActionState.asStateFlow()
+
         /**
          * Called from the initial resume (there is no `init` — see this class's own KDoc) and from
          * [GroupsUiState.Error]'s retry action.
@@ -59,12 +64,22 @@ class GroupsViewModel
          * carried forward from whatever [state] held before this call. This is what makes "the
          * invite code is not shown for a group that came from the list" true even after the
          * round trip create -> tap the new group -> Detail -> Back, which fires this exact
-         * function again: the fresh [GroupsUiState.Success] this produces has no [GroupsUiState.Success.justCreated]
-         * at all, regardless of what the state before this call carried.
+         * function again: the fresh [GroupsUiState.Success] this produces has no
+         * [GroupsUiState.Success.justCreated] at all, regardless of what the state before this
+         * call carried.
          *
          * On failure, the same [GroupsUiState.Success.isStale] marking `FavoritesViewModel.refresh`
          * uses: a resume's failed background fetch marks a populated screen stale instead of
          * destroying it; only a load with nothing already on screen produces [GroupsUiState.Error].
+         *
+         * **Fix round 1 — this function never touches [actionState].** Before the fix, a resume's
+         * `refresh()` overwrote the WHOLE `Success` object, including the `creating`/`joining`
+         * flags that used to live on it — so a create/join genuinely in flight when the app was
+         * backgrounded and resumed had its "in progress" flag silently cleared the instant the
+         * resume's OWN fetch landed, before the create/join itself had answered. The submit button
+         * re-enabled and its label flipped back from "Creating…" while the original request was
+         * still in flight, and a second tap raced a real second `POST /v1/groups`. Splitting
+         * [actionState] out fixes this structurally: [refresh] has no way to reach it at all now.
          */
         fun refresh() {
             if (mutableState.value !is GroupsUiState.Success) {
@@ -82,78 +97,92 @@ class GroupsViewModel
         }
 
         /**
-         * A no-op unless [state] is already [GroupsUiState.Success] (a group cannot be created
-         * before the list itself has ever loaded) or a create is already in flight — the same
-         * re-entrancy guard `FavoritesViewModel.loadMore` uses, applied to a form submit instead of
-         * a scroll trigger: without it, a double-tap on the submit button would race two
-         * `POST /v1/groups` calls and create the group twice.
+         * Re-entrancy is keyed on [GroupsActionState.creating] alone (fix round 1) — NOT on
+         * whether [state] is [GroupsUiState.Success]. Before the fix, this function opened with
+         * `mutableState.value as? GroupsUiState.Success ?: return`, which read as a re-entrancy
+         * guard but was actually also a "has the list ever loaded" precondition with no caller
+         * that wanted it: a user holding a valid invite code, or naming a new group, has every
+         * reason to do so from a screen that failed to load the list (`GroupsUiState.Error`,
+         * which — unlike `Loading` — is NOT transient; a cold start with no connectivity leaves it
+         * there indefinitely) or hasn't finished loading it yet (`GroupsUiState.Loading`). That
+         * guard made Create and Join permanently, silently dead from `Error`: the dialog opened,
+         * accepted input, the submit button was enabled (nothing in the dialog itself reads
+         * [state]), and tapping it called this function, which returned immediately — no request,
+         * no error, no spinner, forever. See [GroupsActionState]'s own KDoc for the general
+         * pattern this was an instance of.
          *
-         * [GroupsUiState.Success.createError] is cleared THE MOMENT this launches (decision C-S:
-         * clear the error before the retry, not only on success) — the same discipline
+         * [GroupsActionState.createError] is cleared THE MOMENT this launches (decision C-S: clear
+         * the error before the retry, not only on success) — the same discipline
          * `ImportViewModel.import` follows for its own single form.
          *
-         * On success, the created [com.anarky.showtrack.core.model.Group] is appended to [groups]
-         * and the full [com.anarky.showtrack.core.data.repository.GroupWithInvite] is published as
-         * [GroupsUiState.Success.justCreated] — this is one of only three moments the client ever
-         * sees an invite code (task brief, E-I): `POST /v1/groups` is the only endpoint that
-         * returns one for a group this session did not already know about.
+         * On success, [applyGroupChange] folds the created group into whatever [state] currently
+         * holds — see that function's own KDoc for why it never re-fetches the whole list.
          */
         fun createGroup(name: String) {
-            val current = mutableState.value as? GroupsUiState.Success ?: return
-            if (current.creating) return
-            mutableState.value = current.copy(creating = true, createError = null)
+            if (mutableActionState.value.creating) return
+            mutableActionState.value = mutableActionState.value.copy(creating = true, createError = null)
             viewModelScope.launch {
                 try {
                     val created = repository.createGroup(name)
-                    replaceSuccess {
-                        it.copy(
-                            groups = it.groups + created.group,
-                            justCreated = created,
-                            creating = false,
-                            createError = null,
-                        )
-                    }
+                    mutableActionState.value = mutableActionState.value.copy(creating = false, createError = null)
+                    applyGroupChange(created)
                 } catch (failure: GroupOperationException) {
-                    replaceSuccess { it.copy(creating = false, createError = failure.failure) }
+                    mutableActionState.value =
+                        mutableActionState.value.copy(creating = false, createError = failure.failure)
                 }
             }
         }
 
         /**
-         * [current.joining]'s re-entrancy guard mirrors [createGroup]'s own — a double-tap on
-         * submit must not race two `POST /v1/groups/join` calls for the same code.
+         * [GroupsActionState.joining]'s re-entrancy guard mirrors [createGroup]'s own, fixed the
+         * identical way in this round — keyed on [actionState], not on [state].
          *
-         * [GroupsUiState.Success.joinError] is cleared before this launches (decision C-S), the
-         * same discipline [createGroup] follows for its own channel — SEPARATE from [createGroup]'s
-         * [GroupsUiState.Success.createError], since a failed join must never be readable as a
-         * failed create or vice versa.
+         * [GroupsActionState.joinError] is cleared before this launches (decision C-S), the same
+         * discipline [createGroup] follows for its own channel — SEPARATE from [createGroup]'s
+         * [GroupsActionState.createError], since a failed join must never be readable as a failed
+         * create or vice versa.
          *
          * [inviteCode] itself is never touched here — this function has no field of its own to
-         * clear it from. [GroupsScreen]'s join dialog owns that text as its own `remember`ed draft,
-         * exactly `ImportScreen`'s `username`, so a failed attempt leaves it exactly as the user
-         * typed it: retyping a 20-character invite code because the request failed would be a bad
-         * experience, and nothing in this function's failure path touches anything the screen reads
-         * to populate that field.
+         * clear it from. [JoinGroupDialog] owns that text as its own `remember`ed draft, exactly
+         * `ImportScreen`'s `username`, so a failed attempt leaves it exactly as the user typed it:
+         * retyping a 20-character invite code because the request failed would be a bad
+         * experience, and nothing in this function's failure path touches anything the screen
+         * reads to populate that field.
          */
         fun joinGroup(inviteCode: String) {
-            val current = mutableState.value as? GroupsUiState.Success ?: return
-            if (current.joining) return
-            mutableState.value = current.copy(joining = true, joinError = null)
+            if (mutableActionState.value.joining) return
+            mutableActionState.value = mutableActionState.value.copy(joining = true, joinError = null)
             viewModelScope.launch {
                 try {
                     val joined = repository.joinGroup(inviteCode)
-                    replaceSuccess {
-                        it.copy(
-                            groups = it.groups + joined.group,
-                            justCreated = joined,
-                            joining = false,
-                            joinError = null,
-                        )
-                    }
+                    mutableActionState.value = mutableActionState.value.copy(joining = false, joinError = null)
+                    applyGroupChange(joined)
                 } catch (failure: GroupOperationException) {
-                    replaceSuccess { it.copy(joining = false, joinError = failure.failure) }
+                    mutableActionState.value =
+                        mutableActionState.value.copy(joining = false, joinError = failure.failure)
                 }
             }
+        }
+
+        /**
+         * Folds a successful create/join into [state] (fix round 1). Appends [invite]'s group to
+         * whatever [GroupsUiState.Success.groups] is already showing, or starts a fresh
+         * single-group list if [state] is [GroupsUiState.Loading]/[GroupsUiState.Error] — the
+         * server-side action already succeeded by the time this runs, so [state] MUST land on
+         * [GroupsUiState.Success] regardless of what it was before, with [invite] published as
+         * [GroupsUiState.Success.justCreated] (E-I: one of the only three moments the client ever
+         * sees an invite code).
+         *
+         * Deliberately does NOT re-fetch [GroupRepository.groups] to get a "complete" list instead
+         * of appending — that would add a second network call whose own failure would have to be
+         * handled separately (the group was already created/joined server-side; a failed re-fetch
+         * must not be reported as if the create/join itself failed), for a completeness guarantee
+         * this screen does not need: the next resume's [refresh] re-fetches the canonical list
+         * anyway, exactly as it would for any other out-of-band change made elsewhere.
+         */
+        private fun applyGroupChange(invite: GroupWithInvite) {
+            val previousGroups = (mutableState.value as? GroupsUiState.Success)?.groups.orEmpty()
+            mutableState.value = GroupsUiState.Success(groups = previousGroups + invite.group, justCreated = invite)
         }
 
         /**
@@ -162,11 +191,7 @@ class GroupsViewModel
          * away. Never re-derives a code: this only ever clears the field to `null`.
          */
         fun dismissJustCreated() {
-            replaceSuccess { it.copy(justCreated = null) }
-        }
-
-        private inline fun replaceSuccess(transform: (GroupsUiState.Success) -> GroupsUiState.Success) {
-            val latest = mutableState.value as? GroupsUiState.Success ?: return
-            mutableState.value = transform(latest)
+            val current = mutableState.value as? GroupsUiState.Success ?: return
+            mutableState.value = current.copy(justCreated = null)
         }
     }

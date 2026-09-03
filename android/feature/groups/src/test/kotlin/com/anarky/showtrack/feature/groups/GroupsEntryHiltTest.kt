@@ -39,10 +39,16 @@ import java.time.Instant
  *
  * Asserts WHICH route the navigation reached, not merely that navigation happened at all — a
  * plain `hasRoute(GroupDetailRoute::class)` check would pass even if the binding read the wrong
- * field (a plausible mistake here, since [Group] has both `id` (the field this binding must use)
- * and no OTHER id-shaped field to confuse it with — unlike `LibraryEntry`'s `id`/`media.id` pair —
- * but the discrimination technique is applied anyway, matching the standing instruction: assert
- * the actual navigated-to `groupId`, not just that some navigation fired).
+ * field.
+ *
+ * **Fix round 1 (BLOCKING 3):** the previous version of this test used a ONE-group fixture, which
+ * cannot tell "the tapped row's own id" apart from "always the first group's id" — a
+ * `GroupsList`/`GroupRow` bug that hands every row's click straight to `groups.first()` regardless
+ * of which one was tapped would have passed this test AND every `GroupsScreenTest` assertion that
+ * existed at the time (measured: it did). A TWO-group fixture, tapping the SECOND one, is what
+ * actually discriminates "reads the tapped group" from "reads some fixed group" — the same failure
+ * shape the dispatch named for `entry.media.id` vs `entry.id`, one layer lower (the row itself,
+ * not just the navigation binding above it).
  */
 @HiltAndroidTest
 @RunWith(RobolectricTestRunner::class)
@@ -54,18 +60,19 @@ class GroupsEntryHiltTest {
     @get:Rule(order = 1)
     val composeRule = createAndroidComposeRule<HiltTestActivity>()
 
-    // Preset with one group BEFORE injection: GroupsViewModel's LifecycleResumeEffect calls
+    // Preset with TWO groups BEFORE injection (fix round 1 — see this class's own KDoc for why
+    // one is not enough to discriminate this test): GroupsViewModel's LifecycleResumeEffect calls
     // `refresh()` on the very first composition (GroupsViewModel's own KDoc), and by then this
     // field must already hold what that call publishes — FavoritesEntryHiltTest's identical setup.
     @BindValue
     @JvmField
-    val groupRepository: GroupRepository = FakeGroupRepository(groupsResult = listOf(ALPHA))
+    val groupRepository: GroupRepository = FakeGroupRepository(groupsResult = listOf(ALPHA, BETA))
 
     @Before
     fun setUp() = hiltRule.inject()
 
     @Test
-    fun `tapping a group navigates to GroupDetailRoute for its id`() {
+    fun `tapping a group navigates to GroupDetailRoute for that group's id, not the first one`() {
         lateinit var navController: TestNavHostController
 
         composeRule.setContent {
@@ -81,14 +88,16 @@ class GroupsEntryHiltTest {
             }
         }
 
-        composeRule.onNodeWithText(ALPHA.name).performClick()
+        composeRule.onNodeWithText(BETA.name).performClick()
 
         val groupId = navController.currentBackStackEntry?.toRoute<GroupDetailRoute>()?.groupId
-        assertEquals(ALPHA.id, groupId)
+        assertEquals(BETA.id, groupId)
     }
 
     private companion object {
         val ALPHA =
             Group(id = "group-alpha", name = "Alpha Watchers", createdAt = Instant.parse("2026-08-28T10:15:30Z"))
+        val BETA =
+            Group(id = "group-beta", name = "Beta Watchers", createdAt = Instant.parse("2026-08-29T09:00:00Z"))
     }
 }
