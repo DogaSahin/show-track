@@ -64,7 +64,15 @@ import java.time.Instant
  * everyone, remove never for yourself" are RENDERING decisions — `GroupDetailScreenTest` pins those,
  * driving the stateless `GroupDetailScreen` overload directly (Global Constraints: "if a behaviour is
  * a rendering decision, a ViewModel test cannot pin it").
+ *
+ * `@Suppress("LargeClass")` (fix round 2): `GroupDetailScreenTest`'s own identical suppression and
+ * identical reasoning, one layer down — this class pins members, identity, rotate, leave, remove
+ * AND the watchlist's reload/paging/remove-entry behaviour for ONE screen's ONE ViewModel; splitting
+ * it by sub-concern would scatter the fixture (`FakeGroupRepository`/`FakeAuthRepository`, the
+ * `viewModel(...)` helper, the `OWNER`/`MEMBER`/`ENTRY_1`/`ENTRY_2` companion fixtures) every test
+ * shares, for a lint threshold's sake rather than a real cohesion problem.
  */
+@Suppress("LargeClass")
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], application = Application::class)
@@ -534,6 +542,50 @@ class GroupDetailViewModelTest {
         }
 
     /**
+     * Fix round 2, BLOCKING R2's own regression test — [reloadMembers]'s identical shape one
+     * section over from `removing a member preserves a rotated code already on screen` above.
+     * [reloadMembers] rebuilt [GroupDetailUiState.Success] field by field and never named
+     * [GroupDetailUiState.Success.watchlistIsStale], so a members-only reload (never
+     * [reloadWatchlist] itself) silently cleared it — the stale banner over the watchlist section
+     * vanishing on screen while the rows underneath it were exactly as stale as before, the SAME
+     * class of bug task 9c.1's `applyGroupChange` hit dropping `isStale` the same way. `refresh()`
+     * cannot reproduce this: it re-runs [reloadWatchlist] immediately after [reloadMembers], which
+     * is exactly why no existing test caught it — this test drives [removeMember] instead, whose
+     * own reload never touches the watchlist.
+     */
+    @Test
+    fun `watchlistIsStale survives a member removal's own members-only reload`() =
+        runTest(dispatcher) {
+            val groupRepository =
+                FakeGroupRepository(
+                    membersResult = listOf(OWNER, MEMBER),
+                    watchlistPages = mutableMapOf(null to WatchlistPage(items = listOf(ENTRY_1), nextCursor = null)),
+                )
+            val viewModel = viewModel(groupRepository)
+            advanceUntilIdle()
+            assertEquals(listOf(ENTRY_1), (viewModel.state.value as GroupDetailUiState.Success).watchlist)
+
+            // The watchlist's own reload fails on the next refresh, marking it stale.
+            groupRepository.watchlistFailure = GroupFailure.Network
+            viewModel.refresh()
+            advanceUntilIdle()
+            assertTrue((viewModel.state.value as GroupDetailUiState.Success).watchlistIsStale)
+
+            // A member is then successfully removed — removeMember's own reload only ever calls
+            // reloadMembers, never reloadWatchlist (refresh's own KDoc), so nothing here has any
+            // legitimate reason to touch the watchlist's own staleness.
+            groupRepository.watchlistFailure = null
+            groupRepository.membersResult = listOf(OWNER)
+            viewModel.removeMember(MEMBER.userId)
+            advanceUntilIdle()
+
+            val result = viewModel.state.value as GroupDetailUiState.Success
+            assertEquals(listOf(OWNER), result.members)
+            assertTrue("watchlistIsStale must survive a members-only reload", result.watchlistIsStale)
+            assertEquals(listOf(ENTRY_1), result.watchlist)
+        }
+
+    /**
      * Fix-round-2 lesson (`GroupsViewModel.clearCreateError`'s own KDoc), applied proactively:
      * three SEPARATE channels (decision C-S), so clearing one must never touch the other two.
      */
@@ -666,6 +718,52 @@ class GroupDetailViewModelTest {
         }
 
     /**
+     * Fix round 2, smaller item 1: decision C-S requires clearing an operation's error channel
+     * BEFORE launching its retry, not only on success. Checked synchronously, right after calling
+     * [GroupDetailViewModel.loadMoreWatchlist] and before `advanceUntilIdle()` — the write this
+     * pins happens before [kotlinx.coroutines.CoroutineScope.launch] is even reached, so if it were
+     * missing this assertion would see the STALE error, not a timing artifact of the fake's gate.
+     */
+    @Test
+    fun `loadMoreWatchlist clears a previous page error before firing the retry, not only on success`() =
+        runTest(dispatcher) {
+            val groupRepository =
+                FakeGroupRepository(
+                    membersResult = listOf(OWNER),
+                    watchlistPages =
+                        mutableMapOf(
+                            null to WatchlistPage(items = listOf(ENTRY_1), nextCursor = "cursor-2"),
+                            "cursor-2" to WatchlistPage(items = listOf(ENTRY_2), nextCursor = null),
+                        ),
+                )
+            val viewModel = viewModel(groupRepository)
+            advanceUntilIdle()
+
+            groupRepository.watchlistFailure = GroupFailure.Network
+            viewModel.loadMoreWatchlist()
+            advanceUntilIdle()
+            assertEquals(
+                GroupFailure.Network,
+                (viewModel.state.value as GroupDetailUiState.Success).watchlistPageError,
+            )
+
+            groupRepository.watchlistFailure = null
+            groupRepository.watchlistGate = CompletableDeferred()
+            viewModel.loadMoreWatchlist()
+
+            // The retry's own fetch is still suspended on the gate — nothing has succeeded yet —
+            // but the stale error must already be gone.
+            assertNull((viewModel.state.value as GroupDetailUiState.Success).watchlistPageError)
+
+            groupRepository.watchlistGate?.complete(Unit)
+            advanceUntilIdle()
+            assertEquals(
+                listOf(ENTRY_1, ENTRY_2),
+                (viewModel.state.value as GroupDetailUiState.Success).watchlist,
+            )
+        }
+
+    /**
      * Fix round 1, finding B1's own combination test — round 1 review's explicit ask (Global
      * Constraints): "reload in flight AND loadMore fired", the exact combination that produced the
      * duplicate-key crash. Before the fix, [GroupDetailViewModel.refresh]'s own [reloadWatchlist]
@@ -779,6 +877,55 @@ class GroupDetailViewModelTest {
             val recovered = viewModel.state.value as GroupDetailUiState.Success
             assertEquals(listOf(ENTRY_1), recovered.watchlist)
             assertTrue(!recovered.watchlistIsStale)
+        }
+
+    /**
+     * Fix round 2, BLOCKING R1's own regression test. The exact sequence the finding describes:
+     * page one loads with a next cursor, [loadMoreWatchlist] fails (setting
+     * [GroupDetailUiState.Success.watchlistPageError]), and then a LATER, authoritative
+     * [reloadWatchlist] (via [refresh] — another member deleted entries in the meantime) lands
+     * SUCCESSFULLY and comes back exhausted (`nextCursor = null`). Before this fix, the only thing
+     * that ever cleared [GroupDetailUiState.Success.watchlistPageError] was a successful
+     * [loadMoreWatchlist] — which never fires again once the list is exhausted — so the stale error
+     * survived the reload forever: a red "tap to retry" footer over freshly, correctly reloaded
+     * rows, wired to a function that had already stopped issuing any fetch at all.
+     */
+    @Test
+    fun `a reload landing after a failed loadMore clears the stale page error, even if it exhausts the list`() =
+        runTest(dispatcher) {
+            val groupRepository =
+                FakeGroupRepository(
+                    membersResult = listOf(OWNER),
+                    watchlistPages =
+                        mutableMapOf(null to WatchlistPage(items = listOf(ENTRY_1), nextCursor = "cursor-2")),
+                )
+            val viewModel = viewModel(groupRepository)
+            advanceUntilIdle()
+            assertEquals(listOf(ENTRY_1), (viewModel.state.value as GroupDetailUiState.Success).watchlist)
+
+            // 1 & 2: loadMore fails, setting the page-error channel; hasMore is still true.
+            groupRepository.watchlistFailure = GroupFailure.Network
+            viewModel.loadMoreWatchlist()
+            advanceUntilIdle()
+            assertEquals(
+                GroupFailure.Network,
+                (viewModel.state.value as GroupDetailUiState.Success).watchlistPageError,
+            )
+
+            // 3: a later reload lands successfully and comes back exhausted — page one now has no
+            // next cursor, as if another member's deletions shrank the list below a full page.
+            groupRepository.watchlistFailure = null
+            groupRepository.watchlistPages =
+                mutableMapOf(null to WatchlistPage(items = listOf(ENTRY_1), nextCursor = null))
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            val result = viewModel.state.value as GroupDetailUiState.Success
+            assertEquals(listOf(ENTRY_1), result.watchlist)
+            assertNull(
+                "a stale loadMore failure must not survive a newer, successful reload",
+                result.watchlistPageError,
+            )
         }
 
     /**

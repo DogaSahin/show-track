@@ -244,20 +244,35 @@ class GroupDetailViewModel
             try {
                 val members = groupRepository.members(groupId)
                 val previous = mutableState.value as? GroupDetailUiState.Success
-                val rotatedInvite = if (preserveRotatedInvite) previous?.rotatedInvite else null
-                // The watchlist fields are carried forward UNCONDITIONALLY (task 9c.3) — unlike
-                // rotatedInvite, a members-only reload has nothing to do with the watchlist section
-                // regardless of which caller triggered it. [refresh] calls reloadWatchlist() right
-                // after this returns and overwrites these anyway; [removeMember] does not, and
-                // without this the watchlist would flash to empty on screen for the whole duration
-                // of every member removal, for no reason connected to what changed.
+                // `.copy()` off `previous` (fix round 2, BLOCKING R2), not a field-by-field
+                // `GroupDetailUiState.Success(...)` rebuild — the SAME bug task 9c.1's
+                // `applyGroupChange` hit rebuilding `GroupsUiState.Success` from scratch and
+                // silently dropping `isStale`: a rebuild only carries forward the fields someone
+                // remembered to name at the call site, so it silently drops every field added
+                // AFTER it was written — here, `watchlistIsStale` (fix round 1), which the
+                // original rebuild never named. `.copy()` is immune to that class of bug by
+                // construction: every field neither named below nor `members`/`rotatedInvite`
+                // (which genuinely do need per-caller handling — see below) is carried forward
+                // automatically, watchlistIsStale included, with no maintenance burden on this
+                // function every time `Success` grows a new field.
+                //
+                // A fresh `Success(members = members)` stands in for `previous` only on the very
+                // first successful load (Loading/Error -> Success), where every OTHER field is
+                // correctly its own default — identical to what the old rebuild produced for that
+                // case.
+                val base = previous ?: GroupDetailUiState.Success(members = members)
                 mutableState.value =
-                    GroupDetailUiState.Success(
+                    base.copy(
                         members = members,
-                        watchlist = previous?.watchlist.orEmpty(),
-                        watchlistLoadingMore = previous?.watchlistLoadingMore == true,
-                        watchlistPageError = previous?.watchlistPageError,
-                        rotatedInvite = rotatedInvite,
+                        // rotatedInvite is the one field that must NOT simply carry forward
+                        // unconditionally — [preserveRotatedInvite]'s own KDoc (this function's
+                        // own doc comment) explains why [refresh] and [removeMember] disagree here.
+                        rotatedInvite = if (preserveRotatedInvite) previous?.rotatedInvite else null,
+                        // A successful members reload clears this screen's OWN staleness — the
+                        // identical "next success clears the mark" rule watchlistIsStale itself
+                        // follows one section down, and what the old rebuild already did today
+                        // (isStale defaulted to false, unnamed, in the rebuilt Success).
+                        isStale = false,
                     )
             } catch (failure: GroupOperationException) {
                 val stillShowing = mutableState.value as? GroupDetailUiState.Success
@@ -307,7 +322,17 @@ class GroupDetailViewModel
             try {
                 val items = watchlistPaginator.restart()
                 val current = mutableState.value as? GroupDetailUiState.Success ?: return
-                mutableState.value = current.copy(watchlist = items, watchlistIsStale = false)
+                // watchlistPageError = null (fix round 2, BLOCKING R1): a reload is a strictly
+                // newer, authoritative read of the same section than a prior loadMoreWatchlist()
+                // failure, so a stale page-fetch error must not survive it. Before this, the ONLY
+                // place that ever cleared watchlistPageError was a SUCCESSFUL loadMoreWatchlist()
+                // (loadMoreWatchlist itself returns early once the list is exhausted), so a reload
+                // landing after a failed loadMore left a permanent "tap to retry" footer wired to a
+                // function that had already stopped firing any request at all — and, via
+                // watchlistItems' own nothingToShow check, suppressed the empty state in favour of a
+                // bare error row even once the reload genuinely came back empty.
+                mutableState.value =
+                    current.copy(watchlist = items, watchlistIsStale = false, watchlistPageError = null)
             } catch (failure: GroupOperationException) {
                 val current = mutableState.value as? GroupDetailUiState.Success ?: return
                 mutableState.value = current.copy(watchlistIsStale = true)
@@ -346,7 +371,13 @@ class GroupDetailViewModel
             val current = mutableState.value as? GroupDetailUiState.Success ?: return
             if (current.watchlistLoadingMore) return
             if (!watchlistPaginator.hasMore.value) return
-            mutableState.value = current.copy(watchlistLoadingMore = true)
+            // watchlistPageError = null HERE, before the retry is even launched (fix round 2,
+            // smaller item 1) — decision C-S: "clear the error before launching a retry, not only
+            // on success." Previously this only happened on the success branch below, masked by a
+            // rendering coincidence (watchlistItems renders the loading branch in preference to
+            // the error branch), not because the constraint was actually met — a failure on this
+            // very call would otherwise briefly leave the stale error still standing.
+            mutableState.value = current.copy(watchlistLoadingMore = true, watchlistPageError = null)
             viewModelScope.launch {
                 try {
                     watchlistPaginator.loadMore()

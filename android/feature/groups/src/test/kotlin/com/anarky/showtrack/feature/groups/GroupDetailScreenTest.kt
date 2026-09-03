@@ -803,10 +803,17 @@ class GroupDetailScreenTest {
      * Mutation-critical: pins that "Remove" on the SECOND entry's row confirms and removes THAT
      * entry, not the first — `tapping remove on the second member's row...`'s identical shape one
      * resource over.
+     *
+     * **Fix round 2, smaller item 3:** also pins that tapping "Remove" does not ALSO fire the
+     * row's own [onEntryClick] navigation — [WatchlistEntryRow]'s own KDoc names Compose's pointer
+     * input disambiguation as what keeps a nested `TextButton` tap from bubbling up to the
+     * enclosing `Card(onClick = ...)`, but nothing PINNED that until now. The failure mode is
+     * user-visible: tapping Remove would navigate the user off the screen mid-confirmation.
      */
     @Test
     fun `tapping remove on the second watchlist entry confirms and removes that entry, not the first`() {
         var removedEntryId: String? = null
+        var entryClicks = 0
         composeRule.setContent {
             GroupDetailScreen(
                 state = successState(members = listOf(OWNER), watchlist = listOf(ENTRY_1, ENTRY_2)),
@@ -823,7 +830,7 @@ class GroupDetailScreenTest {
                 onLoadMoreWatchlist = {},
                 onRemoveWatchlistEntry = { removedEntryId = it },
                 onRemoveEntryDialogOpened = {},
-                onEntryClick = {},
+                onEntryClick = { entryClicks++ },
             )
         }
 
@@ -841,6 +848,7 @@ class GroupDetailScreenTest {
         composeRule.onNodeWithText(context.getString(R.string.groups_watchlist_remove_confirm_button)).performClick()
 
         assertEquals(ENTRY_2.id, removedEntryId)
+        assertEquals(0, entryClicks)
     }
 
     /**
