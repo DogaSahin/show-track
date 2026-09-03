@@ -447,9 +447,16 @@ class GroupsViewModelTest {
      * `Group::id` — crashed composition the moment that state was rendered
      * (`IllegalArgumentException: Key "…" was already used`). A rejoin must REPLACE the existing
      * row, not duplicate it.
+     *
+     * **Fix round 3 (review finding):** this also pins the row's POSITION, not just its count —
+     * round 2's own fix was a remove-then-append, which stopped the crash but silently moved a
+     * rejoined group to the bottom of the list (a visible reorder round 2's KDoc and report both
+     * mis-described as an in-place replace). `applyGroupChange` now does a real `map`, so ALPHA
+     * stays exactly where it already was; only a genuinely new id gets appended at the end, which
+     * matches the server's own `GET /v1/groups` ordering (`created_at ASC`).
      */
     @Test
-    fun `joining a group already in the list replaces it instead of duplicating it`() =
+    fun `joining a group already in the list replaces it in place, without moving it`() =
         runTest(dispatcher) {
             val repository = FakeGroupRepository(groupsResult = listOf(ALPHA, BETA))
             val viewModel = GroupsViewModel(repository)
@@ -464,7 +471,8 @@ class GroupsViewModelTest {
             advanceUntilIdle()
 
             val result = viewModel.state.value as GroupsUiState.Success
-            assertEquals(listOf(BETA, ALPHA), result.groups)
+            // ALPHA stays FIRST — an in-place replace, not a move-to-the-end.
+            assertEquals(listOf(ALPHA, BETA), result.groups)
             assertEquals(1, result.groups.count { it.id == ALPHA.id })
             assertEquals(rejoined, result.justCreated)
         }
@@ -499,9 +507,18 @@ class GroupsViewModelTest {
     /**
      * Fix round 2, small item 3: reopening the create dialog after a failed attempt must not show
      * that attempt's error before the user has done anything new.
+     *
+     * **Fix round 3 (review finding):** the "only" in this test's own name was unpinned — setting
+     * ONE channel then asserting the whole [GroupsActionState] equals the all-null default cannot
+     * tell "cleared just this channel" apart from "cleared everything", so mutating
+     * [GroupsViewModel.clearCreateError]/[GroupsViewModel.clearJoinError] to clear BOTH fields left
+     * this suite green (measured). Both errors are set here — a real, reachable sequence: create
+     * fails, the user opens Join instead, that fails too — before clearing only one, so the
+     * surviving field is what's actually asserted, not merely absent from an equality check that
+     * happened to pass.
      */
     @Test
-    fun `clearCreateError clears only the create channel`() =
+    fun `clearCreateError clears only the create channel, leaving a live join error untouched`() =
         runTest(dispatcher) {
             val repository = FakeGroupRepository(groupsResult = listOf(ALPHA))
             val viewModel = GroupsViewModel(repository)
@@ -511,30 +528,40 @@ class GroupsViewModelTest {
             repository.createFailure = GroupFailure.Network
             viewModel.createGroup("Gamma Watchers")
             advanceUntilIdle()
+            repository.joinFailure = GroupFailure.InvalidInviteCode
+            viewModel.joinGroup("BADCODE0000000000000")
+            advanceUntilIdle()
             assertEquals(GroupFailure.Network, viewModel.actionState.value.createError)
+            assertEquals(GroupFailure.InvalidInviteCode, viewModel.actionState.value.joinError)
 
             viewModel.clearCreateError()
 
-            assertEquals(GroupsActionState(), viewModel.actionState.value)
+            assertEquals(null, viewModel.actionState.value.createError)
+            assertEquals(GroupFailure.InvalidInviteCode, viewModel.actionState.value.joinError)
         }
 
-    /** [clearCreateError]'s mirror — a SEPARATE channel, cleared separately. */
+    /** [clearCreateError]'s mirror — a SEPARATE channel, cleared separately (fix round 3's identical evidence). */
     @Test
-    fun `clearJoinError clears only the join channel`() =
+    fun `clearJoinError clears only the join channel, leaving a live create error untouched`() =
         runTest(dispatcher) {
             val repository = FakeGroupRepository(groupsResult = listOf(ALPHA))
             val viewModel = GroupsViewModel(repository)
             viewModel.refresh()
             advanceUntilIdle()
 
-            repository.joinFailure = GroupFailure.BadRequest
+            repository.createFailure = GroupFailure.Network
+            viewModel.createGroup("Gamma Watchers")
+            advanceUntilIdle()
+            repository.joinFailure = GroupFailure.InvalidInviteCode
             viewModel.joinGroup("BADCODE0000000000000")
             advanceUntilIdle()
-            assertEquals(GroupFailure.BadRequest, viewModel.actionState.value.joinError)
+            assertEquals(GroupFailure.Network, viewModel.actionState.value.createError)
+            assertEquals(GroupFailure.InvalidInviteCode, viewModel.actionState.value.joinError)
 
             viewModel.clearJoinError()
 
-            assertEquals(GroupsActionState(), viewModel.actionState.value)
+            assertEquals(GroupFailure.Network, viewModel.actionState.value.createError)
+            assertEquals(null, viewModel.actionState.value.joinError)
         }
 
     private companion object {

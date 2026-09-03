@@ -375,28 +375,29 @@ class GroupRepositoryImplTest {
      * Fix round 2: a bad, unknown, or expired invite code is a 400
      * (`backend/app/groups/routes.py`'s `_INVALID_CODE`), and `joinGroup` is the one call site
      * that opts `guarded` into distinguishing it from every other unmapped failure — see
-     * [GroupFailure.BadRequest]'s own KDoc for why round 1's `Unknown`-for-everything shape was
-     * wrong (it also caught a 500 or an expired session, see the sibling test below).
+     * [GroupFailure.InvalidInviteCode]'s own KDoc for why round 1's `Unknown`-for-everything shape
+     * was wrong (it also caught a 500 or an expired session, see the sibling test below) and fix
+     * round 3's for why the case is named `InvalidInviteCode`, not the status code it came from.
      */
     @Test
-    fun `a 400 from joinGroup surfaces as BadRequest`() =
+    fun `a 400 from joinGroup surfaces as InvalidInviteCode`() =
         runTest {
             val api = FakeApi()
             api.joinFailure = httpError(400)
 
             val failure = runCatching { repository(api).joinGroup("BADCODE0000000000000") }.exceptionOrNull()
 
-            assertEquals(GroupFailure.BadRequest, (failure as GroupOperationException).failure)
+            assertEquals(GroupFailure.InvalidInviteCode, (failure as GroupOperationException).failure)
         }
 
     /**
      * The negative control for the test above: `badRequest` in `guarded`/`mapFailure` is gated
      * on the STATUS CODE actually being 400, not on "joinGroup failed at all" — a 500 or any other
      * unmapped status from the same endpoint must still fall through to the generic
-     * [GroupFailure.Unknown], never [GroupFailure.BadRequest].
+     * [GroupFailure.Unknown], never [GroupFailure.InvalidInviteCode].
      */
     @Test
-    fun `a 500 from joinGroup still surfaces as Unknown, not BadRequest`() =
+    fun `a 500 from joinGroup still surfaces as Unknown, not InvalidInviteCode`() =
         runTest {
             val api = FakeApi()
             api.joinFailure = httpError(500)

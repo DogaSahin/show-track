@@ -101,12 +101,12 @@ internal fun JoinGroupDialog(
                     enabled = !submitting,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                // GroupFailure.BadRequest (fix round 2) is what a bad or expired invite code
-                // surfaces as — GroupRepository.joinGroup's own KDoc — a dedicated case, not the
-                // generic GroupFailure.Unknown a 500 or an expired session ALSO produces (round 1's
-                // original shape conflated the two: see GroupFailure.BadRequest's own KDoc for the
-                // measured bug that produced). messageRes() below renders it distinctly on its own,
-                // so no caller override is needed here any more.
+                // GroupFailure.InvalidInviteCode (fix round 2; renamed from BadRequest in fix
+                // round 3 — see its own KDoc) is what a bad or expired invite code surfaces as —
+                // GroupRepository.joinGroup's own KDoc — a dedicated case, not the generic
+                // GroupFailure.Unknown a 500 or an expired session ALSO produces (round 1's
+                // original shape conflated the two). messageRes() below renders it distinctly on
+                // its own, so no caller override is needed here any more.
                 error?.let {
                     Text(
                         text = stringResource(it.messageRes()),
@@ -136,8 +136,8 @@ internal fun JoinGroupDialog(
 
 /**
  * The one place a [GroupFailure] becomes copy — `ImportScreen`'s identical `ImportError.messageRes()`
- * pattern. Every case besides [GroupFailure.Network] and [GroupFailure.BadRequest] folds to the
- * same generic message: the remaining four (`NotAMember`, `NotPermitted`, `NoSuchTitle`,
+ * pattern. Every case besides [GroupFailure.Network] and [GroupFailure.InvalidInviteCode] folds to
+ * the same generic message: the remaining four (`NotAMember`, `NotPermitted`, `NoSuchTitle`,
  * `NoSuchEntry`) plus [GroupFailure.AlreadyReviewed] and [GroupFailure.Unknown] describe failures
  * from feed/watchlist/review endpoints this screen never calls, or genuinely unexpected ones (a
  * 500, an expired session) — creating or joining a group cannot produce the former, and the latter
@@ -147,13 +147,14 @@ internal fun JoinGroupDialog(
  * its own KDoc): an `HttpException`'s message is the raw HTTP status line, never fit for
  * user-facing copy.
  *
- * **Fix round 2:** [GroupFailure.BadRequest] replaces round 1's `unknownRes` caller-override
- * parameter — round 1 discriminated "bad invite code" from the generic case by asking the CALLER
- * to say which [GroupFailure.Unknown] meant that, but every [GroupFailure.Unknown] looked
- * identical from here, so a 500 or an expired session on the SAME form got the "that code might be
- * wrong" copy too (measured in review). [GroupFailure.BadRequest] is a real, dedicated TYPE now —
- * see its own KDoc — so the discrimination happens at `:core:data`'s boundary, where the actual
- * HTTP status is visible, not by a caller guessing which `Unknown` it was.
+ * **Fix round 2:** [GroupFailure.InvalidInviteCode] replaces round 1's `unknownRes`
+ * caller-override parameter — round 1 discriminated "bad invite code" from the generic case by
+ * asking the CALLER to say which [GroupFailure.Unknown] meant that, but every [GroupFailure.Unknown]
+ * looked identical from here, so a 500 or an expired session on the SAME form got the "that code
+ * might be wrong" copy too (measured in review). [GroupFailure.InvalidInviteCode] is a real,
+ * dedicated TYPE now — see its own KDoc, including fix round 3's rename from `BadRequest` — so the
+ * discrimination happens at `:core:data`'s boundary, where the actual HTTP status is visible, not
+ * by a caller guessing which `Unknown` it was.
  *
  * `internal`, not `private`: `GroupsScreen.kt`'s `GroupsContent` also needs it for
  * [GroupsUiState.Error]'s own message, and this file is where the mapping lives (split out to keep
@@ -162,7 +163,7 @@ internal fun JoinGroupDialog(
 internal fun GroupFailure.messageRes(): Int =
     when (this) {
         GroupFailure.Network -> R.string.groups_error_network
-        GroupFailure.BadRequest -> R.string.groups_join_error_bad_code
+        GroupFailure.InvalidInviteCode -> R.string.groups_join_error_bad_code
         GroupFailure.NotAMember,
         GroupFailure.NotPermitted,
         GroupFailure.NoSuchTitle,

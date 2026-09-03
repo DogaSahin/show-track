@@ -105,11 +105,32 @@ fun GroupsScreen(
  * cast, which is what makes both forms usable from [GroupsUiState.Loading]/[GroupsUiState.Error]
  * as well as [GroupsUiState.Success] (see [GroupsActionState]'s own KDoc for the bug this fixes).
  *
- * The [LaunchedEffect] closes whichever dialog is open the moment [GroupsUiState.Success.justCreated]
- * goes non-null — the create/join actually landed, so the form dialog's job is done and the invite
- * banner below takes over. Keyed on the invite itself (not just "is it non-null") so a second
- * create/join later in the same session — a different [GroupWithInvite] — re-fires this even if,
- * somehow, a dialog were still open when it landed.
+ * The [LaunchedEffect] closes whichever dialog is open once the create/join actually landed, so
+ * the form dialog's job is done and the invite banner below takes over.
+ *
+ * **Fix round 3 (review finding) — why this is keyed on [GroupsActionState.creating]/
+ * [GroupsActionState.joining] TOO, not on [GroupsUiState.Success.justCreated] alone.** An earlier
+ * version keyed ONLY on `justCreated`, defended by a comment claiming a second create/join later
+ * in the session is "a DIFFERENT [GroupWithInvite]" and would therefore re-fire this — false
+ * whenever the SAME code is redeemed twice for a group whose invite has not been rotated:
+ * `GroupRepository.joinGroup` is deliberately idempotent (decision G-I) and returns an
+ * `equals`-identical [GroupWithInvite] both times, so `MutableStateFlow`'s own conflation never
+ * emits a "new" value for it, [state] never visibly changes, and a `LaunchedEffect` keyed only on
+ * `justCreated` never re-runs — the join dialog stayed open after a successful REPEAT join, with
+ * no visible feedback (cosmetic: Cancel still dismisses it, but the comment defended precisely the
+ * case it failed).
+ *
+ * [GroupsActionState.creating]/[joining] do not have that problem: `GroupsViewModel.createGroup`/
+ * `joinGroup` write them `true` UNCONDITIONALLY at the start of every call — a real, distinct
+ * boolean flip away from their `false` resting state regardless of whether the eventual RESULT is
+ * value-identical to a previous one — so these keys reliably change on every call, including a
+ * repeat one. Adding them as EXTRA keys (not replacing `justCreated`) keeps the original path
+ * working unchanged for the ordinary case (`justCreated` going `null` -> non-null, a genuinely new
+ * value) while also catching the repeat-identical one: on the falling edge (`creating`/`joining`
+ * going back to `false`), [state] already reflects [GroupsUiState.Success.justCreated] non-null
+ * (both writes happen synchronously, one `viewModelScope.launch` block, before either is observed),
+ * so the `if (justCreated != null)` check below still finds it and closes the dialog even though
+ * `justCreated`'s own value never changed enough to trigger a recomposition on its own.
  *
  * **Fix round 2, small item 3:** [onCreateDialogOpened]/[onJoinDialogOpened] fire alongside
  * `showCreateDialog`/`showJoinDialog` going `true` — before this, reopening a dialog after a
@@ -136,7 +157,7 @@ internal fun GroupsScreen(
     var showJoinDialog by remember { mutableStateOf(false) }
 
     val justCreated = (state as? GroupsUiState.Success)?.justCreated
-    LaunchedEffect(justCreated) {
+    LaunchedEffect(justCreated, actionState.creating, actionState.joining) {
         if (justCreated != null) {
             showCreateDialog = false
             showJoinDialog = false

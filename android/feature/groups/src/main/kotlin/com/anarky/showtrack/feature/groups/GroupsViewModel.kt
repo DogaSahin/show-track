@@ -171,7 +171,10 @@ class GroupsViewModel
          * server-side action already succeeded by the time this runs, so [state] MUST land on
          * [GroupsUiState.Success] regardless of what it was before, with [invite] published as
          * [GroupsUiState.Success.justCreated] (E-I: one of the only three moments the client ever
-         * sees an invite code).
+         * sees an invite code). Appending a genuinely NEW group LAST is not just convenient — the
+         * server orders `GET /v1/groups` by `created_at ASC` (confirmed in review), so this keeps
+         * client-side order matching the canonical one at all times, not only after the next
+         * [refresh].
          *
          * Deliberately does NOT re-fetch [GroupRepository.groups] to get a "complete" list instead
          * of appending — that would add a second network call whose own failure would have to be
@@ -188,10 +191,9 @@ class GroupsViewModel
          *    SAME group, not an error. Appending unconditionally duplicated it in [previousGroups],
          *    and `GroupsList`'s `LazyColumn` — keyed by `Group::id` — crashed composition
          *    (`IllegalArgumentException: Key "…" was already used`) the moment that render was
-         *    attempted. [invite]'s own group id is now dropped from [previousGroups] before the
-         *    append, so a rejoin REPLACES the existing row (with whatever fresh data the server
-         *    just returned) instead of duplicating it — correct for `createGroup` too, harmlessly:
-         *    a freshly created group's id cannot already be in [previousGroups].
+         *    attempted. A rejoin now replaces the matching row IN PLACE (fix round 3 — see below
+         *    for why "in place" specifically) instead of duplicating it — correct for `createGroup`
+         *    too, harmlessly: a freshly created group's id cannot already be in [previousGroups].
          * 2. **A successful create/join used to silently clear [GroupsUiState.Success.isStale].**
          *    This function used to construct a brand-new `Success(...)` rather than `copy` an
          *    existing one, so `isStale` always reset to its `false` default — an UNRELATED
@@ -204,13 +206,28 @@ class GroupsViewModel
          *    [GroupsUiState.Success] — the list genuinely is known-incomplete in that case, so the
          *    banner and its Retry are exactly the right affordance, and the next successful
          *    [refresh] clears it exactly as it already does for an ordinary stale mark.
+         *
+         * **Fix round 3 (review finding): a rejoin is a real in-place `map`, not a remove-then-append.**
+         * Round 2's own fix (item 1 above) actually REMOVED the matching row before appending
+         * [invite]'s group at the end — which stops the crash, but visibly moves a rejoined group
+         * to the bottom of the list until the next [refresh] restores its real position, an
+         * undocumented reorder round 2's own KDoc and report both mis-described as an in-place
+         * replace. [map] now updates the matching row WITHOUT moving it, and the append-if-absent
+         * branch below is reached only for a genuinely new id — so client-side order never diverges
+         * from the server's `created_at ASC` ordering at all, not merely after the next resume.
          */
         private fun applyGroupChange(invite: GroupWithInvite) {
             val previous = mutableState.value as? GroupsUiState.Success
-            val previousGroups = previous?.groups.orEmpty().filterNot { it.id == invite.group.id }
+            val previousGroups = previous?.groups.orEmpty()
+            val groups =
+                if (previousGroups.any { it.id == invite.group.id }) {
+                    previousGroups.map { if (it.id == invite.group.id) invite.group else it }
+                } else {
+                    previousGroups + invite.group
+                }
             mutableState.value =
                 GroupsUiState.Success(
-                    groups = previousGroups + invite.group,
+                    groups = groups,
                     justCreated = invite,
                     isStale = previous?.isStale ?: true,
                 )

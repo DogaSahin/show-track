@@ -1,5 +1,7 @@
 package com.anarky.showtrack.feature.groups
 
+import android.content.ClipDescription
+import android.content.ClipboardManager
 import android.content.Context
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -14,11 +16,13 @@ import com.anarky.showtrack.core.data.repository.GroupWithInvite
 import com.anarky.showtrack.core.model.Group
 import com.anarky.showtrack.core.model.GroupFailure
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import java.time.Instant
 import com.anarky.showtrack.core.designsystem.R as DesignSystemR
 
@@ -222,6 +226,73 @@ class GroupsScreenTest {
     }
 
     /**
+     * Fix round 3: verifies the actual clipboard content, not just the button label — pins that
+     * `sensitiveInviteCodeClipEntry` really does set `ClipDescription.EXTRA_IS_SENSITIVE` on API
+     * 33+ (decision E-I: the invite code is a credential). Per-method `@Config(sdk = [33])`
+     * overrides this module's `robolectric.properties` `sdk=35` default — Robolectric 4.15.1 ships
+     * a real `ClipboardManager` shadow for API 33, so this reads the system clipboard directly
+     * rather than only asserting on-screen text.
+     */
+    @Config(sdk = [33])
+    @Test
+    fun `copying the invite code marks the clip sensitive on API 33`() {
+        composeRule.setContent {
+            GroupsScreen(
+                state = GroupsUiState.Success(groups = listOf(ALPHA), justCreated = INVITE),
+                actionState = GroupsActionState(),
+                onRetry = {},
+                onCreateGroup = {},
+                onJoinGroup = {},
+                onDismissInvite = {},
+                onCreateDialogOpened = {},
+                onJoinDialogOpened = {},
+                onGroupClick = {},
+            )
+        }
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule.onNodeWithText(context.getString(R.string.groups_invite_copy)).performClick()
+        composeRule.waitForIdle()
+
+        val clipboardManager = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val clip = clipboardManager.primaryClip
+        assertEquals(INVITE.inviteCode, clip?.getItemAt(0)?.text.toString())
+        assertTrue(clip?.description?.extras?.getBoolean(ClipDescription.EXTRA_IS_SENSITIVE) == true)
+    }
+
+    /**
+     * The negative control: `minSdk` is 29, and the sensitivity flag is guarded behind
+     * `Build.VERSION.SDK_INT >= TIRAMISU` — below that, the extra must never be set (the platform
+     * would not honour it either way, but the code must not claim it did).
+     */
+    @Config(sdk = [29])
+    @Test
+    fun `copying the invite code does not set the sensitive flag below API 33`() {
+        composeRule.setContent {
+            GroupsScreen(
+                state = GroupsUiState.Success(groups = listOf(ALPHA), justCreated = INVITE),
+                actionState = GroupsActionState(),
+                onRetry = {},
+                onCreateGroup = {},
+                onJoinGroup = {},
+                onDismissInvite = {},
+                onCreateDialogOpened = {},
+                onJoinDialogOpened = {},
+                onGroupClick = {},
+            )
+        }
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule.onNodeWithText(context.getString(R.string.groups_invite_copy)).performClick()
+        composeRule.waitForIdle()
+
+        val clipboardManager = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val clip = clipboardManager.primaryClip
+        assertEquals(INVITE.inviteCode, clip?.getItemAt(0)?.text.toString())
+        assertFalse(clip?.description?.extras?.getBoolean(ClipDescription.EXTRA_IS_SENSITIVE) == true)
+    }
+
+    /**
      * The brief's third named test, its rendering half (see this class's own KDoc). The join
      * dialog's code field is [JoinGroupDialog]'s own `remember`ed draft — nothing in
      * [GroupsActionState.joinError] resets it, so retyping a 20-character invite code after a
@@ -261,7 +332,7 @@ class GroupsScreenTest {
      * BLOCKING 2 (fix round 1 review): deleting `JoinGroupDialog`'s own `error?.let { Text(...) }`
      * left every pre-existing test green, because none of them asserted the error message was
      * actually RENDERED — only that [GroupsActionState.joinError] existed in state, or that the
-     * typed code survived. This is the specific copy for [GroupFailure.BadRequest] (fix round 2 —
+     * typed code survived. This is the specific copy for [GroupFailure.InvalidInviteCode] (fix round 2 —
      * a bad or expired code is the single most common outcome of this form).
      */
     @Test
@@ -284,7 +355,7 @@ class GroupsScreenTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         composeRule.onNodeWithText(context.getString(R.string.groups_join_action)).performClick()
 
-        actionState = GroupsActionState(joinError = GroupFailure.BadRequest)
+        actionState = GroupsActionState(joinError = GroupFailure.InvalidInviteCode)
         composeRule.waitForIdle()
 
         composeRule.onNodeWithText(context.getString(R.string.groups_join_error_bad_code)).assertIsDisplayed()
@@ -507,6 +578,48 @@ class GroupsScreenTest {
         composeRule.onNodeWithText(context.getString(R.string.groups_join_action)).performClick()
 
         assertTrue(opened)
+    }
+
+    /**
+     * Fix round 3 (review finding): `GroupRepository.joinGroup` is deliberately idempotent
+     * (decision G-I) — redeeming the SAME code twice for a group already joined returns an
+     * `equals`-identical [GroupWithInvite] both times. [state] here never changes at all (it is a
+     * fixed `val`, exactly modelling `MutableStateFlow`'s own conflation of an equal value), so
+     * only [actionState] toggling `joining` true then false is what the fixed `LaunchedEffect` key
+     * has to react to — pinning that the dialog closes even when `justCreated`'s VALUE never
+     * visibly changes.
+     */
+    @Test
+    fun `an idempotent rejoin closes the dialog even though the invite value never changes`() {
+        var actionState by mutableStateOf(GroupsActionState())
+        val state = GroupsUiState.Success(groups = listOf(ALPHA), justCreated = INVITE)
+        composeRule.setContent {
+            GroupsScreen(
+                state = state,
+                actionState = actionState,
+                onRetry = {},
+                onCreateGroup = {},
+                onJoinGroup = {},
+                onDismissInvite = {},
+                onCreateDialogOpened = {},
+                onJoinDialogOpened = {},
+                onGroupClick = {},
+            )
+        }
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        // Reopen the join dialog — the round trip a user pasting the same code again would take.
+        composeRule.onNodeWithText(context.getString(R.string.groups_join_action)).performClick()
+        composeRule.onNodeWithText(context.getString(R.string.groups_join_code_label)).assertIsDisplayed()
+
+        // The second join completes: `joining` flips true then false, while `state` — and
+        // therefore `justCreated` — stays exactly as it already was.
+        actionState = GroupsActionState(joining = true)
+        composeRule.waitForIdle()
+        actionState = GroupsActionState(joining = false)
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithText(context.getString(R.string.groups_join_code_label)).assertDoesNotExist()
     }
 
     private companion object {

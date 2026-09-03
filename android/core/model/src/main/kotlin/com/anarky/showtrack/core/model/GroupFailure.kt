@@ -65,21 +65,35 @@ sealed interface GroupFailure {
     data object Network : GroupFailure
 
     /**
-     * 400 from `POST /v1/groups/join` (fix round 2, task 9c.1): a bad, unknown, or expired invite
-     * code — `resolve_invite_code`/`join_group`'s own comment, `backend/app/groups/routes.py`,
-     * "one generic message for wrong, unknown AND expired". No payload: the client has no more
-     * specific reason to give than the server does, and none of the three sub-causes is
-     * distinguishable from the others by status code alone.
+     * 400 from `POST /v1/groups/join` (fix round 2, task 9c.1; renamed from `BadRequest` in fix
+     * round 3): a bad, unknown, or expired invite code — `resolve_invite_code`/`join_group`'s own
+     * comment, `backend/app/groups/routes.py`, "one generic message for wrong, unknown AND
+     * expired". No payload: the client has no more specific reason to give than the server does,
+     * and none of the three sub-causes is distinguishable from the others by status code alone.
+     *
+     * **Named for what it MEANS, not for the status code it came from** (fix round 3 rename): this
+     * is a case on a sealed interface [shared][GroupFailure] across `:feature:groups`,
+     * `:feature:feed`, and `:feature:detail`, and `backend/app/groups/routes.py:133`/`:173`
+     * already return 400 for an unusable feed/watchlist cursor — a DIFFERENT meaning tasks 9c.3
+     * and 9c.4 will wire through the exact same `guarded(badRequest = …)` sink. `messageRes()`
+     * (`GroupsDialogs.kt`) maps this case UNCONDITIONALLY to "that code didn't work" — correct
+     * only because today's one caller is `joinGroup`. The old name `BadRequest` named the STATUS
+     * CODE the sink receives, which is what `guarded`'s own `badRequest:` PARAMETER correctly
+     * describes (it stays named that — it genuinely is one); this VALUE has to name the MEANING,
+     * or a future implementer reading the parameter name and writing
+     * `badRequest = GroupFailure.BadRequest` for a bad cursor gets invite-code copy for a
+     * pagination error, with nothing in the type system to object.
      *
      * A dedicated case rather than folding into [Unknown] (round 1's original shape): [Unknown]
      * is ALSO what a 500, an expired session's 401, or a deserialization failure map to, and a UI
      * that rendered "that code might be wrong" for any of those would be actively misleading —
      * measured in review: round 1's `messageRes(unknownRes = …)` could not tell a genuine 400
      * apart from those other causes, since all of them arrived as the same [Unknown] type. Wired
-     * through `guarded(badRequest = GroupFailure.BadRequest)` in `GroupRepositoryImpl` — the same
-     * caller-chosen-sink shape [NoSuchTitle]/[NoSuchEntry] already use for 404 via `notFound`.
+     * through `guarded(badRequest = GroupFailure.InvalidInviteCode)` in `GroupRepositoryImpl` —
+     * the same caller-chosen-sink shape [NoSuchTitle]/[NoSuchEntry] already use for 404 via
+     * `notFound`.
      */
-    data object BadRequest : GroupFailure
+    data object InvalidInviteCode : GroupFailure
 
     /**
      * Anything else — an unexpected status, a malformed response, ...

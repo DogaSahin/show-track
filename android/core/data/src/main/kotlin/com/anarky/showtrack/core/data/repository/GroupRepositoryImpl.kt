@@ -48,13 +48,13 @@ class GroupRepositoryImpl
             guarded { api.createGroup(CreateGroupRequestDto(name = name)).toDomain() }
 
         /**
-         * [GroupFailure.BadRequest] on a 400 here (fix round 2): `POST /v1/groups/join` returns
+         * [GroupFailure.InvalidInviteCode] on a 400 here (fix round 2): `POST /v1/groups/join` returns
          * exactly that status for a bad, unknown, or expired code (`routes.py`'s `_INVALID_CODE`)
-         * — see [GroupFailure.BadRequest]'s own KDoc for why this needed a dedicated case rather
+         * — see [GroupFailure.InvalidInviteCode]'s own KDoc for why this needed a dedicated case rather
          * than folding into [GroupFailure.Unknown] the way round 1 originally left it.
          */
         override suspend fun joinGroup(inviteCode: String): GroupWithInvite =
-            guarded(badRequest = GroupFailure.BadRequest) {
+            guarded(badRequest = GroupFailure.InvalidInviteCode) {
                 api.joinGroup(JoinGroupRequestDto(inviteCode = inviteCode)).toDomain()
             }
 
