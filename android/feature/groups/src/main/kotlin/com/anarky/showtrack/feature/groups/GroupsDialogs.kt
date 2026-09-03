@@ -136,16 +136,18 @@ internal fun JoinGroupDialog(
 
 /**
  * The one place a [GroupFailure] becomes copy — `ImportScreen`'s identical `ImportError.messageRes()`
- * pattern. Every case besides [GroupFailure.Network] and [GroupFailure.InvalidInviteCode] folds to
- * the same generic message: the remaining four (`NotAMember`, `NotPermitted`, `NoSuchTitle`,
- * `NoSuchEntry`) plus [GroupFailure.AlreadyReviewed] and [GroupFailure.Unknown] describe failures
- * from feed/watchlist/review endpoints this screen never calls, or genuinely unexpected ones (a
- * 500, an expired session) — creating or joining a group cannot produce the former, and the latter
- * has no more specific story than "something went wrong" — so a dedicated string for either would
- * either name a case this form can never reach, or claim specificity the client does not have.
- * [GroupFailure.Unknown.cause] is deliberately not read here (that field is for logging only — see
- * its own KDoc): an `HttpException`'s message is the raw HTTP status line, never fit for
- * user-facing copy.
+ * pattern. Three dedicated cases ([GroupFailure.Network], [GroupFailure.InvalidInviteCode],
+ * [GroupFailure.NotAMember] — the last added round 1 review, minor 4, for
+ * [GroupDetailScreen]/`GroupDetailDialogs.kt`'s benefit, since it is the single most likely
+ * non-network failure there) and one generic fallback for the rest: `NotPermitted`, `NoSuchTitle`,
+ * `NoSuchEntry`, [GroupFailure.AlreadyReviewed] and [GroupFailure.Unknown] describe failures from
+ * feed/watchlist/review endpoints `GroupsScreen`'s own create/join forms never call, or genuinely
+ * unexpected ones (a 500, an expired session) — creating or joining a group cannot produce the
+ * former, and the latter has no more specific story than "something went wrong" — so a dedicated
+ * string for either would either name a case that form can never reach, or claim specificity the
+ * client does not have. [GroupFailure.Unknown.cause] is deliberately not read here (that field is
+ * for logging only — see its own KDoc): an `HttpException`'s message is the raw HTTP status line,
+ * never fit for user-facing copy.
  *
  * **Fix round 2:** [GroupFailure.InvalidInviteCode] replaces round 1's `unknownRes`
  * caller-override parameter — round 1 discriminated "bad invite code" from the generic case by
@@ -164,7 +166,11 @@ internal fun GroupFailure.messageRes(): Int =
     when (this) {
         GroupFailure.Network -> R.string.groups_error_network
         GroupFailure.InvalidInviteCode -> R.string.groups_join_error_bad_code
-        GroupFailure.NotAMember,
+        // Round 1 review, minor 4: a dedicated case, not the generic fallback below — NotAMember
+        // is the single most likely non-network failure on the group detail screen (removed from
+        // the group elsewhere, or the group is gone), and "something went wrong, try again" is
+        // actively misleading for a 404 that will answer identically on every retry.
+        GroupFailure.NotAMember -> R.string.groups_error_not_a_member
         GroupFailure.NotPermitted,
         GroupFailure.NoSuchTitle,
         GroupFailure.NoSuchEntry,

@@ -11,6 +11,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.testing.TestNavHostController
 import androidx.test.core.app.ApplicationProvider
+import com.anarky.showtrack.core.data.repository.AuthRepository
 import com.anarky.showtrack.core.data.repository.GroupRepository
 import com.anarky.showtrack.core.model.GroupMember
 import com.anarky.showtrack.core.model.GroupRole
@@ -55,17 +56,22 @@ class GroupDetailEntryHiltTest {
     @get:Rule(order = 1)
     val composeRule = createAndroidComposeRule<HiltTestActivity>()
 
-    // membersResult/currentUserIdResult must both be set BEFORE injection — GroupDetailViewModel's
-    // own `init { refresh() }` fires on construction, resolved through hiltViewModel() the moment
-    // GroupDetailScreen first composes, and by then this field must already hold what that call
-    // publishes (GroupsEntryHiltTest's identical setup note for GroupsViewModel's resume load).
+    // membersResult must be set BEFORE injection — GroupDetailViewModel's own `init { refresh() }`
+    // fires on construction, resolved through hiltViewModel() the moment GroupDetailScreen first
+    // composes, and by then this field must already hold what that call publishes
+    // (GroupsEntryHiltTest's identical setup note for GroupsViewModel's resume load).
     @BindValue
     @JvmField
-    val groupRepository: GroupRepository =
-        FakeGroupRepository(
-            membersResult = listOf(SELF),
-            currentUserIdResult = SELF.userId,
-        )
+    val groupRepository: GroupRepository = FakeGroupRepository(membersResult = listOf(SELF))
+
+    // Round 1 review moved identity to AuthRepository (that method's own KDoc) — GroupDetailViewModel
+    // now names it as a second constructor dependency, so the Hilt graph needs a binding for it too.
+    // SELF is a MEMBER, not the OWNER, deliberately: round 1 review's own minor 1 measured that
+    // "Leave group" gated on `isOwner` left every screen test green except THIS one, whose fixture
+    // happened to be a member — kept that way here so this test keeps covering that exact case.
+    @BindValue
+    @JvmField
+    val authRepository: AuthRepository = FakeAuthRepository(currentUserIdResult = SELF.userId)
 
     @Before
     fun setUp() = hiltRule.inject()

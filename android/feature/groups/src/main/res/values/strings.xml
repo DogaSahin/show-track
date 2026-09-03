@@ -44,6 +44,12 @@
 
     <string name="groups_error_network">Couldn\'t reach the server. Check your connection and try again.</string>
     <string name="groups_error_unknown">Something went wrong. Please try again.</string>
+    <!-- Round 1 review, minor 4: GroupFailure.NotAMember previously fell into the generic
+         "something went wrong" copy above, but on THIS screen it is the single most likely
+         non-network failure (removed from the group elsewhere, or the group itself is gone) and
+         names something the generic copy actively misdescribes: retrying answers the identical
+         404 every time, not a transient fault. -->
+    <string name="groups_error_not_a_member">You\'re no longer a member of this group.</string>
     <!-- Fix round 2: the single most common outcome of JoinGroupDialog's submit —
          GroupFailure.BadRequest's own KDoc: a bad or expired code is a 400
          (backend/app/groups/routes.py's _INVALID_CODE) the backend deliberately does not
@@ -84,7 +90,12 @@
          unconditionally — G-E's ownership-transfer rule only ever gates removing SOMEONE ELSE). -->
     <string name="groups_detail_leave_action">Leave group</string>
     <string name="groups_detail_leave_confirm_title">Leave this group?</string>
-    <string name="groups_detail_leave_confirm_message">You\'ll need a new invite code to rejoin.</string>
+    <!-- Round 1 review, minor 3: the previous copy ("You\'ll need a new invite code to rejoin")
+         was wrong for an owner leaving — backend/app/groups/service.py:204-221 either transfers
+         ownership to the earliest joiner or, with nobody left, DELETES the group outright; there
+         is nothing to rejoin in that second case. One message covers both audiences (member and
+         owner) honestly rather than computing isOwner a second time just to pick between two. -->
+    <string name="groups_detail_leave_confirm_message">You\'ll need a new invite code to rejoin. If you\'re the owner, leaving hands the group to another member automatically \u2014 or deletes it if no one else is left.</string>
     <string name="groups_detail_leave_confirm_button">Leave</string>
     <string name="groups_detail_leave_cancel">Cancel</string>
 

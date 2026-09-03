@@ -17,6 +17,8 @@ internal class EntryFakeAuthRepository
     constructor() : AuthRepository {
         override suspend fun hasSession(): Boolean = true
 
+        override suspend fun currentUserId(): String = error("AuthEntryHiltTest only exercises login")
+
         override suspend fun login(
             email: String,
             password: String,

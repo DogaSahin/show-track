@@ -408,23 +408,6 @@ class GroupRepositoryImplTest {
             assertTrue((failure as GroupOperationException).failure is GroupFailure.Unknown)
         }
 
-    /**
-     * `currentUserId()` (task 9c.2): the only way this client resolves "who am I", needed to
-     * derive `GroupDetailViewModel`'s owner-only rendering (E-F) against the LIVE members
-     * response rather than anything cached — see [GroupRepository.currentUserId]'s own KDoc.
-     */
-    @Test
-    fun `currentUserId returns the id GET v1users me answers with`() =
-        runTest {
-            val api = FakeApi()
-            api.meResponse =
-                UserDto(id = "user-42", username = "anyone", email = "a@b.test", createdAt = "2026-09-01T10:00:00Z")
-
-            val id = repository(api).currentUserId()
-
-            assertEquals("user-42", id)
-        }
-
     @Test
     fun `members maps GroupRole strictly`() =
         runTest {
@@ -722,19 +705,10 @@ class GroupRepositoryImplTest {
 
         override suspend fun mediaDetail(id: String): MediaDto = error("not used")
 
-        var meResponse =
-            UserDto(
-                id = "user-1",
-                username = "someone",
-                email = "someone@example.com",
-                createdAt = "2026-09-01T10:00:00Z",
-            )
-        var meFailure: Throwable? = null
-
-        override suspend fun me(): UserDto {
-            meFailure?.let { throw it }
-            return meResponse
-        }
+        // GroupRepositoryImpl no longer calls api.me() (round 1 review moved currentUserId() to
+        // AuthRepositoryImpl — see GroupRepository.kt's own KDoc) — kept as a loud failure, not a
+        // stub answer, so a regression that reintroduces the call here is caught immediately.
+        override suspend fun me(): UserDto = error("not used")
 
         override suspend fun registerPushTarget(request: RegisterTargetRequest): PushTargetDto = error("not used")
 

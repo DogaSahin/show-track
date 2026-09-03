@@ -41,6 +41,10 @@ import com.anarky.showtrack.core.designsystem.R as DesignSystemR
  * discriminate "removing yourself is offered" (per E-F, it must not be) from "removing the FIRST
  * other member is offered" (a real, separate bug) — a two-member fixture where the SECOND member is
  * the viewer cannot tell those apart, since there is no OTHER "other" member left to expose it.
+ *
+ * **`currentUserId` is now a SIBLING parameter to [state]** (round 1 review moved it off
+ * [GroupDetailUiState.Success] entirely — that type's own KDoc), passed to every call below
+ * alongside `state`/`actionState`.
  */
 @RunWith(RobolectricTestRunner::class)
 class GroupDetailScreenTest {
@@ -54,8 +58,9 @@ class GroupDetailScreenTest {
     fun `a non-owner sees no rotate and no remove controls`() {
         composeRule.setContent {
             GroupDetailScreen(
-                state = successState(currentUserId = MEMBER.userId, members = listOf(OWNER, MEMBER, MEMBER2)),
+                state = successState(members = listOf(OWNER, MEMBER, MEMBER2)),
                 actionState = GroupDetailActionState(),
+                currentUserId = MEMBER.userId,
                 onRetry = {},
                 onRotateInvite = {},
                 onLeaveGroup = {},
@@ -79,8 +84,9 @@ class GroupDetailScreenTest {
     fun `an owner sees rotate and remove`() {
         composeRule.setContent {
             GroupDetailScreen(
-                state = successState(currentUserId = OWNER.userId, members = listOf(OWNER, MEMBER, MEMBER2)),
+                state = successState(members = listOf(OWNER, MEMBER, MEMBER2)),
                 actionState = GroupDetailActionState(),
+                currentUserId = OWNER.userId,
                 onRetry = {},
                 onRotateInvite = {},
                 onLeaveGroup = {},
@@ -97,6 +103,34 @@ class GroupDetailScreenTest {
     }
 
     /**
+     * `currentUserId == null` (identity has not resolved yet, or its own background fetch failed —
+     * `GroupDetailViewModel.currentUserId`'s own KDoc) must hide owner-only controls exactly like a
+     * known non-owner does — E-F's "hidden, not disabled" applied to an UNKNOWN role, not only a
+     * known non-owner one.
+     */
+    @Test
+    fun `an unresolved currentUserId hides rotate and remove, the same as a non-owner`() {
+        composeRule.setContent {
+            GroupDetailScreen(
+                state = successState(members = listOf(OWNER, MEMBER, MEMBER2)),
+                actionState = GroupDetailActionState(),
+                currentUserId = null,
+                onRetry = {},
+                onRotateInvite = {},
+                onLeaveGroup = {},
+                onRemoveMember = {},
+                onDismissRotatedInvite = {},
+                onRotateDialogOpened = {},
+                onLeaveDialogOpened = {},
+                onRemoveDialogOpened = {},
+            )
+        }
+
+        composeRule.onNodeWithText(context.getString(R.string.groups_detail_rotate_action)).assertDoesNotExist()
+        composeRule.onAllNodesWithText(context.getString(R.string.groups_detail_remove_action)).assertCountEquals(0)
+    }
+
+    /**
      * The brief's third named test, verbatim. Three members ([OWNER] as the viewer, plus [MEMBER]
      * and [MEMBER2]): "Remove" must render for the two OTHER rows and never for the owner's own —
      * `assertCountEquals(2)`, not merely "at least one", is what a "remove always shows for row 0"
@@ -106,8 +140,9 @@ class GroupDetailScreenTest {
     fun `leaving is offered to every member and removing is not offered for yourself`() {
         composeRule.setContent {
             GroupDetailScreen(
-                state = successState(currentUserId = OWNER.userId, members = listOf(OWNER, MEMBER, MEMBER2)),
+                state = successState(members = listOf(OWNER, MEMBER, MEMBER2)),
                 actionState = GroupDetailActionState(),
+                currentUserId = OWNER.userId,
                 onRetry = {},
                 onRotateInvite = {},
                 onLeaveGroup = {},
@@ -124,6 +159,63 @@ class GroupDetailScreenTest {
     }
 
     /**
+     * Round 1 review, minor 1: "leaving is offered to every member" was only ever driven with the
+     * OWNER as the viewer — mutating the Leave button to `if (isOwner) { … }` left every other test
+     * in this file green. [MEMBER] as the viewer here is the negative control that closes it: Leave
+     * must render regardless of role, since [GroupDetailScreen] renders it OUTSIDE the
+     * `isOwner`-gated success content entirely now (that function's own KDoc).
+     */
+    @Test
+    fun `a non-owner can also see and use Leave group`() {
+        var left = false
+        composeRule.setContent {
+            GroupDetailScreen(
+                state = successState(members = listOf(OWNER, MEMBER)),
+                actionState = GroupDetailActionState(),
+                currentUserId = MEMBER.userId,
+                onRetry = {},
+                onRotateInvite = {},
+                onLeaveGroup = { left = true },
+                onRemoveMember = {},
+                onDismissRotatedInvite = {},
+                onRotateDialogOpened = {},
+                onLeaveDialogOpened = {},
+                onRemoveDialogOpened = {},
+            )
+        }
+
+        composeRule.onNodeWithText(context.getString(R.string.groups_detail_leave_action)).performClick()
+        composeRule.onNodeWithText(context.getString(R.string.groups_detail_leave_confirm_button)).performClick()
+
+        assertTrue(left)
+    }
+
+    /**
+     * "Leave group" must also render for [GroupDetailUiState.Error] — round 1 review, BLOCKING
+     * 2's screen-side half.
+     */
+    @Test
+    fun `Leave group is offered even when the member list failed to load`() {
+        composeRule.setContent {
+            GroupDetailScreen(
+                state = GroupDetailUiState.Error(GroupFailure.Network),
+                actionState = GroupDetailActionState(),
+                currentUserId = OWNER.userId,
+                onRetry = {},
+                onRotateInvite = {},
+                onLeaveGroup = {},
+                onRemoveMember = {},
+                onDismissRotatedInvite = {},
+                onRotateDialogOpened = {},
+                onLeaveDialogOpened = {},
+                onRemoveDialogOpened = {},
+            )
+        }
+
+        composeRule.onNodeWithText(context.getString(R.string.groups_detail_leave_action)).assertIsDisplayed()
+    }
+
+    /**
      * Mutation-critical: pins that "Remove" on the SECOND other member's row (not the first) opens
      * a confirmation naming THAT member, and confirming calls [onRemoveMember] with THEIR id — a
      * handler that always targeted `members[1]` (the first non-owner row) would pass every assertion
@@ -134,8 +226,9 @@ class GroupDetailScreenTest {
         var removedUserId: String? = null
         composeRule.setContent {
             GroupDetailScreen(
-                state = successState(currentUserId = OWNER.userId, members = listOf(OWNER, MEMBER, MEMBER2)),
+                state = successState(members = listOf(OWNER, MEMBER, MEMBER2)),
                 actionState = GroupDetailActionState(),
+                currentUserId = OWNER.userId,
                 onRetry = {},
                 onRotateInvite = {},
                 onLeaveGroup = {},
@@ -159,13 +252,66 @@ class GroupDetailScreenTest {
         assertEquals(MEMBER2.userId, removedUserId)
     }
 
+    /**
+     * BLOCKING 1 (round 1 review) — the actual regression: reopening the remove confirmation for a
+     * NEW target right after a PREVIOUS remove's error must not dismiss itself. Round 0's close
+     * effect keyed on `(removingUserId, removeError)` alone: `onRemoveDialogOpened` (bound to
+     * `clearRemoveError`) clears the error in the SAME recomposition that sets the new target,
+     * which flips the key to `(null, null)` — indistinguishable from a genuine success — and the
+     * dialog closed itself before the user had done anything. Reproduced here exactly as the
+     * review found it: fail sam's remove, cancel, then remove kai — a NEW target, not a re-tap of
+     * the same one.
+     */
+    @Test
+    fun `reopening remove for a new target after a previous remove's error does not self-dismiss`() {
+        var actionState by mutableStateOf(GroupDetailActionState())
+        composeRule.setContent {
+            GroupDetailScreen(
+                state = successState(members = listOf(OWNER, MEMBER, MEMBER2)),
+                actionState = actionState,
+                currentUserId = OWNER.userId,
+                onRetry = {},
+                onRotateInvite = {},
+                onLeaveGroup = {},
+                onRemoveMember = {},
+                onDismissRotatedInvite = {},
+                onRotateDialogOpened = {},
+                onLeaveDialogOpened = {},
+                onRemoveDialogOpened = { actionState = actionState.copy(removeError = null) },
+            )
+        }
+
+        // Remove sam (the first "other" row): open, confirm, fail.
+        composeRule.onAllNodesWithText(context.getString(R.string.groups_detail_remove_action))[0].performClick()
+        actionState = actionState.copy(removingUserId = MEMBER.userId)
+        composeRule.onNodeWithText(context.getString(R.string.groups_detail_remove_confirm_button)).performClick()
+        actionState = actionState.copy(removingUserId = null, removeError = GroupFailure.NotPermitted)
+        composeRule.waitForIdle()
+        composeRule
+            .onNodeWithText(context.getString(R.string.groups_detail_remove_confirm_title, MEMBER.username))
+            .assertIsDisplayed()
+
+        // Cancel sam's dialog, then open kai's — a genuinely NEW target, with sam's error still
+        // live in actionState until onRemoveDialogOpened (wired above, matching production) clears
+        // it on this very open.
+        composeRule.onNodeWithText(context.getString(R.string.groups_detail_remove_cancel)).performClick()
+        composeRule.onAllNodesWithText(context.getString(R.string.groups_detail_remove_action))[1].performClick()
+        composeRule.waitForIdle()
+
+        // Must still be showing — a self-dismiss here is BLOCKING 1 reproduced.
+        composeRule
+            .onNodeWithText(context.getString(R.string.groups_detail_remove_confirm_title, MEMBER2.username))
+            .assertIsDisplayed()
+    }
+
     @Test
     fun `tapping leave opens a confirmation, and confirming invokes onLeaveGroup`() {
         var left = false
         composeRule.setContent {
             GroupDetailScreen(
-                state = successState(currentUserId = OWNER.userId, members = listOf(OWNER, MEMBER)),
+                state = successState(members = listOf(OWNER, MEMBER)),
                 actionState = GroupDetailActionState(),
+                currentUserId = OWNER.userId,
                 onRetry = {},
                 onRotateInvite = {},
                 onLeaveGroup = { left = true },
@@ -189,8 +335,9 @@ class GroupDetailScreenTest {
         var left = false
         composeRule.setContent {
             GroupDetailScreen(
-                state = successState(currentUserId = OWNER.userId, members = listOf(OWNER, MEMBER)),
+                state = successState(members = listOf(OWNER, MEMBER)),
                 actionState = GroupDetailActionState(),
+                currentUserId = OWNER.userId,
                 onRetry = {},
                 onRotateInvite = {},
                 onLeaveGroup = { left = true },
@@ -214,8 +361,9 @@ class GroupDetailScreenTest {
         var rotated = false
         composeRule.setContent {
             GroupDetailScreen(
-                state = successState(currentUserId = OWNER.userId, members = listOf(OWNER, MEMBER)),
+                state = successState(members = listOf(OWNER, MEMBER)),
                 actionState = GroupDetailActionState(),
+                currentUserId = OWNER.userId,
                 onRetry = {},
                 onRotateInvite = { rotated = true },
                 onLeaveGroup = {},
@@ -241,11 +389,12 @@ class GroupDetailScreenTest {
      */
     @Test
     fun `a successful rotate closes the dialog and shows the new code`() {
-        var state by mutableStateOf(successState(currentUserId = OWNER.userId, members = listOf(OWNER)))
+        var state by mutableStateOf(successState(members = listOf(OWNER)))
         composeRule.setContent {
             GroupDetailScreen(
                 state = state,
                 actionState = GroupDetailActionState(),
+                currentUserId = OWNER.userId,
                 onRetry = {},
                 onRotateInvite = {},
                 onLeaveGroup = {},
@@ -275,8 +424,9 @@ class GroupDetailScreenTest {
         var actionState by mutableStateOf(GroupDetailActionState())
         composeRule.setContent {
             GroupDetailScreen(
-                state = successState(currentUserId = OWNER.userId, members = listOf(OWNER)),
+                state = successState(members = listOf(OWNER)),
                 actionState = actionState,
+                currentUserId = OWNER.userId,
                 onRetry = {},
                 onRotateInvite = {},
                 onLeaveGroup = {},
@@ -302,8 +452,9 @@ class GroupDetailScreenTest {
         var actionState by mutableStateOf(GroupDetailActionState())
         composeRule.setContent {
             GroupDetailScreen(
-                state = successState(currentUserId = OWNER.userId, members = listOf(OWNER, MEMBER)),
+                state = successState(members = listOf(OWNER, MEMBER)),
                 actionState = actionState,
+                currentUserId = OWNER.userId,
                 onRetry = {},
                 onRotateInvite = {},
                 onLeaveGroup = {},
@@ -325,13 +476,37 @@ class GroupDetailScreenTest {
             .assertIsDisplayed()
     }
 
+    /** Round 1 review, minor 4: `NotAMember` gets its own copy now, not the generic fallback. */
+    @Test
+    fun `an error state shows NotAMember's dedicated message, not the generic one`() {
+        composeRule.setContent {
+            GroupDetailScreen(
+                state = GroupDetailUiState.Error(GroupFailure.NotAMember),
+                actionState = GroupDetailActionState(),
+                currentUserId = OWNER.userId,
+                onRetry = {},
+                onRotateInvite = {},
+                onLeaveGroup = {},
+                onRemoveMember = {},
+                onDismissRotatedInvite = {},
+                onRotateDialogOpened = {},
+                onLeaveDialogOpened = {},
+                onRemoveDialogOpened = {},
+            )
+        }
+
+        composeRule.onNodeWithText(context.getString(R.string.groups_error_not_a_member)).assertIsDisplayed()
+        composeRule.onNodeWithText(context.getString(R.string.groups_error_unknown)).assertDoesNotExist()
+    }
+
     @Test
     fun `opening the rotate dialog invokes onRotateDialogOpened`() {
         var opened = false
         composeRule.setContent {
             GroupDetailScreen(
-                state = successState(currentUserId = OWNER.userId, members = listOf(OWNER)),
+                state = successState(members = listOf(OWNER)),
                 actionState = GroupDetailActionState(),
+                currentUserId = OWNER.userId,
                 onRetry = {},
                 onRotateInvite = {},
                 onLeaveGroup = {},
@@ -355,6 +530,7 @@ class GroupDetailScreenTest {
             GroupDetailScreen(
                 state = GroupDetailUiState.Error(GroupFailure.Network),
                 actionState = GroupDetailActionState(),
+                currentUserId = OWNER.userId,
                 onRetry = { retried = true },
                 onRotateInvite = {},
                 onLeaveGroup = {},
@@ -377,8 +553,9 @@ class GroupDetailScreenTest {
         var retried = false
         composeRule.setContent {
             GroupDetailScreen(
-                state = successState(currentUserId = OWNER.userId, members = listOf(OWNER), isStale = true),
+                state = successState(members = listOf(OWNER), isStale = true),
                 actionState = GroupDetailActionState(),
+                currentUserId = OWNER.userId,
                 onRetry = { retried = true },
                 onRotateInvite = {},
                 onLeaveGroup = {},
@@ -404,10 +581,9 @@ class GroupDetailScreenTest {
     }
 
     private fun successState(
-        currentUserId: String,
         members: List<GroupMember>,
         isStale: Boolean = false,
-    ) = GroupDetailUiState.Success(members = members, currentUserId = currentUserId, isStale = isStale)
+    ) = GroupDetailUiState.Success(members = members, isStale = isStale)
 
     private companion object {
         fun member(

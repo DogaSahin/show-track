@@ -4,14 +4,39 @@ import com.anarky.showtrack.core.data.push.PushRepository
 import com.anarky.showtrack.core.model.AuthFailure
 import com.anarky.showtrack.core.model.PushNotification
 import com.anarky.showtrack.core.network.api.AuthApi
+import com.anarky.showtrack.core.network.api.ShowTrackApi
 import com.anarky.showtrack.core.network.auth.TokenPair
 import com.anarky.showtrack.core.network.auth.TokenStore
+import com.anarky.showtrack.core.network.dto.AddLibraryEntryRequest
+import com.anarky.showtrack.core.network.dto.CreateGroupRequestDto
+import com.anarky.showtrack.core.network.dto.CreateReviewRequestDto
+import com.anarky.showtrack.core.network.dto.FeedPageDto
+import com.anarky.showtrack.core.network.dto.GroupDto
+import com.anarky.showtrack.core.network.dto.GroupWithInviteDto
+import com.anarky.showtrack.core.network.dto.ImportAniListRequest
+import com.anarky.showtrack.core.network.dto.ImportSummaryDto
+import com.anarky.showtrack.core.network.dto.JoinGroupRequestDto
+import com.anarky.showtrack.core.network.dto.LibraryEntryDto
+import com.anarky.showtrack.core.network.dto.LibraryPageDto
+import com.anarky.showtrack.core.network.dto.LibraryStatsDto
 import com.anarky.showtrack.core.network.dto.LoginRequest
+import com.anarky.showtrack.core.network.dto.MediaDto
+import com.anarky.showtrack.core.network.dto.MediaSearchResponseDto
+import com.anarky.showtrack.core.network.dto.MemberDto
+import com.anarky.showtrack.core.network.dto.ProgressEntryDto
+import com.anarky.showtrack.core.network.dto.ProposeTitleRequestDto
+import com.anarky.showtrack.core.network.dto.PushTargetDto
+import com.anarky.showtrack.core.network.dto.RecommendationPageDto
 import com.anarky.showtrack.core.network.dto.RefreshRequest
 import com.anarky.showtrack.core.network.dto.RegisterRequest
+import com.anarky.showtrack.core.network.dto.RegisterTargetRequest
+import com.anarky.showtrack.core.network.dto.ReviewDto
 import com.anarky.showtrack.core.network.dto.TokenPairDto
 import com.anarky.showtrack.core.network.dto.UserDto
+import com.anarky.showtrack.core.network.dto.WatchlistItemDto
+import com.anarky.showtrack.core.network.dto.WatchlistPageDto
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonObject
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -42,7 +67,7 @@ class AuthRepositoryTest {
         runTest {
             val api = FakeAuthApi()
             val store = FakeTokenStore()
-            val repository = AuthRepositoryImpl(api, store, FakePush())
+            val repository = AuthRepositoryImpl(api, FakeShowTrackApi(), store, FakePush())
 
             repository.register("someone", "a@example.com", "hunter2hunter2", "CODE")
 
@@ -57,7 +82,7 @@ class AuthRepositoryTest {
             // now answers "email already taken", with nothing left to try.
             val api = FakeAuthApi(loginFailure = IOException("offline"))
             val store = FakeTokenStore()
-            val repository = AuthRepositoryImpl(api, store, FakePush())
+            val repository = AuthRepositoryImpl(api, FakeShowTrackApi(), store, FakePush())
 
             val failure =
                 runCatching {
@@ -72,7 +97,7 @@ class AuthRepositoryTest {
     fun `login registers this device for push`() =
         runTest {
             val push = FakePush()
-            val repository = AuthRepositoryImpl(FakeAuthApi(), FakeTokenStore(), push)
+            val repository = AuthRepositoryImpl(FakeAuthApi(), FakeShowTrackApi(), FakeTokenStore(), push)
 
             repository.login("a@example.com", "hunter2hunter2")
 
@@ -86,7 +111,7 @@ class AuthRepositoryTest {
             // target could not be created would be a lie about what went wrong.
             val store = FakeTokenStore()
             val repository =
-                AuthRepositoryImpl(FakeAuthApi(), store, FakePush(failure = IOException("offline")))
+                AuthRepositoryImpl(FakeAuthApi(), FakeShowTrackApi(), store, FakePush(failure = IOException("offline")))
 
             repository.login("a@example.com", "hunter2hunter2")
 
@@ -104,7 +129,7 @@ class AuthRepositoryTest {
             val calls = mutableListOf<String>()
             val store = FakeTokenStore(initial = TokenPair("access-1", "refresh-1"), calls = calls)
             val push = FakePush(calls = calls)
-            val repository = AuthRepositoryImpl(FakeAuthApi(), store, push)
+            val repository = AuthRepositoryImpl(FakeAuthApi(), FakeShowTrackApi(), store, push)
 
             repository.logout()
 
@@ -119,7 +144,8 @@ class AuthRepositoryTest {
             // the user pressing "log out" and staying logged in — worse than login's symmetric
             // case, where a push failure must not be misreported as a login failure.
             val store = FakeTokenStore(initial = TokenPair("access-1", "refresh-1"))
-            val repository = AuthRepositoryImpl(FakeAuthApi(), store, FakePush(failure = IOException("offline")))
+            val repository =
+                AuthRepositoryImpl(FakeAuthApi(), FakeShowTrackApi(), store, FakePush(failure = IOException("offline")))
 
             repository.logout()
 
@@ -130,7 +156,7 @@ class AuthRepositoryTest {
     fun `a wrong password surfaces as invalid credentials`() =
         runTest {
             val api = FakeAuthApi(loginFailure = httpError(401))
-            val repository = AuthRepositoryImpl(api, FakeTokenStore(), FakePush())
+            val repository = AuthRepositoryImpl(api, FakeShowTrackApi(), FakeTokenStore(), FakePush())
 
             val failure = runCatching { repository.login("a@example.com", "wrong") }.exceptionOrNull()
 
@@ -141,7 +167,7 @@ class AuthRepositoryTest {
     fun `being offline during login surfaces as being offline`() =
         runTest {
             val api = FakeAuthApi(loginFailure = IOException("offline"))
-            val repository = AuthRepositoryImpl(api, FakeTokenStore(), FakePush())
+            val repository = AuthRepositoryImpl(api, FakeShowTrackApi(), FakeTokenStore(), FakePush())
 
             val failure = runCatching { repository.login("a@example.com", "hunter2hunter2") }.exceptionOrNull()
 
@@ -155,7 +181,7 @@ class AuthRepositoryTest {
             // (taken email/username) both arrive as Refused, carrying whichever code the
             // server sent. Telling them apart is :feature:auth's job, done from the code.
             val api = FakeAuthApi(registerFailure = httpError(409))
-            val repository = AuthRepositoryImpl(api, FakeTokenStore(), FakePush())
+            val repository = AuthRepositoryImpl(api, FakeShowTrackApi(), FakeTokenStore(), FakePush())
 
             val failure =
                 runCatching {
@@ -167,12 +193,89 @@ class AuthRepositoryTest {
         }
 
     @Test
+    fun `currentUserId returns the id GET v1users me answers with`() =
+        runTest {
+            val showTrackApi =
+                FakeShowTrackApi(meResult = UserDto("user-42", "alex", "a@b.test", "2026-09-01T00:00:00Z"))
+            val repository = AuthRepositoryImpl(FakeAuthApi(), showTrackApi, FakeTokenStore(), FakePush())
+
+            val id = repository.currentUserId()
+
+            assertEquals("user-42", id)
+        }
+
+    /**
+     * Round 1 review, ruling: identity is a SESSION-lifetime fact, cached in memory rather than
+     * refetched per caller — a screen that asks twice (e.g. a resume) pays for one network round
+     * trip, not two. [FakeShowTrackApi.meCalls] is what makes "resolved once" distinguishable from
+     * "resolved every time" (round 1 review's own minor: the OLD `FakeGroupRepository.currentUserId`
+     * had no call counter at all, so no test could tell the two apart).
+     */
+    @Test
+    fun `currentUserId is resolved once and cached for the rest of the session`() =
+        runTest {
+            val showTrackApi =
+                FakeShowTrackApi(meResult = UserDto("user-42", "alex", "a@b.test", "2026-09-01T00:00:00Z"))
+            val repository = AuthRepositoryImpl(FakeAuthApi(), showTrackApi, FakeTokenStore(), FakePush())
+
+            repository.currentUserId()
+            repository.currentUserId()
+            repository.currentUserId()
+
+            assertEquals(1, showTrackApi.meCalls)
+        }
+
+    @Test
+    fun `logout clears the cached currentUserId, so the next session re-resolves it`() =
+        runTest {
+            val showTrackApi =
+                FakeShowTrackApi(meResult = UserDto("user-42", "alex", "a@b.test", "2026-09-01T00:00:00Z"))
+            val store = FakeTokenStore(initial = TokenPair("access-1", "refresh-1"))
+            val repository = AuthRepositoryImpl(FakeAuthApi(), showTrackApi, store, FakePush())
+            repository.currentUserId()
+            assertEquals(1, showTrackApi.meCalls)
+
+            repository.logout()
+            showTrackApi.meResult = UserDto("user-99", "sam", "s@b.test", "2026-09-02T00:00:00Z")
+            val secondSessionId = repository.currentUserId()
+
+            assertEquals("user-99", secondSessionId)
+            assertEquals(2, showTrackApi.meCalls)
+        }
+
+    @Test
+    fun `being offline while resolving currentUserId surfaces as being offline`() =
+        runTest {
+            val showTrackApi = FakeShowTrackApi(meFailure = IOException("offline"))
+            val repository = AuthRepositoryImpl(FakeAuthApi(), showTrackApi, FakeTokenStore(), FakePush())
+
+            val failure = runCatching { repository.currentUserId() }.exceptionOrNull()
+
+            assertTrue(failure is AuthFailure.Offline)
+        }
+
+    /** The negative control: an unmapped failure (a 500, a malformed response) is Unexpected, not Offline. */
+    @Test
+    fun `an unmapped failure while resolving currentUserId surfaces as Unexpected`() =
+        runTest {
+            val showTrackApi = FakeShowTrackApi(meFailure = httpError(500))
+            val repository = AuthRepositoryImpl(FakeAuthApi(), showTrackApi, FakeTokenStore(), FakePush())
+
+            val failure = runCatching { repository.currentUserId() }.exceptionOrNull()
+
+            assertTrue(failure is AuthFailure.Unexpected)
+        }
+
+    @Test
     fun `hasSession is false with nothing stored and true with tokens`() =
         runTest {
-            assertFalse(AuthRepositoryImpl(FakeAuthApi(), FakeTokenStore(), FakePush()).hasSession())
+            assertFalse(
+                AuthRepositoryImpl(FakeAuthApi(), FakeShowTrackApi(), FakeTokenStore(), FakePush()).hasSession(),
+            )
             assertTrue(
                 AuthRepositoryImpl(
                     FakeAuthApi(),
+                    FakeShowTrackApi(),
                     FakeTokenStore(initial = TokenPair("a", "r")),
                     FakePush(),
                 ).hasSession(),
@@ -200,6 +303,117 @@ class AuthRepositoryTest {
         override suspend fun refresh(request: RefreshRequest) = TokenPairDto("access-2", "refresh-2")
 
         override suspend fun logout(request: RefreshRequest) = Unit
+    }
+
+    /**
+     * Hand-written, `GroupRepositoryImplTest.FakeApi`'s own precedent (a fifth copy of this same
+     * boilerplate — noted, not fixed, here; this file is not the place to extract a shared one).
+     * Only [me] is functional; every other member fails loudly if [AuthRepositoryImpl] ever
+     * reaches it, since nothing else on this interface is this class's job.
+     */
+    @Suppress("TooManyFunctions")
+    private class FakeShowTrackApi(
+        var meResult: UserDto = UserDto("user-1", "someone", "someone@example.com", "2026-09-01T00:00:00Z"),
+        var meFailure: Throwable? = null,
+    ) : ShowTrackApi {
+        var meCalls = 0
+            private set
+
+        override suspend fun me(): UserDto {
+            meCalls++
+            meFailure?.let { throw it }
+            return meResult
+        }
+
+        override suspend fun library(
+            cursor: String?,
+            limit: Int,
+            status: String?,
+            sort: String?,
+            mediaId: String?,
+            favorite: Boolean?,
+        ): LibraryPageDto = error("not used")
+
+        override suspend fun addLibraryEntry(request: AddLibraryEntryRequest): LibraryEntryDto = error("not used")
+
+        override suspend fun updateLibraryEntry(
+            id: String,
+            patch: JsonObject,
+        ): LibraryEntryDto = error("not used")
+
+        override suspend fun libraryStats(): LibraryStatsDto = error("not used")
+
+        override suspend fun importAniList(request: ImportAniListRequest): ImportSummaryDto = error("not used")
+
+        override suspend fun searchMedia(
+            query: String,
+            page: Int,
+        ): MediaSearchResponseDto = error("not used")
+
+        override suspend fun mediaDetail(id: String): MediaDto = error("not used")
+
+        override suspend fun registerPushTarget(request: RegisterTargetRequest): PushTargetDto = error("not used")
+
+        override suspend fun deletePushTarget(id: String): Unit = error("not used")
+
+        override suspend fun recommendations(
+            cursor: String?,
+            limit: Int,
+        ): RecommendationPageDto = error("not used")
+
+        override suspend fun createGroup(request: CreateGroupRequestDto): GroupWithInviteDto = error("not used")
+
+        override suspend fun groups(): List<GroupDto> = error("not used")
+
+        override suspend fun joinGroup(request: JoinGroupRequestDto): GroupWithInviteDto = error("not used")
+
+        override suspend fun groupMembers(groupId: String): List<MemberDto> = error("not used")
+
+        override suspend fun rotateGroupInvite(groupId: String): GroupWithInviteDto = error("not used")
+
+        override suspend fun removeGroupMember(
+            groupId: String,
+            userId: String,
+        ): Unit = error("not used")
+
+        override suspend fun groupFeed(
+            groupId: String,
+            cursor: String?,
+            limit: Int,
+        ): FeedPageDto = error("not used")
+
+        override suspend fun groupReviews(
+            groupId: String,
+            mediaId: String,
+        ): List<ReviewDto> = error("not used")
+
+        override suspend fun groupWatchlist(
+            groupId: String,
+            cursor: String?,
+            limit: Int,
+        ): WatchlistPageDto = error("not used")
+
+        override suspend fun proposeToWatchlist(
+            groupId: String,
+            request: ProposeTitleRequestDto,
+        ): WatchlistItemDto = error("not used")
+
+        override suspend fun removeFromWatchlist(
+            groupId: String,
+            entryId: String,
+        ): Unit = error("not used")
+
+        override suspend fun groupProgress(
+            groupId: String,
+            mediaId: String,
+        ): List<ProgressEntryDto> = error("not used")
+
+        override suspend fun createReview(request: CreateReviewRequestDto): ReviewDto = error("not used")
+
+        override suspend fun updateReview(
+            id: String,
+            patch: JsonObject,
+        ): ReviewDto = error("not used")
     }
 
     private class FakeTokenStore(

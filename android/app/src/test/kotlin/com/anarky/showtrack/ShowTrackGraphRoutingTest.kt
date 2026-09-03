@@ -347,6 +347,35 @@ class ShowTrackGraphRoutingTest {
         )
     }
 
+    /**
+     * Round 1 review's own scenario, reproduced directly: `GroupDetailRoute` reached from a door
+     * OTHER than `GroupsRoute` (`FavoritesRoute` here stands in for the 9c.4 feed-item case the
+     * review named). Round 0's blind `popBackStack()` — "am I on `GroupDetailRoute` with something
+     * beneath me" — would have popped to `FavoritesRoute` here and called it a return to Groups.
+     * `popBackStack<GroupsRoute>(inclusive = false)` finds no `GroupsRoute` anywhere on this stack
+     * and correctly falls through to an ordinary push instead.
+     */
+    @Test
+    fun `routing to GroupsRoute after reaching GroupDetailRoute from somewhere other than GroupsRoute still pushes`() {
+        val controller = controllerWith { defaultGraph() }
+        controller.navigate(FavoritesRoute)
+        controller.navigate(GroupDetailRoute(groupId = "group-1"))
+        assertEquals(4, controller.currentBackStack.value.size)
+
+        controller.routeShowTrackNavigation(GroupsRoute)
+
+        assertEquals(
+            listOf(
+                null,
+                LibraryRoute::class.qualifiedName,
+                FavoritesRoute::class.qualifiedName,
+                GroupDetailRoute::class.qualifiedName,
+                GroupsRoute::class.qualifiedName,
+            ),
+            controller.backStackRoutes(),
+        )
+    }
+
     @Test
     fun `routing to any other route is an ordinary push`() {
         val controller = controllerWith { defaultGraph() }

@@ -26,6 +26,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.anarky.showtrack.core.data.repository.GroupWithInvite
 import com.anarky.showtrack.core.designsystem.component.ErrorState
 import com.anarky.showtrack.core.designsystem.component.LoadingState
 import com.anarky.showtrack.core.designsystem.component.StaleDataBanner
@@ -45,6 +46,10 @@ import com.anarky.showtrack.core.model.GroupRole
  *
  * No `LifecycleResumeEffect` — [GroupDetailViewModel]'s own KDoc explains why this screen's
  * ViewModel loads from `init` instead, `DetailViewModel`'s pattern, not `GroupsScreen`'s.
+ *
+ * Collects [GroupDetailViewModel.currentUserId] alongside [GroupDetailViewModel.state] — round 1
+ * review moved identity off [GroupDetailUiState] entirely (that type's own KDoc), so the stateless
+ * overload below needs it as a SIBLING parameter, not a field it can read off [state].
  */
 @Composable
 fun GroupDetailScreen(
@@ -59,9 +64,11 @@ fun GroupDetailScreen(
 
     val state by viewModel.state.collectAsStateWithLifecycle()
     val actionState by viewModel.actionState.collectAsStateWithLifecycle()
+    val currentUserId by viewModel.currentUserId.collectAsStateWithLifecycle()
     GroupDetailScreen(
         state = state,
         actionState = actionState,
+        currentUserId = currentUserId,
         onRetry = viewModel::refresh,
         onRotateInvite = viewModel::rotateInvite,
         onLeaveGroup = viewModel::leaveGroup,
@@ -81,6 +88,16 @@ fun GroupDetailScreen(
  * Constraints: "if a behaviour is a rendering decision, a ViewModel test cannot pin it") —
  * `GroupDetailScreenTest` is what drives this overload directly.
  *
+ * **"Leave group" renders unconditionally, regardless of [state]** (round 1 review, BLOCKING 2's
+ * screen-side half): it sits below [GroupDetailContent] in the `Column`, not inside
+ * [GroupDetailSuccessContent] where round 0 left it — leaving a group has nothing to do with
+ * whether ITS OWN member list happened to load, and hiding the button behind a successful load
+ * silently un-did [GroupDetailViewModel.leaveGroup]'s own fix for that exact bug. No `isOwner`
+ * gate either: every member, owner included, may leave (`GroupDetailViewModel.leaveGroup`'s own
+ * KDoc) — round 1 review's minor 1 measured that gating this on `isOwner` leaves every OTHER
+ * screen test green, since none of them drove a non-owner through Leave; `an owner and a non-owner
+ * can both leave` below is the negative control that closes it.
+ *
  * [showRotateDialog]/[showLeaveDialog]/[pendingRemoveTarget] are this composable's OWN `remember`ed
  * state, not part of [GroupDetailUiState] or [GroupDetailActionState] — dialog visibility is a
  * rendering decision, not a fact the ViewModel knows, `GroupsScreen`'s identical `showCreateDialog`/
@@ -94,14 +111,25 @@ fun GroupDetailScreen(
  *   [com.anarky.showtrack.core.data.repository.GroupWithInvite] is what every successful rotate
  *   produces, never an equals-identical repeat that `MutableStateFlow` would conflate away.
  * - Remove closes when [GroupDetailActionState.removingUserId] returns to `null` with
- *   [GroupDetailActionState.removeError] still `null` — the SUCCESS signature, since the failure
- *   branch sets both fields together (`GroupDetailViewModel.removeMember`'s own `copy(removingUserId
- *   = null, removeError = failure.failure)`). Keyed on the ACTION's own flags, not on the member
- *   list's content, on purpose: `GroupDetailViewModel.reloadMembers`'s own KDoc notes a reload can
- *   fail right after a successful delete (marking the screen [GroupDetailUiState.Success.isStale]
- *   rather than dropping the row), and this dialog must still close in that case — the removal
- *   itself DID succeed, and waiting for a row to visibly disappear that a failed reload will never
- *   show would leave the confirm dialog stuck open over a success.
+ *   [GroupDetailActionState.removeError] still `null` **AND [removeAttempted] is true** (round 1
+ *   review, BLOCKING 1). Without [removeAttempted], that `(null, null)` pair is ALSO the RESTING
+ *   state — what `removingUserId`/`removeError` already read before any remove has ever been
+ *   attempted for the currently-open dialog — and `onRemoveDialogOpened` is bound to
+ *   `clearRemoveError`: reopening the dialog for a NEW target right after a PREVIOUS remove's
+ *   error clears that error in the same recomposition that sets [pendingRemoveTarget], which
+ *   flips the key from `(null, SomeError)` to `(null, null)` — the exact success signature — and
+ *   the effect fired, nulling the just-set target before the user had done anything. [removeAttempted]
+ *   is reset to `false` on every dialog OPEN (regardless of whether the target is the SAME member
+ *   re-targeted, which a `remember(pendingRemoveTarget)` keyed only on the target's VALUE would
+ *   miss, since a data class re-opened with an equal value does not re-key) and set to `true` only
+ *   when the dialog's own confirm button actually fires — so the effect can never mistake "the
+ *   dialog just (re)opened" for "the remove that was in flight when it opened just succeeded".
+ *   Keyed on the ACTION's own flags plus [removeAttempted], not on the member list's content, on
+ *   purpose: `GroupDetailViewModel.reloadMembers`'s own KDoc notes a reload can fail right after a
+ *   successful delete (marking the screen [GroupDetailUiState.Success.isStale] rather than dropping
+ *   the row), and this dialog must still close in that case — the removal itself DID succeed, and
+ *   waiting for a row to visibly disappear that a failed reload will never show would leave the
+ *   confirm dialog stuck open over a success.
  *
  * Leave needs no such effect: a successful leave flips [GroupDetailViewModel.left], which the
  * STATEFUL [GroupDetailScreen] above reacts to by navigating away — the whole composable subtree,
@@ -112,6 +140,7 @@ fun GroupDetailScreen(
 internal fun GroupDetailScreen(
     state: GroupDetailUiState,
     actionState: GroupDetailActionState,
+    currentUserId: String?,
     onRetry: () -> Unit,
     onRotateInvite: () -> Unit,
     onLeaveGroup: () -> Unit,
@@ -125,17 +154,142 @@ internal fun GroupDetailScreen(
     var showRotateDialog by remember { mutableStateOf(false) }
     var showLeaveDialog by remember { mutableStateOf(false) }
     var pendingRemoveTarget by remember { mutableStateOf<GroupMember?>(null) }
+    var removeAttempted by remember { mutableStateOf(false) }
 
     val rotatedInvite = (state as? GroupDetailUiState.Success)?.rotatedInvite
+    DialogCloseEffects(
+        rotatedInvite = rotatedInvite,
+        actionState = actionState,
+        removeAttempted = removeAttempted,
+        onRotateDialogShouldClose = { showRotateDialog = false },
+        onRemoveDialogShouldClose = {
+            pendingRemoveTarget = null
+            removeAttempted = false
+        },
+    )
+
+    GroupDetailBody(
+        state = state,
+        currentUserId = currentUserId,
+        onRetry = onRetry,
+        onRotateClick = {
+            onRotateDialogOpened()
+            showRotateDialog = true
+        },
+        onLeaveClick = {
+            onLeaveDialogOpened()
+            showLeaveDialog = true
+        },
+        onRemoveClick = { member ->
+            onRemoveDialogOpened()
+            pendingRemoveTarget = member
+            removeAttempted = false
+        },
+        onDismissRotatedInvite = onDismissRotatedInvite,
+        modifier = modifier,
+    )
+
+    GroupDetailActionDialogs(
+        showRotateDialog = showRotateDialog,
+        showLeaveDialog = showLeaveDialog,
+        pendingRemoveTarget = pendingRemoveTarget,
+        actionState = actionState,
+        onRotateConfirm = onRotateInvite,
+        onRotateDismiss = { showRotateDialog = false },
+        onLeaveConfirm = onLeaveGroup,
+        onLeaveDismiss = { showLeaveDialog = false },
+        onRemoveConfirm = { userId ->
+            removeAttempted = true
+            onRemoveMember(userId)
+        },
+        onRemoveDismiss = {
+            pendingRemoveTarget = null
+            removeAttempted = false
+        },
+    )
+}
+
+/**
+ * [GroupDetailScreen]'s own two close-on-success effects — pulled out purely to keep that
+ * function's own length under detekt's `LongMethod` threshold; no behaviour moved with it that a
+ * caller could observe differently. [GroupDetailScreen]'s own KDoc documents WHY each condition is
+ * shaped the way it is (BLOCKING 1's `removeAttempted` fix, most of all) — that reasoning stays
+ * there, not duplicated here.
+ */
+@Composable
+private fun DialogCloseEffects(
+    rotatedInvite: GroupWithInvite?,
+    actionState: GroupDetailActionState,
+    removeAttempted: Boolean,
+    onRotateDialogShouldClose: () -> Unit,
+    onRemoveDialogShouldClose: () -> Unit,
+) {
     LaunchedEffect(rotatedInvite) {
-        if (rotatedInvite != null) showRotateDialog = false
+        if (rotatedInvite != null) onRotateDialogShouldClose()
     }
     LaunchedEffect(actionState.removingUserId, actionState.removeError) {
-        if (pendingRemoveTarget != null && actionState.removingUserId == null && actionState.removeError == null) {
-            pendingRemoveTarget = null
+        if (removeAttempted && actionState.removingUserId == null && actionState.removeError == null) {
+            onRemoveDialogShouldClose()
         }
     }
+}
 
+/**
+ * The three owner/member confirmation dialogs, bundled — pulled out of [GroupDetailScreen] for the
+ * identical [DialogCloseEffects] reason above.
+ */
+@Suppress("LongParameterList")
+@Composable
+private fun GroupDetailActionDialogs(
+    showRotateDialog: Boolean,
+    showLeaveDialog: Boolean,
+    pendingRemoveTarget: GroupMember?,
+    actionState: GroupDetailActionState,
+    onRotateConfirm: () -> Unit,
+    onRotateDismiss: () -> Unit,
+    onLeaveConfirm: () -> Unit,
+    onLeaveDismiss: () -> Unit,
+    onRemoveConfirm: (String) -> Unit,
+    onRemoveDismiss: () -> Unit,
+) {
+    RotateDialogHost(
+        visible = showRotateDialog,
+        actionState = actionState,
+        onConfirm = onRotateConfirm,
+        onDismiss = onRotateDismiss,
+    )
+    LeaveDialogHost(
+        visible = showLeaveDialog,
+        actionState = actionState,
+        onConfirm = onLeaveConfirm,
+        onDismiss = onLeaveDismiss,
+    )
+    RemoveDialogHost(
+        target = pendingRemoveTarget,
+        actionState = actionState,
+        onConfirm = onRemoveConfirm,
+        onDismiss = onRemoveDismiss,
+    )
+}
+
+/**
+ * The `Column` [GroupDetailScreen] renders — pulled out purely to keep that function's own length
+ * under detekt's `LongMethod` threshold; no behaviour moved with it that a caller could observe
+ * differently. "Leave group" lives HERE, a sibling of [GroupDetailContent] rather than nested
+ * inside its `Success`-only branch — [GroupDetailScreen]'s own KDoc explains why.
+ */
+@Suppress("LongParameterList")
+@Composable
+private fun GroupDetailBody(
+    state: GroupDetailUiState,
+    currentUserId: String?,
+    onRetry: () -> Unit,
+    onRotateClick: () -> Unit,
+    onLeaveClick: () -> Unit,
+    onRemoveClick: (GroupMember) -> Unit,
+    onDismissRotatedInvite: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Column(modifier = modifier.fillMaxSize()) {
         Text(
             text = stringResource(R.string.groups_detail_title),
@@ -144,118 +298,32 @@ internal fun GroupDetailScreen(
         )
         GroupDetailContent(
             state = state,
+            currentUserId = currentUserId,
             onRetry = onRetry,
-            onRotateClick = {
-                onRotateDialogOpened()
-                showRotateDialog = true
-            },
-            onLeaveClick = {
-                onLeaveDialogOpened()
-                showLeaveDialog = true
-            },
-            onRemoveClick = { member ->
-                onRemoveDialogOpened()
-                pendingRemoveTarget = member
-            },
+            onRotateClick = onRotateClick,
+            onRemoveClick = onRemoveClick,
             onDismissRotatedInvite = onDismissRotatedInvite,
             modifier = Modifier.weight(weight = 1f).fillMaxWidth(),
         )
-    }
-
-    RotateDialogHost(
-        visible = showRotateDialog,
-        actionState = actionState,
-        onConfirm = onRotateInvite,
-        onDismiss = { showRotateDialog = false },
-    )
-    LeaveDialogHost(
-        visible = showLeaveDialog,
-        actionState = actionState,
-        onConfirm = onLeaveGroup,
-        onDismiss = { showLeaveDialog = false },
-    )
-    RemoveDialogHost(
-        target = pendingRemoveTarget,
-        actionState = actionState,
-        onConfirm = onRemoveMember,
-        onDismiss = { pendingRemoveTarget = null },
-    )
-}
-
-/**
- * [RotateInviteDialog]'s own visibility guard — pulled out to keep [GroupDetailScreen] under
- * detekt's `LongMethod` threshold.
- */
-@Composable
-private fun RotateDialogHost(
-    visible: Boolean,
-    actionState: GroupDetailActionState,
-    onConfirm: () -> Unit,
-    onDismiss: () -> Unit,
-) {
-    if (visible) {
-        RotateInviteDialog(
-            submitting = actionState.rotating,
-            error = actionState.rotateError,
-            onConfirm = onConfirm,
-            onDismiss = onDismiss,
-        )
-    }
-}
-
-/** [LeaveGroupDialog]'s own visibility guard — [RotateDialogHost]'s identical reasoning. */
-@Composable
-private fun LeaveDialogHost(
-    visible: Boolean,
-    actionState: GroupDetailActionState,
-    onConfirm: () -> Unit,
-    onDismiss: () -> Unit,
-) {
-    if (visible) {
-        LeaveGroupDialog(
-            submitting = actionState.leaving,
-            error = actionState.leaveError,
-            onConfirm = onConfirm,
-            onDismiss = onDismiss,
-        )
-    }
-}
-
-/**
- * [RemoveMemberDialog]'s own visibility guard — [RotateDialogHost]'s identical reasoning, except
- * visibility is carried by [target] itself (non-null means "showing"), matching
- * [GroupDetailScreen]'s own `pendingRemoveTarget?.let { }` this replaces.
- */
-@Composable
-private fun RemoveDialogHost(
-    target: GroupMember?,
-    actionState: GroupDetailActionState,
-    onConfirm: (String) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    if (target != null) {
-        RemoveMemberDialog(
-            username = target.username,
-            submitting = actionState.removingUserId == target.userId,
-            error = actionState.removeError,
-            onConfirm = { onConfirm(target.userId) },
-            onDismiss = onDismiss,
-        )
+        TextButton(onClick = onLeaveClick, modifier = Modifier.padding(all = 16.dp)) {
+            Text(text = stringResource(R.string.groups_detail_leave_action))
+        }
     }
 }
 
 /**
  * The body below the title — pulled out of the stateless [GroupDetailScreen] overload purely to
  * keep that function's own length under detekt's `LongMethod` threshold, `GroupsScreen.kt`'s
- * `GroupsContent` precedent.
+ * `GroupsContent` precedent. "Leave group" is NOT here — [GroupDetailScreen]'s own KDoc explains
+ * why it renders outside this state-dependent body entirely.
  */
 @Suppress("LongParameterList")
 @Composable
 private fun GroupDetailContent(
     state: GroupDetailUiState,
+    currentUserId: String?,
     onRetry: () -> Unit,
     onRotateClick: () -> Unit,
-    onLeaveClick: () -> Unit,
     onRemoveClick: (GroupMember) -> Unit,
     onDismissRotatedInvite: () -> Unit,
     modifier: Modifier = Modifier,
@@ -272,9 +340,9 @@ private fun GroupDetailContent(
             is GroupDetailUiState.Success ->
                 GroupDetailSuccessContent(
                     state = state,
+                    currentUserId = currentUserId,
                     onRetry = onRetry,
                     onRotateClick = onRotateClick,
-                    onLeaveClick = onLeaveClick,
                     onRemoveClick = onRemoveClick,
                     onDismissRotatedInvite = onDismissRotatedInvite,
                 )
@@ -283,29 +351,34 @@ private fun GroupDetailContent(
 }
 
 /**
- * [GroupDetailUiState.Success]'s own rendering. Owner-ness (E-F) is derived HERE, every
- * recomposition, from [GroupDetailUiState.Success.members]/[GroupDetailUiState.Success.currentUserId]
- * — never cached, never a field on [GroupDetailUiState] itself — E-F's own stated mitigation made
- * literal: [self] below is looked up fresh from the LIVE member list this render is showing, so a
- * stale cached role can never diverge from what the rest of this composable already displays.
+ * [GroupDetailUiState.Success]'s own rendering (minus "Leave group", which
+ * [GroupDetailScreen] now renders itself, unconditionally — see that function's own KDoc).
+ * Owner-ness (E-F) is derived HERE, every recomposition, from
+ * [GroupDetailUiState.Success.members]/[currentUserId] — never cached, never a field on
+ * [GroupDetailUiState] itself (round 1 review moved [currentUserId] to its own ViewModel field;
+ * [GroupDetailUiState.Success]'s own KDoc has the full reasoning) — E-F's own stated mitigation
+ * made literal: [self] below is looked up fresh from the LIVE member list this render is showing,
+ * so a stale cached role can never diverge from what the rest of this composable already displays.
  *
- * [self] can be `null` — the signed-in member briefly missing from their OWN member list — only in
- * the moment between an owner removing themselves elsewhere (another device, the API directly) and
- * this screen's next reload; `isOwner` reads `false` for that case, which hides rotate/remove rather
- * than crashing, and "Leave group" stays offered regardless (leaving a group you already left is a
- * harmless, idempotent-in-effect repeat of the same DELETE call).
+ * [self] can be `null` for two reasons now, not one: [currentUserId] itself can still be `null`
+ * (identity has not resolved yet, or its own background fetch failed —
+ * `GroupDetailViewModel.currentUserId`'s own KDoc), or the signed-in member can be briefly missing
+ * from their OWN member list (the moment between an owner removing themselves elsewhere — another
+ * device, the API directly — and this screen's next reload). Both read `isOwner` as `false`, which
+ * hides rotate/remove rather than crashing — E-F's own "hidden, not disabled" applied to an
+ * UNKNOWN role, not only a known non-owner one.
  */
 @Suppress("LongParameterList")
 @Composable
 private fun GroupDetailSuccessContent(
     state: GroupDetailUiState.Success,
+    currentUserId: String?,
     onRetry: () -> Unit,
     onRotateClick: () -> Unit,
-    onLeaveClick: () -> Unit,
     onRemoveClick: (GroupMember) -> Unit,
     onDismissRotatedInvite: () -> Unit,
 ) {
-    val self = state.members.firstOrNull { it.userId == state.currentUserId }
+    val self = state.members.firstOrNull { it.userId == currentUserId }
     val isOwner = self?.role == GroupRole.OWNER
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -326,21 +399,18 @@ private fun GroupDetailSuccessContent(
         }
         MembersList(
             members = state.members,
-            currentUserId = state.currentUserId,
+            currentUserId = currentUserId,
             isOwner = isOwner,
             onRemoveClick = onRemoveClick,
             modifier = Modifier.weight(weight = 1f).fillMaxWidth(),
         )
-        TextButton(onClick = onLeaveClick, modifier = Modifier.padding(all = 16.dp)) {
-            Text(text = stringResource(R.string.groups_detail_leave_action))
-        }
     }
 }
 
 @Composable
 private fun MembersList(
     members: List<GroupMember>,
-    currentUserId: String,
+    currentUserId: String?,
     isOwner: Boolean,
     onRemoveClick: (GroupMember) -> Unit,
     modifier: Modifier = Modifier,

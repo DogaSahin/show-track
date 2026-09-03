@@ -13,7 +13,6 @@ import com.anarky.showtrack.core.designsystem.component.LoadingState
 import com.anarky.showtrack.core.model.AuthEvent
 import com.anarky.showtrack.core.navigation.AppRoute
 import com.anarky.showtrack.core.navigation.AuthRoute
-import com.anarky.showtrack.core.navigation.GroupDetailRoute
 import com.anarky.showtrack.core.navigation.GroupsRoute
 import com.anarky.showtrack.core.navigation.ImportRoute
 import com.anarky.showtrack.core.navigation.LibraryRoute
@@ -196,14 +195,21 @@ private fun ShowTrackGraph(
  * `currentDestination == AuthRoute` check immediately above is therefore the ONLY guard against
  * that demotion, not one half of two.
  *
- * **`GroupsRoute` (task 9c.2)** follows the identical `LibraryRoute`/`ImportRoute` pop-vs-push
- * shape, for the identical reason: `:feature:groups`' `groupDetailEntry` reaches this branch via
- * `onNavigate(GroupsRoute)` when a member leaves a group (`GroupsNavigation.kt`'s
- * `leaveNavigation`), and the back stack at that moment is ALWAYS `[..., GroupsRoute,
- * GroupDetailRoute]` — `GroupDetailRoute`'s own KDoc: it is reached ONLY from `GroupsRoute`'s own
- * list, never with an invented id. Popping back to that existing `GroupsRoute` rather than pushing
- * a second one is what keeps Back from returning to the just-left group's own (now stale, and for
- * a non-member, now 404ing) detail screen.
+ * **`GroupsRoute` (task 9c.2, revised round 1)** — `:feature:groups`' `groupDetailEntry` reaches
+ * this branch via `onNavigate(GroupsRoute)` when a member leaves a group (`GroupsNavigation.kt`'s
+ * `leaveNavigation`). Round 0 mirrored `LibraryRoute`/`ImportRoute`'s pop-vs-push shape exactly —
+ * infer "returning" from `currentDestination == GroupDetailRoute` plus something beneath it, then
+ * pop blind. Round 1 review found that shape unsound HERE specifically: `LibraryRoute`/`ImportRoute`
+ * each have exactly one door (`ProfileRoute`), so "something is beneath me" and "that something is
+ * the right screen" are the same fact for them. `GroupDetailRoute` does not have that guarantee —
+ * 9c.4 is expected to let a feed item route into it directly — so the blind pop would land a leave
+ * reached that way on Feed while reading as a return to Groups. The branch below instead asks the
+ * BACK STACK directly, via `popBackStack<GroupsRoute>(inclusive = false)`: pop up to (not
+ * including) the nearest real `GroupsRoute` wherever it is, or push an ordinary new one if there
+ * is none. Popping back to an EXISTING `GroupsRoute` rather than pushing a second one is what keeps
+ * Back from returning to the just-left group's own (now stale, and for a non-member, now 404ing)
+ * detail screen — the same outcome round 0 wanted, reached by reading the stack instead of guessing
+ * what is on it.
  */
 internal fun NavHostController.routeShowTrackNavigation(
     route: AppRoute,
@@ -231,13 +237,18 @@ internal fun NavHostController.routeShowTrackNavigation(
         }
 
         is GroupsRoute -> {
-            val returningFromDetail =
-                currentDestination?.hasRoute(GroupDetailRoute::class) == true && previousBackStackEntry != null
-            if (returningFromDetail) {
-                // A member just left the group on screen — see this function's own KDoc. Pop back
-                // to the existing GroupsRoute rather than pushing a second one on top of it.
-                popBackStack()
-            } else {
+            // Round 1 review, minor 2: reads the STACK for an actual GroupsRoute entry rather than
+            // inferring one is there from "am I on GroupDetailRoute with something beneath me" —
+            // the round 0 shape mirrored LibraryRoute/ImportRoute's own precedent faithfully, but
+            // that precedent's "something beneath me" is ALWAYS the door that pushed it (Profile,
+            // in that pair's case); GroupDetailRoute has no such single door once 9c.4 lets a feed
+            // item route into it directly, and blind-popping in that shape would land the user on
+            // Feed while believing they returned to Groups. `popBackStack<GroupsRoute>(inclusive =
+            // false)` pops up to (not including) the nearest actual GroupsRoute wherever it is on
+            // the stack and returns `false` if none exists, so a route that never went through
+            // Groups falls through to an ordinary push instead of popping to the wrong screen.
+            val poppedToGroups = popBackStack<GroupsRoute>(inclusive = false)
+            if (!poppedToGroups) {
                 navigate(route)
             }
         }

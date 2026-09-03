@@ -171,6 +171,8 @@ class AuthViewModelTest {
     ) : AuthRepository {
         override suspend fun hasSession(): Boolean = true
 
+        override suspend fun currentUserId(): String = error("not exercised by AuthViewModelTest")
+
         override suspend fun login(
             email: String,
             password: String,

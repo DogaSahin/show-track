@@ -11,6 +11,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.testing.TestNavHostController
 import androidx.navigation.toRoute
 import androidx.test.core.app.ApplicationProvider
+import com.anarky.showtrack.core.data.repository.AuthRepository
 import com.anarky.showtrack.core.data.repository.GroupRepository
 import com.anarky.showtrack.core.model.Group
 import com.anarky.showtrack.core.navigation.GroupDetailRoute
@@ -67,6 +68,14 @@ class GroupsEntryHiltTest {
     @BindValue
     @JvmField
     val groupRepository: GroupRepository = FakeGroupRepository(groupsResult = listOf(ALPHA, BETA))
+
+    // GroupsViewModel never reads this — it exists only so this test's Hilt component can resolve
+    // GroupDetailViewModel's own AuthRepository dependency for the whole-component validation Hilt
+    // performs on every @HiltViewModel in the module, `TestDataModule`'s own KDoc explains why this
+    // lives here (one `@BindValue` per test class) rather than as a module-wide `@Provides` default.
+    @BindValue
+    @JvmField
+    val authRepository: AuthRepository = FakeAuthRepository()
 
     @Before
     fun setUp() = hiltRule.inject()

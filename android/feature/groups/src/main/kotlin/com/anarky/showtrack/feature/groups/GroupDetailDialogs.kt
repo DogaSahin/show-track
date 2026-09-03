@@ -10,6 +10,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.anarky.showtrack.core.model.GroupFailure
+import com.anarky.showtrack.core.model.GroupMember
 import com.anarky.showtrack.core.model.GroupRole
 
 /**
@@ -141,3 +142,66 @@ internal fun GroupRole.labelRes(): Int =
         GroupRole.OWNER -> R.string.groups_detail_role_owner
         GroupRole.MEMBER -> R.string.groups_detail_role_member
     }
+
+/**
+ * [RotateInviteDialog]'s own visibility guard — pulled out of `GroupDetailScreen.kt` (round 1
+ * review) to keep that file's own function count under detekt's `TooManyFunctions` threshold; no
+ * behaviour moved with it that a caller could observe differently.
+ */
+@Composable
+internal fun RotateDialogHost(
+    visible: Boolean,
+    actionState: GroupDetailActionState,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    if (visible) {
+        RotateInviteDialog(
+            submitting = actionState.rotating,
+            error = actionState.rotateError,
+            onConfirm = onConfirm,
+            onDismiss = onDismiss,
+        )
+    }
+}
+
+/** [LeaveGroupDialog]'s own visibility guard — [RotateDialogHost]'s identical reasoning. */
+@Composable
+internal fun LeaveDialogHost(
+    visible: Boolean,
+    actionState: GroupDetailActionState,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    if (visible) {
+        LeaveGroupDialog(
+            submitting = actionState.leaving,
+            error = actionState.leaveError,
+            onConfirm = onConfirm,
+            onDismiss = onDismiss,
+        )
+    }
+}
+
+/**
+ * [RemoveMemberDialog]'s own visibility guard — [RotateDialogHost]'s identical reasoning, except
+ * visibility is carried by [target] itself (non-null means "showing"), matching
+ * `GroupDetailScreen`'s own `pendingRemoveTarget?.let { }` this replaces.
+ */
+@Composable
+internal fun RemoveDialogHost(
+    target: GroupMember?,
+    actionState: GroupDetailActionState,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    if (target != null) {
+        RemoveMemberDialog(
+            username = target.username,
+            submitting = actionState.removingUserId == target.userId,
+            error = actionState.removeError,
+            onConfirm = { onConfirm(target.userId) },
+            onDismiss = onDismiss,
+        )
+    }
+}

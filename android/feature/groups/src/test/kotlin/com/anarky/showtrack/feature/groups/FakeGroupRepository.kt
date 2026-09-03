@@ -21,7 +21,8 @@ import kotlinx.coroutines.CompletableDeferred
  * (neither is on this module's compile classpath — architecture rule 2).
  *
  * [groups]/[createGroup]/[joinGroup] (the three [GroupsViewModel] calls) and, since task 9c.2,
- * [currentUserId]/[members]/[rotateInvite]/[removeMember] (the four [GroupDetailViewModel] calls)
+ * [members]/[rotateInvite]/[removeMember] (three of the four [GroupDetailViewModel] calls —
+ * `currentUserId` moved to `AuthRepository`/`FakeAuthRepository` in round 1 review)
  * are functional. Every OTHER member `error(...)`s rather than silently no-op-ing: a ViewModel
  * that accidentally reached one of them fails LOUDLY, with that message, rather than an
  * unexplained `NotImplementedError` or a silently wrong result —
@@ -52,8 +53,6 @@ internal class FakeGroupRepository(
     var createFailure: GroupFailure? = null,
     var joinResult: GroupWithInvite? = null,
     var joinFailure: GroupFailure? = null,
-    var currentUserIdResult: String = "user-self",
-    var currentUserIdFailure: GroupFailure? = null,
     var membersResult: List<GroupMember> = emptyList(),
     var membersFailure: GroupFailure? = null,
     var rotateResult: GroupWithInvite? = null,
@@ -102,11 +101,6 @@ internal class FakeGroupRepository(
         joinGate?.await()
         joinFailure?.let { throw GroupOperationException(it) }
         return joinResult ?: error("joinResult not set for this test")
-    }
-
-    override suspend fun currentUserId(): String {
-        currentUserIdFailure?.let { throw GroupOperationException(it) }
-        return currentUserIdResult
     }
 
     override suspend fun members(groupId: String): List<GroupMember> {

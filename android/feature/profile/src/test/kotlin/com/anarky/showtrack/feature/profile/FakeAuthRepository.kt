@@ -15,6 +15,8 @@ internal class FakeAuthRepository(
 
     override suspend fun hasSession(): Boolean = true
 
+    override suspend fun currentUserId(): String = error("not exercised by ProfileViewModelTest/ProfileResumeTest")
+
     override suspend fun login(
         email: String,
         password: String,

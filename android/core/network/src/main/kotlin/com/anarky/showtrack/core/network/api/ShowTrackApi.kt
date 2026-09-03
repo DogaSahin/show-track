@@ -178,10 +178,9 @@ interface ShowTrackApi {
      * `AuthApi.register`'s response, whose wire shape is identical to `GET /v1/users/me`'s
      * (`UserOut` on the backend, `app/users/schemas.py`) — reused rather than minting a second DTO.
      *
-     * Added for [com.anarky.showtrack.core.data.repository.GroupRepository.currentUserId] — see
-     * that method's own KDoc for why this call exists at all: deriving ownership for the group
-     * detail screen's owner-only affordances (E-F) needs the signed-in user's id, and nothing else
-     * in this client currently resolves one.
+     * Called from [com.anarky.showtrack.core.data.repository.AuthRepositoryImpl.currentUserId] —
+     * see that method's own KDoc (round 1 review moved this call there from `GroupRepositoryImpl`;
+     * `AuthApi` cannot serve it, since its client carries no `AuthInterceptor`).
      */
     @GET("v1/users/me")
     suspend fun me(): UserDto

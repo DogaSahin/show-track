@@ -4,6 +4,7 @@ import android.util.Log
 import com.anarky.showtrack.core.data.push.PushRepository
 import com.anarky.showtrack.core.model.AuthFailure
 import com.anarky.showtrack.core.network.api.AuthApi
+import com.anarky.showtrack.core.network.api.ShowTrackApi
 import com.anarky.showtrack.core.network.auth.TokenStore
 import com.anarky.showtrack.core.network.dto.LoginRequest
 import com.anarky.showtrack.core.network.dto.RefreshRequest
@@ -17,15 +18,47 @@ import javax.inject.Singleton
 private const val TAG = "ShowTrackAuth"
 private const val HTTP_UNAUTHORIZED = 401
 
+/**
+ * `@Suppress("TooManyFunctions")`: [currentUserId] (round 1 review) is the eleventh member,
+ * over detekt's threshold — the same seam-cohesion argument [GroupRepository]/`LibraryRepository`
+ * already make for their own suppressions applies here too: this class is the session's single
+ * door into `:core:data` (its own KDoc: "The session."), and identity is a session fact, not a
+ * reason to split this into a second interface a caller would have to know to inject instead.
+ */
+@Suppress("TooManyFunctions")
 @Singleton
 class AuthRepositoryImpl
     @Inject
     constructor(
         private val api: AuthApi,
+        private val showTrackApi: ShowTrackApi,
         private val tokenStore: TokenStore,
         private val push: PushRepository,
     ) : AuthRepository {
+        // In-memory only, per decision at [AuthRepository.currentUserId]'s own KDoc — cleared on
+        // [logout], never persisted. A benign, not a correctness, race: two concurrent first callers
+        // can both miss the cache and both call `GET /v1/users/me`; both land on the identical
+        // answer (the same signed-in account), so the second write is a harmless no-op rather than
+        // a torn or inconsistent value. A Mutex would remove the redundant call at the cost of a
+        // second moving part for a race that costs, at most, one extra idempotent GET.
+        @Volatile
+        private var cachedUserId: String? = null
+
         override suspend fun hasSession(): Boolean = tokenStore.tokens() != null
+
+        @Suppress("TooGenericExceptionCaught")
+        override suspend fun currentUserId(): String {
+            cachedUserId?.let { return it }
+            return try {
+                val id = showTrackApi.me().id
+                cachedUserId = id
+                id
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (failure: Exception) {
+                throw mapCurrentUserIdFailure(failure)
+            }
+        }
 
         @Suppress("TooGenericExceptionCaught")
         override suspend fun login(
@@ -93,6 +126,9 @@ class AuthRepositoryImpl
                 revoke(tokens.refresh)
             }
             tokenStore.clear()
+            // The session this id belonged to is gone; the next signed-in session (same account
+            // signing back in, or a different one) must re-resolve it rather than read a stale cache.
+            cachedUserId = null
         }
 
         @Suppress("TooGenericExceptionCaught")
@@ -133,6 +169,13 @@ class AuthRepositoryImpl
                 Log.w(TAG, "could not revoke the refresh token: ${failure.javaClass.simpleName}")
             }
         }
+
+        /** [currentUserId]'s own mapping — no "wrong credentials" case exists for a plain identity read. */
+        private fun mapCurrentUserIdFailure(failure: Throwable): AuthFailure =
+            when {
+                failure is IOException -> AuthFailure.Offline(failure)
+                else -> AuthFailure.Unexpected(failure)
+            }
 
         /** A 401 means the password was wrong; anything else here is not something the user typed. */
         private fun mapLoginFailure(failure: Throwable): AuthFailure =

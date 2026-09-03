@@ -21,22 +21,33 @@ sealed interface GroupDetailUiState {
     data object Loading : GroupDetailUiState
 
     /**
-     * [members] and [currentUserId] are always fetched together, by the same [GroupDetailViewModel.refresh]
-     * call — `GroupRepository.members(groupId)` and `GroupRepository.currentUserId()`. Owner-only
-     * rendering (E-F) is derived from the two of them together, in [GroupDetailScreen] — a rendering
-     * decision, not something either this state or [GroupDetailViewModel] pre-computes into a
-     * boolean: "is this member me, and am I the owner" is cheap to recompute on every render and
-     * keeping it un-cached is what makes E-F's stated mitigation ("derived from the live members
-     * response... not from anything cached or inferred") literally true rather than merely intended.
+     * [currentUserId] deliberately does NOT live here (round 1 review, BLOCKING 2/3 and the
+     * ruling that resolved them). Round 0 fetched it inside the SAME `try` as [members], which
+     * meant a failed member-list load left no id in existence at all, and every action needing
+     * it — most of all leaving the group — died silently with the load, even though leaving has
+     * nothing to do with whether the member list loaded. Identity is now a session-lifetime fact
+     * `GroupDetailViewModel` resolves independently via `AuthRepository.currentUserId` and holds
+     * in its OWN field — see that method's own KDoc — passed to [GroupDetailScreen] as a sibling
+     * parameter to this state, not folded into it. Owner-only rendering (E-F) is still derived
+     * fresh at render time from the two values TOGETHER — "is this member me, and am I the
+     * owner" is cheap to recompute on every render — E-F's stated mitigation ("derived from the
+     * live members response... not from anything cached or inferred") is still literally true;
+     * only WHERE the id itself is held changed.
      *
      * [rotatedInvite] mirrors [GroupsUiState.Success.justCreated] (decision E-I, restated for this
      * screen's own rotate action): the invite code returned by `GroupRepository.rotateInvite` is
-     * shown ONCE, held only in this in-memory state, and is dropped — unconditionally, the identical
-     * discipline [GroupsViewModel.refresh]'s own KDoc documents for `justCreated` — by the very next
-     * [GroupDetailViewModel.refresh], including the refresh a successful [GroupDetailViewModel.removeMember]
-     * triggers to reload the member list. That is deliberate, not an oversight: E-I's own position is
-     * that a member who needs the code again rotates it, and nothing about "the owner just removed a
-     * different member" changes that.
+     * shown ONCE, held only in this in-memory state, and is dropped by the very next
+     * [GroupDetailViewModel.refresh] — the identical discipline [GroupsViewModel.refresh]'s own
+     * KDoc documents for `justCreated`, applied identically here: E-I's own position is that a
+     * member who needs the code again rotates it.
+     *
+     * **NOT dropped by [GroupDetailViewModel.removeMember]'s own reload** (round 1 review, minor
+     * 5 — a fix, not the original design): round 0 had ONE reload path that always defaulted this
+     * to `null`, which meant an owner rotating the code and then removing a different member lost
+     * the just-rotated code from screen with no way back except rotating again — invalidating a
+     * code they may already have sent. Removing a member has nothing to do with the invite banner;
+     * `GroupDetailViewModel.reloadMembers`'s `preserveRotatedInvite` parameter is what lets the two
+     * callers disagree correctly.
      *
      * [isStale] mirrors [GroupsUiState.Success.isStale] — the settled refresh shape (Global
      * Constraints): a failed background [GroupDetailViewModel.refresh] over an already-populated
@@ -45,7 +56,6 @@ sealed interface GroupDetailUiState {
      */
     data class Success(
         val members: List<GroupMember>,
-        val currentUserId: String,
         val rotatedInvite: GroupWithInvite? = null,
         val isStale: Boolean = false,
     ) : GroupDetailUiState

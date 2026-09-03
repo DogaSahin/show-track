@@ -3,6 +3,7 @@ package com.anarky.showtrack.feature.groups
 import android.app.Application
 import androidx.lifecycle.SavedStateHandle
 import com.anarky.showtrack.core.data.repository.GroupWithInvite
+import com.anarky.showtrack.core.model.AuthFailure
 import com.anarky.showtrack.core.model.Group
 import com.anarky.showtrack.core.model.GroupFailure
 import com.anarky.showtrack.core.model.GroupMember
@@ -24,11 +25,13 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import java.io.IOException
 import java.time.Instant
 
 /**
- * [GroupDetailViewModel] exercised against a fake [com.anarky.showtrack.core.data.repository.GroupRepository]
- * — [GroupsViewModelTest]'s identical shape, one screen over.
+ * [GroupDetailViewModel] exercised against fake [com.anarky.showtrack.core.data.repository.GroupRepository]
+ * and [com.anarky.showtrack.core.data.repository.AuthRepository] — [GroupsViewModelTest]'s
+ * identical shape, one screen (and one more dependency) over.
  *
  * Robolectric, `DetailViewModelTest`'s identical reasoning (that class's own KDoc, quoted here
  * since this is the same failure mode): [GroupDetailViewModel]'s constructor calls
@@ -38,11 +41,18 @@ import java.time.Instant
  * `application = Application::class` avoids standing up `ShowTrackApplication`'s `@HiltAndroidApp`
  * component, which this test needs neither DataStore nor the Keystore from.
  *
- * `GroupDetailViewModel`'s `init { refresh() }` means every test below observes the CONSTRUCTOR's
- * own load — `viewModel(repository)` alone already schedules the first `refresh()`, so
+ * `GroupDetailViewModel`'s `init { loadCurrentUserId(); refresh() }` means every test below
+ * observes the CONSTRUCTOR's own load of BOTH — `viewModel(...)` alone already schedules both, so
  * `advanceUntilIdle()` right after construction is what stands in for the resume `GroupsViewModelTest`
  * calls explicitly, mirroring how `DetailViewModelTest` (this class's own closer analogue) handles
  * its identical `init { load() }`.
+ *
+ * **Round 1 review's own instruction, followed here:** several tests below build a state the
+ * screen can genuinely reach but round 0's suite never did — most importantly `currentUserIdFailure`/
+ * `membersFailure` in independent COMBINATIONS, and [GroupDetailViewModel.leaveGroup]/
+ * [GroupDetailViewModel.rotateInvite] invoked from [GroupDetailUiState.Error]/[GroupDetailUiState.Loading]
+ * rather than only from an already-populated [GroupDetailUiState.Success]. BLOCKING 2 and BLOCKING 3
+ * both lived in exactly that gap.
  *
  * **What this class deliberately does NOT pin:** owner-only rendering (E-F) and "leave is offered to
  * everyone, remove never for yourself" are RENDERING decisions — `GroupDetailScreenTest` pins those,
@@ -61,37 +71,57 @@ class GroupDetailViewModelTest {
     @After
     fun tearDown() = Dispatchers.resetMain()
 
-    private fun viewModel(repository: FakeGroupRepository): GroupDetailViewModel =
+    private fun viewModel(
+        groupRepository: FakeGroupRepository = FakeGroupRepository(),
+        authRepository: FakeAuthRepository = FakeAuthRepository(),
+    ): GroupDetailViewModel =
         GroupDetailViewModel(
             savedStateHandle = SavedStateHandle(mapOf("groupId" to GROUP_ID)),
-            repository = repository,
+            groupRepository = groupRepository,
+            authRepository = authRepository,
         )
 
     @Test
-    fun `refresh loads the members and the signed-in user's own id`() =
+    fun `refresh loads the members, and identity resolves independently`() =
         runTest(dispatcher) {
-            val repository =
-                FakeGroupRepository(
-                    membersResult = listOf(OWNER, MEMBER),
-                    currentUserIdResult = OWNER.userId,
-                )
-            val viewModel = viewModel(repository)
+            val groupRepository = FakeGroupRepository(membersResult = listOf(OWNER, MEMBER))
+            val authRepository = FakeAuthRepository(currentUserIdResult = OWNER.userId)
+            val viewModel = viewModel(groupRepository, authRepository)
             advanceUntilIdle()
 
             assertEquals(
-                GroupDetailUiState.Success(members = listOf(OWNER, MEMBER), currentUserId = OWNER.userId),
+                GroupDetailUiState.Success(members = listOf(OWNER, MEMBER)),
                 viewModel.state.value,
             )
+            assertEquals(OWNER.userId, viewModel.currentUserId.value)
         }
 
     @Test
     fun `a failed initial load with nothing on screen produces Error`() =
         runTest(dispatcher) {
-            val repository = FakeGroupRepository(membersFailure = GroupFailure.Network)
-            val viewModel = viewModel(repository)
+            val groupRepository = FakeGroupRepository(membersFailure = GroupFailure.Network)
+            val viewModel = viewModel(groupRepository)
             advanceUntilIdle()
 
             assertEquals(GroupDetailUiState.Error(GroupFailure.Network), viewModel.state.value)
+        }
+
+    /**
+     * BLOCKING 2's own scenario, at the identity layer: a failed member-list load must not stop
+     * identity from resolving — they are now two independent coroutines, launched from `init`
+     * separately (`GroupDetailViewModel`'s own KDoc). Round 0 fetched both inside the SAME `try`,
+     * so a `membersFailure` here would ALSO have meant no `currentUserId` at all.
+     */
+    @Test
+    fun `identity resolves even when the member list fails to load`() =
+        runTest(dispatcher) {
+            val groupRepository = FakeGroupRepository(membersFailure = GroupFailure.Network)
+            val authRepository = FakeAuthRepository(currentUserIdResult = OWNER.userId)
+            val viewModel = viewModel(groupRepository, authRepository)
+            advanceUntilIdle()
+
+            assertEquals(GroupDetailUiState.Error(GroupFailure.Network), viewModel.state.value)
+            assertEquals(OWNER.userId, viewModel.currentUserId.value)
         }
 
     /**
@@ -102,64 +132,86 @@ class GroupDetailViewModelTest {
     @Test
     fun `a reload over an already-loaded screen keeps the members, not a spinner, mid-fetch`() =
         runTest(dispatcher) {
-            val repository =
-                FakeGroupRepository(membersResult = listOf(OWNER), currentUserIdResult = OWNER.userId)
-            val viewModel = viewModel(repository)
+            val groupRepository = FakeGroupRepository(membersResult = listOf(OWNER))
+            val viewModel = viewModel(groupRepository)
             advanceUntilIdle()
-            assertEquals(
-                GroupDetailUiState.Success(members = listOf(OWNER), currentUserId = OWNER.userId),
-                viewModel.state.value,
-            )
+            assertEquals(GroupDetailUiState.Success(members = listOf(OWNER)), viewModel.state.value)
 
-            repository.membersResult = listOf(OWNER, MEMBER)
-            repository.membersGate = CompletableDeferred()
+            groupRepository.membersResult = listOf(OWNER, MEMBER)
+            groupRepository.membersGate = CompletableDeferred()
             viewModel.refresh()
             advanceUntilIdle()
 
             // Still the OLD member list, and still Success — never Loading — while the network
             // round trip this refresh triggered is genuinely still in flight.
-            assertEquals(
-                GroupDetailUiState.Success(members = listOf(OWNER), currentUserId = OWNER.userId),
-                viewModel.state.value,
-            )
+            assertEquals(GroupDetailUiState.Success(members = listOf(OWNER)), viewModel.state.value)
 
-            repository.membersGate?.complete(Unit)
+            groupRepository.membersGate?.complete(Unit)
             advanceUntilIdle()
 
-            assertEquals(
-                GroupDetailUiState.Success(members = listOf(OWNER, MEMBER), currentUserId = OWNER.userId),
-                viewModel.state.value,
-            )
+            assertEquals(GroupDetailUiState.Success(members = listOf(OWNER, MEMBER)), viewModel.state.value)
         }
 
     @Test
     fun `a failed reload over an already-loaded screen marks it stale instead of replacing it`() =
         runTest(dispatcher) {
-            val repository =
-                FakeGroupRepository(membersResult = listOf(OWNER), currentUserIdResult = OWNER.userId)
-            val viewModel = viewModel(repository)
+            val groupRepository = FakeGroupRepository(membersResult = listOf(OWNER))
+            val viewModel = viewModel(groupRepository)
             advanceUntilIdle()
 
-            repository.membersFailure = GroupFailure.Network
+            groupRepository.membersFailure = GroupFailure.Network
             viewModel.refresh()
             advanceUntilIdle()
 
             assertEquals(
-                GroupDetailUiState.Success(members = listOf(OWNER), currentUserId = OWNER.userId, isStale = true),
+                GroupDetailUiState.Success(members = listOf(OWNER), isStale = true),
                 viewModel.state.value,
             )
+        }
+
+    /** [refresh] retries a previously-failed identity resolution too, not only the member list. */
+    @Test
+    fun `refresh retries a previously failed identity resolution`() =
+        runTest(dispatcher) {
+            val groupRepository = FakeGroupRepository(membersResult = listOf(OWNER))
+            val authRepository = FakeAuthRepository(currentUserIdFailure = AuthFailure.Offline(IOException("offline")))
+            val viewModel = viewModel(groupRepository, authRepository)
+            advanceUntilIdle()
+            assertNull(viewModel.currentUserId.value)
+
+            authRepository.currentUserIdFailure = null
+            authRepository.currentUserIdResult = OWNER.userId
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            assertEquals(OWNER.userId, viewModel.currentUserId.value)
+        }
+
+    /** The negative control for the test above: once resolved, a refresh must NOT re-ask. */
+    @Test
+    fun `refresh does not re-resolve identity once it has already succeeded`() =
+        runTest(dispatcher) {
+            val groupRepository = FakeGroupRepository(membersResult = listOf(OWNER))
+            val authRepository = FakeAuthRepository(currentUserIdResult = OWNER.userId)
+            val viewModel = viewModel(groupRepository, authRepository)
+            advanceUntilIdle()
+            assertEquals(1, authRepository.currentUserIdCalls)
+
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            assertEquals(1, authRepository.currentUserIdCalls)
         }
 
     /** The brief's fourth named test, verbatim. */
     @Test
     fun `rotating replaces the displayed code`() =
         runTest(dispatcher) {
-            val repository =
-                FakeGroupRepository(membersResult = listOf(OWNER), currentUserIdResult = OWNER.userId)
-            val viewModel = viewModel(repository)
+            val groupRepository = FakeGroupRepository(membersResult = listOf(OWNER))
+            val viewModel = viewModel(groupRepository)
             advanceUntilIdle()
 
-            repository.rotateResult = INVITE
+            groupRepository.rotateResult = INVITE
             viewModel.rotateInvite()
             advanceUntilIdle()
 
@@ -176,12 +228,11 @@ class GroupDetailViewModelTest {
     @Test
     fun `a failed rotate surfaces the error and leaves no code on screen`() =
         runTest(dispatcher) {
-            val repository =
-                FakeGroupRepository(membersResult = listOf(OWNER), currentUserIdResult = OWNER.userId)
-            val viewModel = viewModel(repository)
+            val groupRepository = FakeGroupRepository(membersResult = listOf(OWNER))
+            val viewModel = viewModel(groupRepository)
             advanceUntilIdle()
 
-            repository.rotateFailure = GroupFailure.NotPermitted
+            groupRepository.rotateFailure = GroupFailure.NotPermitted
             viewModel.rotateInvite()
             advanceUntilIdle()
 
@@ -192,13 +243,8 @@ class GroupDetailViewModelTest {
     @Test
     fun `rotate is not fired again while one is already in flight`() =
         runTest(dispatcher) {
-            val repository =
-                FakeGroupRepository(
-                    membersResult = listOf(OWNER),
-                    currentUserIdResult = OWNER.userId,
-                    rotateResult = INVITE,
-                )
-            val viewModel = viewModel(repository)
+            val groupRepository = FakeGroupRepository(membersResult = listOf(OWNER), rotateResult = INVITE)
+            val viewModel = viewModel(groupRepository)
             advanceUntilIdle()
 
             viewModel.rotateInvite()
@@ -206,33 +252,111 @@ class GroupDetailViewModelTest {
             viewModel.rotateInvite()
             advanceUntilIdle()
 
-            assertEquals(1, repository.rotateCalls)
+            assertEquals(1, groupRepository.rotateCalls)
+        }
+
+    /**
+     * BLOCKING 3 (round 1 review): round 0 let `rotateInvite()` reach the repository from a
+     * non-`Success` state, genuinely rotating the server-side code and then discarding the
+     * response — an irreversible consequence for a call `GroupDetailScreen` never offers outside
+     * `Success` in the first place. The guard now makes that a real no-op.
+     */
+    @Test
+    fun `rotateInvite does nothing when the member list failed to load`() =
+        runTest(dispatcher) {
+            val groupRepository = FakeGroupRepository(membersFailure = GroupFailure.Network, rotateResult = INVITE)
+            val viewModel = viewModel(groupRepository)
+            advanceUntilIdle()
+            assertEquals(GroupDetailUiState.Error(GroupFailure.Network), viewModel.state.value)
+
+            viewModel.rotateInvite()
+            advanceUntilIdle()
+
+            assertEquals(0, groupRepository.rotateCalls)
+            assertEquals(GroupDetailActionState(), viewModel.actionState.value)
+        }
+
+    /** [rotateInvite]'s guard, isolated from the "loaded but not yet resolved" [Loading] case too. */
+    @Test
+    fun `rotateInvite does nothing while the member list is still loading`() =
+        runTest(dispatcher) {
+            val groupRepository = FakeGroupRepository(rotateResult = INVITE)
+            groupRepository.membersGate = CompletableDeferred()
+            val viewModel = viewModel(groupRepository)
+            assertEquals(GroupDetailUiState.Loading, viewModel.state.value)
+
+            viewModel.rotateInvite()
+            advanceUntilIdle()
+
+            assertEquals(0, groupRepository.rotateCalls)
         }
 
     @Test
     fun `leaving calls removeMember with the signed-in user's own id and sets left`() =
         runTest(dispatcher) {
-            val repository =
-                FakeGroupRepository(membersResult = listOf(OWNER, MEMBER), currentUserIdResult = OWNER.userId)
-            val viewModel = viewModel(repository)
+            val groupRepository = FakeGroupRepository(membersResult = listOf(OWNER, MEMBER))
+            val authRepository = FakeAuthRepository(currentUserIdResult = OWNER.userId)
+            val viewModel = viewModel(groupRepository, authRepository)
             advanceUntilIdle()
 
             viewModel.leaveGroup()
             advanceUntilIdle()
 
-            assertEquals(listOf(GROUP_ID to OWNER.userId), repository.removeMemberCalls)
+            assertEquals(listOf(GROUP_ID to OWNER.userId), groupRepository.removeMemberCalls)
+            assertTrue(viewModel.left.value)
+        }
+
+    /**
+     * BLOCKING 2, the flagship regression test (round 1 review's own instruction: "include at
+     * least one that builds a state the screen can reach but no existing test creates"). Round 0's
+     * `leaveGroup()` read `(state as? Success)?.currentUserId ?: return` — the literal shape
+     * `GroupsActionState`'s own fix rounds existed to remove — so from [GroupDetailUiState.Error]
+     * this returned silently: no call, no error, `left` stayed false, and the affordance was not
+     * even on screen (`GroupDetailSuccessContent` is where round 0 kept the Leave button). Fixed by
+     * moving identity off [state] entirely; this is the direct proof it no longer depends on it.
+     */
+    @Test
+    fun `leaving succeeds even when the member list failed to load`() =
+        runTest(dispatcher) {
+            val groupRepository = FakeGroupRepository(membersFailure = GroupFailure.Network)
+            val authRepository = FakeAuthRepository(currentUserIdResult = OWNER.userId)
+            val viewModel = viewModel(groupRepository, authRepository)
+            advanceUntilIdle()
+            assertEquals(GroupDetailUiState.Error(GroupFailure.Network), viewModel.state.value)
+
+            viewModel.leaveGroup()
+            advanceUntilIdle()
+
+            assertEquals(listOf(GROUP_ID to OWNER.userId), groupRepository.removeMemberCalls)
+            assertTrue(viewModel.left.value)
+        }
+
+    /** [leaveGroup]'s mirror of the test above, for the OTHER state a guard on [state] would have blocked. */
+    @Test
+    fun `leaving succeeds while the member list is still loading`() =
+        runTest(dispatcher) {
+            val groupRepository = FakeGroupRepository()
+            groupRepository.membersGate = CompletableDeferred()
+            val authRepository = FakeAuthRepository(currentUserIdResult = OWNER.userId)
+            val viewModel = viewModel(groupRepository, authRepository)
+            advanceUntilIdle()
+            assertEquals(GroupDetailUiState.Loading, viewModel.state.value)
+
+            viewModel.leaveGroup()
+            advanceUntilIdle()
+
+            assertEquals(listOf(GROUP_ID to OWNER.userId), groupRepository.removeMemberCalls)
             assertTrue(viewModel.left.value)
         }
 
     @Test
     fun `a failed leave surfaces the error and does not set left`() =
         runTest(dispatcher) {
-            val repository =
-                FakeGroupRepository(membersResult = listOf(OWNER), currentUserIdResult = OWNER.userId)
-            val viewModel = viewModel(repository)
+            val groupRepository = FakeGroupRepository(membersResult = listOf(OWNER))
+            groupRepository.removeMemberFailure = GroupFailure.Network
+            val viewModel = viewModel(groupRepository)
             advanceUntilIdle()
 
-            repository.removeMemberFailure = GroupFailure.Network
             viewModel.leaveGroup()
             advanceUntilIdle()
 
@@ -240,12 +364,32 @@ class GroupDetailViewModelTest {
             assertTrue("a failed leave must not navigate away", !viewModel.left.value)
         }
 
+    /**
+     * `leaveGroup`'s own KDoc: it re-asks [com.anarky.showtrack.core.data.repository.AuthRepository]
+     * directly rather than trusting the cached [GroupDetailViewModel.currentUserId] field, so a
+     * failure THERE also surfaces as a (generic) leave failure rather than an unexplained no-op.
+     */
+    @Test
+    fun `a failed identity resolution surfaces as a leave failure too`() =
+        runTest(dispatcher) {
+            val groupRepository = FakeGroupRepository(membersResult = listOf(OWNER))
+            val authRepository = FakeAuthRepository(currentUserIdFailure = AuthFailure.Offline(IOException("offline")))
+            val viewModel = viewModel(groupRepository, authRepository)
+            advanceUntilIdle()
+            assertNull(viewModel.currentUserId.value)
+
+            viewModel.leaveGroup()
+            advanceUntilIdle()
+
+            assertTrue(viewModel.actionState.value.leaveError is GroupFailure.Unknown)
+            assertTrue("a failed leave must not navigate away", !viewModel.left.value)
+        }
+
     @Test
     fun `leave is not fired again while one is already in flight`() =
         runTest(dispatcher) {
-            val repository =
-                FakeGroupRepository(membersResult = listOf(OWNER), currentUserIdResult = OWNER.userId)
-            val viewModel = viewModel(repository)
+            val groupRepository = FakeGroupRepository(membersResult = listOf(OWNER))
+            val viewModel = viewModel(groupRepository)
             advanceUntilIdle()
 
             viewModel.leaveGroup()
@@ -253,7 +397,7 @@ class GroupDetailViewModelTest {
             viewModel.leaveGroup()
             advanceUntilIdle()
 
-            assertEquals(1, repository.removeMemberCalls.size)
+            assertEquals(1, groupRepository.removeMemberCalls.size)
         }
 
     /**
@@ -266,15 +410,14 @@ class GroupDetailViewModelTest {
     @Test
     fun `removing a member calls removeMember with that member's id, not the caller's own`() =
         runTest(dispatcher) {
-            val repository =
-                FakeGroupRepository(membersResult = listOf(OWNER, MEMBER), currentUserIdResult = OWNER.userId)
-            val viewModel = viewModel(repository)
+            val groupRepository = FakeGroupRepository(membersResult = listOf(OWNER, MEMBER))
+            val viewModel = viewModel(groupRepository)
             advanceUntilIdle()
 
             viewModel.removeMember(MEMBER.userId)
             advanceUntilIdle()
 
-            assertEquals(listOf(GROUP_ID to MEMBER.userId), repository.removeMemberCalls)
+            assertEquals(listOf(GROUP_ID to MEMBER.userId), groupRepository.removeMemberCalls)
         }
 
     /**
@@ -286,13 +429,12 @@ class GroupDetailViewModelTest {
     @Test
     fun `removingUserId stays set through the reload, not just the delete call`() =
         runTest(dispatcher) {
-            val repository =
-                FakeGroupRepository(membersResult = listOf(OWNER, MEMBER), currentUserIdResult = OWNER.userId)
-            val viewModel = viewModel(repository)
+            val groupRepository = FakeGroupRepository(membersResult = listOf(OWNER, MEMBER))
+            val viewModel = viewModel(groupRepository)
             advanceUntilIdle()
 
-            repository.membersGate = CompletableDeferred()
-            repository.membersResult = listOf(OWNER)
+            groupRepository.membersGate = CompletableDeferred()
+            groupRepository.membersResult = listOf(OWNER)
             viewModel.removeMember(MEMBER.userId)
             advanceUntilIdle()
 
@@ -304,9 +446,9 @@ class GroupDetailViewModelTest {
             // one's reload is in flight.
             viewModel.removeMember(OWNER.userId)
             advanceUntilIdle()
-            assertEquals(1, repository.removeMemberCalls.size)
+            assertEquals(1, groupRepository.removeMemberCalls.size)
 
-            repository.membersGate?.complete(Unit)
+            groupRepository.membersGate?.complete(Unit)
             advanceUntilIdle()
 
             assertNull(viewModel.actionState.value.removingUserId)
@@ -316,12 +458,11 @@ class GroupDetailViewModelTest {
     @Test
     fun `a failed remove surfaces the error, clears removingUserId, and leaves the member list untouched`() =
         runTest(dispatcher) {
-            val repository =
-                FakeGroupRepository(membersResult = listOf(OWNER, MEMBER), currentUserIdResult = OWNER.userId)
-            val viewModel = viewModel(repository)
+            val groupRepository = FakeGroupRepository(membersResult = listOf(OWNER, MEMBER))
+            groupRepository.removeMemberFailure = GroupFailure.NotPermitted
+            val viewModel = viewModel(groupRepository)
             advanceUntilIdle()
 
-            repository.removeMemberFailure = GroupFailure.NotPermitted
             viewModel.removeMember(MEMBER.userId)
             advanceUntilIdle()
 
@@ -333,9 +474,8 @@ class GroupDetailViewModelTest {
     @Test
     fun `remove is not fired again while one is already in flight`() =
         runTest(dispatcher) {
-            val repository =
-                FakeGroupRepository(membersResult = listOf(OWNER, MEMBER), currentUserIdResult = OWNER.userId)
-            val viewModel = viewModel(repository)
+            val groupRepository = FakeGroupRepository(membersResult = listOf(OWNER, MEMBER))
+            val viewModel = viewModel(groupRepository)
             advanceUntilIdle()
 
             viewModel.removeMember(MEMBER.userId)
@@ -343,7 +483,48 @@ class GroupDetailViewModelTest {
             viewModel.removeMember(MEMBER.userId)
             advanceUntilIdle()
 
-            assertEquals(1, repository.removeMemberCalls.size)
+            assertEquals(1, groupRepository.removeMemberCalls.size)
+        }
+
+    /**
+     * Round 1 review, minor 5: a rotated code that is still on screen must SURVIVE a remove's own
+     * reload — round 0's single reload path always dropped it, so an owner rotating and then
+     * removing a different member lost the just-rotated (and now server-side invalidated) code
+     * with no way back except rotating again.
+     */
+    @Test
+    fun `removing a member preserves a rotated code already on screen`() =
+        runTest(dispatcher) {
+            val groupRepository =
+                FakeGroupRepository(membersResult = listOf(OWNER, MEMBER), rotateResult = INVITE)
+            val viewModel = viewModel(groupRepository)
+            advanceUntilIdle()
+            viewModel.rotateInvite()
+            advanceUntilIdle()
+            assertEquals(INVITE, (viewModel.state.value as GroupDetailUiState.Success).rotatedInvite)
+
+            groupRepository.membersResult = listOf(OWNER)
+            viewModel.removeMember(MEMBER.userId)
+            advanceUntilIdle()
+
+            assertEquals(INVITE, (viewModel.state.value as GroupDetailUiState.Success).rotatedInvite)
+        }
+
+    /** The negative control for the test above: an ORDINARY [refresh] still drops it (E-I, unchanged). */
+    @Test
+    fun `an ordinary refresh still drops a rotated code`() =
+        runTest(dispatcher) {
+            val groupRepository = FakeGroupRepository(membersResult = listOf(OWNER), rotateResult = INVITE)
+            val viewModel = viewModel(groupRepository)
+            advanceUntilIdle()
+            viewModel.rotateInvite()
+            advanceUntilIdle()
+            assertEquals(INVITE, (viewModel.state.value as GroupDetailUiState.Success).rotatedInvite)
+
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            assertNull((viewModel.state.value as GroupDetailUiState.Success).rotatedInvite)
         }
 
     /**
@@ -353,18 +534,17 @@ class GroupDetailViewModelTest {
     @Test
     fun `clearRotateError, clearRemoveError and clearLeaveError each clear only their own channel`() =
         runTest(dispatcher) {
-            val repository =
-                FakeGroupRepository(membersResult = listOf(OWNER, MEMBER), currentUserIdResult = OWNER.userId)
-            val viewModel = viewModel(repository)
+            val groupRepository = FakeGroupRepository(membersResult = listOf(OWNER, MEMBER))
+            val viewModel = viewModel(groupRepository)
             advanceUntilIdle()
 
-            repository.rotateFailure = GroupFailure.NotPermitted
+            groupRepository.rotateFailure = GroupFailure.NotPermitted
             viewModel.rotateInvite()
             advanceUntilIdle()
-            repository.removeMemberFailure = GroupFailure.NotPermitted
+            groupRepository.removeMemberFailure = GroupFailure.NotPermitted
             viewModel.removeMember(MEMBER.userId)
             advanceUntilIdle()
-            repository.removeMemberFailure = GroupFailure.Network
+            groupRepository.removeMemberFailure = GroupFailure.Network
             viewModel.leaveGroup()
             advanceUntilIdle()
 
@@ -388,13 +568,8 @@ class GroupDetailViewModelTest {
     @Test
     fun `dismissRotatedInvite clears the rotated code and nothing else`() =
         runTest(dispatcher) {
-            val repository =
-                FakeGroupRepository(
-                    membersResult = listOf(OWNER),
-                    currentUserIdResult = OWNER.userId,
-                    rotateResult = INVITE,
-                )
-            val viewModel = viewModel(repository)
+            val groupRepository = FakeGroupRepository(membersResult = listOf(OWNER), rotateResult = INVITE)
+            val viewModel = viewModel(groupRepository)
             advanceUntilIdle()
             viewModel.rotateInvite()
             advanceUntilIdle()
