@@ -7,11 +7,11 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
-import androidx.navigation.NavDestination.Companion.hasRoute
 import androidx.navigation.compose.ComposeNavigator
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.testing.TestNavHostController
+import androidx.navigation.toRoute
 import androidx.test.core.app.ApplicationProvider
 import com.anarky.showtrack.core.data.repository.LibraryRepository
 import com.anarky.showtrack.core.data.repository.MediaRepository
@@ -29,7 +29,7 @@ import dagger.hilt.android.testing.BindValue
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
 import dagger.hilt.android.testing.HiltTestApplication
-import org.junit.Assert.assertTrue
+import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -107,7 +107,12 @@ class SearchEntryHiltTest {
         composeRule.onNodeWithText("Frieren").performClick()
         composeRule.waitForIdle()
 
-        assertTrue(navController.currentDestination?.hasRoute(DetailRoute::class) == true)
+        // Not just `hasRoute(DetailRoute::class)`: `addedEntry()` below carries its own `id`
+        // ("entry-1", the library row) distinct from `media.id` ("media-1", the title) — the exact
+        // kind of in-scope, same-type mix-up `FavoritesEntryHiltTest`'s own KDoc measured stays
+        // green under a route-type-only assertion (round 1 fix, applied uniformly here too).
+        val mediaId = navController.currentBackStackEntry?.toRoute<DetailRoute>()?.mediaId
+        assertEquals("media-1", mediaId)
     }
 
     private companion object {

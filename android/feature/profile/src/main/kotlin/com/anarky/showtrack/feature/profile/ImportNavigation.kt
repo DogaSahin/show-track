@@ -40,7 +40,17 @@ fun NavGraphBuilder.importEntry(onNavigate: (AppRoute) -> Unit) {
 /**
  * The mapping "finished" drives, pulled out of the `composable<ImportRoute> { }` lambda above —
  * `signOutNavigation`'s own reasoning (`ProfileNavigation.kt`): [importEntry]'s lambda constructs
- * `ImportScreen` WITHOUT passing `viewModel`, evaluating its `hiltViewModel()` default, which
- * this module has no Hilt harness for — so a test reaches this function directly instead.
+ * `ImportScreen` WITHOUT passing `viewModel`, evaluating its `hiltViewModel()` default, so a plain
+ * unit test reaches this function directly instead of composing [importEntry] just to pin the
+ * mapping.
+ *
+ * **Round 1 fix (task 9c.0):** an earlier version of this KDoc claimed the module "has no Hilt
+ * harness for" the `hiltViewModel()` default above — false by the time it was written:
+ * `:feature:profile` had already adopted one for `ProfileEntryHiltTest` in the SAME task. That false
+ * claim was the standing excuse for leaving the BINDING itself (`onFinished =
+ * importFinishedNavigation(onNavigate)`, one function above) untested — the same failure mode
+ * `ProfileNavigation.kt`'s `signOutNavigation`/`importNavigation` document for their own bindings.
+ * **CLOSED:** `ImportEntryHiltTest`'s `` `tapping skip navigates to LibraryRoute` `` composes the
+ * real [importEntry] and fails if that binding is set to `{}`.
  */
 internal fun importFinishedNavigation(onNavigate: (AppRoute) -> Unit): () -> Unit = { onNavigate(LibraryRoute) }

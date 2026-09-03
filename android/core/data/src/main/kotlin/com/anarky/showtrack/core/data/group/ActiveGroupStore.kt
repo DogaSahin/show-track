@@ -47,10 +47,18 @@ interface ActiveGroupStore {
 }
 
 // A top-level delegate, which is how DataStore enforces one instance per file per process —
-// constructing two over the same file throws. The corruption handler covers WRITES as well as
-// reads, the same reasoning `pushDataStore`'s own comment gives: without it a damaged file would
-// make `setActiveGroup(null)` throw too, leaving no in-app recovery. Losing this file costs one
-// group switch back to "no active group" on next launch — harmless, unlike a lost push target.
+// constructing two over the same file throws.
+//
+// The corruption handler's actual job is narrower than a first version of this comment claimed
+// (round 1 fix): `androidx.datastore.core.CorruptionException` extends `IOException` (confirmed via
+// `javap`), so on the READ path a corrupt file is ALREADY caught by `activeGroupId`'s own
+// `.catch { cause is IOException }` below even with this handler removed — that catch, not this
+// handler, is what makes a corrupt file read as "no active group" rather than crashing at launch.
+// What this handler alone buys is the WRITE path: `setActiveGroup()`'s `dataStore.edit {}` reads
+// the current value before writing the new one, and without a corruption handler THAT read throws
+// straight out of the suspend function, with nothing in this file to catch it. Losing this file on
+// a write costs one group switch back to "no active group" on next launch — harmless, unlike a lost
+// push target — but only with the handler present.
 //
 // Not separately unit-tested: `ActiveGroupStoreTest`'s own corruption test measured that
 // hand-crafted garbage bytes do not reliably reach `CorruptionException` at all — protobuf-lite's

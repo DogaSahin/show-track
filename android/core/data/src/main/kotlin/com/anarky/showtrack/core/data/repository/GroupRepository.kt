@@ -37,10 +37,16 @@ data class GroupWithInvite(
  * itself is a plain sealed interface, not a sealed class extending `Exception` — see its own KDoc
  * for why — so it needs a carrier to cross an actual `throw`/`catch` boundary. Callers catch this
  * and switch on [failure]; they never match on this wrapper's own type.
+ *
+ * `message`/`cause` are set from [failure] (round 1 fix) rather than left at `Exception()`'s own
+ * defaults: five of [GroupFailure]'s six cases carried no `Throwable` at all before this, so a log
+ * of an uncaught [GroupOperationException] gave a bare stack with no indication of what actually
+ * failed. `(failure as? GroupFailure.Unknown)?.cause` is the only case that HAS an original
+ * throwable to chain; every other case's `message` still names which [GroupFailure] it was.
  */
 class GroupOperationException(
     val failure: GroupFailure,
-) : Exception()
+) : Exception(failure.toString(), (failure as? GroupFailure.Unknown)?.cause)
 
 /**
  * The only data-layer type any `:feature:*` module sees for groups, the shared feed, the shared
@@ -110,6 +116,7 @@ interface GroupRepository {
         mediaId: String,
     ): WatchlistEntry
 
+    /** [GroupFailure.NoSuchEntry] when [entryId] is already gone — any member may remove any entry. */
     suspend fun removeFromWatchlist(
         groupId: String,
         entryId: String,
@@ -121,14 +128,21 @@ interface GroupRepository {
         mediaId: String,
     ): List<MemberProgress>
 
-    /** `POST /v1/reviews`. [GroupFailure.AlreadyReviewed] when this account already reviewed [mediaId]. */
+    /**
+     * `POST /v1/reviews`. [GroupFailure.AlreadyReviewed] when this account already reviewed
+     * [mediaId]; [GroupFailure.NoSuchTitle] when [mediaId] names no known title.
+     */
     suspend fun createReview(
         mediaId: String,
         body: String,
         containsSpoilers: Boolean,
     ): Review
 
-    /** `PATCH /v1/reviews/{id}`. A null [body]/[containsSpoilers] means "leave it unchanged", never "clear it". */
+    /**
+     * `PATCH /v1/reviews/{id}`. A null [body]/[containsSpoilers] means "leave it unchanged", never
+     * "clear it". [GroupFailure.NoSuchEntry] when [reviewId] does not exist or is not this
+     * account's own review.
+     */
     suspend fun updateReview(
         reviewId: String,
         body: String?,

@@ -5,11 +5,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import androidx.navigation.NavDestination.Companion.hasRoute
 import androidx.navigation.compose.ComposeNavigator
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.testing.TestNavHostController
+import androidx.navigation.toRoute
 import androidx.test.core.app.ApplicationProvider
 import com.anarky.showtrack.core.data.repository.RecommendationRepository
 import com.anarky.showtrack.core.model.Media
@@ -24,7 +24,7 @@ import dagger.hilt.android.testing.BindValue
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
 import dagger.hilt.android.testing.HiltTestApplication
-import org.junit.Assert.assertTrue
+import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -79,7 +79,12 @@ class DiscoverEntryHiltTest {
 
         composeRule.onNodeWithText("Frieren").performClick()
 
-        assertTrue(navController.currentDestination?.hasRoute(DetailRoute::class) == true)
+        // Not just `hasRoute(DetailRoute::class)`: asserting the actual `mediaId` is what proves
+        // the tapped ROW's id reached `DetailRoute`, not merely that some navigation happened —
+        // `FavoritesEntryHiltTest`'s own KDoc has the measured example of a route-type-only
+        // assertion staying green under a wrong-id swap (round 1 fix, applied uniformly here too).
+        val mediaId = navController.currentBackStackEntry?.toRoute<DetailRoute>()?.mediaId
+        assertEquals("media-1", mediaId)
     }
 
     private companion object {

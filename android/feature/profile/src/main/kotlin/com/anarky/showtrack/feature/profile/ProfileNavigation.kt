@@ -35,44 +35,46 @@ fun NavGraphBuilder.profileEntry(onNavigate: (AppRoute) -> Unit) {
 
 /**
  * The mapping sign-out drives, pulled out of the `composable<ProfileRoute> { }` lambda above so it
- * is reachable by a plain unit test. [profileEntry]'s lambda constructs `ProfileScreen` WITHOUT
- * passing `viewModel`, which evaluates its `hiltViewModel()` default — composing THAT lambda as
- * written would need a Hilt harness this module does not have — so a test cannot compose
- * [profileEntry] itself to observe what a confirmed sign-out does; it can call this function
- * directly instead.
+ * is reachable by a plain unit test without paying for a full Compose/Hilt composition just to pin
+ * one `(AppRoute) -> Unit` mapping. [profileEntry]'s lambda constructs `ProfileScreen` WITHOUT
+ * passing `viewModel`, which evaluates its `hiltViewModel()` default — so a test cannot compose
+ * [profileEntry] itself to observe what a confirmed sign-out does using ONLY this function; it can
+ * call this function directly for the mapping, and `ProfileEntryHiltTest` for the binding (below).
  *
  * What IS covered: `ProfileViewModelTest` pins `signOut()` → `AuthRepository.logout()`;
  * `ProfileNavigationTest` pins this function, `onSignedOut` (the parameter) →
  * `onNavigate(AuthRoute)`; `ProfileResumeTest` (round 2) composes `ProfileScreen`'s stateful
  * overload with a fake `ProfileViewModel` passed explicitly — never evaluating the
  * `hiltViewModel()` default at all — to pin the stats fetch's own wiring, with no Hilt harness
- * needed for that.
+ * needed for that; `ProfileEntryHiltTest` (task 9c.0) composes the REAL [profileEntry] and asserts
+ * both bindings below actually fire.
  *
- * What is NOT, and this module has three such gaps where `:feature:library` has one — corrected
- * (review finding, round 2): only gap 3 below needs Hilt. Gaps 1 and 2 are reachable the exact
- * same Hilt-free way `ProfileResumeTest` reaches the stats wiring; they are open because nobody
- * has written that test yet, not because anything blocks it:
+ * What used to be open, and how each gap closed (history kept — this module had three such gaps
+ * where `:feature:library` had one, corrected review finding round 2, closed task 9c.0):
  *   1. The confirm button's `onClick` inside `ProfileScreen`'s `AlertDialog` → `viewModel.signOut()`.
+ *      Reachable the Hilt-free way `ProfileResumeTest` reaches the stats wiring; still open —
+ *      nobody has written that test yet, not because anything blocks it.
  *   2. `ProfileScreen`'s `LaunchedEffect(signedOut) { if (signedOut) onSignedOut() }` →
- *      `onSignedOut()`. Delete that `LaunchedEffect` entirely and sign-out silently stops
- *      navigating anywhere — `signedOut` still flips, `ProfileViewModelTest` stays green, nothing
- *      fails.
+ *      `onSignedOut()`. Same status as gap 1: reachable without Hilt, still open.
  *   3. The BINDING one line above — `onSignedOut = signOutNavigation(onNavigate)` — same failure
- *      mode as [libraryEntry]: change it to `onSignedOut = {}` and every existing test, including
- *      `ProfileNavigationTest`, stays green while sign-out goes unreachable again. THIS one lives
- *      inside [profileEntry]'s own lambda, which evaluates the `hiltViewModel()` default, so
- *      closing it does need a Hilt-composed harness — `:feature:library`'s `LibraryEntryHiltTest`
- *      is the pattern, built against the identical gap in `LibraryNavigation.kt`'s
- *      `searchNavigation` binding — but this module has not adopted it: `:feature:profile`
- *      declares no `hilt-android-testing`/`HiltTestActivity` of its own. Do not read library's fix
- *      as covering this file too.
+ *      mode as [libraryEntry]: change it to `onSignedOut = {}` and every OTHER existing test,
+ *      including `ProfileNavigationTest`, stayed green while sign-out went unreachable. THIS one
+ *      lives inside [profileEntry]'s own lambda, which evaluates the `hiltViewModel()` default, so
+ *      closing it needed a Hilt-composed harness — `:feature:library`'s `LibraryEntryHiltTest` was
+ *      the pattern, built against the identical gap in `LibraryNavigation.kt`'s `searchNavigation`
+ *      binding. **CLOSED (task 9c.0):** `:feature:profile` now declares its own
+ *      `hilt-android-testing`/`HiltTestActivity`/`TestDataModule`, and `ProfileEntryHiltTest`'s
+ *      `` `confirming sign-out navigates to AuthRoute` `` composes this exact binding and fails if
+ *      it is set to `{}`.
  */
 internal fun signOutNavigation(onNavigate: (AppRoute) -> Unit): () -> Unit = { onNavigate(AuthRoute) }
 
 /**
  * The mapping [ProfileScreen]'s import action drives (task 9b.6) — [signOutNavigation]'s own
  * reasoning applies identically: pulled out of [profileEntry]'s lambda so it is reachable by a
- * plain unit test, since [profileEntry] constructs `ProfileScreen` WITHOUT passing `viewModel`
- * and this module has no Hilt test harness.
+ * plain unit test, since [profileEntry] constructs `ProfileScreen` WITHOUT passing `viewModel`.
+ * The BINDING itself (`onImportClick = importNavigation(onNavigate)`, one function above) is
+ * covered by `ProfileEntryHiltTest`'s `` `tapping import navigates to ImportRoute` `` (task 9c.0) —
+ * see [signOutNavigation]'s own KDoc, gap 3, for the identical history on the sign-out binding.
  */
 internal fun importNavigation(onNavigate: (AppRoute) -> Unit): () -> Unit = { onNavigate(ImportRoute) }

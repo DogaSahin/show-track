@@ -5,11 +5,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import androidx.navigation.NavDestination.Companion.hasRoute
 import androidx.navigation.compose.ComposeNavigator
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.testing.TestNavHostController
+import androidx.navigation.toRoute
 import androidx.test.core.app.ApplicationProvider
 import com.anarky.showtrack.core.data.repository.LibraryRepository
 import com.anarky.showtrack.core.model.LibraryEntry
@@ -24,7 +24,7 @@ import dagger.hilt.android.testing.BindValue
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
 import dagger.hilt.android.testing.HiltTestApplication
-import org.junit.Assert.assertTrue
+import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -82,8 +82,14 @@ class FavoritesEntryHiltTest {
 
         composeRule.onNodeWithText("Frieren").performClick()
 
-        val destination = navController.currentDestination
-        assertTrue(destination?.hasRoute(DetailRoute::class) == true)
+        // NOT just `hasRoute(DetailRoute::class)`: `FavoritesNavigation.kt`'s binding reads
+        // `entry.media.id`, but `LibraryEntry` ALSO carries its own, different `id` in scope at the
+        // same call site — `entry.id` (the library ROW's id, "entry-1") vs. `entry.media.id` (the
+        // TITLE's id, "media-1"). Both are `String`, so swapping one for the other is a real,
+        // type-checked, silently-wrong-navigation bug a route-type-only assertion cannot see
+        // (measured, round 1 fix: it did not).
+        val mediaId = navController.currentBackStackEntry?.toRoute<DetailRoute>()?.mediaId
+        assertEquals("media-1", mediaId)
     }
 
     private companion object {

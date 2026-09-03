@@ -26,6 +26,15 @@ sealed interface GroupFailure {
     data object NoSuchTitle : GroupFailure
 
     /**
+     * 404 on a call scoped to ONE row that is not the group itself: `DELETE
+     * /v1/groups/{id}/watchlist/{entryId}` (the entry was already removed — any member may remove
+     * any entry, so two members racing to delete the same row is a real, not hypothetical, case) or
+     * `PATCH /v1/reviews/{id}` (no such review, or it is not this account's). Distinct from
+     * [NotAMember]: the caller is still in the group, and telling them otherwise would be wrong.
+     */
+    data object NoSuchEntry : GroupFailure
+
+    /**
      * 409 from `POST /v1/reviews`: this account already reviewed the title. [existingReviewId] is
      * always null in practice today — the backend's 409 body carries no id (`ReviewExists` maps to
      * a fixed detail string, `app/library/routes.py`) — but the field stays nullable rather than
@@ -38,7 +47,16 @@ sealed interface GroupFailure {
     /** The request never reached the server. */
     data object Network : GroupFailure
 
-    /** Anything else — an unexpected status, a malformed response, ... */
+    /**
+     * Anything else — an unexpected status, a malformed response, ...
+     *
+     * [cause] is for LOGGING ONLY (round 1 fix, stated explicitly): decision C-R keeps
+     * `retrofit2`/`okhttp3` types out of every `:feature:*` module's compile classpath, but nothing
+     * stops a caller reading `cause.message` at runtime and putting it straight into user-facing
+     * copy — an `HttpException`'s message is literally the HTTP status line ("HTTP 500 Internal
+     * Server Error"). Render a fixed "something went wrong" string for this case; never `cause`'s
+     * own message.
+     */
     data class Unknown(
         val cause: Throwable,
     ) : GroupFailure

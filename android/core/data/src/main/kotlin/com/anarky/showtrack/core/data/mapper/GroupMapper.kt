@@ -88,6 +88,10 @@ private fun JsonElement.stringify(): String = if (this is JsonPrimitive) content
  * [FeedItemDto.media] maps to [FeedEntry.media], which stays nullable end to end: an
  * [ActivityKind.IMPORTED] row carries `media: null` on the wire (decision S-A) and MUST render
  * without one — see [FeedEntry]'s own KDoc. Do not default this to a placeholder [MediaSummary].
+ *
+ * [FeedEntry.mediaId] is read straight off [FeedItemDto.media]'s own `id` (round 1 fix), BEFORE
+ * [toSummary] drops it — [MediaSummary] deliberately carries no id (decision C-N), so this is the
+ * only point the wire's real, persisted id is still in scope. Null exactly when `media` is null.
  */
 fun FeedItemDto.toDomain(): FeedEntry =
     FeedEntry(
@@ -95,14 +99,21 @@ fun FeedItemDto.toDomain(): FeedEntry =
         actor = actor.toDomain(),
         kind = kindOf(kind),
         media = media?.toSummary(),
+        mediaId = media?.id,
         payload = payload.mapValues { (_, value) -> value.stringify() },
         createdAt = Instant.parse(createdAt),
     )
 
+/**
+ * [WatchlistEntry.mediaId] is read straight off [WatchlistItemDto.media]'s own `id` (round 1 fix),
+ * BEFORE [toSummary] drops it — see [FeedItemDto.toDomain]'s identical note. Never null here:
+ * unlike a feed row, a watchlist entry's `media` is never absent on the wire.
+ */
 fun WatchlistItemDto.toDomain(): WatchlistEntry =
     WatchlistEntry(
         id = id,
         media = media.toSummary(),
+        mediaId = media.id,
         proposedBy = proposedBy,
         createdAt = Instant.parse(createdAt),
     )

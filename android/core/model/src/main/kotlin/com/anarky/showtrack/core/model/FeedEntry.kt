@@ -30,6 +30,15 @@ enum class ActivityKind { ADDED, IMPORTED, PROGRESSED, RATED, COMPLETED, DROPPED
  * import bury every other member's activity), so it carries no single title. A feed row must
  * render, and must not be tappable, when [media] is null — see design decision E-H.
  *
+ * [mediaId] is the persisted title's own id (round 1 fix): [media] is a [MediaSummary], which
+ * deliberately has NO `id` (decision C-N — a search result writes nothing, so no row exists to
+ * have one), but the wire's `FeedItem.media` is a `MediaDetail`, a PERSISTED row that genuinely
+ * carries one — dropping it in `GroupMapper.toSummary()` left a feed row with no way to open
+ * `DetailRoute`. Null exactly when [media] is null (the `imported` kind); never add an `id` to
+ * [MediaSummary] itself to avoid this — C-N's reasoning holds for every OTHER caller of
+ * [MediaSummary], and a nullable id there would force all of them to handle a case that is
+ * actually specific to this one.
+ *
  * [payload] is `Map<String, String>`, stringifying whatever the wire sends (`dict[str, Any]` on the
  * backend): an untyped bag is a coupling to interpret at the boundary, in `GroupMapper`, rather than
  * letting a raw `JsonElement` leak past `:core:data` (spec §6).
@@ -39,6 +48,7 @@ data class FeedEntry(
     val actor: GroupActor,
     val kind: ActivityKind,
     val media: MediaSummary?,
+    val mediaId: String?,
     val payload: Map<String, String>,
     val createdAt: Instant,
 )

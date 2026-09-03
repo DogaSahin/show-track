@@ -30,11 +30,17 @@ fun NavGraphBuilder.authEntry(onNavigate: (AppRoute) -> Unit) {
  * lambda above so it is reachable by a plain unit test — `ProfileNavigation.kt`'s
  * `signOutNavigation`/`importNavigation` are the pattern this follows: [authEntry]'s lambda
  * constructs `AuthScreen` WITHOUT passing `viewModel`, which evaluates its `hiltViewModel()`
- * default, and `:feature:auth` has no Hilt test harness — so a test cannot compose [authEntry]
- * itself to observe which route a given `isNewAccount` value produces; it can call this function
- * directly instead (round 1, task 9b.6 fix round: nothing in the repository referenced [authEntry]
- * at all before this, so a round-0 defect that inverted or deleted the condition on the line this
- * replaces would have passed the entire suite).
+ * default, so a PLAIN unit test cannot compose [authEntry] itself to observe which route a given
+ * `isNewAccount` value produces; it can call this function directly instead (round 1, task 9b.6 fix
+ * round: nothing in the repository referenced [authEntry] at all before this, so a round-0 defect
+ * that inverted or deleted the condition on the line this replaces would have passed the entire
+ * suite).
+ *
+ * **Task 9c.0 update:** `:feature:auth` now DOES have a Hilt test harness
+ * (`HiltTestActivity`/`TestDataModule`, the `:feature:library` pattern) — `AuthEntryHiltTest`
+ * composes the real `authEntry()` binding one line above and asserts the navigation this function
+ * only describes in isolation. This function stays, because it is still the cheaper way to pin the
+ * `isNewAccount` → route mapping itself without paying for a full Compose/Hilt composition per case.
  */
 internal fun authenticatedNavigation(onNavigate: (AppRoute) -> Unit): (Boolean) -> Unit =
     { isNewAccount -> onNavigate(if (isNewAccount) ImportRoute else LibraryRoute) }

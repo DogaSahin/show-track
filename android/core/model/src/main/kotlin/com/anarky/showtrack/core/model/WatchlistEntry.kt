@@ -13,10 +13,19 @@ import java.time.Instant
  * [media] is [MediaSummary], not the full [Media] the backend's `MediaDetail` actually carries —
  * see `GroupMapper`'s `MediaDto.toSummary()`: a watchlist row is a proposal, not a library entry,
  * and reuses the same title shape search results use rather than minting a second one.
+ *
+ * [mediaId] is the persisted title's own id (round 1 fix), non-null — [media] is always present
+ * here (unlike [FeedEntry.media]), so the id backing it always is too. [MediaSummary] itself stays
+ * without an `id` (decision C-N holds for search results); this is the same "the wire DTO carries
+ * an id `MediaSummary` deliberately drops" gap [FeedEntry.mediaId] closes, and for the identical
+ * reason: without it, a watchlist row has no id to call `GroupRepository.progress`/
+ * `GroupRepository.reviews` with (both live in `:core:data`, which this module does not depend on),
+ * and no id to open `DetailRoute` with.
  */
 data class WatchlistEntry(
     val id: String,
     val media: MediaSummary,
+    val mediaId: String,
     val proposedBy: String?,
     val createdAt: Instant,
 )

@@ -84,9 +84,11 @@ class GroupRepositoryImpl
             }
 
         /**
-         * [GroupFailure.NoSuchTitle] on a 404 here — the ONE call site that overrides [guarded]'s
-         * default [GroupFailure.NotAMember], because a 404 from this endpoint means the *media id*
-         * was not found (`app/groups/routes.py`'s `responses={404: "no such title"}`), not that the
+         * [GroupFailure.NoSuchTitle] on a 404 here — one of four call sites that override [guarded]'s
+         * default [GroupFailure.NotAMember] (round 1 fix added the other three:
+         * [createReview] for the identical reason, [removeFromWatchlist]/[updateReview] for
+         * [GroupFailure.NoSuchEntry]) — because a 404 from this endpoint means the *media id* was
+         * not found (`app/groups/routes.py`'s `responses={404: "no such title"}`), not that the
          * caller left the group between the membership check and this line.
          */
         override suspend fun proposeTitle(
@@ -97,22 +99,34 @@ class GroupRepositoryImpl
                 api.proposeToWatchlist(groupId, ProposeTitleRequestDto(mediaId = mediaId)).toDomain()
             }
 
+        /**
+         * [GroupFailure.NoSuchEntry] on a 404 here, not the default [GroupFailure.NotAMember]: any
+         * member may remove any entry (design doc §5.3), so two members racing to delete the same
+         * row is a real case — the loser must be told the ROW is gone, not that they left the group.
+         */
         override suspend fun removeFromWatchlist(
             groupId: String,
             entryId: String,
-        ) = guarded { api.removeFromWatchlist(groupId, entryId) }
+        ) = guarded(notFound = GroupFailure.NoSuchEntry) { api.removeFromWatchlist(groupId, entryId) }
 
         override suspend fun progress(
             groupId: String,
             mediaId: String,
         ): List<MemberProgress> = guarded { api.groupProgress(groupId, mediaId).map { it.toDomain() } }
 
+        /**
+         * [GroupFailure.NoSuchTitle] on a 404 here, not the default [GroupFailure.NotAMember]:
+         * `POST /v1/reviews` 404s when `media_id` names no known title
+         * (`backend/app/library/routes.py`), the identical shape [proposeTitle] above already
+         * overrides for. Telling the caller they are not a member of the group would be wrong — the
+         * title is what is missing, and this endpoint is not even group-scoped.
+         */
         override suspend fun createReview(
             mediaId: String,
             body: String,
             containsSpoilers: Boolean,
         ): Review =
-            guarded {
+            guarded(notFound = GroupFailure.NoSuchTitle) {
                 api
                     .createReview(
                         CreateReviewRequestDto(mediaId = mediaId, body = body, containsSpoilers = containsSpoilers),
@@ -125,13 +139,18 @@ class GroupRepositoryImpl
          * the backend REJECTS an explicit JSON null for either field
          * (`UpdateReviewRequest._reject_explicit_nulls`) — so "unchanged" has to be the field's
          * ABSENCE from the body, which only an object built field-by-field can express.
+         *
+         * [GroupFailure.NoSuchEntry] on a 404 (round 1 fix): "ownership failures answer 404 rather
+         * than 403" (`app/library/routes.py`) for this endpoint, covering both "no such review" and
+         * "not this account's review" — [NotAMember] would be actively wrong here, since the caller
+         * can be a member of every group involved and still get this 404.
          */
         override suspend fun updateReview(
             reviewId: String,
             body: String?,
             containsSpoilers: Boolean?,
         ): Review =
-            guarded {
+            guarded(notFound = GroupFailure.NoSuchEntry) {
                 val patch =
                     buildJsonObject {
                         body?.let { put("body", it) }
