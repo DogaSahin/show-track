@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    AGP supports a variant-specific manifest for local unit tests precisely for Robolectric's
+    sake — plain JUnit never reads a manifest, but Robolectric launches a real (shadowed) Activity
+    and needs one to resolve it against. HiltTestActivity is declared nowhere else: it is
+    test-only, so this is the only manifest that should ever name it. Copied from
+    `:feature:groups`'s identical file (task 9c.0).
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!--
+            The FULLY QUALIFIED name, not ".HiltTestActivity": AGP's default testNamespace for a
+            library module is "${namespace}.test" — this manifest merges under
+            com.anarky.showtrack.feature.feed.test, not com.anarky.showtrack.feature.feed,
+            so a relative name resolves to a class that does not exist and Robolectric fails to
+            launch the activity with "Unable to resolve activity for Intent" even though the class
+            itself compiles and is on the classpath. HiltTestActivity's real package is where the
+            .kt file actually lives: com.anarky.showtrack.feature.feed.
+        -->
+        <activity
+            android:name="com.anarky.showtrack.feature.feed.HiltTestActivity"
+            android:exported="false" />
+    </application>
+</manifest>

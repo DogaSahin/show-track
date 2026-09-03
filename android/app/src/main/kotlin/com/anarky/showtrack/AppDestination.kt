@@ -75,7 +75,12 @@ internal val appDestinations: List<AppDestination> =
         AppDestination(SearchRoute::class) { onNavigate -> searchEntry(onNavigate) },
         AppDestination(GroupsRoute::class) { onNavigate -> groupsEntry(onNavigate) },
         AppDestination(GroupDetailRoute::class) { onNavigate -> groupDetailEntry(onNavigate) },
-        AppDestination(FeedRoute::class) { onNavigate -> feedEntry(onNavigate) },
+        // activeGroupId = null (task 9c.4, Ruling 1 — progress.md's pre-flight conflict scan):
+        // FeedRoute carries no argument of its own, and no ActiveGroupStore-backed value exists
+        // yet — task 9c.5 hoists an ActiveGroupViewModel in ShowTrackApp and threads its real
+        // value through here. FeedScreen already renders correctly for null (the no-groups empty
+        // state) — see its own KDoc.
+        AppDestination(FeedRoute::class) { onNavigate -> feedEntry(activeGroupId = null, onNavigate = onNavigate) },
         AppDestination(ImportRoute::class) { onNavigate -> importEntry(onNavigate) },
     )
 

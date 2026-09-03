@@ -9,6 +9,7 @@ import androidx.navigation.createGraph
 import androidx.test.core.app.ApplicationProvider
 import com.anarky.showtrack.core.navigation.DiscoverRoute
 import com.anarky.showtrack.core.navigation.FavoritesRoute
+import com.anarky.showtrack.core.navigation.FeedRoute
 import com.anarky.showtrack.core.navigation.LibraryRoute
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -91,6 +92,40 @@ class TopLevelNavigationTest {
 
         assertEquals(
             listOf(null, LibraryRoute::class.qualifiedName, DiscoverRoute::class.qualifiedName),
+            controller.backStackRoutes(),
+        )
+    }
+
+    /**
+     * `FeedRoute` is registered and unreachable today — this task's own brief, verbatim (task
+     * 9c.4). `TopLevelDestination.FEED` is what makes it reachable: a plain enum read, the
+     * `DISCOVER` sibling test's identical narrow scope — see that test's own KDoc for what this
+     * does and does not cover.
+     */
+    @Test
+    fun `Feed is registered as a top-level destination`() {
+        assertTrue(TopLevelDestination.entries.any { it.route == FeedRoute })
+    }
+
+    /**
+     * The actual reachability pin `Feed is registered as a top-level destination` cannot provide
+     * on its own — `AppDestination.kt`'s own KDoc calls this exact failure mode out: "a route
+     * wired into the graph with no door in." Drives a real `NavHostController` through
+     * `navigateToTopLevelDestination(FeedRoute)` via `showTrackDestinations` (which now calls
+     * `feedEntry(activeGroupId = null, onNavigate = ...)`), so a broken registration — the
+     * `AppDestination` entry pointing at the wrong route, or `feedEntry` never actually composing
+     * `FeedRoute` — fails here, not silently. `Discover`'s sibling test's identical shape one tab
+     * over.
+     */
+    @Test
+    fun `tapping Feed after Favorites lands on Feed above the start destination`() {
+        val controller = controllerWith { defaultGraph() }
+
+        controller.navigateToTopLevelDestination(FavoritesRoute)
+        controller.navigateToTopLevelDestination(FeedRoute)
+
+        assertEquals(
+            listOf(null, LibraryRoute::class.qualifiedName, FeedRoute::class.qualifiedName),
             controller.backStackRoutes(),
         )
     }

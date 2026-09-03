@@ -5,6 +5,7 @@
          (MainActivity.kt), so these must read correctly standalone, not just next to the icon. -->
     <string name="destination_home">Home</string>
     <string name="destination_discover">Discover</string>
+    <string name="destination_feed">Feed</string>
     <string name="destination_favorites">Favorites</string>
     <string name="destination_profile">Profile</string>
 </resources>

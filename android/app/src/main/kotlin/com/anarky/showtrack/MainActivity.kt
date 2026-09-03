@@ -32,6 +32,7 @@ import com.anarky.showtrack.core.navigation.AppRoute
 import com.anarky.showtrack.core.navigation.AuthRoute
 import com.anarky.showtrack.core.navigation.DiscoverRoute
 import com.anarky.showtrack.core.navigation.FavoritesRoute
+import com.anarky.showtrack.core.navigation.FeedRoute
 import com.anarky.showtrack.core.navigation.LibraryRoute
 import com.anarky.showtrack.core.navigation.ProfileRoute
 import dagger.hilt.android.AndroidEntryPoint
@@ -259,17 +260,26 @@ internal fun shouldShowNavigationTabs(
         currentDestination?.hasRoute(AuthRoute::class) == false
 
 /**
- * The four top-level destinations the navigation suite offers. A subset of the nine routes on
- * purpose: Detail and Auth are pushed onto the stack rather than tabbed to, and Search, Groups and
- * Feed still have no chrome — Phase 9 decides where the rest surface.
+ * The five top-level destinations the navigation suite offers. A subset of the nine routes on
+ * purpose: Detail and Auth are pushed onto the stack rather than tabbed to, and Search and Groups
+ * still have no chrome — Phase 9 decides where the rest surface.
  *
  * **Discover joined this set in task 9b.3**, not earlier: `:feature:discover` shipped in Phase 9a
  * as a registered-but-unreachable placeholder (the exact Gap 1/Gap 2 shape `LibraryNavigation.kt`
  * documents at length — a route wired into the graph with no door in, which is invisible to a
  * diff-scoped review because no individual diff is wrong). Once the feed had real rows and a real
  * one-tap add, it needed an actual door; unlike Search (reached from Library's header icon) or
- * Groups/Feed (still undecided), Discover has no natural secondary entry point, so it became a
- * fourth tab rather than staying an icon bolted onto some other screen's chrome.
+ * Groups (still undecided), Discover has no natural secondary entry point, so it became a fourth
+ * tab rather than staying an icon bolted onto some other screen's chrome.
+ *
+ * **Feed joined this set in task 9c.4**, the identical Gap 1/Gap 2 shape one more time:
+ * `:feature:feed` has shipped a registered `FeedRoute` destination since Phase 9's very first
+ * pass, with no door in until now. Unlike Groups (still undecided — reached only from wherever a
+ * future task puts it), the group activity feed has no natural secondary entry point either, so it
+ * becomes a tab rather than an icon bolted onto `GroupsScreen`'s or `GroupDetailScreen`'s chrome.
+ * Placed between Discover and Favorites (this task's own brief, verbatim) rather than appended at
+ * the end: browsing (Discover) and social (Feed) sit together, ahead of the two account-scoped
+ * tabs (Favorites, Profile).
  *
  * Renamed from `AppDestinations`: with [AppDestination] now naming a row in the nav graph's
  * registration table, two types one plural apart meant two different things in the same package.
@@ -283,6 +293,7 @@ enum class TopLevelDestination(
 ) {
     HOME(R.string.destination_home, R.drawable.ic_home, LibraryRoute),
     DISCOVER(R.string.destination_discover, R.drawable.ic_explore, DiscoverRoute),
+    FEED(R.string.destination_feed, R.drawable.ic_feed, FeedRoute),
     FAVORITES(R.string.destination_favorites, R.drawable.ic_favorite, FavoritesRoute),
     PROFILE(R.string.destination_profile, R.drawable.ic_account_box, ProfileRoute),
 }
