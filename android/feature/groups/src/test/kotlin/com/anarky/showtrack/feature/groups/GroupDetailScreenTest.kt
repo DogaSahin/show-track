@@ -11,6 +11,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ApplicationProvider
+import androidx.test.espresso.Espresso
 import com.anarky.showtrack.core.data.repository.GroupWithInvite
 import com.anarky.showtrack.core.model.Group
 import com.anarky.showtrack.core.model.GroupFailure
@@ -302,6 +303,90 @@ class GroupDetailScreenTest {
         composeRule
             .onNodeWithText(context.getString(R.string.groups_detail_remove_confirm_title, MEMBER2.username))
             .assertIsDisplayed()
+    }
+
+    /**
+     * A second, distinct shape of BLOCKING 1's class of bug, which survived that fix.
+     * [DialogCloseEffects]'s remove-close `LaunchedEffect` is keyed on
+     * `(actionState.removingUserId, actionState.removeError)` alone — `removeAttempted` is READ
+     * inside the effect body but never listed among its KEYS. Reachable sequence: start removing
+     * sam (confirm, so `removeAttempted = true` and a real ViewModel sets `removingUserId = sam`
+     * synchronously) -> dismiss sam's dialog with the system Back button while it is still in
+     * flight (both Confirm and Cancel are disabled by `submitting`, so Back is the only way out)
+     * -> `pendingRemoveTarget`/`removeAttempted` both reset to `false`, but `removingUserId` is
+     * untouched, still sam's id -> open kai's dialog (`removeAttempted` reset `false` again on
+     * open, per BLOCKING 1's own fix) -> tap kai's Confirm, which sets `removeAttempted = true`
+     * and calls `onRemoveMember(kai)` — a real `GroupDetailViewModel.removeMember`'s own
+     * re-entrancy guard (`GroupDetailViewModel.kt`) drops this because sam's remove is still in
+     * flight, so `actionState` does not change here, but `removeAttempted` is now `true` for
+     * KAI's dialog. When sam's remove finally lands (`removingUserId -> null`,
+     * `removeError -> null`), the two keys the effect DOES watch both flip, the effect fires,
+     * sees `removeAttempted == true`, and closes KAI's dialog as though kai had been removed —
+     * self-correcting (kai is still in the reloaded member list) but a false close all the same.
+     */
+    @Test
+    fun `a remove confirmed while a different member's remove is still in flight does not close that dialog early`() {
+        var actionState by mutableStateOf(GroupDetailActionState())
+        val removeCalls = mutableListOf<String>()
+        composeRule.setContent {
+            GroupDetailScreen(
+                state = successState(members = listOf(OWNER, MEMBER, MEMBER2)),
+                actionState = actionState,
+                currentUserId = OWNER.userId,
+                onRetry = {},
+                onRotateInvite = {},
+                onLeaveGroup = {},
+                onRemoveMember = { userId ->
+                    removeCalls += userId
+                    // Mirrors GroupDetailViewModel.removeMember's own synchronous
+                    // guard-then-set (GroupDetailViewModel.kt:304-305) — a remove already in
+                    // flight for a DIFFERENT member makes this call a no-op; otherwise
+                    // removingUserId is set in the SAME synchronous call as the confirm click,
+                    // atomically with the screen's own removeAttempted flip, the same ordering
+                    // a real ViewModel gives it.
+                    if (actionState.removingUserId == null) {
+                        actionState = actionState.copy(removingUserId = userId, removeError = null)
+                    }
+                },
+                onDismissRotatedInvite = {},
+                onRotateDialogOpened = {},
+                onLeaveDialogOpened = {},
+                onRemoveDialogOpened = { actionState = actionState.copy(removeError = null) },
+            )
+        }
+
+        // Start removing sam: open, confirm — the fake onRemoveMember above sets
+        // removingUserId synchronously, the same call the confirm click makes.
+        composeRule.onAllNodesWithText(context.getString(R.string.groups_detail_remove_action))[0].performClick()
+        composeRule.onNodeWithText(context.getString(R.string.groups_detail_remove_confirm_button)).performClick()
+        composeRule.waitForIdle()
+
+        // Dismiss with the system Back button while sam's remove is still in flight — Cancel is
+        // disabled (submitting), so Back is the only way out, exactly as found.
+        Espresso.pressBack()
+        composeRule.waitForIdle()
+        composeRule
+            .onNodeWithText(context.getString(R.string.groups_detail_remove_confirm_title, MEMBER.username))
+            .assertDoesNotExist()
+
+        // Open and confirm kai's dialog. Sam's remove is STILL in flight — actionState carries no
+        // change from the dismissal above — so a real ViewModel's re-entrancy guard would drop
+        // this call. This fake still records it; what the screen reacts to is actionState alone.
+        composeRule.onAllNodesWithText(context.getString(R.string.groups_detail_remove_action))[1].performClick()
+        composeRule
+            .onNodeWithText(context.getString(R.string.groups_detail_remove_confirm_title, MEMBER2.username))
+            .assertIsDisplayed()
+        composeRule.onNodeWithText(context.getString(R.string.groups_detail_remove_confirm_button)).performClick()
+
+        // Sam's remove now lands successfully.
+        actionState = actionState.copy(removingUserId = null, removeError = null)
+        composeRule.waitForIdle()
+
+        // Kai was never removed — his dialog must still be showing.
+        composeRule
+            .onNodeWithText(context.getString(R.string.groups_detail_remove_confirm_title, MEMBER2.username))
+            .assertIsDisplayed()
+        assertEquals(listOf(MEMBER.userId, MEMBER2.userId), removeCalls)
     }
 
     @Test

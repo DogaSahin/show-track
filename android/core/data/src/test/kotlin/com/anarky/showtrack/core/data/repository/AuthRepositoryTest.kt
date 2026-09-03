@@ -243,6 +243,30 @@ class AuthRepositoryTest {
             assertEquals(2, showTrackApi.meCalls)
         }
 
+    /**
+     * `logout()` is not the only way a session ends. `TokenRefreshAuthenticator` clears the token
+     * store directly (`clearQuietly()`) on an unrecoverable 401 and emits `AuthEvent.LoggedOut` —
+     * it never calls `AuthRepository.logout()`, so a cache cleared only by `logout()` survives
+     * into whatever account signs in next. Reproduces that shape without the authenticator itself:
+     * resolve as one account, clear the store the way it does, then log in as a different one.
+     */
+    @Test
+    fun `an involuntary session clear followed by a different login re-resolves identity, not the stale cache`() =
+        runTest {
+            val showTrackApi =
+                FakeShowTrackApi(meResult = UserDto("user-42", "alex", "a@b.test", "2026-09-01T00:00:00Z"))
+            val store = FakeTokenStore(initial = TokenPair("access-1", "refresh-1"))
+            val repository = AuthRepositoryImpl(FakeAuthApi(), showTrackApi, store, FakePush())
+            assertEquals("user-42", repository.currentUserId())
+
+            // TokenRefreshAuthenticator.clearQuietly() on an unrecoverable 401 — not logout().
+            store.clear()
+            showTrackApi.meResult = UserDto("user-99", "sam", "s@b.test", "2026-09-02T00:00:00Z")
+            repository.login("s@b.test", "hunter2hunter2")
+
+            assertEquals("user-99", repository.currentUserId())
+        }
+
     @Test
     fun `being offline while resolving currentUserId surfaces as being offline`() =
         runTest {

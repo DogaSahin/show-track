@@ -65,6 +65,14 @@ class AuthRepositoryImpl
             email: String,
             password: String,
         ) {
+            // logout() is not the only way a session ends: TokenRefreshAuthenticator clears the
+            // token store directly on an unrecoverable 401 (never calling logout()) and emits
+            // AuthEvent.LoggedOut for AuthGate/PushSessionObserver to react to. Neither of those
+            // consumers reaches this cache, so a stale id from the PREVIOUS account would
+            // otherwise survive into a new session started this way. Clearing here, at the one
+            // place every new session actually begins, covers that path along with the ordinary
+            // logout-then-login one logout() already covers.
+            cachedUserId = null
             try {
                 val tokens = api.login(LoginRequest(email = email, password = password))
                 tokenStore.save(access = tokens.accessToken, refresh = tokens.refreshToken)

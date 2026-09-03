@@ -41,11 +41,12 @@ import java.time.Instant
  * `application = Application::class` avoids standing up `ShowTrackApplication`'s `@HiltAndroidApp`
  * component, which this test needs neither DataStore nor the Keystore from.
  *
- * `GroupDetailViewModel`'s `init { loadCurrentUserId(); refresh() }` means every test below
- * observes the CONSTRUCTOR's own load of BOTH — `viewModel(...)` alone already schedules both, so
- * `advanceUntilIdle()` right after construction is what stands in for the resume `GroupsViewModelTest`
- * calls explicitly, mirroring how `DetailViewModelTest` (this class's own closer analogue) handles
- * its identical `init { load() }`.
+ * `GroupDetailViewModel`'s `init { refresh() }` — which itself calls `loadCurrentUserId()`, per
+ * that class's own KDoc — means every test below observes the CONSTRUCTOR's own load of BOTH
+ * members and identity — `viewModel(...)` alone already schedules both, so `advanceUntilIdle()`
+ * right after construction is what stands in for the resume `GroupsViewModelTest` calls
+ * explicitly, mirroring how `DetailViewModelTest` (this class's own closer analogue) handles its
+ * identical `init { load() }`.
  *
  * **Round 1 review's own instruction, followed here:** several tests below build a state the
  * screen can genuinely reach but round 0's suite never did — most importantly `currentUserIdFailure`/

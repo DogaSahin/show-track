@@ -131,6 +131,22 @@ fun GroupDetailScreen(
  *   waiting for a row to visibly disappear that a failed reload will never show would leave the
  *   confirm dialog stuck open over a success.
  *
+ *   [removeAttempted] is only ever set for the dialog CURRENTLY reacting to it, never for one
+ *   already resolved or one whose call was dropped — that guard lives at the `onRemoveConfirm`
+ *   lambda passed to [GroupDetailActionDialogs] below, not here. Without it: start removing sam
+ *   (confirm sets `removeAttempted = true` and — a real `GroupDetailViewModel.removeMember`'s own
+ *   re-entrancy guard — sets `removingUserId = sam`), dismiss sam's dialog with Back while it is
+ *   still in flight (Confirm and Cancel are both disabled by `submitting`, so Back is the only
+ *   way out; `pendingRemoveTarget`/[removeAttempted] reset to `null`/`false`, `removingUserId`
+ *   untouched), open kai's dialog (`removeAttempted` reset `false` on open), tap kai's Confirm —
+ *   the ViewModel's re-entrancy guard drops it because sam's remove is still in flight, so
+ *   `actionState` never changes, but `removeAttempted` would flip `true` for KAI's dialog
+ *   regardless. When sam's remove then lands (`removingUserId`/`removeError` both back to
+ *   `null`), the effect reads that stale `true` and closes KAI's dialog as though kai had been
+ *   removed. Self-correcting (kai is still in the reloaded list) but a false close all the same —
+ *   `GroupDetailScreenTest`'s `a remove confirmed while a different member's remove is still in
+ *   flight does not close that dialog early` is the regression test.
+ *
  * Leave needs no such effect: a successful leave flips [GroupDetailViewModel.left], which the
  * STATEFUL [GroupDetailScreen] above reacts to by navigating away — the whole composable subtree,
  * confirm dialog included, is torn down before there is anything left here to close.
@@ -199,7 +215,18 @@ internal fun GroupDetailScreen(
         onLeaveConfirm = onLeaveGroup,
         onLeaveDismiss = { showLeaveDialog = false },
         onRemoveConfirm = { userId ->
-            removeAttempted = true
+            // A remove already in flight for a DIFFERENT member makes this call a silent no-op —
+            // GroupDetailViewModel.removeMember's own re-entrancy guard drops it because
+            // actionState.removingUserId is already someone else's id, so actionState itself
+            // never changes because of THIS tap. Marking removeAttempted true anyway would leave
+            // it wrongly set for THIS dialog's target; when the OTHER member's remove later
+            // resolves (removingUserId back to null), the close effect below would read that
+            // stale true and close THIS dialog as though its own target had been removed. Setting
+            // it only when nothing else is in flight keeps it meaning what it says: "the remove
+            // now resolving is the one this open dialog actually asked for."
+            if (actionState.removingUserId == null) {
+                removeAttempted = true
+            }
             onRemoveMember(userId)
         },
         onRemoveDismiss = {

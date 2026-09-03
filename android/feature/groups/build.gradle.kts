@@ -41,6 +41,12 @@ dependencies {
     // module was excluded from in task 9c.0 because groupsEntry() took no onNavigate then).
     testImplementation(libs.androidx.navigation.testing)
 
+    // Espresso.pressBack() — GroupDetailScreenTest needs a genuine system Back dismissal (not a
+    // button click) to reproduce a remove dialog dismissed while its own Cancel/Confirm are
+    // disabled (submitting). createComposeRule() already hosts a real ComponentActivity under the
+    // hood, so Espresso's instrumentation reaches it without any extra harness.
+    testImplementation(libs.androidx.espresso.core)
+
     // Hilt's test harness — composing a hiltViewModel()-backed screen in a JVM test needs it, the
     // same three lines :feature:favorites'/:feature:library's build files carry.
     testImplementation(libs.hilt.android.testing)
