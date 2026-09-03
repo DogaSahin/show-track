@@ -111,4 +111,45 @@
          identical collision groups_create_submit's own note describes for GroupsScreen. -->
     <string name="groups_detail_remove_confirm_button">Remove member</string>
     <string name="groups_detail_remove_cancel">Cancel</string>
+
+    <!-- ===== Shared watchlist (task 9c.3) — GroupWatchlistSection.kt, GroupWatchlistDialogs.kt ===== -->
+
+    <string name="groups_watchlist_section_title">Shared watchlist</string>
+    <string name="groups_watchlist_propose_action">Propose a title</string>
+    <string name="groups_watchlist_empty_message">No one has proposed a title yet.</string>
+    <string name="groups_watchlist_page_error">Couldn\'t load more titles. Tap to retry.</string>
+
+    <!-- proposedBy is nullable — deleting your account leaves the entry standing (design §5.3) —
+         and a member who has since LEFT the group (still a valid id, no longer resolvable against
+         the current member list) reads identically to the viewer, so both fall back to this same
+         copy rather than rendering a blank name (this task's own first named test). -->
+    <string name="groups_watchlist_proposed_by">Proposed by %1$s</string>
+    <string name="groups_watchlist_no_proposer">Proposed anonymously</string>
+    <string name="groups_watchlist_remove_action">Remove</string>
+
+    <!-- The proposed_by column on the wire is a raw user id, not a username (backend
+         GroupWatchlist.proposed_by: uuid.UUID) — :feature:groups has no title PICKER of its own
+         (architecture rule 1 forbids depending on :feature:search for one), so this is a raw-id
+         entry field, not a search box. WatchlistEntry.mediaId (task 9c.0) exists so a future task
+         can replace this with a proper picker without a data-layer change. -->
+    <string name="groups_watchlist_propose_title">Propose a title</string>
+    <string name="groups_watchlist_propose_message">Enter the ID of a title already in ShowTrack.</string>
+    <string name="groups_watchlist_propose_media_id_label">Media ID</string>
+    <!-- Deliberately NOT "Propose" — the header's own groups_watchlist_propose_action button stays
+         on screen underneath this dialog, groups_detail_remove_confirm_button's identical
+         collision note. -->
+    <string name="groups_watchlist_propose_submit">Propose title</string>
+    <string name="groups_watchlist_propose_submitting">Proposing…</string>
+    <string name="groups_watchlist_propose_cancel">Cancel</string>
+
+    <string name="groups_watchlist_remove_confirm_title">Remove %1$s?</string>
+    <string name="groups_watchlist_remove_confirm_message">Any member can propose it again later.</string>
+    <string name="groups_watchlist_remove_confirm_button">Remove title</string>
+    <string name="groups_watchlist_remove_cancel">Cancel</string>
+
+    <!-- Round 1's own note (this file's messageRes()) said NoSuchTitle/NoSuchEntry could not be
+         produced by anything on screen; task 9c.3's propose/remove dialogs are what changes that —
+         see messageRes()'s own KDoc. -->
+    <string name="groups_watchlist_error_no_such_title">That title isn\'t in ShowTrack. Double-check the ID.</string>
+    <string name="groups_watchlist_error_no_such_entry">That title was already removed from the watchlist.</string>
 </resources>

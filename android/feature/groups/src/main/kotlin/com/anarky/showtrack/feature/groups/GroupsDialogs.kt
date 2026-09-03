@@ -161,6 +161,17 @@ internal fun JoinGroupDialog(
  * `internal`, not `private`: `GroupsScreen.kt`'s `GroupsContent` also needs it for
  * [GroupsUiState.Error]'s own message, and this file is where the mapping lives (split out to keep
  * `GroupsScreen.kt` under detekt's `TooManyFunctions` threshold — see this file's own KDoc).
+ *
+ * **Task 9c.3 gives [GroupFailure.NoSuchTitle]/[GroupFailure.NoSuchEntry] their own copy**, the
+ * identical round-1 reasoning [GroupFailure.NotAMember] already got: both fell into the generic
+ * fallback while nothing on screen could ever produce them (this file's own prior note said so
+ * explicitly — "creating or joining a group cannot produce the former"). That stopped being true
+ * the moment `ProposeTitleDialog`/`RemoveWatchlistEntryDialog` could reach them, and each names
+ * something the generic "something went wrong" copy would actively misdescribe: retrying
+ * [GroupFailure.NoSuchTitle] answers the identical 404 every time (the media id is simply not one
+ * the server knows), and [GroupFailure.NoSuchEntry] means the row is already gone, not that
+ * anything is broken — see that case's own KDoc for the membership-race shadow this mapping
+ * deliberately still accepts.
  */
 internal fun GroupFailure.messageRes(): Int =
     when (this) {
@@ -171,9 +182,9 @@ internal fun GroupFailure.messageRes(): Int =
         // the group elsewhere, or the group is gone), and "something went wrong, try again" is
         // actively misleading for a 404 that will answer identically on every retry.
         GroupFailure.NotAMember -> R.string.groups_error_not_a_member
+        GroupFailure.NoSuchTitle -> R.string.groups_watchlist_error_no_such_title
+        GroupFailure.NoSuchEntry -> R.string.groups_watchlist_error_no_such_entry
         GroupFailure.NotPermitted,
-        GroupFailure.NoSuchTitle,
-        GroupFailure.NoSuchEntry,
         is GroupFailure.AlreadyReviewed,
         is GroupFailure.Unknown,
         -> R.string.groups_error_unknown

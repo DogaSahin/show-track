@@ -4,34 +4,34 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Card
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.anarky.showtrack.core.data.repository.GroupWithInvite
+import com.anarky.showtrack.core.designsystem.component.EndOfListTrigger
 import com.anarky.showtrack.core.designsystem.component.ErrorState
 import com.anarky.showtrack.core.designsystem.component.LoadingState
 import com.anarky.showtrack.core.designsystem.component.StaleDataBanner
 import com.anarky.showtrack.core.model.GroupMember
 import com.anarky.showtrack.core.model.GroupRole
+import com.anarky.showtrack.core.model.WatchlistEntry
 
 /**
  * The stateful entry point. `hiltViewModel()` is the only line here that touches DI —
@@ -77,6 +77,11 @@ fun GroupDetailScreen(
         onRotateDialogOpened = viewModel::clearRotateError,
         onLeaveDialogOpened = viewModel::clearLeaveError,
         onRemoveDialogOpened = viewModel::clearRemoveError,
+        onLoadMoreWatchlist = viewModel::loadMoreWatchlist,
+        onProposeTitle = viewModel::proposeTitle,
+        onRemoveWatchlistEntry = viewModel::removeFromWatchlist,
+        onProposeDialogOpened = viewModel::clearProposeError,
+        onRemoveEntryDialogOpened = viewModel::clearRemoveEntryError,
         modifier = modifier,
     )
 }
@@ -165,24 +170,22 @@ internal fun GroupDetailScreen(
     onRotateDialogOpened: () -> Unit,
     onLeaveDialogOpened: () -> Unit,
     onRemoveDialogOpened: () -> Unit,
+    onLoadMoreWatchlist: () -> Unit,
+    onProposeTitle: (String) -> Unit,
+    onRemoveWatchlistEntry: (String) -> Unit,
+    onProposeDialogOpened: () -> Unit,
+    onRemoveEntryDialogOpened: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var showRotateDialog by remember { mutableStateOf(false) }
-    var showLeaveDialog by remember { mutableStateOf(false) }
-    var pendingRemoveTarget by remember { mutableStateOf<GroupMember?>(null) }
-    var removeAttempted by remember { mutableStateOf(false) }
-
-    val rotatedInvite = (state as? GroupDetailUiState.Success)?.rotatedInvite
-    DialogCloseEffects(
-        rotatedInvite = rotatedInvite,
-        actionState = actionState,
-        removeAttempted = removeAttempted,
-        onRotateDialogShouldClose = { showRotateDialog = false },
-        onRemoveDialogShouldClose = {
-            pendingRemoveTarget = null
-            removeAttempted = false
-        },
-    )
+    val dialogState = rememberGroupDetailDialogState(state = state, actionState = actionState)
+    var showRotateDialog by dialogState.showRotateDialog
+    var showLeaveDialog by dialogState.showLeaveDialog
+    var pendingRemoveTarget by dialogState.pendingRemoveTarget
+    var removeAttempted by dialogState.removeAttempted
+    var showProposeDialog by dialogState.showProposeDialog
+    var proposeAttempted by dialogState.proposeAttempted
+    var pendingRemoveEntryTarget by dialogState.pendingRemoveEntryTarget
+    var removeEntryAttempted by dialogState.removeEntryAttempted
 
     GroupDetailBody(
         state = state,
@@ -202,28 +205,147 @@ internal fun GroupDetailScreen(
             removeAttempted = false
         },
         onDismissRotatedInvite = onDismissRotatedInvite,
+        onLoadMoreWatchlist = onLoadMoreWatchlist,
+        onProposeClick = {
+            onProposeDialogOpened()
+            showProposeDialog = true
+            proposeAttempted = false
+        },
+        onRemoveEntryClick = { entry ->
+            onRemoveEntryDialogOpened()
+            pendingRemoveEntryTarget = entry
+            removeEntryAttempted = false
+        },
         modifier = modifier,
     )
 
-    GroupDetailActionDialogs(
+    GroupDetailScreenDialogs(
+        dialogState = dialogState,
+        actionState = actionState,
+        onRotateInvite = onRotateInvite,
+        onLeaveGroup = onLeaveGroup,
+        onRemoveMember = onRemoveMember,
+        onProposeTitle = onProposeTitle,
+        onRemoveWatchlistEntry = onRemoveWatchlistEntry,
+    )
+}
+
+/**
+ * [GroupDetailScreen]'s own `remember`ed dialog-visibility state, plus the [DialogCloseEffects]
+ * wiring over it — pulled out purely to keep that function's own length under detekt's `LongMethod`
+ * threshold; no behaviour moved with it that a caller could observe differently. [GroupDetailScreen]'s
+ * own KDoc documents WHY each field exists and how it is used.
+ *
+ * `@Suppress("LongParameterList")`: a private, internal state carrier for one screen's five
+ * dialogs — `FakeGroupRepository`'s own suppression carries the identical "this is what the shape
+ * genuinely needs" reasoning, not a bag of unrelated fields that should have been split.
+ */
+@Suppress("LongParameterList")
+private class GroupDetailDialogState(
+    val showRotateDialog: MutableState<Boolean>,
+    val showLeaveDialog: MutableState<Boolean>,
+    val pendingRemoveTarget: MutableState<GroupMember?>,
+    val removeAttempted: MutableState<Boolean>,
+    val showProposeDialog: MutableState<Boolean>,
+    val proposeAttempted: MutableState<Boolean>,
+    val pendingRemoveEntryTarget: MutableState<WatchlistEntry?>,
+    val removeEntryAttempted: MutableState<Boolean>,
+)
+
+@Composable
+private fun rememberGroupDetailDialogState(
+    state: GroupDetailUiState,
+    actionState: GroupDetailActionState,
+): GroupDetailDialogState {
+    val showRotateDialog = remember { mutableStateOf(false) }
+    val showLeaveDialog = remember { mutableStateOf(false) }
+    val pendingRemoveTarget = remember { mutableStateOf<GroupMember?>(null) }
+    val removeAttempted = remember { mutableStateOf(false) }
+    val showProposeDialog = remember { mutableStateOf(false) }
+    val proposeAttempted = remember { mutableStateOf(false) }
+    val pendingRemoveEntryTarget = remember { mutableStateOf<WatchlistEntry?>(null) }
+    val removeEntryAttempted = remember { mutableStateOf(false) }
+
+    DialogCloseEffects(
+        rotatedInvite = (state as? GroupDetailUiState.Success)?.rotatedInvite,
+        actionState = actionState,
+        removeAttempted = removeAttempted.value,
+        proposeAttempted = proposeAttempted.value,
+        removeEntryAttempted = removeEntryAttempted.value,
+        onRotateDialogShouldClose = { showRotateDialog.value = false },
+        onRemoveDialogShouldClose = {
+            pendingRemoveTarget.value = null
+            removeAttempted.value = false
+        },
+        onProposeDialogShouldClose = {
+            showProposeDialog.value = false
+            proposeAttempted.value = false
+        },
+        onRemoveEntryDialogShouldClose = {
+            pendingRemoveEntryTarget.value = null
+            removeEntryAttempted.value = false
+        },
+    )
+
+    return GroupDetailDialogState(
         showRotateDialog = showRotateDialog,
         showLeaveDialog = showLeaveDialog,
         pendingRemoveTarget = pendingRemoveTarget,
+        removeAttempted = removeAttempted,
+        showProposeDialog = showProposeDialog,
+        proposeAttempted = proposeAttempted,
+        pendingRemoveEntryTarget = pendingRemoveEntryTarget,
+        removeEntryAttempted = removeEntryAttempted,
+    )
+}
+
+/**
+ * The five confirm/dismiss callbacks [GroupDetailActionDialogs] needs, built from [dialogState] and
+ * the raw mutation calls — pulled out of [GroupDetailScreen] for the identical `LongMethod` reason
+ * [rememberGroupDetailDialogState] was. [onRemoveConfirm]/[onProposeConfirm]'s own inline comments
+ * (below) are where the "only mark an attempt when nothing is already in flight" reasoning lives —
+ * [GroupDetailActionState]'s own KDoc has the higher-level "why one channel per operation" argument.
+ */
+@Suppress("LongParameterList")
+@Composable
+private fun GroupDetailScreenDialogs(
+    dialogState: GroupDetailDialogState,
+    actionState: GroupDetailActionState,
+    onRotateInvite: () -> Unit,
+    onLeaveGroup: () -> Unit,
+    onRemoveMember: (String) -> Unit,
+    onProposeTitle: (String) -> Unit,
+    onRemoveWatchlistEntry: (String) -> Unit,
+) {
+    var showRotateDialog by dialogState.showRotateDialog
+    var pendingRemoveTarget by dialogState.pendingRemoveTarget
+    var removeAttempted by dialogState.removeAttempted
+    var showProposeDialog by dialogState.showProposeDialog
+    var proposeAttempted by dialogState.proposeAttempted
+    var pendingRemoveEntryTarget by dialogState.pendingRemoveEntryTarget
+    var removeEntryAttempted by dialogState.removeEntryAttempted
+
+    GroupDetailActionDialogs(
+        showRotateDialog = showRotateDialog,
+        showLeaveDialog = dialogState.showLeaveDialog.value,
+        pendingRemoveTarget = pendingRemoveTarget,
+        showProposeDialog = showProposeDialog,
+        pendingRemoveEntryTarget = pendingRemoveEntryTarget,
         actionState = actionState,
         onRotateConfirm = onRotateInvite,
         onRotateDismiss = { showRotateDialog = false },
         onLeaveConfirm = onLeaveGroup,
-        onLeaveDismiss = { showLeaveDialog = false },
+        onLeaveDismiss = { dialogState.showLeaveDialog.value = false },
         onRemoveConfirm = { userId ->
             // A remove already in flight for a DIFFERENT member makes this call a silent no-op —
             // GroupDetailViewModel.removeMember's own re-entrancy guard drops it because
             // actionState.removingUserId is already someone else's id, so actionState itself
             // never changes because of THIS tap. Marking removeAttempted true anyway would leave
             // it wrongly set for THIS dialog's target; when the OTHER member's remove later
-            // resolves (removingUserId back to null), the close effect below would read that
-            // stale true and close THIS dialog as though its own target had been removed. Setting
-            // it only when nothing else is in flight keeps it meaning what it says: "the remove
-            // now resolving is the one this open dialog actually asked for."
+            // resolves (removingUserId back to null), the close effect would read that stale true
+            // and close THIS dialog as though its own target had been removed. Setting it only
+            // when nothing else is in flight keeps it meaning what it says: "the remove now
+            // resolving is the one this open dialog actually asked for."
             if (actionState.removingUserId == null) {
                 removeAttempted = true
             }
@@ -233,23 +355,55 @@ internal fun GroupDetailScreen(
             pendingRemoveTarget = null
             removeAttempted = false
         },
+        onProposeConfirm = { mediaId ->
+            // [onRemoveConfirm]'s own note above, applied identically here.
+            if (!actionState.proposing) {
+                proposeAttempted = true
+            }
+            onProposeTitle(mediaId)
+        },
+        onProposeDismiss = { showProposeDialog = false },
+        onRemoveEntryConfirm = { entryId ->
+            // [onRemoveConfirm]'s own note above, applied identically here, one resource over.
+            if (actionState.removingEntryId == null) {
+                removeEntryAttempted = true
+            }
+            onRemoveWatchlistEntry(entryId)
+        },
+        onRemoveEntryDismiss = {
+            pendingRemoveEntryTarget = null
+            removeEntryAttempted = false
+        },
     )
 }
 
 /**
- * [GroupDetailScreen]'s own two close-on-success effects — pulled out purely to keep that
- * function's own length under detekt's `LongMethod` threshold; no behaviour moved with it that a
- * caller could observe differently. [GroupDetailScreen]'s own KDoc documents WHY each condition is
- * shaped the way it is (BLOCKING 1's `removeAttempted` fix, most of all) — that reasoning stays
- * there, not duplicated here.
+ * [GroupDetailScreen]'s own close-on-success effects — pulled out purely to keep that function's
+ * own length under detekt's `LongMethod` threshold; no behaviour moved with it that a caller could
+ * observe differently. [GroupDetailScreen]'s own KDoc documents WHY each condition is shaped the
+ * way it is (BLOCKING 1's `removeAttempted` fix, most of all) — that reasoning stays there, not
+ * duplicated here.
+ *
+ * [proposeAttempted]/[removeEntryAttempted] (task 9c.3) are [removeAttempted]'s IDENTICAL shape,
+ * applied to the two new dialogs: propose has no natural "just succeeded" signal to key on the way
+ * rotate's [rotatedInvite] does (there is no per-success unique VALUE this task exposes — the
+ * watchlist LIST changing is not specific enough, [GroupDetailViewModel.reloadWatchlist]'s own KDoc
+ * on why keying a close effect on list CONTENT would be wrong, the identical reasoning
+ * [removeAttempted] itself already carries for [GroupDetailActionState.removingUserId]), so both
+ * new dialogs use the attempted-flag fix rather than rotate's simpler shape.
  */
+@Suppress("LongParameterList")
 @Composable
 private fun DialogCloseEffects(
     rotatedInvite: GroupWithInvite?,
     actionState: GroupDetailActionState,
     removeAttempted: Boolean,
+    proposeAttempted: Boolean,
+    removeEntryAttempted: Boolean,
     onRotateDialogShouldClose: () -> Unit,
     onRemoveDialogShouldClose: () -> Unit,
+    onProposeDialogShouldClose: () -> Unit,
+    onRemoveEntryDialogShouldClose: () -> Unit,
 ) {
     LaunchedEffect(rotatedInvite) {
         if (rotatedInvite != null) onRotateDialogShouldClose()
@@ -259,11 +413,21 @@ private fun DialogCloseEffects(
             onRemoveDialogShouldClose()
         }
     }
+    LaunchedEffect(actionState.proposing, actionState.proposeError) {
+        if (proposeAttempted && !actionState.proposing && actionState.proposeError == null) {
+            onProposeDialogShouldClose()
+        }
+    }
+    LaunchedEffect(actionState.removingEntryId, actionState.removeEntryError) {
+        if (removeEntryAttempted && actionState.removingEntryId == null && actionState.removeEntryError == null) {
+            onRemoveEntryDialogShouldClose()
+        }
+    }
 }
 
 /**
- * The three owner/member confirmation dialogs, bundled — pulled out of [GroupDetailScreen] for the
- * identical [DialogCloseEffects] reason above.
+ * The five owner/member/watchlist confirmation dialogs, bundled — pulled out of [GroupDetailScreen]
+ * for the identical [DialogCloseEffects] reason above.
  */
 @Suppress("LongParameterList")
 @Composable
@@ -271,6 +435,8 @@ private fun GroupDetailActionDialogs(
     showRotateDialog: Boolean,
     showLeaveDialog: Boolean,
     pendingRemoveTarget: GroupMember?,
+    showProposeDialog: Boolean,
+    pendingRemoveEntryTarget: WatchlistEntry?,
     actionState: GroupDetailActionState,
     onRotateConfirm: () -> Unit,
     onRotateDismiss: () -> Unit,
@@ -278,6 +444,10 @@ private fun GroupDetailActionDialogs(
     onLeaveDismiss: () -> Unit,
     onRemoveConfirm: (String) -> Unit,
     onRemoveDismiss: () -> Unit,
+    onProposeConfirm: (String) -> Unit,
+    onProposeDismiss: () -> Unit,
+    onRemoveEntryConfirm: (String) -> Unit,
+    onRemoveEntryDismiss: () -> Unit,
 ) {
     RotateDialogHost(
         visible = showRotateDialog,
@@ -297,6 +467,18 @@ private fun GroupDetailActionDialogs(
         onConfirm = onRemoveConfirm,
         onDismiss = onRemoveDismiss,
     )
+    ProposeDialogHost(
+        visible = showProposeDialog,
+        actionState = actionState,
+        onPropose = onProposeConfirm,
+        onDismiss = onProposeDismiss,
+    )
+    RemoveWatchlistEntryDialogHost(
+        target = pendingRemoveEntryTarget,
+        actionState = actionState,
+        onConfirm = onRemoveEntryConfirm,
+        onDismiss = onRemoveEntryDismiss,
+    )
 }
 
 /**
@@ -315,6 +497,9 @@ private fun GroupDetailBody(
     onLeaveClick: () -> Unit,
     onRemoveClick: (GroupMember) -> Unit,
     onDismissRotatedInvite: () -> Unit,
+    onLoadMoreWatchlist: () -> Unit,
+    onProposeClick: () -> Unit,
+    onRemoveEntryClick: (WatchlistEntry) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.fillMaxSize()) {
@@ -330,6 +515,9 @@ private fun GroupDetailBody(
             onRotateClick = onRotateClick,
             onRemoveClick = onRemoveClick,
             onDismissRotatedInvite = onDismissRotatedInvite,
+            onLoadMoreWatchlist = onLoadMoreWatchlist,
+            onProposeClick = onProposeClick,
+            onRemoveEntryClick = onRemoveEntryClick,
             modifier = Modifier.weight(weight = 1f).fillMaxWidth(),
         )
         TextButton(onClick = onLeaveClick, modifier = Modifier.padding(all = 16.dp)) {
@@ -353,6 +541,9 @@ private fun GroupDetailContent(
     onRotateClick: () -> Unit,
     onRemoveClick: (GroupMember) -> Unit,
     onDismissRotatedInvite: () -> Unit,
+    onLoadMoreWatchlist: () -> Unit,
+    onProposeClick: () -> Unit,
+    onRemoveEntryClick: (WatchlistEntry) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Box(modifier = modifier) {
@@ -372,6 +563,9 @@ private fun GroupDetailContent(
                     onRotateClick = onRotateClick,
                     onRemoveClick = onRemoveClick,
                     onDismissRotatedInvite = onDismissRotatedInvite,
+                    onLoadMoreWatchlist = onLoadMoreWatchlist,
+                    onProposeClick = onProposeClick,
+                    onRemoveEntryClick = onRemoveEntryClick,
                 )
         }
     }
@@ -394,6 +588,22 @@ private fun GroupDetailContent(
  * device, the API directly — and this screen's next reload). Both read `isOwner` as `false`, which
  * hides rotate/remove rather than crashing — E-F's own "hidden, not disabled" applied to an
  * UNKNOWN role, not only a known non-owner one.
+ *
+ * **Task 9c.3 adds the shared watchlist below the member list, in the SAME `LazyColumn`** as
+ * [membersItems] (`GroupMembersSection.kt`) and [watchlistItems] (`GroupWatchlistSection.kt`) — one
+ * scrollable region for the whole screen, rather than members and watchlist each owning a separate
+ * one: whichever section has more rows simply scrolls further, the same as any ordinary list screen.
+ * `GroupWatchlistSection.kt`'s own KDoc has the fuller reasoning, including a Robolectric testing
+ * characteristic this choice does NOT by itself fix — `GroupDetailScreenTest` scrolls explicitly for
+ * rows a `LazyColumn` does not reach on its first layout pass.
+ *
+ * [EndOfListTrigger]'s [itemCount] is members + the watchlist header + watchlist rows (or one, for
+ * the empty-state row [watchlistItems] emits when there are none) — an approximation of the ACTUAL
+ * emitted item count, not a index-exact one, which is fine: [EndOfListTrigger]'s own `threshold`
+ * already tolerates being a few items off, and firing [onLoadMoreWatchlist] a little early or late
+ * near the bottom of a combined list is harmless — `GroupDetailViewModel.loadMoreWatchlist`'s own
+ * re-entrancy and exhaustion guards are what make an extra call actually safe, not this count being
+ * exact.
  */
 @Suppress("LongParameterList")
 @Composable
@@ -404,6 +614,9 @@ private fun GroupDetailSuccessContent(
     onRotateClick: () -> Unit,
     onRemoveClick: (GroupMember) -> Unit,
     onDismissRotatedInvite: () -> Unit,
+    onLoadMoreWatchlist: () -> Unit,
+    onProposeClick: () -> Unit,
+    onRemoveEntryClick: (WatchlistEntry) -> Unit,
 ) {
     val self = state.members.firstOrNull { it.userId == currentUserId }
     val isOwner = self?.role == GroupRole.OWNER
@@ -424,69 +637,63 @@ private fun GroupDetailSuccessContent(
                 Text(text = stringResource(R.string.groups_detail_rotate_action))
             }
         }
-        MembersList(
-            members = state.members,
+        GroupDetailList(
+            state = state,
             currentUserId = currentUserId,
             isOwner = isOwner,
             onRemoveClick = onRemoveClick,
+            onLoadMoreWatchlist = onLoadMoreWatchlist,
+            onProposeClick = onProposeClick,
+            onRemoveEntryClick = onRemoveEntryClick,
             modifier = Modifier.weight(weight = 1f).fillMaxWidth(),
         )
     }
 }
 
+/**
+ * The ONE `LazyColumn` [GroupDetailSuccessContent] renders — pulled out purely to keep that
+ * function's own length under detekt's `LongMethod` threshold; no behaviour moved with it that a
+ * caller could observe differently. [GroupDetailSuccessContent]'s own KDoc has the full reasoning
+ * for why members and watchlist rows now share this one scrollable region.
+ */
+@Suppress("LongParameterList")
 @Composable
-private fun MembersList(
-    members: List<GroupMember>,
+private fun GroupDetailList(
+    state: GroupDetailUiState.Success,
     currentUserId: String?,
     isOwner: Boolean,
     onRemoveClick: (GroupMember) -> Unit,
+    onLoadMoreWatchlist: () -> Unit,
+    onProposeClick: () -> Unit,
+    onRemoveEntryClick: (WatchlistEntry) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val listState = rememberLazyListState()
+    val itemCount = state.members.size + 1 + state.watchlist.size.coerceAtLeast(minimumValue = 1)
+    EndOfListTrigger(listState = listState, itemCount = itemCount, onTriggered = onLoadMoreWatchlist)
+
     LazyColumn(
+        state = listState,
         modifier = modifier,
         contentPadding = PaddingValues(all = 12.dp),
         verticalArrangement = Arrangement.spacedBy(space = 8.dp),
     ) {
-        // Keyed by userId, GroupsList's identical reasoning: without a key a reorder from a
-        // refresh re-uses the wrong composable state for the wrong row.
-        items(items = members, key = GroupMember::userId) { member ->
-            MemberRow(
-                member = member,
-                // Owner-only (E-F), and NEVER for the viewer's own row — design doc §1.1: removing
-                // yourself is "Leave group", not this control reused with your own id.
-                showRemove = isOwner && member.userId != currentUserId,
-                onRemoveClick = { onRemoveClick(member) },
-            )
+        membersItems(
+            members = state.members,
+            currentUserId = currentUserId,
+            isOwner = isOwner,
+            onRemoveClick = onRemoveClick,
+        )
+        item(key = "watchlist-header") {
+            WatchlistHeader(onProposeClick = onProposeClick, modifier = Modifier.fillMaxWidth())
         }
-    }
-}
-
-@Composable
-private fun MemberRow(
-    member: GroupMember,
-    showRemove: Boolean,
-    onRemoveClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Card(modifier = modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(all = 16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column {
-                Text(text = member.username, style = MaterialTheme.typography.titleMedium)
-                Text(
-                    text = stringResource(member.role.labelRes()),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            if (showRemove) {
-                TextButton(onClick = onRemoveClick) {
-                    Text(text = stringResource(R.string.groups_detail_remove_action))
-                }
-            }
-        }
+        watchlistItems(
+            entries = state.watchlist,
+            members = state.members,
+            loadingMore = state.watchlistLoadingMore,
+            pageError = state.watchlistPageError != null,
+            onLoadMore = onLoadMoreWatchlist,
+            onRemoveClick = onRemoveEntryClick,
+        )
     }
 }

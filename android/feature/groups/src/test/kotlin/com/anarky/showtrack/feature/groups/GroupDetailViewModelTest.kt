@@ -3,11 +3,16 @@ package com.anarky.showtrack.feature.groups
 import android.app.Application
 import androidx.lifecycle.SavedStateHandle
 import com.anarky.showtrack.core.data.repository.GroupWithInvite
+import com.anarky.showtrack.core.data.repository.WatchlistPage
 import com.anarky.showtrack.core.model.AuthFailure
 import com.anarky.showtrack.core.model.Group
 import com.anarky.showtrack.core.model.GroupFailure
 import com.anarky.showtrack.core.model.GroupMember
 import com.anarky.showtrack.core.model.GroupRole
+import com.anarky.showtrack.core.model.MediaSource
+import com.anarky.showtrack.core.model.MediaSummary
+import com.anarky.showtrack.core.model.MediaType
+import com.anarky.showtrack.core.model.WatchlistEntry
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -583,6 +588,286 @@ class GroupDetailViewModelTest {
             assertEquals(listOf(OWNER), result.members)
         }
 
+    /**
+     * The brief's second named test (task 9c.3), verbatim. `WatchlistPage` is `{items, next_cursor}`
+     * over the composite `(sort_value, id)` cursor (architecture rule 4) — [ENTRY_1]/[ENTRY_2] are
+     * DISTINCT entries so a bug that re-fetched or re-appended page one would be visible as a
+     * duplicate, not merely a wrong count. [watchlistCalls] pins the cursor sequence itself: a
+     * mutant that fetched the first page twice, or skipped straight to page two without a first
+     * fetch, would still leave [state] looking plausible but would fail that assertion.
+     */
+    @Test
+    fun `paging the watchlist appends without duplicates`() =
+        runTest(dispatcher) {
+            val groupRepository =
+                FakeGroupRepository(
+                    membersResult = listOf(OWNER),
+                    watchlistPages =
+                        mutableMapOf(
+                            null to WatchlistPage(items = listOf(ENTRY_1), nextCursor = "cursor-2"),
+                            "cursor-2" to WatchlistPage(items = listOf(ENTRY_2), nextCursor = null),
+                        ),
+                )
+            val viewModel = viewModel(groupRepository)
+            advanceUntilIdle()
+            assertEquals(listOf(ENTRY_1), (viewModel.state.value as GroupDetailUiState.Success).watchlist)
+
+            viewModel.loadMoreWatchlist()
+            advanceUntilIdle()
+
+            assertEquals(
+                listOf(ENTRY_1, ENTRY_2),
+                (viewModel.state.value as GroupDetailUiState.Success).watchlist,
+            )
+            assertEquals(listOf(null, "cursor-2"), groupRepository.watchlistCalls)
+
+            // The negative control for exhaustion: the list is now exhausted (nextCursor == null
+            // on page two), so a THIRD call must be a no-op, not a re-fetch of page one appended a
+            // second time.
+            viewModel.loadMoreWatchlist()
+            advanceUntilIdle()
+
+            assertEquals(listOf(null, "cursor-2"), groupRepository.watchlistCalls)
+            assertEquals(
+                listOf(ENTRY_1, ENTRY_2),
+                (viewModel.state.value as GroupDetailUiState.Success).watchlist,
+            )
+        }
+
+    /** [loadMoreWatchlist]'s own re-entrancy guard — `LibraryViewModel.loadMore`'s identical shape. */
+    @Test
+    fun `loadMoreWatchlist is not fired again while one is already in flight`() =
+        runTest(dispatcher) {
+            val groupRepository =
+                FakeGroupRepository(
+                    membersResult = listOf(OWNER),
+                    watchlistPages =
+                        mutableMapOf(
+                            null to WatchlistPage(items = listOf(ENTRY_1), nextCursor = "cursor-2"),
+                            "cursor-2" to WatchlistPage(items = listOf(ENTRY_2), nextCursor = null),
+                        ),
+                )
+            val viewModel = viewModel(groupRepository)
+            advanceUntilIdle()
+
+            groupRepository.watchlistGate = CompletableDeferred()
+            viewModel.loadMoreWatchlist()
+            viewModel.loadMoreWatchlist()
+            viewModel.loadMoreWatchlist()
+            advanceUntilIdle()
+
+            // Only the ORIGINAL first-page fetch (from refresh()) plus ONE loadMore call for
+            // cursor-2 — the two re-entrant calls above must not have queued a second request.
+            assertEquals(listOf(null, "cursor-2"), groupRepository.watchlistCalls)
+
+            groupRepository.watchlistGate?.complete(Unit)
+            advanceUntilIdle()
+            assertEquals(listOf(ENTRY_1, ENTRY_2), (viewModel.state.value as GroupDetailUiState.Success).watchlist)
+        }
+
+    /**
+     * The reachable-state test round 1 review's own instruction (Global Constraints) asks for: a
+     * failed WATCHLIST fetch, over a member list that loaded fine, is a combination no OTHER test
+     * in this file builds. [GroupDetailUiState.Success.watchlistPageError] must carry the failure
+     * and [GroupDetailUiState.Success.members] must be UNTOUCHED — not [GroupDetailUiState.Error],
+     * which would take the correctly-loaded member list off screen for a failure that has nothing
+     * to do with it (this task's own "can the user still act on what they can see" question,
+     * answered for the member list's side: yes, because the watchlist failing never demotes it).
+     */
+    @Test
+    fun `a failed watchlist fetch leaves the members on screen with an inline error, not a full-screen one`() =
+        runTest(dispatcher) {
+            val groupRepository = FakeGroupRepository(membersResult = listOf(OWNER, MEMBER))
+            groupRepository.watchlistFailure = GroupFailure.Network
+            val viewModel = viewModel(groupRepository)
+            advanceUntilIdle()
+
+            val result = viewModel.state.value as GroupDetailUiState.Success
+            assertEquals(listOf(OWNER, MEMBER), result.members)
+            assertEquals(emptyList<WatchlistEntry>(), result.watchlist)
+            assertEquals(GroupFailure.Network, result.watchlistPageError)
+        }
+
+    /** The brief's third named test (task 9c.3), verbatim. */
+    @Test
+    fun `proposing a title the server does not know shows the unknown-title error`() =
+        runTest(dispatcher) {
+            val groupRepository = FakeGroupRepository(membersResult = listOf(OWNER))
+            groupRepository.proposeFailure = GroupFailure.NoSuchTitle
+            val viewModel = viewModel(groupRepository)
+            advanceUntilIdle()
+
+            viewModel.proposeTitle("no-such-media-id")
+            advanceUntilIdle()
+
+            assertEquals(GroupFailure.NoSuchTitle, viewModel.actionState.value.proposeError)
+            assertEquals(emptyList<WatchlistEntry>(), (viewModel.state.value as GroupDetailUiState.Success).watchlist)
+        }
+
+    /**
+     * The positive control for the test above: without it, a [proposeTitle] that ALWAYS set
+     * [GroupDetailActionState.proposeError] would trivially pass it. Also pins that
+     * [proposeGate]/[proposeCalls] is the right ARGUMENT (`mediaId`), not merely that some call
+     * happened.
+     */
+    @Test
+    fun `proposing a known title reloads the watchlist and clears the propose state`() =
+        runTest(dispatcher) {
+            val groupRepository = FakeGroupRepository(membersResult = listOf(OWNER))
+            val viewModel = viewModel(groupRepository)
+            advanceUntilIdle()
+            // Starts empty (the fake's default first page) — proves what follows is a genuine
+            // reload, not a no-op propose that happens to leave an already-populated list alone.
+            assertEquals(emptyList<WatchlistEntry>(), (viewModel.state.value as GroupDetailUiState.Success).watchlist)
+
+            groupRepository.proposeResult = ENTRY_1
+            groupRepository.watchlistPages =
+                mutableMapOf(null to WatchlistPage(items = listOf(ENTRY_1), nextCursor = null))
+            viewModel.proposeTitle(ENTRY_1.mediaId)
+            advanceUntilIdle()
+
+            assertEquals(listOf(GROUP_ID to ENTRY_1.mediaId), groupRepository.proposeCalls)
+            assertEquals(listOf(ENTRY_1), (viewModel.state.value as GroupDetailUiState.Success).watchlist)
+            assertEquals(GroupDetailActionState(), viewModel.actionState.value)
+        }
+
+    @Test
+    fun `propose is not fired again while one is already in flight`() =
+        runTest(dispatcher) {
+            val groupRepository = FakeGroupRepository(membersResult = listOf(OWNER), proposeResult = ENTRY_1)
+            val viewModel = viewModel(groupRepository)
+            advanceUntilIdle()
+
+            viewModel.proposeTitle(ENTRY_1.mediaId)
+            viewModel.proposeTitle(ENTRY_1.mediaId)
+            viewModel.proposeTitle(ENTRY_1.mediaId)
+            advanceUntilIdle()
+
+            assertEquals(1, groupRepository.proposeCalls.size)
+        }
+
+    /**
+     * [proposeTitle]'s own BLOCKING-3-shaped guard, mirroring [rotateInvite]'s test of the same
+     * name one section up: this screen offers exactly one propose form, reachable only from a
+     * loaded [GroupDetailUiState.Success], so a call reaching the repository from
+     * [GroupDetailUiState.Error] would be an irreversible server-side create with nowhere to fold
+     * the result into.
+     */
+    @Test
+    fun `proposeTitle does nothing when the member list failed to load`() =
+        runTest(dispatcher) {
+            val groupRepository = FakeGroupRepository(membersFailure = GroupFailure.Network, proposeResult = ENTRY_1)
+            val viewModel = viewModel(groupRepository)
+            advanceUntilIdle()
+            assertEquals(GroupDetailUiState.Error(GroupFailure.Network), viewModel.state.value)
+
+            viewModel.proposeTitle(ENTRY_1.mediaId)
+            advanceUntilIdle()
+
+            assertEquals(0, groupRepository.proposeCalls.size)
+            assertEquals(GroupDetailActionState(), viewModel.actionState.value)
+        }
+
+    /**
+     * Mutation-critical negative control, `removing a member calls removeMember with that member's
+     * id, not the caller's own`'s identical shape one resource over: a [removeFromWatchlist] that
+     * always targeted the FIRST entry would pass every other test in this file, since [ENTRY_1] is
+     * not [ENTRY_2]. Two entries in the fixture, removing the SECOND, is what discriminates "reads
+     * the argument" from "reads something fixed".
+     */
+    @Test
+    fun `removing a watchlist entry calls removeFromWatchlist with that entry's id, not another entry's`() =
+        runTest(dispatcher) {
+            val groupRepository =
+                FakeGroupRepository(
+                    membersResult = listOf(OWNER),
+                    watchlistPages =
+                        mutableMapOf(null to WatchlistPage(items = listOf(ENTRY_1, ENTRY_2), nextCursor = null)),
+                )
+            val viewModel = viewModel(groupRepository)
+            advanceUntilIdle()
+
+            viewModel.removeFromWatchlist(ENTRY_2.id)
+            advanceUntilIdle()
+
+            assertEquals(listOf(GROUP_ID to ENTRY_2.id), groupRepository.removeWatchlistEntryCalls)
+        }
+
+    @Test
+    fun `a failed remove-from-watchlist surfaces the error and leaves the watchlist untouched`() =
+        runTest(dispatcher) {
+            val groupRepository =
+                FakeGroupRepository(
+                    membersResult = listOf(OWNER),
+                    watchlistPages =
+                        mutableMapOf(null to WatchlistPage(items = listOf(ENTRY_1, ENTRY_2), nextCursor = null)),
+                )
+            groupRepository.removeWatchlistEntryFailure = GroupFailure.NoSuchEntry
+            val viewModel = viewModel(groupRepository)
+            advanceUntilIdle()
+
+            viewModel.removeFromWatchlist(ENTRY_1.id)
+            advanceUntilIdle()
+
+            assertEquals(GroupFailure.NoSuchEntry, viewModel.actionState.value.removeEntryError)
+            assertNull(viewModel.actionState.value.removingEntryId)
+            assertEquals(listOf(ENTRY_1, ENTRY_2), (viewModel.state.value as GroupDetailUiState.Success).watchlist)
+        }
+
+    @Test
+    fun `remove entry is not fired again while one is already in flight`() =
+        runTest(dispatcher) {
+            val groupRepository =
+                FakeGroupRepository(
+                    membersResult = listOf(OWNER),
+                    watchlistPages =
+                        mutableMapOf(null to WatchlistPage(items = listOf(ENTRY_1, ENTRY_2), nextCursor = null)),
+                )
+            val viewModel = viewModel(groupRepository)
+            advanceUntilIdle()
+
+            viewModel.removeFromWatchlist(ENTRY_1.id)
+            viewModel.removeFromWatchlist(ENTRY_2.id)
+            viewModel.removeFromWatchlist(ENTRY_1.id)
+            advanceUntilIdle()
+
+            assertEquals(1, groupRepository.removeWatchlistEntryCalls.size)
+        }
+
+    /**
+     * Fix-round-2 lesson (`GroupsViewModel.clearCreateError`'s own KDoc), applied proactively to
+     * the two channels this task adds — decision C-S: clearing one must never touch another.
+     */
+    @Test
+    fun `clearProposeError and clearRemoveEntryError each clear only their own channel`() =
+        runTest(dispatcher) {
+            val groupRepository =
+                FakeGroupRepository(
+                    membersResult = listOf(OWNER),
+                    watchlistPages =
+                        mutableMapOf(null to WatchlistPage(items = listOf(ENTRY_1), nextCursor = null)),
+                )
+            val viewModel = viewModel(groupRepository)
+            advanceUntilIdle()
+
+            groupRepository.proposeFailure = GroupFailure.NoSuchTitle
+            viewModel.proposeTitle(ENTRY_1.mediaId)
+            advanceUntilIdle()
+            groupRepository.removeWatchlistEntryFailure = GroupFailure.NoSuchEntry
+            viewModel.removeFromWatchlist(ENTRY_1.id)
+            advanceUntilIdle()
+
+            assertEquals(GroupFailure.NoSuchTitle, viewModel.actionState.value.proposeError)
+            assertEquals(GroupFailure.NoSuchEntry, viewModel.actionState.value.removeEntryError)
+
+            viewModel.clearProposeError()
+            assertNull(viewModel.actionState.value.proposeError)
+            assertEquals(GroupFailure.NoSuchEntry, viewModel.actionState.value.removeEntryError)
+
+            viewModel.clearRemoveEntryError()
+            assertNull(viewModel.actionState.value.removeEntryError)
+        }
+
     private companion object {
         const val GROUP_ID = "group-1"
 
@@ -600,5 +885,32 @@ class GroupDetailViewModelTest {
                 inviteCode = "NEWCODE0000000000000",
                 expiresAt = Instant.parse("2026-09-10T00:00:00Z"),
             )
+
+        fun summary(title: String) =
+            MediaSummary(
+                source = MediaSource.ANILIST,
+                externalId = title,
+                type = MediaType.ANIME,
+                title = title,
+                year = 2024,
+                genres = emptyList(),
+                coverImageUrl = null,
+            )
+
+        fun entry(
+            id: String,
+            title: String,
+            mediaId: String,
+            proposedBy: String?,
+        ) = WatchlistEntry(
+            id = id,
+            media = summary(title),
+            mediaId = mediaId,
+            proposedBy = proposedBy,
+            createdAt = Instant.parse("2026-08-28T10:15:30Z"),
+        )
+
+        val ENTRY_1 = entry(id = "entry-1", title = "Frieren", mediaId = "media-1", proposedBy = OWNER.userId)
+        val ENTRY_2 = entry(id = "entry-2", title = "Mushishi", mediaId = "media-2", proposedBy = MEMBER.userId)
     }
 }

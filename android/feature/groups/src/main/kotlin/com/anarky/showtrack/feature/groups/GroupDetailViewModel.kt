@@ -51,7 +51,17 @@ private const val TAG = "ShowTrackGroupDetail"
  * explains why catching that specific type, not a generic `Exception`, is what lets most `catch`
  * blocks below read `.failure` with no `@Suppress("TooGenericExceptionCaught")`. [leaveGroup] is the
  * one exception (also catches [authRepository]'s own failure type) and is suppressed explicitly.
+ *
+ * `@Suppress("TooManyFunctions")` (task 9c.3, sixteen functions): [GroupRepository]'s own
+ * `TooManyFunctions` suppression carries the identical seam-cohesion argument for why this stays ONE
+ * class rather than splitting by sub-concern (members vs. watchlist) — this ViewModel is meant to be
+ * the SINGLE owner of one screen's state, and [GroupDetailActionState]'s own KDoc already argues for
+ * keeping members/watchlist actions on one screen's ViewModel rather than fragmenting a cohesive unit
+ * across files for a lint threshold's sake. Splitting would also re-introduce the exact class of bug
+ * this file's own KDoc catalogues repeatedly (identity/state fused into or separated from the wrong
+ * scope) by forcing a decision about which fields each half owns.
  */
+@Suppress("TooManyFunctions")
 @HiltViewModel
 class GroupDetailViewModel
     @Inject
@@ -93,6 +103,20 @@ class GroupDetailViewModel
         // second call arriving before the first has finished (from anywhere, not just `init`'s own
         // ordering) is rejected deterministically regardless of dispatcher/scheduling timing.
         private var currentUserIdRequested = false
+
+        // The watchlist's own pagination bookkeeping — plain fields, not `StateFlow`s, since
+        // nothing renders them directly (`GroupDetailUiState.Success.watchlist` is what the screen
+        // reads). Held here rather than reused from `com.anarky.showtrack.core.data.paging.
+        // CursorPaginator` (the primitive `LibraryRepositoryImpl` wraps for the identical
+        // {items, next_cursor} envelope) because `GroupRepository.watchlist(groupId, cursor)` is a
+        // stateless one-shot fetch — unlike `LibraryRepository`, no `:core:data` type owns cursor
+        // state for this endpoint, so this ViewModel is the only place it CAN live. `watchlistCursor`
+        // is the next page's cursor once a fetch has run at least once; `watchlistExhausted` mirrors
+        // `CursorPaginator.started`'s own reasoning — `cursor == null` alone means two different
+        // things ("never fetched" and "fetched, no more pages"), and conflating them would make
+        // [loadMoreWatchlist] re-request page one forever once the list is actually exhausted.
+        private var watchlistCursor: String? = null
+        private var watchlistExhausted = false
 
         init {
             refresh()
@@ -137,16 +161,33 @@ class GroupDetailViewModel
          * already in flight or already succeeded ([currentUserIdRequested]'s own KDoc), and the
          * retry path for a PREVIOUSLY FAILED resolution: the user tapping Retry is the identical
          * trigger this function already recovers [reloadMembers] from, applied to identity too.
+         *
+         * **Task 9c.3:** [reloadWatchlist] is awaited AFTER [reloadMembers], in the SAME coroutine,
+         * and ONLY when [reloadMembers] left [state] as [GroupDetailUiState.Success] — not fired
+         * independently the way [loadCurrentUserId] is. The two fetches are still failure-ISOLATED
+         * ([reloadWatchlist]'s own KDoc: a watchlist failure never touches [members] or promotes
+         * [state] to [GroupDetailUiState.Error]), but sequencing watchlist AFTER members (rather than
+         * launching both from `init` independently, `currentUserId`'s own shape) is deliberate: there
+         * is no [GroupDetailUiState.Success] for [reloadWatchlist] to write INTO until members has
+         * already produced one, so firing it independently would need its own `Loading`-equivalent
+         * (nothing to fold a watchlist-only result into before that point) for no benefit — unlike
+         * identity, the watchlist is rendered ONLY from inside [GroupDetailUiState.Success], never
+         * read by an action that also needs to work from [GroupDetailUiState.Error].
          */
         fun refresh() {
             loadCurrentUserId()
             if (mutableState.value !is GroupDetailUiState.Success) {
                 mutableState.value = GroupDetailUiState.Loading
             }
-            // false: an ordinary refresh drops any rotated code on screen unconditionally — see
-            // reloadMembers's own KDoc (E-I: a refresh is not a moment the server hands the invite
-            // code back).
-            viewModelScope.launch { reloadMembers(preserveRotatedInvite = false) }
+            viewModelScope.launch {
+                // false: an ordinary refresh drops any rotated code on screen unconditionally — see
+                // reloadMembers's own KDoc (E-I: a refresh is not a moment the server hands the
+                // invite code back).
+                reloadMembers(preserveRotatedInvite = false)
+                if (mutableState.value is GroupDetailUiState.Success) {
+                    reloadWatchlist()
+                }
+            }
         }
 
         /**
@@ -184,10 +225,171 @@ class GroupDetailViewModel
                 val members = groupRepository.members(groupId)
                 val previous = mutableState.value as? GroupDetailUiState.Success
                 val rotatedInvite = if (preserveRotatedInvite) previous?.rotatedInvite else null
-                mutableState.value = GroupDetailUiState.Success(members = members, rotatedInvite = rotatedInvite)
+                // The watchlist fields are carried forward UNCONDITIONALLY (task 9c.3) — unlike
+                // rotatedInvite, a members-only reload has nothing to do with the watchlist section
+                // regardless of which caller triggered it. [refresh] calls reloadWatchlist() right
+                // after this returns and overwrites these anyway; [removeMember] does not, and
+                // without this the watchlist would flash to empty on screen for the whole duration
+                // of every member removal, for no reason connected to what changed.
+                mutableState.value =
+                    GroupDetailUiState.Success(
+                        members = members,
+                        watchlist = previous?.watchlist.orEmpty(),
+                        watchlistLoadingMore = previous?.watchlistLoadingMore == true,
+                        watchlistPageError = previous?.watchlistPageError,
+                        rotatedInvite = rotatedInvite,
+                    )
             } catch (failure: GroupOperationException) {
                 val stillShowing = mutableState.value as? GroupDetailUiState.Success
                 mutableState.value = stillShowing?.copy(isStale = true) ?: GroupDetailUiState.Error(failure.failure)
+            }
+        }
+
+        /**
+         * The watchlist's own reload — always the FIRST page (`cursor = null`), replacing whatever
+         * [GroupDetailUiState.Success.watchlist] currently holds, [reloadMembers]'s identical
+         * unconditional-replace shape for [GroupDetailUiState.Success.members]. Called from [refresh]
+         * (after [reloadMembers] has already produced a [GroupDetailUiState.Success] to write into —
+         * see [refresh]'s own KDoc for why this is sequenced rather than independent) and from
+         * [proposeTitle]/[removeFromWatchlist] on a successful mutation — `DetailViewModel`'s own "no
+         * optimistic updates, the server owns the data" discipline, applied here for an even
+         * stronger reason than that precedent: `GroupFailure.NoSuchEntry`'s own KDoc documents that
+         * ANY member may remove ANY entry, so a reload after a mutation can also pick up a
+         * concurrent change another member made in the same window, not merely this caller's own.
+         *
+         * **Never promotes [state] to [GroupDetailUiState.Error]** — on the first page or a later
+         * one, deliberately more permissive than [reloadMembers]. A failure here only ever sets
+         * [GroupDetailUiState.Success.watchlistPageError], leaving [GroupDetailUiState.Success.members]
+         * and everything else on screen exactly as they were: this task's own "can the user still act
+         * on what they can see" question, answered by never letting a broken watchlist fetch take a
+         * correctly-loaded member list off screen — see [GroupDetailUiState.Success]'s own KDoc for
+         * the fuller reasoning. If there is no [GroupDetailUiState.Success] to update (the caller
+         * raced a reload that itself just failed), this is a silent no-op: there is nowhere left to
+         * write the result.
+         *
+         * Resets [watchlistCursor]/[watchlistExhausted] to a fresh first page's values every time —
+         * a caller-visible consequence worth naming: any pages beyond the first that the user had
+         * scrolled into are dropped on every reload, [reloadMembers]'s identical trade-off for
+         * [GroupDetailUiState.Success.members] (which is not paginated at all, so it always fully
+         * replaces), accepted here rather than grown into an incremental merge this task's scope does
+         * not call for.
+         */
+        private suspend fun reloadWatchlist() {
+            try {
+                val page = groupRepository.watchlist(groupId, cursor = null)
+                watchlistCursor = page.nextCursor
+                watchlistExhausted = page.nextCursor == null
+                val current = mutableState.value as? GroupDetailUiState.Success ?: return
+                mutableState.value = current.copy(watchlist = page.items, watchlistPageError = null)
+            } catch (failure: GroupOperationException) {
+                val current = mutableState.value as? GroupDetailUiState.Success ?: return
+                mutableState.value = current.copy(watchlistPageError = failure.failure)
+            }
+        }
+
+        /**
+         * The re-entrancy-guarded shape `LibraryViewModel.loadMore` establishes (Global Constraints;
+         * this task's own brief names it as the reference), adapted to a cursor THIS ViewModel
+         * manages itself rather than a `:core:data`-owned `CursorPaginator` — [watchlistCursor]'s own
+         * KDoc explains why. Guarded on [GroupDetailUiState.Success.watchlistLoadingMore] rather than
+         * a separate field, `LibraryViewModel`'s identical choice: a re-entrant call (a `LazyColumn`'s
+         * end-reached callback firing on every near-bottom frame) is dropped before a coroutine is
+         * even launched, so a backlog of no-op requests can never queue up behind the real one.
+         * [watchlistExhausted] is the second guard `CursorPaginator.loadMore` gives Library for free
+         * that this ViewModel has to reproduce by hand: without it, scrolling back and forth near an
+         * already-exhausted list's end would re-request page one forever.
+         *
+         * A page-fetch failure here is [GroupDetailUiState.Success.watchlistPageError] — a footer,
+         * never a promotion to [GroupDetailUiState.Error] (Global Constraints: uniform across
+         * Library, Discover, Favorites and this screen) — and the existing
+         * [GroupDetailUiState.Success.watchlist] rows are left untouched either way,
+         * `LibraryRepository.loadMore`'s identical "leaves items untouched on a throw" guarantee,
+         * reproduced by hand here since there is no repository-side paginator to give it for free.
+         */
+        fun loadMoreWatchlist() {
+            val current = mutableState.value as? GroupDetailUiState.Success ?: return
+            if (current.watchlistLoadingMore || watchlistExhausted) return
+            mutableState.value = current.copy(watchlistLoadingMore = true)
+            viewModelScope.launch {
+                try {
+                    val page = groupRepository.watchlist(groupId, cursor = watchlistCursor)
+                    watchlistCursor = page.nextCursor
+                    watchlistExhausted = page.nextCursor == null
+                    val latest = mutableState.value as? GroupDetailUiState.Success ?: return@launch
+                    mutableState.value =
+                        latest.copy(
+                            watchlist = latest.watchlist + page.items,
+                            watchlistLoadingMore = false,
+                            watchlistPageError = null,
+                        )
+                } catch (failure: GroupOperationException) {
+                    val latest = mutableState.value as? GroupDetailUiState.Success ?: return@launch
+                    mutableState.value =
+                        latest.copy(watchlistLoadingMore = false, watchlistPageError = failure.failure)
+                }
+            }
+        }
+
+        /**
+         * `POST /v1/groups/{id}/watchlist`. Guarded to [GroupDetailUiState.Success] explicitly,
+         * mirroring [rotateInvite]'s BLOCKING-3 guard (that function's own KDoc) rather than
+         * [removeMember]'s looser shape: like rotate, this screen offers exactly ONE propose form,
+         * reachable only from a loaded watchlist section, so a call from
+         * [GroupDetailUiState.Loading]/[GroupDetailUiState.Error] would still genuinely create a
+         * server-side row and then have nowhere to fold the result into — the identical
+         * irreversible-consequence argument, not merely "true in practice today".
+         *
+         * On success, [reloadWatchlist] resets to page one rather than prepending the
+         * `com.anarky.showtrack.core.model.WatchlistEntry` this call's own response returned — see
+         * [reloadWatchlist]'s own KDoc: no optimistic/local splice, since a real reload also reflects
+         * anything a DIFFERENT member proposed or removed in the same window.
+         * [GroupDetailActionState.proposing] stays `true` for the WHOLE round trip, including that
+         * reload — [removeMember]'s identical reasoning for [GroupDetailActionState.removingUserId]
+         * staying set through ITS OWN reload, applied here so a fast double-submit cannot fire a
+         * second POST while the first one's reload is still in flight.
+         */
+        fun proposeTitle(mediaId: String) {
+            if (mutableState.value !is GroupDetailUiState.Success) return
+            if (mutableActionState.value.proposing) return
+            mutableActionState.value = mutableActionState.value.copy(proposing = true, proposeError = null)
+            viewModelScope.launch {
+                try {
+                    groupRepository.proposeTitle(groupId, mediaId)
+                    reloadWatchlist()
+                    mutableActionState.value = mutableActionState.value.copy(proposing = false)
+                } catch (failure: GroupOperationException) {
+                    mutableActionState.value =
+                        mutableActionState.value.copy(proposing = false, proposeError = failure.failure)
+                }
+            }
+        }
+
+        /**
+         * `DELETE /v1/groups/{id}/watchlist/{entryId}` — [removeMember]'s identical shape, one
+         * resource over: re-entrancy guarded on [GroupDetailActionState.removingEntryId] alone, not
+         * also gated on [GroupDetailUiState.Success] — [removeMember]'s own precedent, since the row
+         * this call's [entryId] came from only ever renders inside [GroupDetailUiState.Success] in
+         * the first place, so the UI already makes an out-of-state call unreachable without a second
+         * guard here.
+         *
+         * `GroupFailure.NoSuchEntry`'s own KDoc: any member may remove any entry, so two members
+         * racing to delete the same row is a real, not hypothetical, outcome — the loser sees that
+         * dedicated message, not a crash. On success, [reloadWatchlist] — never a local filter — for
+         * the identical "the server owns the list, and a race is real" reasoning [proposeTitle]'s
+         * own KDoc gives.
+         */
+        fun removeFromWatchlist(entryId: String) {
+            if (mutableActionState.value.removingEntryId != null) return
+            mutableActionState.value = mutableActionState.value.copy(removingEntryId = entryId, removeEntryError = null)
+            viewModelScope.launch {
+                try {
+                    groupRepository.removeFromWatchlist(groupId, entryId)
+                    reloadWatchlist()
+                    mutableActionState.value = mutableActionState.value.copy(removingEntryId = null)
+                } catch (failure: GroupOperationException) {
+                    mutableActionState.value =
+                        mutableActionState.value.copy(removingEntryId = null, removeEntryError = failure.failure)
+                }
             }
         }
 
@@ -337,6 +539,19 @@ class GroupDetailViewModel
         /** [clearRotateError]'s mirror for the leave-confirmation dialog — a SEPARATE channel, cleared separately. */
         fun clearLeaveError() {
             mutableActionState.value = mutableActionState.value.copy(leaveError = null)
+        }
+
+        /** [clearRotateError]'s mirror for the propose-title dialog — a SEPARATE channel, cleared separately. */
+        fun clearProposeError() {
+            mutableActionState.value = mutableActionState.value.copy(proposeError = null)
+        }
+
+        /**
+         * [clearRotateError]'s mirror for the remove-watchlist-entry confirmation dialog — a
+         * SEPARATE channel, cleared separately.
+         */
+        fun clearRemoveEntryError() {
+            mutableActionState.value = mutableActionState.value.copy(removeEntryError = null)
         }
 
         /**

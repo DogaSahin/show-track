@@ -27,10 +27,16 @@ import com.anarky.showtrack.core.model.GroupRole
  * submitting, error, both callbacks" genuinely needs for a generic confirm dialog — splitting it
  * further would mean re-introducing the three near-duplicate `AlertDialog`s this function exists
  * to replace.
+ *
+ * `internal`, not `private` (task 9c.3): `GroupWatchlistDialogs.kt`'s own
+ * `RemoveWatchlistEntryDialog` is the identical "are you sure" shape one resource over, and reusing
+ * this rather than a fourth near-duplicate `AlertDialog` is the same reasoning this KDoc's own first
+ * paragraph already gives for why [RotateInviteDialog]/[LeaveGroupDialog]/[RemoveMemberDialog] share
+ * it — `private` (Kotlin file-visibility, not package-visibility) would have forced a copy instead.
  */
 @Suppress("LongParameterList")
 @Composable
-private fun ConfirmActionDialog(
+internal fun ConfirmActionDialog(
     title: String,
     message: String,
     confirmLabel: String,

@@ -6,10 +6,15 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasScrollAction
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performTextInput
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.espresso.Espresso
 import com.anarky.showtrack.core.data.repository.GroupWithInvite
@@ -17,6 +22,10 @@ import com.anarky.showtrack.core.model.Group
 import com.anarky.showtrack.core.model.GroupFailure
 import com.anarky.showtrack.core.model.GroupMember
 import com.anarky.showtrack.core.model.GroupRole
+import com.anarky.showtrack.core.model.MediaSource
+import com.anarky.showtrack.core.model.MediaSummary
+import com.anarky.showtrack.core.model.MediaType
+import com.anarky.showtrack.core.model.WatchlistEntry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -46,7 +55,14 @@ import com.anarky.showtrack.core.designsystem.R as DesignSystemR
  * **`currentUserId` is now a SIBLING parameter to [state]** (round 1 review moved it off
  * [GroupDetailUiState.Success] entirely — that type's own KDoc), passed to every call below
  * alongside `state`/`actionState`.
+ *
+ * `@Suppress("LargeClass")` (task 9c.3): this class now pins the members section AND the shared
+ * watchlist section of ONE screen — splitting it by section would scatter the dialog-close
+ * regression tests (BLOCKING 1's own class of bug, reproduced for BOTH the remove-member and the
+ * two new watchlist dialogs) away from the `successState`/fixture helpers and `context` property
+ * they all share, for a lint threshold's sake rather than a real cohesion problem.
  */
+@Suppress("LargeClass")
 @RunWith(RobolectricTestRunner::class)
 class GroupDetailScreenTest {
     @get:Rule
@@ -70,6 +86,11 @@ class GroupDetailScreenTest {
                 onRotateDialogOpened = {},
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
+                onLoadMoreWatchlist = {},
+                onProposeTitle = {},
+                onRemoveWatchlistEntry = {},
+                onProposeDialogOpened = {},
+                onRemoveEntryDialogOpened = {},
             )
         }
 
@@ -96,6 +117,11 @@ class GroupDetailScreenTest {
                 onRotateDialogOpened = {},
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
+                onLoadMoreWatchlist = {},
+                onProposeTitle = {},
+                onRemoveWatchlistEntry = {},
+                onProposeDialogOpened = {},
+                onRemoveEntryDialogOpened = {},
             )
         }
 
@@ -124,6 +150,11 @@ class GroupDetailScreenTest {
                 onRotateDialogOpened = {},
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
+                onLoadMoreWatchlist = {},
+                onProposeTitle = {},
+                onRemoveWatchlistEntry = {},
+                onProposeDialogOpened = {},
+                onRemoveEntryDialogOpened = {},
             )
         }
 
@@ -152,6 +183,11 @@ class GroupDetailScreenTest {
                 onRotateDialogOpened = {},
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
+                onLoadMoreWatchlist = {},
+                onProposeTitle = {},
+                onRemoveWatchlistEntry = {},
+                onProposeDialogOpened = {},
+                onRemoveEntryDialogOpened = {},
             )
         }
 
@@ -182,6 +218,11 @@ class GroupDetailScreenTest {
                 onRotateDialogOpened = {},
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
+                onLoadMoreWatchlist = {},
+                onProposeTitle = {},
+                onRemoveWatchlistEntry = {},
+                onProposeDialogOpened = {},
+                onRemoveEntryDialogOpened = {},
             )
         }
 
@@ -210,6 +251,11 @@ class GroupDetailScreenTest {
                 onRotateDialogOpened = {},
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
+                onLoadMoreWatchlist = {},
+                onProposeTitle = {},
+                onRemoveWatchlistEntry = {},
+                onProposeDialogOpened = {},
+                onRemoveEntryDialogOpened = {},
             )
         }
 
@@ -238,6 +284,11 @@ class GroupDetailScreenTest {
                 onRotateDialogOpened = {},
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
+                onLoadMoreWatchlist = {},
+                onProposeTitle = {},
+                onRemoveWatchlistEntry = {},
+                onProposeDialogOpened = {},
+                onRemoveEntryDialogOpened = {},
             )
         }
 
@@ -279,6 +330,11 @@ class GroupDetailScreenTest {
                 onRotateDialogOpened = {},
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = { actionState = actionState.copy(removeError = null) },
+                onLoadMoreWatchlist = {},
+                onProposeTitle = {},
+                onRemoveWatchlistEntry = {},
+                onProposeDialogOpened = {},
+                onRemoveEntryDialogOpened = {},
             )
         }
 
@@ -352,6 +408,11 @@ class GroupDetailScreenTest {
                 onRotateDialogOpened = {},
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = { actionState = actionState.copy(removeError = null) },
+                onLoadMoreWatchlist = {},
+                onProposeTitle = {},
+                onRemoveWatchlistEntry = {},
+                onProposeDialogOpened = {},
+                onRemoveEntryDialogOpened = {},
             )
         }
 
@@ -405,6 +466,11 @@ class GroupDetailScreenTest {
                 onRotateDialogOpened = {},
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
+                onLoadMoreWatchlist = {},
+                onProposeTitle = {},
+                onRemoveWatchlistEntry = {},
+                onProposeDialogOpened = {},
+                onRemoveEntryDialogOpened = {},
             )
         }
 
@@ -431,6 +497,11 @@ class GroupDetailScreenTest {
                 onRotateDialogOpened = {},
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
+                onLoadMoreWatchlist = {},
+                onProposeTitle = {},
+                onRemoveWatchlistEntry = {},
+                onProposeDialogOpened = {},
+                onRemoveEntryDialogOpened = {},
             )
         }
 
@@ -457,6 +528,11 @@ class GroupDetailScreenTest {
                 onRotateDialogOpened = {},
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
+                onLoadMoreWatchlist = {},
+                onProposeTitle = {},
+                onRemoveWatchlistEntry = {},
+                onProposeDialogOpened = {},
+                onRemoveEntryDialogOpened = {},
             )
         }
 
@@ -488,6 +564,11 @@ class GroupDetailScreenTest {
                 onRotateDialogOpened = {},
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
+                onLoadMoreWatchlist = {},
+                onProposeTitle = {},
+                onRemoveWatchlistEntry = {},
+                onProposeDialogOpened = {},
+                onRemoveEntryDialogOpened = {},
             )
         }
 
@@ -520,6 +601,11 @@ class GroupDetailScreenTest {
                 onRotateDialogOpened = {},
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
+                onLoadMoreWatchlist = {},
+                onProposeTitle = {},
+                onRemoveWatchlistEntry = {},
+                onProposeDialogOpened = {},
+                onRemoveEntryDialogOpened = {},
             )
         }
 
@@ -548,6 +634,11 @@ class GroupDetailScreenTest {
                 onRotateDialogOpened = {},
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
+                onLoadMoreWatchlist = {},
+                onProposeTitle = {},
+                onRemoveWatchlistEntry = {},
+                onProposeDialogOpened = {},
+                onRemoveEntryDialogOpened = {},
             )
         }
 
@@ -577,6 +668,11 @@ class GroupDetailScreenTest {
                 onRotateDialogOpened = {},
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
+                onLoadMoreWatchlist = {},
+                onProposeTitle = {},
+                onRemoveWatchlistEntry = {},
+                onProposeDialogOpened = {},
+                onRemoveEntryDialogOpened = {},
             )
         }
 
@@ -600,6 +696,11 @@ class GroupDetailScreenTest {
                 onRotateDialogOpened = { opened = true },
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
+                onLoadMoreWatchlist = {},
+                onProposeTitle = {},
+                onRemoveWatchlistEntry = {},
+                onProposeDialogOpened = {},
+                onRemoveEntryDialogOpened = {},
             )
         }
 
@@ -624,6 +725,11 @@ class GroupDetailScreenTest {
                 onRotateDialogOpened = {},
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
+                onLoadMoreWatchlist = {},
+                onProposeTitle = {},
+                onRemoveWatchlistEntry = {},
+                onProposeDialogOpened = {},
+                onRemoveEntryDialogOpened = {},
             )
         }
 
@@ -649,6 +755,11 @@ class GroupDetailScreenTest {
                 onRotateDialogOpened = {},
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
+                onLoadMoreWatchlist = {},
+                onProposeTitle = {},
+                onRemoveWatchlistEntry = {},
+                onProposeDialogOpened = {},
+                onRemoveEntryDialogOpened = {},
             )
         }
 
@@ -665,10 +776,402 @@ class GroupDetailScreenTest {
         assertTrue(retried)
     }
 
+    /**
+     * This task's own first named test, verbatim. [ENTRY_1]'s `proposedBy` resolves against
+     * [OWNER] (present in the `members` fixture) to a real username; [ENTRY_2]'s is `null` (design
+     * §5.3 — a deleted account). Both entries in ONE fixture is deliberate — Global Constraints'
+     * own "multi-element fixtures, always": a single-entry fixture could not catch a row mapper
+     * that used the SAME (right or wrong) copy for every row regardless of `proposedBy`.
+     */
+    @Test
+    fun `an entry proposed by a deleted account renders without a proposer, not a blank name`() {
+        composeRule.setContent {
+            GroupDetailScreen(
+                state = successState(members = listOf(OWNER), watchlist = listOf(ENTRY_1, ENTRY_2)),
+                actionState = GroupDetailActionState(),
+                currentUserId = OWNER.userId,
+                onRetry = {},
+                onRotateInvite = {},
+                onLeaveGroup = {},
+                onRemoveMember = {},
+                onDismissRotatedInvite = {},
+                onRotateDialogOpened = {},
+                onLeaveDialogOpened = {},
+                onRemoveDialogOpened = {},
+                onLoadMoreWatchlist = {},
+                onProposeTitle = {},
+                onRemoveWatchlistEntry = {},
+                onProposeDialogOpened = {},
+                onRemoveEntryDialogOpened = {},
+            )
+        }
+
+        composeRule
+            .onNodeWithText(context.getString(R.string.groups_watchlist_proposed_by, OWNER.username))
+            .assertIsDisplayed()
+        // ENTRY_2's row is not composed at all on first layout (GroupWatchlistSection.kt's own
+        // KDoc — a Robolectric root does not reach a second poster-sized watchlist row the way it
+        // reaches several text-only member rows), so scroll the LIST to ENTRY_2's own remove
+        // button (a stable anchor within its row) before asserting on its proposer text.
+        composeRule
+            .onNode(hasScrollAction())
+            .performScrollToNode(hasTestTag("watchlist-remove-${ENTRY_2.id}"))
+        composeRule.onNodeWithText(context.getString(R.string.groups_watchlist_no_proposer)).assertIsDisplayed()
+    }
+
+    /**
+     * Mutation-critical: pins that "Remove" on the SECOND entry's row confirms and removes THAT
+     * entry, not the first — `tapping remove on the second member's row...`'s identical shape one
+     * resource over.
+     */
+    @Test
+    fun `tapping remove on the second watchlist entry confirms and removes that entry, not the first`() {
+        var removedEntryId: String? = null
+        composeRule.setContent {
+            GroupDetailScreen(
+                state = successState(members = listOf(OWNER), watchlist = listOf(ENTRY_1, ENTRY_2)),
+                actionState = GroupDetailActionState(),
+                currentUserId = OWNER.userId,
+                onRetry = {},
+                onRotateInvite = {},
+                onLeaveGroup = {},
+                onRemoveMember = {},
+                onDismissRotatedInvite = {},
+                onRotateDialogOpened = {},
+                onLeaveDialogOpened = {},
+                onRemoveDialogOpened = {},
+                onLoadMoreWatchlist = {},
+                onProposeTitle = {},
+                onRemoveWatchlistEntry = { removedEntryId = it },
+                onProposeDialogOpened = {},
+                onRemoveEntryDialogOpened = {},
+            )
+        }
+
+        // ENTRY_2's own remove button, reached by scrolling the LazyColumn's underlying
+        // LazyListState to it directly — `performScrollToNode` works even when the target row is
+        // not yet composed at all (Robolectric's default viewport does not reach a second
+        // poster-sized row on first layout; `GroupWatchlistSection.kt`'s own KDoc), unlike chaining
+        // `performScrollTo()` onto a query that has already failed to find the node.
+        val entry2RemoveTag = "watchlist-remove-${ENTRY_2.id}"
+        composeRule.onNode(hasScrollAction()).performScrollToNode(hasTestTag(entry2RemoveTag))
+        composeRule.onNodeWithTag(entry2RemoveTag).performClick()
+        composeRule
+            .onNodeWithText(context.getString(R.string.groups_watchlist_remove_confirm_title, ENTRY_2.media.title))
+            .assertIsDisplayed()
+        composeRule.onNodeWithText(context.getString(R.string.groups_watchlist_remove_confirm_button)).performClick()
+
+        assertEquals(ENTRY_2.id, removedEntryId)
+    }
+
+    @Test
+    fun `submitting the propose dialog invokes onProposeTitle with the typed media id`() {
+        var opened = false
+        var proposedMediaId: String? = null
+        composeRule.setContent {
+            GroupDetailScreen(
+                state = successState(members = listOf(OWNER)),
+                actionState = GroupDetailActionState(),
+                currentUserId = OWNER.userId,
+                onRetry = {},
+                onRotateInvite = {},
+                onLeaveGroup = {},
+                onRemoveMember = {},
+                onDismissRotatedInvite = {},
+                onRotateDialogOpened = {},
+                onLeaveDialogOpened = {},
+                onRemoveDialogOpened = {},
+                onLoadMoreWatchlist = {},
+                onProposeTitle = { proposedMediaId = it },
+                onRemoveWatchlistEntry = {},
+                onProposeDialogOpened = { opened = true },
+                onRemoveEntryDialogOpened = {},
+            )
+        }
+
+        composeRule.onNodeWithText(context.getString(R.string.groups_watchlist_propose_action)).performClick()
+        assertTrue(opened)
+        composeRule
+            .onNodeWithText(context.getString(R.string.groups_watchlist_propose_media_id_label))
+            .performTextInput("media-42")
+        composeRule.onNodeWithText(context.getString(R.string.groups_watchlist_propose_submit)).performClick()
+
+        assertEquals("media-42", proposedMediaId)
+    }
+
+    /**
+     * The happy-path half of the propose dialog's own close-on-success — driven through a REAL
+     * submit (not merely opening it), matching Global Constraints' "drive it through the failure
+     * path and the reopen-after-failure path... not just the happy one" by giving the happy path
+     * an equally real test to sit beside.
+     */
+    @Test
+    fun `a successful propose closes the dialog`() {
+        var actionState by mutableStateOf(GroupDetailActionState())
+        composeRule.setContent {
+            GroupDetailScreen(
+                state = successState(members = listOf(OWNER)),
+                actionState = actionState,
+                currentUserId = OWNER.userId,
+                onRetry = {},
+                onRotateInvite = {},
+                onLeaveGroup = {},
+                onRemoveMember = {},
+                onDismissRotatedInvite = {},
+                onRotateDialogOpened = {},
+                onLeaveDialogOpened = {},
+                onRemoveDialogOpened = {},
+                onLoadMoreWatchlist = {},
+                onProposeTitle = { actionState = actionState.copy(proposing = true, proposeError = null) },
+                onRemoveWatchlistEntry = {},
+                onProposeDialogOpened = { actionState = actionState.copy(proposeError = null) },
+                onRemoveEntryDialogOpened = {},
+            )
+        }
+
+        composeRule.onNodeWithText(context.getString(R.string.groups_watchlist_propose_action)).performClick()
+        composeRule
+            .onNodeWithText(context.getString(R.string.groups_watchlist_propose_media_id_label))
+            .performTextInput("media-42")
+        composeRule.onNodeWithText(context.getString(R.string.groups_watchlist_propose_submit)).performClick()
+        // Settle the in-flight (proposing = true) frame BEFORE flipping back to false — a real
+        // ViewModel's own two writes straddle a genuine suspension (the network call), so Compose
+        // observes them as two distinct states; skipping this wait here collapses both writes into
+        // one recomposition whose net key change is false -> false, which LaunchedEffect's own key
+        // comparison (against its LAST remembered key, also false) then reads as "unchanged" and
+        // never relaunches — the close effect would silently never fire. `waitForIdle()` here is
+        // what makes the simulation honest rather than accidentally erasing the transition.
+        composeRule.waitForIdle()
+
+        actionState = actionState.copy(proposing = false)
+        composeRule.waitForIdle()
+
+        composeRule
+            .onNodeWithText(context.getString(R.string.groups_watchlist_propose_media_id_label))
+            .assertDoesNotExist()
+    }
+
+    /** Driven through a REAL submit, not merely an injected error — the brief's own failure path. */
+    @Test
+    fun `a failed propose keeps the dialog open and shows the error`() {
+        var actionState by mutableStateOf(GroupDetailActionState())
+        composeRule.setContent {
+            GroupDetailScreen(
+                state = successState(members = listOf(OWNER)),
+                actionState = actionState,
+                currentUserId = OWNER.userId,
+                onRetry = {},
+                onRotateInvite = {},
+                onLeaveGroup = {},
+                onRemoveMember = {},
+                onDismissRotatedInvite = {},
+                onRotateDialogOpened = {},
+                onLeaveDialogOpened = {},
+                onRemoveDialogOpened = {},
+                onLoadMoreWatchlist = {},
+                onProposeTitle = { actionState = actionState.copy(proposing = true, proposeError = null) },
+                onRemoveWatchlistEntry = {},
+                onProposeDialogOpened = { actionState = actionState.copy(proposeError = null) },
+                onRemoveEntryDialogOpened = {},
+            )
+        }
+
+        composeRule.onNodeWithText(context.getString(R.string.groups_watchlist_propose_action)).performClick()
+        composeRule
+            .onNodeWithText(context.getString(R.string.groups_watchlist_propose_media_id_label))
+            .performTextInput("unknown-media-id")
+        composeRule.onNodeWithText(context.getString(R.string.groups_watchlist_propose_submit)).performClick()
+
+        actionState = actionState.copy(proposing = false, proposeError = GroupFailure.NoSuchTitle)
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithText(context.getString(R.string.groups_watchlist_error_no_such_title)).assertIsDisplayed()
+        // Still open — a failure must not close it the way a success does.
+        composeRule
+            .onNodeWithText(context.getString(R.string.groups_watchlist_propose_media_id_label))
+            .assertIsDisplayed()
+    }
+
+    /**
+     * The brief's own "reopen-after-failure" path — the shape of bug BLOCKING 1 (9c.2 review)
+     * found: [onProposeDialogOpened] (bound to `clearProposeError`) clears the error in the SAME
+     * recomposition the reopen sets, which flips `(proposing, proposeError)` to `(false, null)` —
+     * indistinguishable from a genuine success — unless [DialogCloseEffects]'s `proposeAttempted`
+     * guard is what it claims to be. Without it, this test fails the moment the dialog reopens.
+     */
+    @Test
+    fun `reopening the propose dialog after a previous failure clears the stale error and does not self-dismiss`() {
+        var actionState by mutableStateOf(GroupDetailActionState(proposeError = GroupFailure.NoSuchTitle))
+        composeRule.setContent {
+            GroupDetailScreen(
+                state = successState(members = listOf(OWNER)),
+                actionState = actionState,
+                currentUserId = OWNER.userId,
+                onRetry = {},
+                onRotateInvite = {},
+                onLeaveGroup = {},
+                onRemoveMember = {},
+                onDismissRotatedInvite = {},
+                onRotateDialogOpened = {},
+                onLeaveDialogOpened = {},
+                onRemoveDialogOpened = {},
+                onLoadMoreWatchlist = {},
+                onProposeTitle = {},
+                onRemoveWatchlistEntry = {},
+                onProposeDialogOpened = { actionState = actionState.copy(proposeError = null) },
+                onRemoveEntryDialogOpened = {},
+            )
+        }
+
+        composeRule.onNodeWithText(context.getString(R.string.groups_watchlist_propose_action)).performClick()
+        composeRule.waitForIdle()
+
+        composeRule
+            .onNodeWithText(context.getString(R.string.groups_watchlist_propose_media_id_label))
+            .assertIsDisplayed()
+        composeRule
+            .onNodeWithText(context.getString(R.string.groups_watchlist_error_no_such_title))
+            .assertDoesNotExist()
+    }
+
+    /**
+     * [RemoveDialogHost]'s own BLOCKING-1-shaped regression, reproduced one resource over: fail
+     * ENTRY_1's remove, cancel, then remove ENTRY_2 — a NEW target, not a re-tap of the same one.
+     */
+    @Test
+    fun `reopening remove-entry for a new target after a previous failure does not self-dismiss`() {
+        var actionState by mutableStateOf(GroupDetailActionState())
+        composeRule.setContent {
+            GroupDetailScreen(
+                state = successState(members = listOf(OWNER), watchlist = listOf(ENTRY_1, ENTRY_2)),
+                actionState = actionState,
+                currentUserId = OWNER.userId,
+                onRetry = {},
+                onRotateInvite = {},
+                onLeaveGroup = {},
+                onRemoveMember = {},
+                onDismissRotatedInvite = {},
+                onRotateDialogOpened = {},
+                onLeaveDialogOpened = {},
+                onRemoveDialogOpened = {},
+                onLoadMoreWatchlist = {},
+                onProposeTitle = {},
+                onRemoveWatchlistEntry = {},
+                onProposeDialogOpened = {},
+                onRemoveEntryDialogOpened = { actionState = actionState.copy(removeEntryError = null) },
+            )
+        }
+
+        // Remove ENTRY_1: open, confirm, fail.
+        composeRule.onAllNodesWithText(context.getString(R.string.groups_watchlist_remove_action))[0].performClick()
+        actionState = actionState.copy(removingEntryId = ENTRY_1.id)
+        composeRule.onNodeWithText(context.getString(R.string.groups_watchlist_remove_confirm_button)).performClick()
+        actionState = actionState.copy(removingEntryId = null, removeEntryError = GroupFailure.NoSuchEntry)
+        composeRule.waitForIdle()
+        composeRule
+            .onNodeWithText(context.getString(R.string.groups_watchlist_remove_confirm_title, ENTRY_1.media.title))
+            .assertIsDisplayed()
+
+        // Cancel ENTRY_1's dialog, then open ENTRY_2's — a genuinely NEW target, with ENTRY_1's
+        // error still live in actionState until onRemoveEntryDialogOpened (wired above, matching
+        // production) clears it on this very open. ENTRY_2's own row, reached via
+        // performScrollToNode — GroupWatchlistSection.kt's own KDoc on why a second poster-sized
+        // row is not guaranteed composed on Robolectric's first layout pass.
+        composeRule.onNodeWithText(context.getString(R.string.groups_watchlist_remove_cancel)).performClick()
+        val entry2RemoveTag = "watchlist-remove-${ENTRY_2.id}"
+        composeRule.onNode(hasScrollAction()).performScrollToNode(hasTestTag(entry2RemoveTag))
+        composeRule.onNodeWithTag(entry2RemoveTag).performClick()
+        composeRule.waitForIdle()
+
+        // Must still be showing — a self-dismiss here is BLOCKING 1's class of bug reproduced.
+        composeRule
+            .onNodeWithText(context.getString(R.string.groups_watchlist_remove_confirm_title, ENTRY_2.media.title))
+            .assertIsDisplayed()
+    }
+
+    /**
+     * The brief's own "footer, never a promotion to full-screen Error" rule, pinned at the screen
+     * layer: the members list AND the watchlist's own entries stay visible underneath the footer —
+     * this is a rendering claim [GroupDetailViewModelTest] cannot make (Global Constraints).
+     */
+    @Test
+    fun `a watchlist page error renders as an inline footer, with the members still visible`() {
+        composeRule.setContent {
+            GroupDetailScreen(
+                state =
+                    successState(
+                        members = listOf(OWNER),
+                        watchlist = listOf(ENTRY_1),
+                        watchlistPageError = GroupFailure.Network,
+                    ),
+                actionState = GroupDetailActionState(),
+                currentUserId = OWNER.userId,
+                onRetry = {},
+                onRotateInvite = {},
+                onLeaveGroup = {},
+                onRemoveMember = {},
+                onDismissRotatedInvite = {},
+                onRotateDialogOpened = {},
+                onLeaveDialogOpened = {},
+                onRemoveDialogOpened = {},
+                onLoadMoreWatchlist = {},
+                onProposeTitle = {},
+                onRemoveWatchlistEntry = {},
+                onProposeDialogOpened = {},
+                onRemoveEntryDialogOpened = {},
+            )
+        }
+
+        composeRule.onNodeWithText(OWNER.username).assertIsDisplayed()
+        composeRule.onNodeWithText(ENTRY_1.media.title).assertIsDisplayed()
+        // The footer is the LAST row and is not composed at all on first layout — scroll the list
+        // to its own testTag first (GroupWatchlistSection.kt's own KDoc on why Robolectric's
+        // default viewport does not reach every row without an explicit scroll).
+        composeRule.onNode(hasScrollAction()).performScrollToNode(hasTestTag("watchlist-page-error"))
+        composeRule
+            .onNodeWithText(context.getString(R.string.groups_watchlist_page_error))
+            .assertIsDisplayed()
+    }
+
+    @Test
+    fun `an empty watchlist shows its own empty state, not a blank scroll area`() {
+        composeRule.setContent {
+            GroupDetailScreen(
+                state = successState(members = listOf(OWNER), watchlist = emptyList()),
+                actionState = GroupDetailActionState(),
+                currentUserId = OWNER.userId,
+                onRetry = {},
+                onRotateInvite = {},
+                onLeaveGroup = {},
+                onRemoveMember = {},
+                onDismissRotatedInvite = {},
+                onRotateDialogOpened = {},
+                onLeaveDialogOpened = {},
+                onRemoveDialogOpened = {},
+                onLoadMoreWatchlist = {},
+                onProposeTitle = {},
+                onRemoveWatchlistEntry = {},
+                onProposeDialogOpened = {},
+                onRemoveEntryDialogOpened = {},
+            )
+        }
+
+        composeRule.onNodeWithText(context.getString(R.string.groups_watchlist_empty_message)).assertIsDisplayed()
+    }
+
     private fun successState(
         members: List<GroupMember>,
+        watchlist: List<WatchlistEntry> = emptyList(),
+        watchlistLoadingMore: Boolean = false,
+        watchlistPageError: GroupFailure? = null,
         isStale: Boolean = false,
-    ) = GroupDetailUiState.Success(members = members, isStale = isStale)
+    ) = GroupDetailUiState.Success(
+        members = members,
+        watchlist = watchlist,
+        watchlistLoadingMore = watchlistLoadingMore,
+        watchlistPageError = watchlistPageError,
+        isStale = isStale,
+    )
 
     private companion object {
         fun member(
@@ -686,5 +1189,36 @@ class GroupDetailScreenTest {
                 inviteCode = "NEWCODE0000000000000",
                 expiresAt = Instant.parse("2026-09-10T00:00:00Z"),
             )
+
+        fun summary(title: String) =
+            MediaSummary(
+                source = MediaSource.ANILIST,
+                externalId = title,
+                type = MediaType.ANIME,
+                title = title,
+                year = 2024,
+                genres = emptyList(),
+                coverImageUrl = null,
+            )
+
+        fun entry(
+            id: String,
+            title: String,
+            mediaId: String,
+            proposedBy: String?,
+        ) = WatchlistEntry(
+            id = id,
+            media = summary(title),
+            mediaId = mediaId,
+            proposedBy = proposedBy,
+            createdAt = Instant.parse("2026-08-28T10:15:30Z"),
+        )
+
+        // proposedBy set to OWNER's own id, resolvable against a members fixture that includes
+        // OWNER — WatchlistList's own lookup, GroupDetailScreenTest's identical reasoning.
+        val ENTRY_1 = entry(id = "entry-1", title = "Frieren", mediaId = "media-1", proposedBy = OWNER.userId)
+
+        // proposedBy null — a deleted account, per design §5.3 (this task's own first named test).
+        val ENTRY_2 = entry(id = "entry-2", title = "Mushishi", mediaId = "media-2", proposedBy = null)
     }
 }

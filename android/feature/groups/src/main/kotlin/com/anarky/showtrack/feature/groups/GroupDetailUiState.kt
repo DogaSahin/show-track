@@ -3,6 +3,7 @@ package com.anarky.showtrack.feature.groups
 import com.anarky.showtrack.core.data.repository.GroupWithInvite
 import com.anarky.showtrack.core.model.GroupFailure
 import com.anarky.showtrack.core.model.GroupMember
+import com.anarky.showtrack.core.model.WatchlistEntry
 
 /**
  * The group DETAIL screen's state (task 9c.2). [GroupsUiState]'s identical shape and identical
@@ -53,9 +54,36 @@ sealed interface GroupDetailUiState {
      * Constraints): a failed background [GroupDetailViewModel.refresh] over an already-populated
      * screen marks the existing [members] stale rather than blanking or error-ing them away, and the
      * next successful refresh clears it.
+     *
+     * **Task 9c.3's own addition:** [watchlist]/[watchlistLoadingMore]/[watchlistPageError], folded
+     * into this SAME `Success` rather than a second sealed hierarchy the way [rotatedInvite] is a
+     * plain field rather than a second state machine. Deliberately NOT independent of [members] the
+     * way [GroupDetailViewModel.currentUserId] is — that field lives outside this type because it is
+     * a SESSION fact several unrelated actions need regardless of what this screen shows
+     * ([GroupDetailViewModel]'s own KDoc); the watchlist is screen CONTENT, exactly the category
+     * [members] already is, and [GroupDetailUiState] exists precisely so a `when` over it cannot
+     * represent an impossible combination — a second top-level branch per section would only
+     * multiply that combinatorial space, not shrink it.
+     *
+     * What this does NOT mean: a failed watchlist fetch never promotes this whole screen to
+     * [Error] — see [GroupDetailViewModel.reloadWatchlist]'s own KDoc for why every watchlist
+     * failure, first page included, surfaces as [watchlistPageError] (an inline, section-scoped
+     * retry) rather than replacing [members] on screen. That is the direct answer to this task's own
+     * "can a user still act on what they can see" question: [members] and [watchlist] fail
+     * independently, so a broken watchlist fetch can never take a correctly-loaded member list off
+     * screen, and a stale/broken member list never hides watchlist rows that DID load.
+     *
+     * [watchlistLoadingMore]/[watchlistPageError] are `LibraryUiState.Success.loadingMore`/
+     * `LibraryUiState.Success.pageError`'s identical shape in `:feature:library` (plain text, not a
+     * doc link — `:feature:groups` cannot depend on that module, architecture rule 1) — a footer
+     * under otherwise-valid rows, never a reason to blank them (Global Constraints: "a page-fetch
+     * failure is a footer, never a promotion to full-screen Error").
      */
     data class Success(
         val members: List<GroupMember>,
+        val watchlist: List<WatchlistEntry> = emptyList(),
+        val watchlistLoadingMore: Boolean = false,
+        val watchlistPageError: GroupFailure? = null,
         val rotatedInvite: GroupWithInvite? = null,
         val isStale: Boolean = false,
     ) : GroupDetailUiState
@@ -96,6 +124,18 @@ sealed interface GroupDetailUiState {
  * supportable case; the endpoint has no cross-member conflict to guard against, only re-entrancy on
  * the SAME id — enforced below by rejecting a second [GroupDetailViewModel.removeMember] while
  * [removingUserId] is already non-null, mirroring [GroupsActionState]'s re-entrancy guards).
+ *
+ * **Task 9c.3 adds two more channels, the identical decision C-S reasoning extended to the
+ * watchlist:** [proposing]/[proposeError] for [GroupDetailViewModel.proposeTitle], and
+ * [removingEntryId]/[removeEntryError] for [GroupDetailViewModel.removeFromWatchlist].
+ * [removingEntryId] is [removingUserId]'s identical shape — one entry's id, not a bare boolean, for
+ * the identical reason: [GroupDetailScreen] renders one remove control per watchlist row. Propose
+ * has no per-target id (there is exactly one propose form on this screen, not one per row), so
+ * [proposing] stays a bare `Boolean`, matching [rotating]'s shape rather than [removingUserId]'s.
+ * Not merged with [removingUserId]/[removeError]: those are `DELETE .../members/{userId}` — a
+ * different endpoint, a different resource, a different confirmation dialog — sharing a channel
+ * would make removing a MEMBER and removing a WATCHLIST ENTRY block each other for no reason either
+ * one's caller would expect.
  */
 data class GroupDetailActionState(
     val rotating: Boolean = false,
@@ -104,4 +144,8 @@ data class GroupDetailActionState(
     val removeError: GroupFailure? = null,
     val leaving: Boolean = false,
     val leaveError: GroupFailure? = null,
+    val proposing: Boolean = false,
+    val proposeError: GroupFailure? = null,
+    val removingEntryId: String? = null,
+    val removeEntryError: GroupFailure? = null,
 )

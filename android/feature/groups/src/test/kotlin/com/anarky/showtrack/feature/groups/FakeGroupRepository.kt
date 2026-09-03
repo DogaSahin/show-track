@@ -20,13 +20,23 @@ import kotlinx.coroutines.CompletableDeferred
  * [com.anarky.showtrack.core.data.repository.GroupRepositoryImpl], which would need Retrofit
  * (neither is on this module's compile classpath — architecture rule 2).
  *
- * [groups]/[createGroup]/[joinGroup] (the three [GroupsViewModel] calls) and, since task 9c.2,
- * [members]/[rotateInvite]/[removeMember] (three of the four [GroupDetailViewModel] calls —
- * `currentUserId` moved to `AuthRepository`/`FakeAuthRepository` in round 1 review)
- * are functional. Every OTHER member `error(...)`s rather than silently no-op-ing: a ViewModel
- * that accidentally reached one of them fails LOUDLY, with that message, rather than an
- * unexplained `NotImplementedError` or a silently wrong result —
- * [FakeLibraryRepository]'s (`:feature:favorites`) identical discrimination technique.
+ * [groups]/[createGroup]/[joinGroup] (the three [GroupsViewModel] calls), since task 9c.2,
+ * [members]/[rotateInvite]/[removeMember], and, since task 9c.3, [watchlist]/[proposeTitle]/
+ * [removeFromWatchlist] (six of the seven [GroupDetailViewModel] calls — `currentUserId` moved to
+ * `AuthRepository`/`FakeAuthRepository` in round 1 review) are functional. Every OTHER member
+ * `error(...)`s rather than silently no-op-ing: a ViewModel that accidentally reached one of them
+ * fails LOUDLY, with that message, rather than an unexplained `NotImplementedError` or a silently
+ * wrong result — [FakeLibraryRepository]'s (`:feature:favorites`) identical discrimination technique.
+ *
+ * [watchlistPages] defaults to a single, EMPTY, successful first page (`null to WatchlistPage(items
+ * = emptyList(), nextCursor = null)`) — not an `error(...)`, unlike every other still-unimplemented
+ * member — because [GroupDetailViewModel.refresh] (task 9c.3) now fetches the watchlist's first page
+ * unconditionally once the member list has loaded, so EVERY existing test in this file that never
+ * mentions the watchlist at all (every test written before this task) still exercises that fetch on
+ * every `advanceUntilIdle()`. A default that threw would break every one of them; a default that
+ * silently returns nothing keeps `GroupDetailUiState.Success`'s new fields at their own defaults,
+ * which is exactly what those tests' existing `assertEquals(GroupDetailUiState.Success(members =
+ * ...), ...)` calls (built with the watchlist fields left at THEIR defaults too) already expect.
  *
  * Failures are configured as a [GroupFailure] directly, not a [Throwable], and wrapped in
  * [GroupOperationException] here — mirroring exactly what
@@ -58,12 +68,21 @@ internal class FakeGroupRepository(
     var rotateResult: GroupWithInvite? = null,
     var rotateFailure: GroupFailure? = null,
     var removeMemberFailure: GroupFailure? = null,
+    var watchlistPages: MutableMap<String?, WatchlistPage> =
+        mutableMapOf(null to WatchlistPage(items = emptyList(), nextCursor = null)),
+    var watchlistFailure: GroupFailure? = null,
+    var proposeResult: WatchlistEntry? = null,
+    var proposeFailure: GroupFailure? = null,
+    var removeWatchlistEntryFailure: GroupFailure? = null,
 ) : GroupRepository {
     var groupsGate: CompletableDeferred<Unit>? = null
     var createGate: CompletableDeferred<Unit>? = null
     var joinGate: CompletableDeferred<Unit>? = null
     var membersGate: CompletableDeferred<Unit>? = null
     var removeMemberGate: CompletableDeferred<Unit>? = null
+    var watchlistGate: CompletableDeferred<Unit>? = null
+    var proposeGate: CompletableDeferred<Unit>? = null
+    var removeWatchlistEntryGate: CompletableDeferred<Unit>? = null
 
     var groupsCalls = 0
         private set
@@ -81,6 +100,14 @@ internal class FakeGroupRepository(
     // test tell "leave (your own id)" apart from "remove (someone else's)" at the repository
     // boundary, since both are the SAME call with a different argument (design doc §1.1).
     val removeMemberCalls = mutableListOf<Pair<String, String>>()
+
+    // Every cursor `watchlist` was actually called with, in order — what a paging test uses to
+    // prove EXACTLY one fetch per page, neither a duplicate first-page re-fetch nor a skipped one
+    // (`GroupDetailViewModelTest`'s "paging the watchlist appends without duplicates").
+    val watchlistCalls = mutableListOf<String?>()
+
+    val proposeCalls = mutableListOf<Pair<String, String>>()
+    val removeWatchlistEntryCalls = mutableListOf<Pair<String, String>>()
 
     override suspend fun groups(): List<Group> {
         groupsCalls++
@@ -137,17 +164,31 @@ internal class FakeGroupRepository(
     override suspend fun watchlist(
         groupId: String,
         cursor: String?,
-    ): WatchlistPage = error("not exercised by GroupsViewModel")
+    ): WatchlistPage {
+        watchlistCalls += cursor
+        watchlistGate?.await()
+        watchlistFailure?.let { throw GroupOperationException(it) }
+        return watchlistPages[cursor] ?: error("no watchlistPages entry configured for cursor=$cursor")
+    }
 
     override suspend fun proposeTitle(
         groupId: String,
         mediaId: String,
-    ): WatchlistEntry = error("not exercised by GroupsViewModel")
+    ): WatchlistEntry {
+        proposeCalls += groupId to mediaId
+        proposeGate?.await()
+        proposeFailure?.let { throw GroupOperationException(it) }
+        return proposeResult ?: error("proposeResult not set for this test")
+    }
 
     override suspend fun removeFromWatchlist(
         groupId: String,
         entryId: String,
-    ): Unit = error("not exercised by GroupsViewModel")
+    ) {
+        removeWatchlistEntryCalls += groupId to entryId
+        removeWatchlistEntryGate?.await()
+        removeWatchlistEntryFailure?.let { throw GroupOperationException(it) }
+    }
 
     override suspend fun progress(
         groupId: String,
