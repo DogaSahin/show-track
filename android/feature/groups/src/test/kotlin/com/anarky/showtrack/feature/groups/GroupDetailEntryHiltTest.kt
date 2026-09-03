@@ -10,11 +10,18 @@ import androidx.navigation.compose.ComposeNavigator
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.testing.TestNavHostController
+import androidx.navigation.toRoute
 import androidx.test.core.app.ApplicationProvider
 import com.anarky.showtrack.core.data.repository.AuthRepository
 import com.anarky.showtrack.core.data.repository.GroupRepository
+import com.anarky.showtrack.core.data.repository.WatchlistPage
 import com.anarky.showtrack.core.model.GroupMember
 import com.anarky.showtrack.core.model.GroupRole
+import com.anarky.showtrack.core.model.MediaSource
+import com.anarky.showtrack.core.model.MediaSummary
+import com.anarky.showtrack.core.model.MediaType
+import com.anarky.showtrack.core.model.WatchlistEntry
+import com.anarky.showtrack.core.navigation.DetailRoute
 import com.anarky.showtrack.core.navigation.GroupDetailRoute
 import com.anarky.showtrack.core.navigation.GroupsRoute
 import dagger.hilt.android.testing.BindValue
@@ -45,6 +52,11 @@ import java.time.Instant
  *
  * Asserts WHICH route the navigation reached (`hasRoute(GroupsRoute::class)`), not merely that some
  * navigation happened — `GroupsEntryHiltTest`'s identical discipline.
+ *
+ * **`tapping a watchlist entry navigates to DetailRoute` (fix round 1)** pins the identical WHOLE
+ * chain for `WatchlistEntry.mediaId`'s own reason for existing: a tap → `groupDetailEntry`'s real
+ * `onEntryClick` binding → `onNavigate(DetailRoute(mediaId = entry.mediaId))` —
+ * `LibraryEntryHiltTest`'s identical end-to-end shape for `libraryEntry`'s own `onEntryClick`.
  */
 @HiltAndroidTest
 @RunWith(RobolectricTestRunner::class)
@@ -62,7 +74,11 @@ class GroupDetailEntryHiltTest {
     // (GroupsEntryHiltTest's identical setup note for GroupsViewModel's resume load).
     @BindValue
     @JvmField
-    val groupRepository: GroupRepository = FakeGroupRepository(membersResult = listOf(SELF))
+    val groupRepository: GroupRepository =
+        FakeGroupRepository(
+            membersResult = listOf(SELF),
+            watchlistPages = mutableMapOf(null to WatchlistPage(items = listOf(ENTRY), nextCursor = null)),
+        )
 
     // Round 1 review moved identity to AuthRepository (that method's own KDoc) — GroupDetailViewModel
     // now names it as a second constructor dependency, so the Hilt graph needs a binding for it too.
@@ -102,6 +118,30 @@ class GroupDetailEntryHiltTest {
         assertTrue(navController.currentDestination?.hasRoute(GroupsRoute::class) == true)
     }
 
+    @Test
+    fun `tapping a watchlist entry navigates to DetailRoute`() {
+        lateinit var navController: TestNavHostController
+
+        composeRule.setContent {
+            navController =
+                remember {
+                    TestNavHostController(ApplicationProvider.getApplicationContext<Context>()).apply {
+                        navigatorProvider.addNavigator(ComposeNavigator())
+                    }
+                }
+            NavHost(navController = navController, startDestination = GroupDetailRoute(groupId = GROUP_ID)) {
+                groupDetailEntry(onNavigate = navController::navigate)
+                composable<DetailRoute> { }
+            }
+        }
+
+        composeRule.onNodeWithText(ENTRY.media.title).performClick()
+        composeRule.waitForIdle()
+
+        assertTrue(navController.currentDestination?.hasRoute(DetailRoute::class) == true)
+        assertTrue(navController.currentBackStackEntry?.toRoute<DetailRoute>()?.mediaId == ENTRY.mediaId)
+    }
+
     private companion object {
         const val GROUP_ID = "group-1"
         val SELF =
@@ -110,6 +150,23 @@ class GroupDetailEntryHiltTest {
                 username = "alex",
                 role = GroupRole.MEMBER,
                 joinedAt = Instant.parse("2026-08-28T10:15:30Z"),
+            )
+        val ENTRY =
+            WatchlistEntry(
+                id = "entry-1",
+                media =
+                    MediaSummary(
+                        source = MediaSource.ANILIST,
+                        externalId = "Frieren",
+                        type = MediaType.ANIME,
+                        title = "Frieren",
+                        year = 2024,
+                        genres = emptyList(),
+                        coverImageUrl = null,
+                    ),
+                mediaId = "media-1",
+                proposedBy = SELF.userId,
+                createdAt = Instant.parse("2026-08-28T10:15:30Z"),
             )
     }
 }

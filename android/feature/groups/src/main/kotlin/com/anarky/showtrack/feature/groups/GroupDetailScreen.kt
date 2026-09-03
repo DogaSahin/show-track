@@ -54,6 +54,7 @@ import com.anarky.showtrack.core.model.WatchlistEntry
 @Composable
 fun GroupDetailScreen(
     onLeft: () -> Unit,
+    onEntryClick: (WatchlistEntry) -> Unit,
     modifier: Modifier = Modifier,
     viewModel: GroupDetailViewModel = hiltViewModel(),
 ) {
@@ -78,10 +79,9 @@ fun GroupDetailScreen(
         onLeaveDialogOpened = viewModel::clearLeaveError,
         onRemoveDialogOpened = viewModel::clearRemoveError,
         onLoadMoreWatchlist = viewModel::loadMoreWatchlist,
-        onProposeTitle = viewModel::proposeTitle,
         onRemoveWatchlistEntry = viewModel::removeFromWatchlist,
-        onProposeDialogOpened = viewModel::clearProposeError,
         onRemoveEntryDialogOpened = viewModel::clearRemoveEntryError,
+        onEntryClick = onEntryClick,
         modifier = modifier,
     )
 }
@@ -171,10 +171,9 @@ internal fun GroupDetailScreen(
     onLeaveDialogOpened: () -> Unit,
     onRemoveDialogOpened: () -> Unit,
     onLoadMoreWatchlist: () -> Unit,
-    onProposeTitle: (String) -> Unit,
     onRemoveWatchlistEntry: (String) -> Unit,
-    onProposeDialogOpened: () -> Unit,
     onRemoveEntryDialogOpened: () -> Unit,
+    onEntryClick: (WatchlistEntry) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val dialogState = rememberGroupDetailDialogState(state = state, actionState = actionState)
@@ -182,8 +181,6 @@ internal fun GroupDetailScreen(
     var showLeaveDialog by dialogState.showLeaveDialog
     var pendingRemoveTarget by dialogState.pendingRemoveTarget
     var removeAttempted by dialogState.removeAttempted
-    var showProposeDialog by dialogState.showProposeDialog
-    var proposeAttempted by dialogState.proposeAttempted
     var pendingRemoveEntryTarget by dialogState.pendingRemoveEntryTarget
     var removeEntryAttempted by dialogState.removeEntryAttempted
 
@@ -206,16 +203,12 @@ internal fun GroupDetailScreen(
         },
         onDismissRotatedInvite = onDismissRotatedInvite,
         onLoadMoreWatchlist = onLoadMoreWatchlist,
-        onProposeClick = {
-            onProposeDialogOpened()
-            showProposeDialog = true
-            proposeAttempted = false
-        },
         onRemoveEntryClick = { entry ->
             onRemoveEntryDialogOpened()
             pendingRemoveEntryTarget = entry
             removeEntryAttempted = false
         },
+        onEntryClick = onEntryClick,
         modifier = modifier,
     )
 
@@ -225,7 +218,6 @@ internal fun GroupDetailScreen(
         onRotateInvite = onRotateInvite,
         onLeaveGroup = onLeaveGroup,
         onRemoveMember = onRemoveMember,
-        onProposeTitle = onProposeTitle,
         onRemoveWatchlistEntry = onRemoveWatchlistEntry,
     )
 }
@@ -236,7 +228,10 @@ internal fun GroupDetailScreen(
  * threshold; no behaviour moved with it that a caller could observe differently. [GroupDetailScreen]'s
  * own KDoc documents WHY each field exists and how it is used.
  *
- * `@Suppress("LongParameterList")`: a private, internal state carrier for one screen's five
+ * **Fix round 1 removed the propose dialog's own state** (`showProposeDialog`/`proposeAttempted`) —
+ * see [GroupDetailActionState]'s own KDoc for why proposing moved to `:feature:detail` (task 9c.6).
+ *
+ * `@Suppress("LongParameterList")`: a private, internal state carrier for one screen's four
  * dialogs — `FakeGroupRepository`'s own suppression carries the identical "this is what the shape
  * genuinely needs" reasoning, not a bag of unrelated fields that should have been split.
  */
@@ -246,8 +241,6 @@ private class GroupDetailDialogState(
     val showLeaveDialog: MutableState<Boolean>,
     val pendingRemoveTarget: MutableState<GroupMember?>,
     val removeAttempted: MutableState<Boolean>,
-    val showProposeDialog: MutableState<Boolean>,
-    val proposeAttempted: MutableState<Boolean>,
     val pendingRemoveEntryTarget: MutableState<WatchlistEntry?>,
     val removeEntryAttempted: MutableState<Boolean>,
 )
@@ -261,8 +254,6 @@ private fun rememberGroupDetailDialogState(
     val showLeaveDialog = remember { mutableStateOf(false) }
     val pendingRemoveTarget = remember { mutableStateOf<GroupMember?>(null) }
     val removeAttempted = remember { mutableStateOf(false) }
-    val showProposeDialog = remember { mutableStateOf(false) }
-    val proposeAttempted = remember { mutableStateOf(false) }
     val pendingRemoveEntryTarget = remember { mutableStateOf<WatchlistEntry?>(null) }
     val removeEntryAttempted = remember { mutableStateOf(false) }
 
@@ -270,16 +261,11 @@ private fun rememberGroupDetailDialogState(
         rotatedInvite = (state as? GroupDetailUiState.Success)?.rotatedInvite,
         actionState = actionState,
         removeAttempted = removeAttempted.value,
-        proposeAttempted = proposeAttempted.value,
         removeEntryAttempted = removeEntryAttempted.value,
         onRotateDialogShouldClose = { showRotateDialog.value = false },
         onRemoveDialogShouldClose = {
             pendingRemoveTarget.value = null
             removeAttempted.value = false
-        },
-        onProposeDialogShouldClose = {
-            showProposeDialog.value = false
-            proposeAttempted.value = false
         },
         onRemoveEntryDialogShouldClose = {
             pendingRemoveEntryTarget.value = null
@@ -292,18 +278,16 @@ private fun rememberGroupDetailDialogState(
         showLeaveDialog = showLeaveDialog,
         pendingRemoveTarget = pendingRemoveTarget,
         removeAttempted = removeAttempted,
-        showProposeDialog = showProposeDialog,
-        proposeAttempted = proposeAttempted,
         pendingRemoveEntryTarget = pendingRemoveEntryTarget,
         removeEntryAttempted = removeEntryAttempted,
     )
 }
 
 /**
- * The five confirm/dismiss callbacks [GroupDetailActionDialogs] needs, built from [dialogState] and
+ * The four confirm/dismiss callbacks [GroupDetailActionDialogs] needs, built from [dialogState] and
  * the raw mutation calls — pulled out of [GroupDetailScreen] for the identical `LongMethod` reason
- * [rememberGroupDetailDialogState] was. [onRemoveConfirm]/[onProposeConfirm]'s own inline comments
- * (below) are where the "only mark an attempt when nothing is already in flight" reasoning lives —
+ * [rememberGroupDetailDialogState] was. [onRemoveConfirm]'s own inline comment (below) is where the
+ * "only mark an attempt when nothing is already in flight" reasoning lives —
  * [GroupDetailActionState]'s own KDoc has the higher-level "why one channel per operation" argument.
  */
 @Suppress("LongParameterList")
@@ -314,14 +298,11 @@ private fun GroupDetailScreenDialogs(
     onRotateInvite: () -> Unit,
     onLeaveGroup: () -> Unit,
     onRemoveMember: (String) -> Unit,
-    onProposeTitle: (String) -> Unit,
     onRemoveWatchlistEntry: (String) -> Unit,
 ) {
     var showRotateDialog by dialogState.showRotateDialog
     var pendingRemoveTarget by dialogState.pendingRemoveTarget
     var removeAttempted by dialogState.removeAttempted
-    var showProposeDialog by dialogState.showProposeDialog
-    var proposeAttempted by dialogState.proposeAttempted
     var pendingRemoveEntryTarget by dialogState.pendingRemoveEntryTarget
     var removeEntryAttempted by dialogState.removeEntryAttempted
 
@@ -329,7 +310,6 @@ private fun GroupDetailScreenDialogs(
         showRotateDialog = showRotateDialog,
         showLeaveDialog = dialogState.showLeaveDialog.value,
         pendingRemoveTarget = pendingRemoveTarget,
-        showProposeDialog = showProposeDialog,
         pendingRemoveEntryTarget = pendingRemoveEntryTarget,
         actionState = actionState,
         onRotateConfirm = onRotateInvite,
@@ -355,14 +335,6 @@ private fun GroupDetailScreenDialogs(
             pendingRemoveTarget = null
             removeAttempted = false
         },
-        onProposeConfirm = { mediaId ->
-            // [onRemoveConfirm]'s own note above, applied identically here.
-            if (!actionState.proposing) {
-                proposeAttempted = true
-            }
-            onProposeTitle(mediaId)
-        },
-        onProposeDismiss = { showProposeDialog = false },
         onRemoveEntryConfirm = { entryId ->
             // [onRemoveConfirm]'s own note above, applied identically here, one resource over.
             if (actionState.removingEntryId == null) {
@@ -384,13 +356,23 @@ private fun GroupDetailScreenDialogs(
  * way it is (BLOCKING 1's `removeAttempted` fix, most of all) — that reasoning stays there, not
  * duplicated here.
  *
- * [proposeAttempted]/[removeEntryAttempted] (task 9c.3) are [removeAttempted]'s IDENTICAL shape,
- * applied to the two new dialogs: propose has no natural "just succeeded" signal to key on the way
- * rotate's [rotatedInvite] does (there is no per-success unique VALUE this task exposes — the
- * watchlist LIST changing is not specific enough, [GroupDetailViewModel.reloadWatchlist]'s own KDoc
- * on why keying a close effect on list CONTENT would be wrong, the identical reasoning
- * [removeAttempted] itself already carries for [GroupDetailActionState.removingUserId]), so both
- * new dialogs use the attempted-flag fix rather than rotate's simpler shape.
+ * [removeEntryAttempted] (task 9c.3) is [removeAttempted]'s IDENTICAL shape, applied to the
+ * remove-entry dialog: no natural "just succeeded" signal to key on the way rotate's
+ * [rotatedInvite] does (there is no per-success unique VALUE this task exposes — the watchlist LIST
+ * changing is not specific enough, [GroupDetailViewModel.reloadWatchlist]'s own KDoc on why keying a
+ * close effect on list CONTENT would be wrong, the identical reasoning [removeAttempted] itself
+ * already carries for [GroupDetailActionState.removingUserId]).
+ *
+ * **Fix round 1's own residual note:** [removeAttempted]/[removeEntryAttempted] are read inside the
+ * effect bodies below but are deliberately NOT [LaunchedEffect] keys themselves — 9c.2's own
+ * `removeAttempted` carries the identical shape and the identical residual hole this file already
+ * accepted once: the CONFIRM-SITE guard (`GroupDetailScreenDialogs`'s own `onRemoveConfirm`/
+ * `onRemoveEntryConfirm`, both above) is what actually prevents a stale `true` from closing the
+ * WRONG dialog, not this effect noticing the flag change on its own — see those two lambdas' own
+ * inline comments. `GroupDetailScreenTest`'s `a remove-entry confirmed while a different entry's
+ * remove is still in flight does not close that dialog early` is the regression test for the
+ * remove-entry half; `a remove confirmed while a different member's remove is still in flight does
+ * not close that dialog early` (9c.2) is its member-remove counterpart.
  */
 @Suppress("LongParameterList")
 @Composable
@@ -398,11 +380,9 @@ private fun DialogCloseEffects(
     rotatedInvite: GroupWithInvite?,
     actionState: GroupDetailActionState,
     removeAttempted: Boolean,
-    proposeAttempted: Boolean,
     removeEntryAttempted: Boolean,
     onRotateDialogShouldClose: () -> Unit,
     onRemoveDialogShouldClose: () -> Unit,
-    onProposeDialogShouldClose: () -> Unit,
     onRemoveEntryDialogShouldClose: () -> Unit,
 ) {
     LaunchedEffect(rotatedInvite) {
@@ -413,11 +393,6 @@ private fun DialogCloseEffects(
             onRemoveDialogShouldClose()
         }
     }
-    LaunchedEffect(actionState.proposing, actionState.proposeError) {
-        if (proposeAttempted && !actionState.proposing && actionState.proposeError == null) {
-            onProposeDialogShouldClose()
-        }
-    }
     LaunchedEffect(actionState.removingEntryId, actionState.removeEntryError) {
         if (removeEntryAttempted && actionState.removingEntryId == null && actionState.removeEntryError == null) {
             onRemoveEntryDialogShouldClose()
@@ -426,7 +401,7 @@ private fun DialogCloseEffects(
 }
 
 /**
- * The five owner/member/watchlist confirmation dialogs, bundled — pulled out of [GroupDetailScreen]
+ * The four owner/member/watchlist confirmation dialogs, bundled — pulled out of [GroupDetailScreen]
  * for the identical [DialogCloseEffects] reason above.
  */
 @Suppress("LongParameterList")
@@ -435,7 +410,6 @@ private fun GroupDetailActionDialogs(
     showRotateDialog: Boolean,
     showLeaveDialog: Boolean,
     pendingRemoveTarget: GroupMember?,
-    showProposeDialog: Boolean,
     pendingRemoveEntryTarget: WatchlistEntry?,
     actionState: GroupDetailActionState,
     onRotateConfirm: () -> Unit,
@@ -444,8 +418,6 @@ private fun GroupDetailActionDialogs(
     onLeaveDismiss: () -> Unit,
     onRemoveConfirm: (String) -> Unit,
     onRemoveDismiss: () -> Unit,
-    onProposeConfirm: (String) -> Unit,
-    onProposeDismiss: () -> Unit,
     onRemoveEntryConfirm: (String) -> Unit,
     onRemoveEntryDismiss: () -> Unit,
 ) {
@@ -466,12 +438,6 @@ private fun GroupDetailActionDialogs(
         actionState = actionState,
         onConfirm = onRemoveConfirm,
         onDismiss = onRemoveDismiss,
-    )
-    ProposeDialogHost(
-        visible = showProposeDialog,
-        actionState = actionState,
-        onPropose = onProposeConfirm,
-        onDismiss = onProposeDismiss,
     )
     RemoveWatchlistEntryDialogHost(
         target = pendingRemoveEntryTarget,
@@ -498,8 +464,8 @@ private fun GroupDetailBody(
     onRemoveClick: (GroupMember) -> Unit,
     onDismissRotatedInvite: () -> Unit,
     onLoadMoreWatchlist: () -> Unit,
-    onProposeClick: () -> Unit,
     onRemoveEntryClick: (WatchlistEntry) -> Unit,
+    onEntryClick: (WatchlistEntry) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.fillMaxSize()) {
@@ -516,8 +482,8 @@ private fun GroupDetailBody(
             onRemoveClick = onRemoveClick,
             onDismissRotatedInvite = onDismissRotatedInvite,
             onLoadMoreWatchlist = onLoadMoreWatchlist,
-            onProposeClick = onProposeClick,
             onRemoveEntryClick = onRemoveEntryClick,
+            onEntryClick = onEntryClick,
             modifier = Modifier.weight(weight = 1f).fillMaxWidth(),
         )
         TextButton(onClick = onLeaveClick, modifier = Modifier.padding(all = 16.dp)) {
@@ -542,8 +508,8 @@ private fun GroupDetailContent(
     onRemoveClick: (GroupMember) -> Unit,
     onDismissRotatedInvite: () -> Unit,
     onLoadMoreWatchlist: () -> Unit,
-    onProposeClick: () -> Unit,
     onRemoveEntryClick: (WatchlistEntry) -> Unit,
+    onEntryClick: (WatchlistEntry) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Box(modifier = modifier) {
@@ -564,8 +530,8 @@ private fun GroupDetailContent(
                     onRemoveClick = onRemoveClick,
                     onDismissRotatedInvite = onDismissRotatedInvite,
                     onLoadMoreWatchlist = onLoadMoreWatchlist,
-                    onProposeClick = onProposeClick,
                     onRemoveEntryClick = onRemoveEntryClick,
+                    onEntryClick = onEntryClick,
                 )
         }
     }
@@ -597,13 +563,11 @@ private fun GroupDetailContent(
  * characteristic this choice does NOT by itself fix — `GroupDetailScreenTest` scrolls explicitly for
  * rows a `LazyColumn` does not reach on its first layout pass.
  *
- * [EndOfListTrigger]'s [itemCount] is members + the watchlist header + watchlist rows (or one, for
- * the empty-state row [watchlistItems] emits when there are none) — an approximation of the ACTUAL
- * emitted item count, not a index-exact one, which is fine: [EndOfListTrigger]'s own `threshold`
- * already tolerates being a few items off, and firing [onLoadMoreWatchlist] a little early or late
- * near the bottom of a combined list is harmless — `GroupDetailViewModel.loadMoreWatchlist`'s own
- * re-entrancy and exhaustion guards are what make an extra call actually safe, not this count being
- * exact.
+ * `onRetry` is now passed all the way into [GroupDetailList] too (fix round 1) — it is what a
+ * [StaleDataBanner] over a stale watchlist section calls, `viewModel::refresh`'s identical mapping
+ * the TOP-level banner above already uses, not a second bespoke retry function; see
+ * [GroupDetailUiState.Success.watchlistIsStale]'s own KDoc for why a reload failure gets this
+ * treatment rather than the page-fetch footer.
  */
 @Suppress("LongParameterList")
 @Composable
@@ -615,8 +579,8 @@ private fun GroupDetailSuccessContent(
     onRemoveClick: (GroupMember) -> Unit,
     onDismissRotatedInvite: () -> Unit,
     onLoadMoreWatchlist: () -> Unit,
-    onProposeClick: () -> Unit,
     onRemoveEntryClick: (WatchlistEntry) -> Unit,
+    onEntryClick: (WatchlistEntry) -> Unit,
 ) {
     val self = state.members.firstOrNull { it.userId == currentUserId }
     val isOwner = self?.role == GroupRole.OWNER
@@ -641,10 +605,11 @@ private fun GroupDetailSuccessContent(
             state = state,
             currentUserId = currentUserId,
             isOwner = isOwner,
+            onRetry = onRetry,
             onRemoveClick = onRemoveClick,
             onLoadMoreWatchlist = onLoadMoreWatchlist,
-            onProposeClick = onProposeClick,
             onRemoveEntryClick = onRemoveEntryClick,
+            onEntryClick = onEntryClick,
             modifier = Modifier.weight(weight = 1f).fillMaxWidth(),
         )
     }
@@ -655,6 +620,17 @@ private fun GroupDetailSuccessContent(
  * function's own length under detekt's `LongMethod` threshold; no behaviour moved with it that a
  * caller could observe differently. [GroupDetailSuccessContent]'s own KDoc has the full reasoning
  * for why members and watchlist rows now share this one scrollable region.
+ *
+ * **Fix round 1, finding "smaller item 1":** [itemCount] is `0` whenever the watchlist is empty,
+ * not `coerceAtLeast(1)` counting the empty-state row round 0 fed [EndOfListTrigger]. Round 0's
+ * shape meant "nothing has loaded yet" and "near the end of a loaded list" were indistinguishable
+ * to the trigger — the FIRST composition after `refresh()` sets `Success` (watchlist still empty,
+ * `reloadWatchlist` not yet landed) had `itemCount == 1` trivially "near its own end", so the
+ * trigger fired on the very first laid-out frame, racing `reloadWatchlist`'s own initial fetch —
+ * see [GroupDetailViewModel.watchlistPaginator]'s own KDoc for the crash that produced (finding
+ * B1). [EndOfListTrigger]'s own `itemCount > 0` guard now means the trigger simply cannot fire
+ * while there is nothing to page from, closing the most common way that race was reached even
+ * before [CursorPaginator]'s own `Mutex` closes the rest of it structurally.
  */
 @Suppress("LongParameterList")
 @Composable
@@ -662,14 +638,16 @@ private fun GroupDetailList(
     state: GroupDetailUiState.Success,
     currentUserId: String?,
     isOwner: Boolean,
+    onRetry: () -> Unit,
     onRemoveClick: (GroupMember) -> Unit,
     onLoadMoreWatchlist: () -> Unit,
-    onProposeClick: () -> Unit,
     onRemoveEntryClick: (WatchlistEntry) -> Unit,
+    onEntryClick: (WatchlistEntry) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val listState = rememberLazyListState()
-    val itemCount = state.members.size + 1 + state.watchlist.size.coerceAtLeast(minimumValue = 1)
+    val itemCount =
+        if (state.watchlist.isEmpty()) 0 else state.members.size + 1 + state.watchlist.size
     EndOfListTrigger(listState = listState, itemCount = itemCount, onTriggered = onLoadMoreWatchlist)
 
     LazyColumn(
@@ -685,15 +663,22 @@ private fun GroupDetailList(
             onRemoveClick = onRemoveClick,
         )
         item(key = "watchlist-header") {
-            WatchlistHeader(onProposeClick = onProposeClick, modifier = Modifier.fillMaxWidth())
+            WatchlistHeader(modifier = Modifier.fillMaxWidth())
+        }
+        if (state.watchlistIsStale) {
+            item(key = "watchlist-stale-banner") {
+                StaleDataBanner(onRetry = onRetry, messageRes = R.string.groups_watchlist_stale_notice)
+            }
         }
         watchlistItems(
             entries = state.watchlist,
             members = state.members,
             loadingMore = state.watchlistLoadingMore,
             pageError = state.watchlistPageError != null,
+            isStale = state.watchlistIsStale,
             onLoadMore = onLoadMoreWatchlist,
             onRemoveClick = onRemoveEntryClick,
+            onEntryClick = onEntryClick,
         )
     }
 }

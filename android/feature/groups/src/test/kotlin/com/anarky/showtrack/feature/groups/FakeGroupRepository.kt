@@ -21,12 +21,18 @@ import kotlinx.coroutines.CompletableDeferred
  * (neither is on this module's compile classpath — architecture rule 2).
  *
  * [groups]/[createGroup]/[joinGroup] (the three [GroupsViewModel] calls), since task 9c.2,
- * [members]/[rotateInvite]/[removeMember], and, since task 9c.3, [watchlist]/[proposeTitle]/
- * [removeFromWatchlist] (six of the seven [GroupDetailViewModel] calls — `currentUserId` moved to
+ * [members]/[rotateInvite]/[removeMember], and, since task 9c.3, [watchlist]/[removeFromWatchlist]
+ * (five of the seven [GroupDetailViewModel] calls — `currentUserId` moved to
  * `AuthRepository`/`FakeAuthRepository` in round 1 review) are functional. Every OTHER member
  * `error(...)`s rather than silently no-op-ing: a ViewModel that accidentally reached one of them
  * fails LOUDLY, with that message, rather than an unexplained `NotImplementedError` or a silently
  * wrong result — [FakeLibraryRepository]'s (`:feature:favorites`) identical discrimination technique.
+ *
+ * **[proposeTitle] reverted to `error(...)` in fix round 1**: task 9c.3's own propose UI was
+ * removed from `:feature:groups` entirely (a raw-media-id text field was worse than not offering
+ * the action — see `GroupDetailActionState`'s own KDoc), so nothing here calls it any more; a
+ * still-functional fake for a method [GroupDetailViewModel] no longer reaches would silently mask
+ * a regression that made it reachable again by mistake.
  *
  * [watchlistPages] defaults to a single, EMPTY, successful first page (`null to WatchlistPage(items
  * = emptyList(), nextCursor = null)`) — not an `error(...)`, unlike every other still-unimplemented
@@ -71,8 +77,6 @@ internal class FakeGroupRepository(
     var watchlistPages: MutableMap<String?, WatchlistPage> =
         mutableMapOf(null to WatchlistPage(items = emptyList(), nextCursor = null)),
     var watchlistFailure: GroupFailure? = null,
-    var proposeResult: WatchlistEntry? = null,
-    var proposeFailure: GroupFailure? = null,
     var removeWatchlistEntryFailure: GroupFailure? = null,
 ) : GroupRepository {
     var groupsGate: CompletableDeferred<Unit>? = null
@@ -81,7 +85,6 @@ internal class FakeGroupRepository(
     var membersGate: CompletableDeferred<Unit>? = null
     var removeMemberGate: CompletableDeferred<Unit>? = null
     var watchlistGate: CompletableDeferred<Unit>? = null
-    var proposeGate: CompletableDeferred<Unit>? = null
     var removeWatchlistEntryGate: CompletableDeferred<Unit>? = null
 
     var groupsCalls = 0
@@ -106,7 +109,6 @@ internal class FakeGroupRepository(
     // (`GroupDetailViewModelTest`'s "paging the watchlist appends without duplicates").
     val watchlistCalls = mutableListOf<String?>()
 
-    val proposeCalls = mutableListOf<Pair<String, String>>()
     val removeWatchlistEntryCalls = mutableListOf<Pair<String, String>>()
 
     override suspend fun groups(): List<Group> {
@@ -174,12 +176,7 @@ internal class FakeGroupRepository(
     override suspend fun proposeTitle(
         groupId: String,
         mediaId: String,
-    ): WatchlistEntry {
-        proposeCalls += groupId to mediaId
-        proposeGate?.await()
-        proposeFailure?.let { throw GroupOperationException(it) }
-        return proposeResult ?: error("proposeResult not set for this test")
-    }
+    ): WatchlistEntry = error("not exercised by GroupsViewModel")
 
     override suspend fun removeFromWatchlist(
         groupId: String,

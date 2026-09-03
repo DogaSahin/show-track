@@ -162,16 +162,19 @@ internal fun JoinGroupDialog(
  * [GroupsUiState.Error]'s own message, and this file is where the mapping lives (split out to keep
  * `GroupsScreen.kt` under detekt's `TooManyFunctions` threshold — see this file's own KDoc).
  *
- * **Task 9c.3 gives [GroupFailure.NoSuchTitle]/[GroupFailure.NoSuchEntry] their own copy**, the
- * identical round-1 reasoning [GroupFailure.NotAMember] already got: both fell into the generic
- * fallback while nothing on screen could ever produce them (this file's own prior note said so
- * explicitly — "creating or joining a group cannot produce the former"). That stopped being true
- * the moment `ProposeTitleDialog`/`RemoveWatchlistEntryDialog` could reach them, and each names
- * something the generic "something went wrong" copy would actively misdescribe: retrying
- * [GroupFailure.NoSuchTitle] answers the identical 404 every time (the media id is simply not one
- * the server knows), and [GroupFailure.NoSuchEntry] means the row is already gone, not that
- * anything is broken — see that case's own KDoc for the membership-race shadow this mapping
- * deliberately still accepts.
+ * **Task 9c.3 gives [GroupFailure.NoSuchEntry] its own copy**, the identical round-1 reasoning
+ * [GroupFailure.NotAMember] already got: it fell into the generic fallback while nothing on screen
+ * could ever produce it (this file's own prior note said so explicitly). That stopped being true
+ * the moment `RemoveWatchlistEntryDialog` could reach it, and it names something the generic
+ * "something went wrong" copy would actively misdescribe: [GroupFailure.NoSuchEntry] means the row
+ * is already gone, not that anything is broken — see that case's own KDoc for the membership-race
+ * shadow this mapping deliberately still accepts.
+ *
+ * **[GroupFailure.NoSuchTitle] stays in the generic fallback below** (fix round 1 reverted task
+ * 9c.3's own dedicated case): it was added for `ProposeTitleDialog`, which fix round 1 removed from
+ * this screen entirely — see [GroupDetailActionState]'s own KDoc for why proposing moved to
+ * `:feature:detail` (task 9c.6). Nothing in `:feature:groups` can produce this failure any more, so
+ * a dedicated branch for it here would name a case this module can no longer reach.
  */
 internal fun GroupFailure.messageRes(): Int =
     when (this) {
@@ -182,9 +185,9 @@ internal fun GroupFailure.messageRes(): Int =
         // the group elsewhere, or the group is gone), and "something went wrong, try again" is
         // actively misleading for a 404 that will answer identically on every retry.
         GroupFailure.NotAMember -> R.string.groups_error_not_a_member
-        GroupFailure.NoSuchTitle -> R.string.groups_watchlist_error_no_such_title
         GroupFailure.NoSuchEntry -> R.string.groups_watchlist_error_no_such_entry
         GroupFailure.NotPermitted,
+        GroupFailure.NoSuchTitle,
         is GroupFailure.AlreadyReviewed,
         is GroupFailure.Unknown,
         -> R.string.groups_error_unknown

@@ -3,7 +3,9 @@ package com.anarky.showtrack.feature.groups
 import androidx.navigation.NavGraphBuilder
 import androidx.navigation.compose.composable
 import com.anarky.showtrack.core.model.Group
+import com.anarky.showtrack.core.model.WatchlistEntry
 import com.anarky.showtrack.core.navigation.AppRoute
+import com.anarky.showtrack.core.navigation.DetailRoute
 import com.anarky.showtrack.core.navigation.GroupDetailRoute
 import com.anarky.showtrack.core.navigation.GroupsRoute
 
@@ -48,13 +50,19 @@ fun NavGraphBuilder.groupsEntry(onNavigate: (AppRoute) -> Unit) {
  * its `hiltViewModel()` default, so a bare unit test cannot drive the BINDING this way; it can
  * drive this mapping directly, and `GroupDetailEntryHiltTest` covers the binding end to end.
  *
- * Task 9c.3 extends this destination with the shared watchlist (plan doc: "Modify:
- * `GroupDetailUiState.kt`, `GroupDetailViewModel.kt`, `GroupDetailScreen.kt`, `strings.xml`") —
- * nothing here is written to preclude it.
+ * **`onEntryClick` (fix round 1, task 9c.3):** `entry.mediaId`, not `entry.media.id` — a
+ * [WatchlistEntry]'s [com.anarky.showtrack.core.model.MediaSummary] carries no id by design
+ * (decision C-N), which is exactly why [WatchlistEntry.mediaId] exists as a sibling field
+ * (`WatchlistEntry`'s own KDoc, `:core:model`) — `LibraryNavigation.kt`'s `libraryEntry` has the
+ * identical inline-lambda shape for its own `entry.media.id`, not pulled into a named function
+ * either, since neither takes more than one line to read correctly.
  */
 fun NavGraphBuilder.groupDetailEntry(onNavigate: (AppRoute) -> Unit) {
     composable<GroupDetailRoute> {
-        GroupDetailScreen(onLeft = leaveNavigation(onNavigate))
+        GroupDetailScreen(
+            onLeft = leaveNavigation(onNavigate),
+            onEntryClick = { entry: WatchlistEntry -> onNavigate(DetailRoute(mediaId = entry.mediaId)) },
+        )
     }
 }
 

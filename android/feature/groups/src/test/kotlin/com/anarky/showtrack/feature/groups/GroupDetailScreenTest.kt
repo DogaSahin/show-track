@@ -8,13 +8,13 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
-import androidx.compose.ui.test.performTextInput
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.espresso.Espresso
 import com.anarky.showtrack.core.data.repository.GroupWithInvite
@@ -87,10 +87,9 @@ class GroupDetailScreenTest {
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
                 onLoadMoreWatchlist = {},
-                onProposeTitle = {},
                 onRemoveWatchlistEntry = {},
-                onProposeDialogOpened = {},
                 onRemoveEntryDialogOpened = {},
+                onEntryClick = {},
             )
         }
 
@@ -118,10 +117,9 @@ class GroupDetailScreenTest {
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
                 onLoadMoreWatchlist = {},
-                onProposeTitle = {},
                 onRemoveWatchlistEntry = {},
-                onProposeDialogOpened = {},
                 onRemoveEntryDialogOpened = {},
+                onEntryClick = {},
             )
         }
 
@@ -151,10 +149,9 @@ class GroupDetailScreenTest {
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
                 onLoadMoreWatchlist = {},
-                onProposeTitle = {},
                 onRemoveWatchlistEntry = {},
-                onProposeDialogOpened = {},
                 onRemoveEntryDialogOpened = {},
+                onEntryClick = {},
             )
         }
 
@@ -184,10 +181,9 @@ class GroupDetailScreenTest {
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
                 onLoadMoreWatchlist = {},
-                onProposeTitle = {},
                 onRemoveWatchlistEntry = {},
-                onProposeDialogOpened = {},
                 onRemoveEntryDialogOpened = {},
+                onEntryClick = {},
             )
         }
 
@@ -219,10 +215,9 @@ class GroupDetailScreenTest {
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
                 onLoadMoreWatchlist = {},
-                onProposeTitle = {},
                 onRemoveWatchlistEntry = {},
-                onProposeDialogOpened = {},
                 onRemoveEntryDialogOpened = {},
+                onEntryClick = {},
             )
         }
 
@@ -252,10 +247,9 @@ class GroupDetailScreenTest {
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
                 onLoadMoreWatchlist = {},
-                onProposeTitle = {},
                 onRemoveWatchlistEntry = {},
-                onProposeDialogOpened = {},
                 onRemoveEntryDialogOpened = {},
+                onEntryClick = {},
             )
         }
 
@@ -285,10 +279,9 @@ class GroupDetailScreenTest {
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
                 onLoadMoreWatchlist = {},
-                onProposeTitle = {},
                 onRemoveWatchlistEntry = {},
-                onProposeDialogOpened = {},
                 onRemoveEntryDialogOpened = {},
+                onEntryClick = {},
             )
         }
 
@@ -331,10 +324,9 @@ class GroupDetailScreenTest {
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = { actionState = actionState.copy(removeError = null) },
                 onLoadMoreWatchlist = {},
-                onProposeTitle = {},
                 onRemoveWatchlistEntry = {},
-                onProposeDialogOpened = {},
                 onRemoveEntryDialogOpened = {},
+                onEntryClick = {},
             )
         }
 
@@ -409,10 +401,9 @@ class GroupDetailScreenTest {
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = { actionState = actionState.copy(removeError = null) },
                 onLoadMoreWatchlist = {},
-                onProposeTitle = {},
                 onRemoveWatchlistEntry = {},
-                onProposeDialogOpened = {},
                 onRemoveEntryDialogOpened = {},
+                onEntryClick = {},
             )
         }
 
@@ -467,10 +458,9 @@ class GroupDetailScreenTest {
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
                 onLoadMoreWatchlist = {},
-                onProposeTitle = {},
                 onRemoveWatchlistEntry = {},
-                onProposeDialogOpened = {},
                 onRemoveEntryDialogOpened = {},
+                onEntryClick = {},
             )
         }
 
@@ -498,10 +488,9 @@ class GroupDetailScreenTest {
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
                 onLoadMoreWatchlist = {},
-                onProposeTitle = {},
                 onRemoveWatchlistEntry = {},
-                onProposeDialogOpened = {},
                 onRemoveEntryDialogOpened = {},
+                onEntryClick = {},
             )
         }
 
@@ -529,10 +518,9 @@ class GroupDetailScreenTest {
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
                 onLoadMoreWatchlist = {},
-                onProposeTitle = {},
                 onRemoveWatchlistEntry = {},
-                onProposeDialogOpened = {},
                 onRemoveEntryDialogOpened = {},
+                onEntryClick = {},
             )
         }
 
@@ -565,10 +553,9 @@ class GroupDetailScreenTest {
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
                 onLoadMoreWatchlist = {},
-                onProposeTitle = {},
                 onRemoveWatchlistEntry = {},
-                onProposeDialogOpened = {},
                 onRemoveEntryDialogOpened = {},
+                onEntryClick = {},
             )
         }
 
@@ -602,10 +589,9 @@ class GroupDetailScreenTest {
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
                 onLoadMoreWatchlist = {},
-                onProposeTitle = {},
                 onRemoveWatchlistEntry = {},
-                onProposeDialogOpened = {},
                 onRemoveEntryDialogOpened = {},
+                onEntryClick = {},
             )
         }
 
@@ -635,10 +621,9 @@ class GroupDetailScreenTest {
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
                 onLoadMoreWatchlist = {},
-                onProposeTitle = {},
                 onRemoveWatchlistEntry = {},
-                onProposeDialogOpened = {},
                 onRemoveEntryDialogOpened = {},
+                onEntryClick = {},
             )
         }
 
@@ -669,10 +654,9 @@ class GroupDetailScreenTest {
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
                 onLoadMoreWatchlist = {},
-                onProposeTitle = {},
                 onRemoveWatchlistEntry = {},
-                onProposeDialogOpened = {},
                 onRemoveEntryDialogOpened = {},
+                onEntryClick = {},
             )
         }
 
@@ -697,10 +681,9 @@ class GroupDetailScreenTest {
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
                 onLoadMoreWatchlist = {},
-                onProposeTitle = {},
                 onRemoveWatchlistEntry = {},
-                onProposeDialogOpened = {},
                 onRemoveEntryDialogOpened = {},
+                onEntryClick = {},
             )
         }
 
@@ -726,10 +709,9 @@ class GroupDetailScreenTest {
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
                 onLoadMoreWatchlist = {},
-                onProposeTitle = {},
                 onRemoveWatchlistEntry = {},
-                onProposeDialogOpened = {},
                 onRemoveEntryDialogOpened = {},
+                onEntryClick = {},
             )
         }
 
@@ -756,10 +738,9 @@ class GroupDetailScreenTest {
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
                 onLoadMoreWatchlist = {},
-                onProposeTitle = {},
                 onRemoveWatchlistEntry = {},
-                onProposeDialogOpened = {},
                 onRemoveEntryDialogOpened = {},
+                onEntryClick = {},
             )
         }
 
@@ -799,10 +780,9 @@ class GroupDetailScreenTest {
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
                 onLoadMoreWatchlist = {},
-                onProposeTitle = {},
                 onRemoveWatchlistEntry = {},
-                onProposeDialogOpened = {},
                 onRemoveEntryDialogOpened = {},
+                onEntryClick = {},
             )
         }
 
@@ -841,10 +821,9 @@ class GroupDetailScreenTest {
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
                 onLoadMoreWatchlist = {},
-                onProposeTitle = {},
                 onRemoveWatchlistEntry = { removedEntryId = it },
-                onProposeDialogOpened = {},
                 onRemoveEntryDialogOpened = {},
+                onEntryClick = {},
             )
         }
 
@@ -862,176 +841,6 @@ class GroupDetailScreenTest {
         composeRule.onNodeWithText(context.getString(R.string.groups_watchlist_remove_confirm_button)).performClick()
 
         assertEquals(ENTRY_2.id, removedEntryId)
-    }
-
-    @Test
-    fun `submitting the propose dialog invokes onProposeTitle with the typed media id`() {
-        var opened = false
-        var proposedMediaId: String? = null
-        composeRule.setContent {
-            GroupDetailScreen(
-                state = successState(members = listOf(OWNER)),
-                actionState = GroupDetailActionState(),
-                currentUserId = OWNER.userId,
-                onRetry = {},
-                onRotateInvite = {},
-                onLeaveGroup = {},
-                onRemoveMember = {},
-                onDismissRotatedInvite = {},
-                onRotateDialogOpened = {},
-                onLeaveDialogOpened = {},
-                onRemoveDialogOpened = {},
-                onLoadMoreWatchlist = {},
-                onProposeTitle = { proposedMediaId = it },
-                onRemoveWatchlistEntry = {},
-                onProposeDialogOpened = { opened = true },
-                onRemoveEntryDialogOpened = {},
-            )
-        }
-
-        composeRule.onNodeWithText(context.getString(R.string.groups_watchlist_propose_action)).performClick()
-        assertTrue(opened)
-        composeRule
-            .onNodeWithText(context.getString(R.string.groups_watchlist_propose_media_id_label))
-            .performTextInput("media-42")
-        composeRule.onNodeWithText(context.getString(R.string.groups_watchlist_propose_submit)).performClick()
-
-        assertEquals("media-42", proposedMediaId)
-    }
-
-    /**
-     * The happy-path half of the propose dialog's own close-on-success — driven through a REAL
-     * submit (not merely opening it), matching Global Constraints' "drive it through the failure
-     * path and the reopen-after-failure path... not just the happy one" by giving the happy path
-     * an equally real test to sit beside.
-     */
-    @Test
-    fun `a successful propose closes the dialog`() {
-        var actionState by mutableStateOf(GroupDetailActionState())
-        composeRule.setContent {
-            GroupDetailScreen(
-                state = successState(members = listOf(OWNER)),
-                actionState = actionState,
-                currentUserId = OWNER.userId,
-                onRetry = {},
-                onRotateInvite = {},
-                onLeaveGroup = {},
-                onRemoveMember = {},
-                onDismissRotatedInvite = {},
-                onRotateDialogOpened = {},
-                onLeaveDialogOpened = {},
-                onRemoveDialogOpened = {},
-                onLoadMoreWatchlist = {},
-                onProposeTitle = { actionState = actionState.copy(proposing = true, proposeError = null) },
-                onRemoveWatchlistEntry = {},
-                onProposeDialogOpened = { actionState = actionState.copy(proposeError = null) },
-                onRemoveEntryDialogOpened = {},
-            )
-        }
-
-        composeRule.onNodeWithText(context.getString(R.string.groups_watchlist_propose_action)).performClick()
-        composeRule
-            .onNodeWithText(context.getString(R.string.groups_watchlist_propose_media_id_label))
-            .performTextInput("media-42")
-        composeRule.onNodeWithText(context.getString(R.string.groups_watchlist_propose_submit)).performClick()
-        // Settle the in-flight (proposing = true) frame BEFORE flipping back to false — a real
-        // ViewModel's own two writes straddle a genuine suspension (the network call), so Compose
-        // observes them as two distinct states; skipping this wait here collapses both writes into
-        // one recomposition whose net key change is false -> false, which LaunchedEffect's own key
-        // comparison (against its LAST remembered key, also false) then reads as "unchanged" and
-        // never relaunches — the close effect would silently never fire. `waitForIdle()` here is
-        // what makes the simulation honest rather than accidentally erasing the transition.
-        composeRule.waitForIdle()
-
-        actionState = actionState.copy(proposing = false)
-        composeRule.waitForIdle()
-
-        composeRule
-            .onNodeWithText(context.getString(R.string.groups_watchlist_propose_media_id_label))
-            .assertDoesNotExist()
-    }
-
-    /** Driven through a REAL submit, not merely an injected error — the brief's own failure path. */
-    @Test
-    fun `a failed propose keeps the dialog open and shows the error`() {
-        var actionState by mutableStateOf(GroupDetailActionState())
-        composeRule.setContent {
-            GroupDetailScreen(
-                state = successState(members = listOf(OWNER)),
-                actionState = actionState,
-                currentUserId = OWNER.userId,
-                onRetry = {},
-                onRotateInvite = {},
-                onLeaveGroup = {},
-                onRemoveMember = {},
-                onDismissRotatedInvite = {},
-                onRotateDialogOpened = {},
-                onLeaveDialogOpened = {},
-                onRemoveDialogOpened = {},
-                onLoadMoreWatchlist = {},
-                onProposeTitle = { actionState = actionState.copy(proposing = true, proposeError = null) },
-                onRemoveWatchlistEntry = {},
-                onProposeDialogOpened = { actionState = actionState.copy(proposeError = null) },
-                onRemoveEntryDialogOpened = {},
-            )
-        }
-
-        composeRule.onNodeWithText(context.getString(R.string.groups_watchlist_propose_action)).performClick()
-        composeRule
-            .onNodeWithText(context.getString(R.string.groups_watchlist_propose_media_id_label))
-            .performTextInput("unknown-media-id")
-        composeRule.onNodeWithText(context.getString(R.string.groups_watchlist_propose_submit)).performClick()
-
-        actionState = actionState.copy(proposing = false, proposeError = GroupFailure.NoSuchTitle)
-        composeRule.waitForIdle()
-
-        composeRule.onNodeWithText(context.getString(R.string.groups_watchlist_error_no_such_title)).assertIsDisplayed()
-        // Still open — a failure must not close it the way a success does.
-        composeRule
-            .onNodeWithText(context.getString(R.string.groups_watchlist_propose_media_id_label))
-            .assertIsDisplayed()
-    }
-
-    /**
-     * The brief's own "reopen-after-failure" path — the shape of bug BLOCKING 1 (9c.2 review)
-     * found: [onProposeDialogOpened] (bound to `clearProposeError`) clears the error in the SAME
-     * recomposition the reopen sets, which flips `(proposing, proposeError)` to `(false, null)` —
-     * indistinguishable from a genuine success — unless [DialogCloseEffects]'s `proposeAttempted`
-     * guard is what it claims to be. Without it, this test fails the moment the dialog reopens.
-     */
-    @Test
-    fun `reopening the propose dialog after a previous failure clears the stale error and does not self-dismiss`() {
-        var actionState by mutableStateOf(GroupDetailActionState(proposeError = GroupFailure.NoSuchTitle))
-        composeRule.setContent {
-            GroupDetailScreen(
-                state = successState(members = listOf(OWNER)),
-                actionState = actionState,
-                currentUserId = OWNER.userId,
-                onRetry = {},
-                onRotateInvite = {},
-                onLeaveGroup = {},
-                onRemoveMember = {},
-                onDismissRotatedInvite = {},
-                onRotateDialogOpened = {},
-                onLeaveDialogOpened = {},
-                onRemoveDialogOpened = {},
-                onLoadMoreWatchlist = {},
-                onProposeTitle = {},
-                onRemoveWatchlistEntry = {},
-                onProposeDialogOpened = { actionState = actionState.copy(proposeError = null) },
-                onRemoveEntryDialogOpened = {},
-            )
-        }
-
-        composeRule.onNodeWithText(context.getString(R.string.groups_watchlist_propose_action)).performClick()
-        composeRule.waitForIdle()
-
-        composeRule
-            .onNodeWithText(context.getString(R.string.groups_watchlist_propose_media_id_label))
-            .assertIsDisplayed()
-        composeRule
-            .onNodeWithText(context.getString(R.string.groups_watchlist_error_no_such_title))
-            .assertDoesNotExist()
     }
 
     /**
@@ -1055,10 +864,9 @@ class GroupDetailScreenTest {
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
                 onLoadMoreWatchlist = {},
-                onProposeTitle = {},
                 onRemoveWatchlistEntry = {},
-                onProposeDialogOpened = {},
                 onRemoveEntryDialogOpened = { actionState = actionState.copy(removeEntryError = null) },
+                onEntryClick = {},
             )
         }
 
@@ -1115,10 +923,9 @@ class GroupDetailScreenTest {
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
                 onLoadMoreWatchlist = {},
-                onProposeTitle = {},
                 onRemoveWatchlistEntry = {},
-                onProposeDialogOpened = {},
                 onRemoveEntryDialogOpened = {},
+                onEntryClick = {},
             )
         }
 
@@ -1149,27 +956,270 @@ class GroupDetailScreenTest {
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
                 onLoadMoreWatchlist = {},
-                onProposeTitle = {},
                 onRemoveWatchlistEntry = {},
-                onProposeDialogOpened = {},
                 onRemoveEntryDialogOpened = {},
+                onEntryClick = {},
             )
         }
 
         composeRule.onNodeWithText(context.getString(R.string.groups_watchlist_empty_message)).assertIsDisplayed()
     }
 
+    /**
+     * Fix round 1, "smaller item 1": `GroupDetailList`'s own `itemCount` is `0` when the watchlist
+     * is empty, not `coerceAtLeast(1)` counting the empty-state row round 0 fed `EndOfListTrigger`.
+     * `EndOfListTrigger`'s own `itemCount > 0` guard means it cannot fire at all in that state — and
+     * because that guard evaluates against `lastVisibleIndex >= itemCount - threshold`, an
+     * `itemCount` of exactly `1` (round 0's shape) is trivially "near its own end" on the VERY FIRST
+     * laid-out frame with no scroll needed, which is what let it fire immediately in production and
+     * race `reloadWatchlist`'s own initial fetch (finding B1). No scroll simulation is needed here
+     * either, for the identical reason: composing this state ONCE is enough to prove the trigger
+     * never fires no-scroll-needed under fix round 1, the same way it never needed a scroll to
+     * misfire under round 0.
+     */
+    @Test
+    fun `an empty watchlist never triggers loadMoreWatchlist on its own`() {
+        var loadMoreCalls = 0
+        composeRule.setContent {
+            GroupDetailScreen(
+                state = successState(members = listOf(OWNER), watchlist = emptyList()),
+                actionState = GroupDetailActionState(),
+                currentUserId = OWNER.userId,
+                onRetry = {},
+                onRotateInvite = {},
+                onLeaveGroup = {},
+                onRemoveMember = {},
+                onDismissRotatedInvite = {},
+                onRotateDialogOpened = {},
+                onLeaveDialogOpened = {},
+                onRemoveDialogOpened = {},
+                onLoadMoreWatchlist = { loadMoreCalls++ },
+                onRemoveWatchlistEntry = {},
+                onRemoveEntryDialogOpened = {},
+                onEntryClick = {},
+            )
+        }
+        composeRule.waitForIdle()
+
+        assertEquals(0, loadMoreCalls)
+    }
+
+    /** [GroupDetailUiState.Success.watchlistLoadingMore]'s own rendering — a footer spinner. */
+    @Test
+    fun `the loading-more footer shows a spinner while a page fetch is in flight`() {
+        composeRule.setContent {
+            GroupDetailScreen(
+                state =
+                    successState(
+                        members = listOf(OWNER),
+                        watchlist = listOf(ENTRY_1),
+                        watchlistLoadingMore = true,
+                    ),
+                actionState = GroupDetailActionState(),
+                currentUserId = OWNER.userId,
+                onRetry = {},
+                onRotateInvite = {},
+                onLeaveGroup = {},
+                onRemoveMember = {},
+                onDismissRotatedInvite = {},
+                onRotateDialogOpened = {},
+                onLeaveDialogOpened = {},
+                onRemoveDialogOpened = {},
+                onLoadMoreWatchlist = {},
+                onRemoveWatchlistEntry = {},
+                onRemoveEntryDialogOpened = {},
+                onEntryClick = {},
+            )
+        }
+
+        composeRule.onNode(hasScrollAction()).performScrollToNode(hasTestTag("watchlist-loading-more"))
+        composeRule.onNodeWithTag("watchlist-loading-more").assertIsDisplayed()
+        // The footer error row must NOT also render — loading and pageError are mutually exclusive
+        // branches in watchlistItems, never both at once.
+        composeRule
+            .onNodeWithText(context.getString(R.string.groups_watchlist_page_error))
+            .assertDoesNotExist()
+    }
+
+    /**
+     * [GroupDetailUiState.Success.watchlistIsStale]'s own rendering (fix round 1, findings B2/B3):
+     * a banner above the watchlist rows, distinct from the page-fetch footer — its retry is
+     * `onRetry`, the SAME callback the top-level members banner already uses, not a second bespoke
+     * one. Existing rows (including one whose delete may not actually be reflected — finding B3)
+     * stay visible underneath it.
+     */
+    @Test
+    fun `a stale watchlist shows a stale banner above its rows, and retrying invokes onRetry`() {
+        var retried = false
+        composeRule.setContent {
+            GroupDetailScreen(
+                state =
+                    successState(
+                        members = listOf(OWNER),
+                        watchlist = listOf(ENTRY_1),
+                        watchlistIsStale = true,
+                    ),
+                actionState = GroupDetailActionState(),
+                currentUserId = OWNER.userId,
+                onRetry = { retried = true },
+                onRotateInvite = {},
+                onLeaveGroup = {},
+                onRemoveMember = {},
+                onDismissRotatedInvite = {},
+                onRotateDialogOpened = {},
+                onLeaveDialogOpened = {},
+                onRemoveDialogOpened = {},
+                onLoadMoreWatchlist = {},
+                onRemoveWatchlistEntry = {},
+                onRemoveEntryDialogOpened = {},
+                onEntryClick = {},
+            )
+        }
+
+        composeRule.onNodeWithText(context.getString(R.string.groups_watchlist_stale_notice)).assertIsDisplayed()
+        composeRule.onNodeWithText(ENTRY_1.media.title).assertIsDisplayed()
+        // Never the empty-state message, even though nothing ELSE claims the watchlist is genuinely
+        // empty here — this fixture is not empty, but a stale + empty combination must not show
+        // "No one has proposed a title yet" contradicting the banner above it (watchlistItems' own
+        // guard); this assertion pins the non-contradiction for the populated case.
+        composeRule
+            .onNodeWithText(context.getString(R.string.groups_watchlist_empty_message))
+            .assertDoesNotExist()
+
+        composeRule.onNodeWithText(context.getString(DesignSystemR.string.action_retry)).performClick()
+        assertTrue(retried)
+    }
+
+    /**
+     * Mutation-critical: a two-entry fixture, tapping the SECOND row — `tapping remove on the
+     * second watchlist entry...`'s identical discriminating shape, applied to the row's own click
+     * rather than its remove button. A handler that always reported `entries.first()` would pass a
+     * single-entry test but fail this one.
+     */
+    @Test
+    fun `tapping a watchlist entry invokes onEntryClick with that entry, not another`() {
+        var clicked: WatchlistEntry? = null
+        composeRule.setContent {
+            GroupDetailScreen(
+                state = successState(members = listOf(OWNER), watchlist = listOf(ENTRY_1, ENTRY_2)),
+                actionState = GroupDetailActionState(),
+                currentUserId = OWNER.userId,
+                onRetry = {},
+                onRotateInvite = {},
+                onLeaveGroup = {},
+                onRemoveMember = {},
+                onDismissRotatedInvite = {},
+                onRotateDialogOpened = {},
+                onLeaveDialogOpened = {},
+                onRemoveDialogOpened = {},
+                onLoadMoreWatchlist = {},
+                onRemoveWatchlistEntry = {},
+                onRemoveEntryDialogOpened = {},
+                onEntryClick = { clicked = it },
+            )
+        }
+
+        composeRule.onNode(hasScrollAction()).performScrollToNode(hasText(ENTRY_2.media.title))
+        composeRule.onNodeWithText(ENTRY_2.media.title).performClick()
+
+        assertEquals(ENTRY_2, clicked)
+    }
+
+    /**
+     * The remove-entry dialog's own version of 9c.2's BLOCKING-1-adjacent second bug (`a remove
+     * confirmed while a different member's remove is still in flight does not close that dialog
+     * early`) — fix round 1's own smaller item 2: `removeEntryAttempted` is read but not a
+     * `LaunchedEffect` key, so this confirms the CONFIRM-SITE guard (`GroupDetailScreenDialogs`'s
+     * own `onRemoveEntryConfirm`) is what actually prevents a stale `true` from closing the wrong
+     * dialog, reproducing the identical sequence the member-remove regression test does one
+     * resource over.
+     */
+    @Test
+    fun `a remove-entry confirmed while a different entry's remove is in flight does not close its dialog early`() {
+        var actionState by mutableStateOf(GroupDetailActionState())
+        val removeCalls = mutableListOf<String>()
+        composeRule.setContent {
+            GroupDetailScreen(
+                state = successState(members = listOf(OWNER), watchlist = listOf(ENTRY_1, ENTRY_2)),
+                actionState = actionState,
+                currentUserId = OWNER.userId,
+                onRetry = {},
+                onRotateInvite = {},
+                onLeaveGroup = {},
+                onRemoveMember = {},
+                onDismissRotatedInvite = {},
+                onRotateDialogOpened = {},
+                onLeaveDialogOpened = {},
+                onRemoveDialogOpened = {},
+                onLoadMoreWatchlist = {},
+                onRemoveWatchlistEntry = { entryId ->
+                    removeCalls += entryId
+                    // Mirrors GroupDetailViewModel.removeFromWatchlist's own synchronous
+                    // guard-then-set — a remove already in flight for a DIFFERENT entry makes this
+                    // call a no-op.
+                    if (actionState.removingEntryId == null) {
+                        actionState = actionState.copy(removingEntryId = entryId, removeEntryError = null)
+                    }
+                },
+                onRemoveEntryDialogOpened = { actionState = actionState.copy(removeEntryError = null) },
+                onEntryClick = {},
+            )
+        }
+
+        // Start removing ENTRY_1: open, confirm — the fake onRemoveWatchlistEntry above sets
+        // removingEntryId synchronously, the same call the confirm click makes.
+        composeRule.onNode(hasScrollAction()).performScrollToNode(hasTestTag("watchlist-remove-${ENTRY_1.id}"))
+        composeRule.onNodeWithTag("watchlist-remove-${ENTRY_1.id}").performClick()
+        composeRule.onNodeWithText(context.getString(R.string.groups_watchlist_remove_confirm_button)).performClick()
+        composeRule.waitForIdle()
+
+        // Dismiss with the system Back button while ENTRY_1's remove is still in flight — Cancel is
+        // disabled (submitting), so Back is the only way out.
+        Espresso.pressBack()
+        composeRule.waitForIdle()
+        composeRule
+            .onNodeWithText(context.getString(R.string.groups_watchlist_remove_confirm_title, ENTRY_1.media.title))
+            .assertDoesNotExist()
+
+        // Open and confirm ENTRY_2's dialog. ENTRY_1's remove is STILL in flight — actionState
+        // carries no change from the dismissal above — so a real ViewModel's re-entrancy guard
+        // would drop this call. This fake still records it; what the screen reacts to is
+        // actionState alone.
+        composeRule.onNode(hasScrollAction()).performScrollToNode(hasTestTag("watchlist-remove-${ENTRY_2.id}"))
+        composeRule.onNodeWithTag("watchlist-remove-${ENTRY_2.id}").performClick()
+        composeRule
+            .onNodeWithText(context.getString(R.string.groups_watchlist_remove_confirm_title, ENTRY_2.media.title))
+            .assertIsDisplayed()
+        composeRule.onNodeWithText(context.getString(R.string.groups_watchlist_remove_confirm_button)).performClick()
+
+        // ENTRY_1's remove now lands successfully.
+        actionState = actionState.copy(removingEntryId = null, removeEntryError = null)
+        composeRule.waitForIdle()
+
+        // ENTRY_2 was never removed — its dialog must still be showing.
+        composeRule
+            .onNodeWithText(context.getString(R.string.groups_watchlist_remove_confirm_title, ENTRY_2.media.title))
+            .assertIsDisplayed()
+        assertEquals(listOf(ENTRY_1.id, ENTRY_2.id), removeCalls)
+    }
+
+    // @Suppress("LongParameterList"): a test fixture builder with one named default per
+    // GroupDetailUiState.Success field a test might want to vary — splitting it further would only
+    // move the same six knobs into a second type built solely to hold them.
+    @Suppress("LongParameterList")
     private fun successState(
         members: List<GroupMember>,
         watchlist: List<WatchlistEntry> = emptyList(),
         watchlistLoadingMore: Boolean = false,
         watchlistPageError: GroupFailure? = null,
+        watchlistIsStale: Boolean = false,
         isStale: Boolean = false,
     ) = GroupDetailUiState.Success(
         members = members,
         watchlist = watchlist,
         watchlistLoadingMore = watchlistLoadingMore,
         watchlistPageError = watchlistPageError,
+        watchlistIsStale = watchlistIsStale,
         isStale = isStale,
     )
 

@@ -67,23 +67,36 @@ sealed interface GroupDetailUiState {
      *
      * What this does NOT mean: a failed watchlist fetch never promotes this whole screen to
      * [Error] — see [GroupDetailViewModel.reloadWatchlist]'s own KDoc for why every watchlist
-     * failure, first page included, surfaces as [watchlistPageError] (an inline, section-scoped
-     * retry) rather than replacing [members] on screen. That is the direct answer to this task's own
-     * "can a user still act on what they can see" question: [members] and [watchlist] fail
-     * independently, so a broken watchlist fetch can never take a correctly-loaded member list off
-     * screen, and a stale/broken member list never hides watchlist rows that DID load.
+     * reload failure, first page included, surfaces as [watchlistIsStale] rather than replacing
+     * [members] on screen. That is the direct answer to this task's own "can a user still act on
+     * what they can see" question: [members] and [watchlist] fail independently, so a broken
+     * watchlist fetch can never take a correctly-loaded member list off screen, and a stale/broken
+     * member list never hides watchlist rows that DID load.
      *
-     * [watchlistLoadingMore]/[watchlistPageError] are `LibraryUiState.Success.loadingMore`/
-     * `LibraryUiState.Success.pageError`'s identical shape in `:feature:library` (plain text, not a
-     * doc link — `:feature:groups` cannot depend on that module, architecture rule 1) — a footer
-     * under otherwise-valid rows, never a reason to blank them (Global Constraints: "a page-fetch
-     * failure is a footer, never a promotion to full-screen Error").
+     * **Fix round 1 split what round 0 folded into one field.** Round 0 had [watchlistPageError]
+     * answer two different questions — "did the last RELOAD fail" and "did the last `loadMore` page
+     * fetch fail" — the SAME shape decision C-S already names and rejects, and this is the shape's
+     * seventh occurrence in this project. The two failures need different recoveries: a `loadMore`
+     * retry only makes sense if there IS a next page to fetch, but a reload can fail on an EXHAUSTED
+     * single-page list, where a footer wired to `loadMoreWatchlist` alone is a dead tap forever
+     * (fix round 1, blocking finding B2). [watchlistPageError] is now `loadMoreWatchlist`'s own
+     * channel exclusively — a footer under otherwise-valid rows, `LibraryUiState.Success.pageError`'s
+     * identical shape in `:feature:library` (plain text, not a doc link — `:feature:groups` cannot
+     * depend on that module, architecture rule 1). [watchlistIsStale] is `reloadWatchlist`'s own
+     * channel exclusively, [isStale]'s identical shape one section down: a failed reload keeps
+     * whatever rows are already known and marks them stale rather than blanking or erroring them
+     * away, retried through `refresh()` — the SAME retry [isStale]'s own banner already uses, not a
+     * second bespoke function. This split is also what makes fix round 1's B3 finding resolve for
+     * free: `removeFromWatchlist`'s reload failing after a genuinely successful delete now marks the
+     * section stale (the deleted row may still show, honestly labelled as possibly outdated) rather
+     * than silently claiming success while lying about freshness.
      */
     data class Success(
         val members: List<GroupMember>,
         val watchlist: List<WatchlistEntry> = emptyList(),
         val watchlistLoadingMore: Boolean = false,
         val watchlistPageError: GroupFailure? = null,
+        val watchlistIsStale: Boolean = false,
         val rotatedInvite: GroupWithInvite? = null,
         val isStale: Boolean = false,
     ) : GroupDetailUiState
@@ -125,17 +138,20 @@ sealed interface GroupDetailUiState {
  * the SAME id — enforced below by rejecting a second [GroupDetailViewModel.removeMember] while
  * [removingUserId] is already non-null, mirroring [GroupsActionState]'s re-entrancy guards).
  *
- * **Task 9c.3 adds two more channels, the identical decision C-S reasoning extended to the
- * watchlist:** [proposing]/[proposeError] for [GroupDetailViewModel.proposeTitle], and
- * [removingEntryId]/[removeEntryError] for [GroupDetailViewModel.removeFromWatchlist].
+ * **Task 9c.3 adds one more channel, the identical decision C-S reasoning extended to the
+ * watchlist:** [removingEntryId]/[removeEntryError] for [GroupDetailViewModel.removeFromWatchlist].
  * [removingEntryId] is [removingUserId]'s identical shape — one entry's id, not a bare boolean, for
- * the identical reason: [GroupDetailScreen] renders one remove control per watchlist row. Propose
- * has no per-target id (there is exactly one propose form on this screen, not one per row), so
- * [proposing] stays a bare `Boolean`, matching [rotating]'s shape rather than [removingUserId]'s.
- * Not merged with [removingUserId]/[removeError]: those are `DELETE .../members/{userId}` — a
- * different endpoint, a different resource, a different confirmation dialog — sharing a channel
- * would make removing a MEMBER and removing a WATCHLIST ENTRY block each other for no reason either
- * one's caller would expect.
+ * the identical reason: [GroupDetailScreen] renders one remove control per watchlist row. Not
+ * merged with [removingUserId]/[removeError]: those are `DELETE .../members/{userId}` — a different
+ * endpoint, a different resource, a different confirmation dialog — sharing a channel would make
+ * removing a MEMBER and removing a WATCHLIST ENTRY block each other for no reason either one's
+ * caller would expect.
+ *
+ * **Fix round 1 removed `proposing`/`proposeError`.** Proposing a title needs a real title picker,
+ * which needs a persisted `mediaId` a search result does not carry (decision C-N) — the ruling that
+ * resolved this moved "propose to a group" to `:feature:detail` (task 9c.6), where a real `mediaId`
+ * already exists. Shipping a raw-media-id text field here was worse than not offering the action
+ * yet.
  */
 data class GroupDetailActionState(
     val rotating: Boolean = false,
@@ -144,8 +160,6 @@ data class GroupDetailActionState(
     val removeError: GroupFailure? = null,
     val leaving: Boolean = false,
     val leaveError: GroupFailure? = null,
-    val proposing: Boolean = false,
-    val proposeError: GroupFailure? = null,
     val removingEntryId: String? = null,
     val removeEntryError: GroupFailure? = null,
 )

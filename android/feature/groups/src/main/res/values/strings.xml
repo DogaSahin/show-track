@@ -115,9 +115,16 @@
     <!-- ===== Shared watchlist (task 9c.3) — GroupWatchlistSection.kt, GroupWatchlistDialogs.kt ===== -->
 
     <string name="groups_watchlist_section_title">Shared watchlist</string>
-    <string name="groups_watchlist_propose_action">Propose a title</string>
     <string name="groups_watchlist_empty_message">No one has proposed a title yet.</string>
     <string name="groups_watchlist_page_error">Couldn\'t load more titles. Tap to retry.</string>
+    <!-- Fix round 1, finding B2: a RELOAD failure (first page or a later background refresh) is a
+         SEPARATE channel from a loadMore page-fetch failure (groups_watchlist_page_error above) —
+         GroupDetailUiState.Success.watchlistIsStale's own KDoc explains why one field answering
+         both questions left the footer's retry dead once the list was exhausted. Deliberately does
+         NOT claim "showing saved titles" the way groups_detail_stale_notice does: the watchlist can
+         be genuinely empty AND stale at once (nothing has ever loaded successfully), where that
+         phrasing would be misleading. -->
+    <string name="groups_watchlist_stale_notice">Couldn\'t refresh the shared watchlist. Tap Retry to check again.</string>
 
     <!-- proposedBy is nullable — deleting your account leaves the entry standing (design §5.3) —
          and a member who has since LEFT the group (still a valid id, no longer resolvable against
@@ -127,29 +134,15 @@
     <string name="groups_watchlist_no_proposer">Proposed anonymously</string>
     <string name="groups_watchlist_remove_action">Remove</string>
 
-    <!-- The proposed_by column on the wire is a raw user id, not a username (backend
-         GroupWatchlist.proposed_by: uuid.UUID) — :feature:groups has no title PICKER of its own
-         (architecture rule 1 forbids depending on :feature:search for one), so this is a raw-id
-         entry field, not a search box. WatchlistEntry.mediaId (task 9c.0) exists so a future task
-         can replace this with a proper picker without a data-layer change. -->
-    <string name="groups_watchlist_propose_title">Propose a title</string>
-    <string name="groups_watchlist_propose_message">Enter the ID of a title already in ShowTrack.</string>
-    <string name="groups_watchlist_propose_media_id_label">Media ID</string>
-    <!-- Deliberately NOT "Propose" — the header's own groups_watchlist_propose_action button stays
-         on screen underneath this dialog, groups_detail_remove_confirm_button's identical
-         collision note. -->
-    <string name="groups_watchlist_propose_submit">Propose title</string>
-    <string name="groups_watchlist_propose_submitting">Proposing…</string>
-    <string name="groups_watchlist_propose_cancel">Cancel</string>
-
     <string name="groups_watchlist_remove_confirm_title">Remove %1$s?</string>
     <string name="groups_watchlist_remove_confirm_message">Any member can propose it again later.</string>
     <string name="groups_watchlist_remove_confirm_button">Remove title</string>
     <string name="groups_watchlist_remove_cancel">Cancel</string>
 
-    <!-- Round 1's own note (this file's messageRes()) said NoSuchTitle/NoSuchEntry could not be
-         produced by anything on screen; task 9c.3's propose/remove dialogs are what changes that —
-         see messageRes()'s own KDoc. -->
-    <string name="groups_watchlist_error_no_such_title">That title isn\'t in ShowTrack. Double-check the ID.</string>
+    <!-- Round 1's own note (this file's messageRes()) said NoSuchEntry could not be produced by
+         anything on screen; task 9c.3's remove dialog is what changes that — see messageRes()'s own
+         KDoc. groups_watchlist_error_no_such_title (fix round 1's propose strings) was removed along
+         with the propose dialog itself — see GroupDetailActionState's own KDoc for why proposing
+         moved to :feature:detail (task 9c.6). -->
     <string name="groups_watchlist_error_no_such_entry">That title was already removed from the watchlist.</string>
 </resources>

@@ -666,16 +666,67 @@ class GroupDetailViewModelTest {
         }
 
     /**
+     * Fix round 1, finding B1's own combination test — round 1 review's explicit ask (Global
+     * Constraints): "reload in flight AND loadMore fired", the exact combination that produced the
+     * duplicate-key crash. Before the fix, [GroupDetailViewModel.refresh]'s own [reloadWatchlist]
+     * (via [GroupDetailViewModel.watchlistPaginator]'s `restart()`) and a scroll-triggered
+     * [loadMoreWatchlist] (via that same paginator's `loadMore()`) raced on an IDENTICAL
+     * `cursor = null` request, appending page one twice. [CursorPaginator]'s own `Mutex` closes
+     * this structurally: [loadMoreWatchlist] suspends on the SAME lock `reloadWatchlist` holds, so
+     * by the time its own fetch runs, `restart()` has already landed and the cursor has already
+     * advanced — this proves the SECOND call correctly resolves to page TWO, never a duplicate of
+     * page one.
+     */
+    @Test
+    fun `loadMoreWatchlist fired while the initial reload is still in flight does not duplicate the first page`() =
+        runTest(dispatcher) {
+            val groupRepository =
+                FakeGroupRepository(
+                    membersResult = listOf(OWNER),
+                    watchlistPages =
+                        mutableMapOf(
+                            null to WatchlistPage(items = listOf(ENTRY_1), nextCursor = "cursor-2"),
+                            "cursor-2" to WatchlistPage(items = listOf(ENTRY_2), nextCursor = null),
+                        ),
+                )
+            groupRepository.watchlistGate = CompletableDeferred()
+            val viewModel = viewModel(groupRepository)
+            advanceUntilIdle()
+
+            // Members are visible; the watchlist's own initial reload is suspended mid-fetch.
+            assertEquals(emptyList<WatchlistEntry>(), (viewModel.state.value as GroupDetailUiState.Success).watchlist)
+
+            // A scroll-triggered loadMore fires while that reload still holds the paginator's lock.
+            viewModel.loadMoreWatchlist()
+            advanceUntilIdle()
+
+            // Only ONE fetch has actually reached the fake so far — the reload's own — still gated;
+            // loadMoreWatchlist's own call is suspended waiting for the SAME mutex, not racing it.
+            assertEquals(listOf(null), groupRepository.watchlistCalls)
+
+            groupRepository.watchlistGate?.complete(Unit)
+            advanceUntilIdle()
+
+            // The reload's page landed first; the queued loadMore then correctly fetched page TWO,
+            // never a second copy of page one.
+            assertEquals(listOf(null, "cursor-2"), groupRepository.watchlistCalls)
+            assertEquals(listOf(ENTRY_1, ENTRY_2), (viewModel.state.value as GroupDetailUiState.Success).watchlist)
+        }
+
+    /**
      * The reachable-state test round 1 review's own instruction (Global Constraints) asks for: a
      * failed WATCHLIST fetch, over a member list that loaded fine, is a combination no OTHER test
-     * in this file builds. [GroupDetailUiState.Success.watchlistPageError] must carry the failure
-     * and [GroupDetailUiState.Success.members] must be UNTOUCHED — not [GroupDetailUiState.Error],
+     * in this file builds. [GroupDetailUiState.Success.watchlistIsStale] must carry the failure and
+     * [GroupDetailUiState.Success.members] must be UNTOUCHED — not [GroupDetailUiState.Error],
      * which would take the correctly-loaded member list off screen for a failure that has nothing
      * to do with it (this task's own "can the user still act on what they can see" question,
      * answered for the member list's side: yes, because the watchlist failing never demotes it).
+     *
+     * **Fix round 1:** was `watchlistPageError` before finding B2 split reload failures onto their
+     * own channel — see [GroupDetailUiState.Success.watchlistIsStale]'s own KDoc.
      */
     @Test
-    fun `a failed watchlist fetch leaves the members on screen with an inline error, not a full-screen one`() =
+    fun `a failed watchlist fetch leaves the members on screen, marked stale, not a full-screen error`() =
         runTest(dispatcher) {
             val groupRepository = FakeGroupRepository(membersResult = listOf(OWNER, MEMBER))
             groupRepository.watchlistFailure = GroupFailure.Network
@@ -685,87 +736,49 @@ class GroupDetailViewModelTest {
             val result = viewModel.state.value as GroupDetailUiState.Success
             assertEquals(listOf(OWNER, MEMBER), result.members)
             assertEquals(emptyList<WatchlistEntry>(), result.watchlist)
-            assertEquals(GroupFailure.Network, result.watchlistPageError)
-        }
-
-    /** The brief's third named test (task 9c.3), verbatim. */
-    @Test
-    fun `proposing a title the server does not know shows the unknown-title error`() =
-        runTest(dispatcher) {
-            val groupRepository = FakeGroupRepository(membersResult = listOf(OWNER))
-            groupRepository.proposeFailure = GroupFailure.NoSuchTitle
-            val viewModel = viewModel(groupRepository)
-            advanceUntilIdle()
-
-            viewModel.proposeTitle("no-such-media-id")
-            advanceUntilIdle()
-
-            assertEquals(GroupFailure.NoSuchTitle, viewModel.actionState.value.proposeError)
-            assertEquals(emptyList<WatchlistEntry>(), (viewModel.state.value as GroupDetailUiState.Success).watchlist)
+            assertNull(result.watchlistPageError)
+            assertTrue(result.watchlistIsStale)
         }
 
     /**
-     * The positive control for the test above: without it, a [proposeTitle] that ALWAYS set
-     * [GroupDetailActionState.proposeError] would trivially pass it. Also pins that
-     * [proposeGate]/[proposeCalls] is the right ARGUMENT (`mediaId`), not merely that some call
-     * happened.
+     * Fix round 1, finding B2's own combination test — round 1 review's explicit ask: "reload
+     * failed AND the list was exhausted". Before the fix, a reload failure over an exhausted
+     * single-page list set [GroupDetailUiState.Success.watchlistPageError], and the footer's own
+     * retry (wired to [loadMoreWatchlist] alone) returned immediately on the exhaustion guard — a
+     * permanently dead tap. [watchlistIsStale] is a SEPARATE channel retried through [refresh]
+     * instead, which has no such exhaustion dependency.
      */
     @Test
-    fun `proposing a known title reloads the watchlist and clears the propose state`() =
+    fun `a failed reload over an exhausted single-page watchlist marks it stale, and the stale retry still works`() =
         runTest(dispatcher) {
-            val groupRepository = FakeGroupRepository(membersResult = listOf(OWNER))
+            val groupRepository =
+                FakeGroupRepository(
+                    membersResult = listOf(OWNER),
+                    watchlistPages = mutableMapOf(null to WatchlistPage(items = listOf(ENTRY_1), nextCursor = null)),
+                )
             val viewModel = viewModel(groupRepository)
             advanceUntilIdle()
-            // Starts empty (the fake's default first page) — proves what follows is a genuine
-            // reload, not a no-op propose that happens to leave an already-populated list alone.
-            assertEquals(emptyList<WatchlistEntry>(), (viewModel.state.value as GroupDetailUiState.Success).watchlist)
-
-            groupRepository.proposeResult = ENTRY_1
-            groupRepository.watchlistPages =
-                mutableMapOf(null to WatchlistPage(items = listOf(ENTRY_1), nextCursor = null))
-            viewModel.proposeTitle(ENTRY_1.mediaId)
-            advanceUntilIdle()
-
-            assertEquals(listOf(GROUP_ID to ENTRY_1.mediaId), groupRepository.proposeCalls)
             assertEquals(listOf(ENTRY_1), (viewModel.state.value as GroupDetailUiState.Success).watchlist)
-            assertEquals(GroupDetailActionState(), viewModel.actionState.value)
-        }
 
-    @Test
-    fun `propose is not fired again while one is already in flight`() =
-        runTest(dispatcher) {
-            val groupRepository = FakeGroupRepository(membersResult = listOf(OWNER), proposeResult = ENTRY_1)
-            val viewModel = viewModel(groupRepository)
+            groupRepository.watchlistFailure = GroupFailure.Network
+            viewModel.refresh()
             advanceUntilIdle()
 
-            viewModel.proposeTitle(ENTRY_1.mediaId)
-            viewModel.proposeTitle(ENTRY_1.mediaId)
-            viewModel.proposeTitle(ENTRY_1.mediaId)
+            val stale = viewModel.state.value as GroupDetailUiState.Success
+            assertEquals(listOf(ENTRY_1), stale.watchlist)
+            assertTrue(stale.watchlistIsStale)
+            assertNull(stale.watchlistPageError)
+
+            // The stale retry (refresh(), the SAME action a stale banner's own retry drives) still
+            // works — this is exactly what a footer wired to loadMoreWatchlist alone could never
+            // recover from once the list was exhausted.
+            groupRepository.watchlistFailure = null
+            viewModel.refresh()
             advanceUntilIdle()
 
-            assertEquals(1, groupRepository.proposeCalls.size)
-        }
-
-    /**
-     * [proposeTitle]'s own BLOCKING-3-shaped guard, mirroring [rotateInvite]'s test of the same
-     * name one section up: this screen offers exactly one propose form, reachable only from a
-     * loaded [GroupDetailUiState.Success], so a call reaching the repository from
-     * [GroupDetailUiState.Error] would be an irreversible server-side create with nowhere to fold
-     * the result into.
-     */
-    @Test
-    fun `proposeTitle does nothing when the member list failed to load`() =
-        runTest(dispatcher) {
-            val groupRepository = FakeGroupRepository(membersFailure = GroupFailure.Network, proposeResult = ENTRY_1)
-            val viewModel = viewModel(groupRepository)
-            advanceUntilIdle()
-            assertEquals(GroupDetailUiState.Error(GroupFailure.Network), viewModel.state.value)
-
-            viewModel.proposeTitle(ENTRY_1.mediaId)
-            advanceUntilIdle()
-
-            assertEquals(0, groupRepository.proposeCalls.size)
-            assertEquals(GroupDetailActionState(), viewModel.actionState.value)
+            val recovered = viewModel.state.value as GroupDetailUiState.Success
+            assertEquals(listOf(ENTRY_1), recovered.watchlist)
+            assertTrue(!recovered.watchlistIsStale)
         }
 
     /**
@@ -835,37 +848,111 @@ class GroupDetailViewModelTest {
         }
 
     /**
-     * Fix-round-2 lesson (`GroupsViewModel.clearCreateError`'s own KDoc), applied proactively to
-     * the two channels this task adds — decision C-S: clearing one must never touch another.
+     * Fix round 1, smaller item 3b: the analogue of `removingUserId stays set through the reload,
+     * not just the delete call` (members, above) for the watchlist's own remove. A fast double-tap
+     * in the window between the DELETE returning and the follow-up `GET /watchlist` landing is the
+     * real bug that test guards against; this is the identical guard, one resource over.
      */
     @Test
-    fun `clearProposeError and clearRemoveEntryError each clear only their own channel`() =
+    fun `removingEntryId stays set through the reload, not just the delete call`() =
         runTest(dispatcher) {
             val groupRepository =
                 FakeGroupRepository(
                     membersResult = listOf(OWNER),
                     watchlistPages =
-                        mutableMapOf(null to WatchlistPage(items = listOf(ENTRY_1), nextCursor = null)),
+                        mutableMapOf(null to WatchlistPage(items = listOf(ENTRY_1, ENTRY_2), nextCursor = null)),
                 )
             val viewModel = viewModel(groupRepository)
             advanceUntilIdle()
 
-            groupRepository.proposeFailure = GroupFailure.NoSuchTitle
-            viewModel.proposeTitle(ENTRY_1.mediaId)
+            groupRepository.watchlistGate = CompletableDeferred()
+            viewModel.removeFromWatchlist(ENTRY_1.id)
+            advanceUntilIdle()
+
+            // The DELETE itself has completed (it needs no gate to observe), but the follow-up
+            // GET /watchlist this reload issues is still suspended — removingEntryId must still be
+            // set.
+            assertEquals(ENTRY_1.id, viewModel.actionState.value.removingEntryId)
+
+            // A second remove for a DIFFERENT entry must still be dropped while the first one's
+            // reload is in flight.
+            viewModel.removeFromWatchlist(ENTRY_2.id)
+            advanceUntilIdle()
+            assertEquals(1, groupRepository.removeWatchlistEntryCalls.size)
+
+            groupRepository.watchlistGate?.complete(Unit)
+            advanceUntilIdle()
+
+            assertNull(viewModel.actionState.value.removingEntryId)
+        }
+
+    /**
+     * Fix round 1, finding B3's own combination test — round 1 review's explicit ask: "delete
+     * succeeded AND its reload failed". Before the fix, [removeFromWatchlist] always reached its
+     * success line once the DELETE itself returned, regardless of whether the follow-up
+     * [reloadWatchlist] landed — [reloadWatchlist] swallows its OWN failures (never rethrows), so
+     * the dialog closed as though everything were current while the deleted row silently stayed on
+     * screen with no signal anything was wrong. The delete genuinely DID succeed, so closing the
+     * dialog is now correct; [GroupDetailUiState.Success.watchlistIsStale] is what keeps the screen
+     * honest about the reload's own separate failure.
+     */
+    @Test
+    fun `a successful remove whose reload fails closes the dialog and marks the section stale`() =
+        runTest(dispatcher) {
+            val groupRepository =
+                FakeGroupRepository(
+                    membersResult = listOf(OWNER),
+                    watchlistPages =
+                        mutableMapOf(null to WatchlistPage(items = listOf(ENTRY_1, ENTRY_2), nextCursor = null)),
+                )
+            val viewModel = viewModel(groupRepository)
+            advanceUntilIdle()
+
+            groupRepository.watchlistFailure = GroupFailure.Network
+            viewModel.removeFromWatchlist(ENTRY_1.id)
+            advanceUntilIdle()
+
+            // The delete itself succeeded — removingEntryId/removeEntryError both back to their
+            // resting (success) shape, which is what closes the confirmation dialog.
+            assertNull(viewModel.actionState.value.removingEntryId)
+            assertNull(viewModel.actionState.value.removeEntryError)
+
+            // But the reload that would have reflected the delete failed — the section is marked
+            // stale, not silently wrong: entry-1 is still shown because the screen genuinely does
+            // not know it is gone yet.
+            val result = viewModel.state.value as GroupDetailUiState.Success
+            assertTrue(result.watchlistIsStale)
+            assertEquals(listOf(ENTRY_1, ENTRY_2), result.watchlist)
+        }
+
+    /**
+     * [clearRotateError]'s mirror for the remove-watchlist-entry channel — a SEPARATE channel from
+     * [clearRemoveError].
+     */
+    @Test
+    fun `clearRemoveEntryError clears only its own channel`() =
+        runTest(dispatcher) {
+            val groupRepository =
+                FakeGroupRepository(
+                    membersResult = listOf(OWNER, MEMBER),
+                    watchlistPages = mutableMapOf(null to WatchlistPage(items = listOf(ENTRY_1), nextCursor = null)),
+                )
+            val viewModel = viewModel(groupRepository)
+            advanceUntilIdle()
+
+            groupRepository.removeMemberFailure = GroupFailure.NotPermitted
+            viewModel.removeMember(MEMBER.userId)
             advanceUntilIdle()
             groupRepository.removeWatchlistEntryFailure = GroupFailure.NoSuchEntry
             viewModel.removeFromWatchlist(ENTRY_1.id)
             advanceUntilIdle()
 
-            assertEquals(GroupFailure.NoSuchTitle, viewModel.actionState.value.proposeError)
-            assertEquals(GroupFailure.NoSuchEntry, viewModel.actionState.value.removeEntryError)
-
-            viewModel.clearProposeError()
-            assertNull(viewModel.actionState.value.proposeError)
+            assertEquals(GroupFailure.NotPermitted, viewModel.actionState.value.removeError)
             assertEquals(GroupFailure.NoSuchEntry, viewModel.actionState.value.removeEntryError)
 
             viewModel.clearRemoveEntryError()
             assertNull(viewModel.actionState.value.removeEntryError)
+            assertEquals(GroupFailure.NotPermitted, viewModel.actionState.value.removeError)
         }
 
     private companion object {
