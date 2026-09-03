@@ -65,6 +65,23 @@ sealed interface GroupFailure {
     data object Network : GroupFailure
 
     /**
+     * 400 from `POST /v1/groups/join` (fix round 2, task 9c.1): a bad, unknown, or expired invite
+     * code — `resolve_invite_code`/`join_group`'s own comment, `backend/app/groups/routes.py`,
+     * "one generic message for wrong, unknown AND expired". No payload: the client has no more
+     * specific reason to give than the server does, and none of the three sub-causes is
+     * distinguishable from the others by status code alone.
+     *
+     * A dedicated case rather than folding into [Unknown] (round 1's original shape): [Unknown]
+     * is ALSO what a 500, an expired session's 401, or a deserialization failure map to, and a UI
+     * that rendered "that code might be wrong" for any of those would be actively misleading —
+     * measured in review: round 1's `messageRes(unknownRes = …)` could not tell a genuine 400
+     * apart from those other causes, since all of them arrived as the same [Unknown] type. Wired
+     * through `guarded(badRequest = GroupFailure.BadRequest)` in `GroupRepositoryImpl` — the same
+     * caller-chosen-sink shape [NoSuchTitle]/[NoSuchEntry] already use for 404 via `notFound`.
+     */
+    data object BadRequest : GroupFailure
+
+    /**
      * Anything else — an unexpected status, a malformed response, ...
      *
      * [cause] is for LOGGING ONLY (round 1 fix, stated explicitly): decision C-R keeps

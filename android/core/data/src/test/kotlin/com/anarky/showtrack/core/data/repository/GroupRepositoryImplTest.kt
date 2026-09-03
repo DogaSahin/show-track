@@ -371,6 +371,41 @@ class GroupRepositoryImplTest {
             assertEquals("The Watch Party", joined.group.name)
         }
 
+    /**
+     * Fix round 2: a bad, unknown, or expired invite code is a 400
+     * (`backend/app/groups/routes.py`'s `_INVALID_CODE`), and `joinGroup` is the one call site
+     * that opts `guarded` into distinguishing it from every other unmapped failure — see
+     * [GroupFailure.BadRequest]'s own KDoc for why round 1's `Unknown`-for-everything shape was
+     * wrong (it also caught a 500 or an expired session, see the sibling test below).
+     */
+    @Test
+    fun `a 400 from joinGroup surfaces as BadRequest`() =
+        runTest {
+            val api = FakeApi()
+            api.joinFailure = httpError(400)
+
+            val failure = runCatching { repository(api).joinGroup("BADCODE0000000000000") }.exceptionOrNull()
+
+            assertEquals(GroupFailure.BadRequest, (failure as GroupOperationException).failure)
+        }
+
+    /**
+     * The negative control for the test above: `badRequest` in `guarded`/`mapFailure` is gated
+     * on the STATUS CODE actually being 400, not on "joinGroup failed at all" — a 500 or any other
+     * unmapped status from the same endpoint must still fall through to the generic
+     * [GroupFailure.Unknown], never [GroupFailure.BadRequest].
+     */
+    @Test
+    fun `a 500 from joinGroup still surfaces as Unknown, not BadRequest`() =
+        runTest {
+            val api = FakeApi()
+            api.joinFailure = httpError(500)
+
+            val failure = runCatching { repository(api).joinGroup("BADCODE0000000000000") }.exceptionOrNull()
+
+            assertTrue((failure as GroupOperationException).failure is GroupFailure.Unknown)
+        }
+
     @Test
     fun `members maps GroupRole strictly`() =
         runTest {
@@ -536,6 +571,7 @@ class GroupRepositoryImplTest {
         var progressResponse: List<ProgressEntryDto> = emptyList()
         var reviewResponse: ReviewDto? = null
         var groupsFailure: Throwable? = null
+        var joinFailure: Throwable? = null
         var rotateFailure: Throwable? = null
         var proposeFailure: Throwable? = null
         var removeMemberFailure: Throwable? = null
@@ -555,7 +591,10 @@ class GroupRepositoryImplTest {
 
         override suspend fun createGroup(request: CreateGroupRequestDto): GroupWithInviteDto = groupWithInviteResponse
 
-        override suspend fun joinGroup(request: JoinGroupRequestDto): GroupWithInviteDto = groupWithInviteResponse
+        override suspend fun joinGroup(request: JoinGroupRequestDto): GroupWithInviteDto {
+            joinFailure?.let { throw it }
+            return groupWithInviteResponse
+        }
 
         override suspend fun groupMembers(groupId: String): List<MemberDto> = membersResponse
 

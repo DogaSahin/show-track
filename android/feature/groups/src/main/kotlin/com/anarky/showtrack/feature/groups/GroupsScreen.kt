@@ -1,5 +1,9 @@
 package com.anarky.showtrack.feature.groups
 
+import android.content.ClipData
+import android.content.ClipDescription
+import android.os.Build
+import android.os.PersistableBundle
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,12 +24,13 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.ClipEntry
+import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleResumeEffect
@@ -36,6 +41,7 @@ import com.anarky.showtrack.core.designsystem.component.ErrorState
 import com.anarky.showtrack.core.designsystem.component.LoadingState
 import com.anarky.showtrack.core.designsystem.component.StaleDataBanner
 import com.anarky.showtrack.core.model.Group
+import kotlinx.coroutines.launch
 
 /**
  * The stateful entry point. `hiltViewModel()` is the only line here that touches DI —
@@ -73,6 +79,8 @@ fun GroupsScreen(
         onCreateGroup = viewModel::createGroup,
         onJoinGroup = viewModel::joinGroup,
         onDismissInvite = viewModel::dismissJustCreated,
+        onCreateDialogOpened = viewModel::clearCreateError,
+        onJoinDialogOpened = viewModel::clearJoinError,
         onGroupClick = onGroupClick,
         modifier = modifier,
     )
@@ -102,6 +110,13 @@ fun GroupsScreen(
  * banner below takes over. Keyed on the invite itself (not just "is it non-null") so a second
  * create/join later in the same session — a different [GroupWithInvite] — re-fires this even if,
  * somehow, a dialog were still open when it landed.
+ *
+ * **Fix round 2, small item 3:** [onCreateDialogOpened]/[onJoinDialogOpened] fire alongside
+ * `showCreateDialog`/`showJoinDialog` going `true` — before this, reopening a dialog after a
+ * failed attempt showed THAT attempt's error before the user had done anything on this new open,
+ * reading as though the fresh attempt had already failed. Wired to
+ * `GroupsViewModel.clearCreateError`/`clearJoinError`, which clear only their own
+ * [GroupsActionState] field — the SEPARATE channel discipline (decision C-S) applies here too.
  */
 @Suppress("LongParameterList")
 @Composable
@@ -112,6 +127,8 @@ internal fun GroupsScreen(
     onCreateGroup: (String) -> Unit,
     onJoinGroup: (String) -> Unit,
     onDismissInvite: () -> Unit,
+    onCreateDialogOpened: () -> Unit,
+    onJoinDialogOpened: () -> Unit,
     onGroupClick: (Group) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -127,7 +144,16 @@ internal fun GroupsScreen(
     }
 
     Column(modifier = modifier.fillMaxSize()) {
-        GroupsTopBar(onCreateClick = { showCreateDialog = true }, onJoinClick = { showJoinDialog = true })
+        GroupsTopBar(
+            onCreateClick = {
+                onCreateDialogOpened()
+                showCreateDialog = true
+            },
+            onJoinClick = {
+                onJoinDialogOpened()
+                showJoinDialog = true
+            },
+        )
         GroupsContent(
             state = state,
             onRetry = onRetry,
@@ -261,6 +287,18 @@ private fun GroupsTopBar(
  * that clears it. [copied] is local, `remember`ed against [invite]'s own code so a SECOND
  * create/join later in the session (a different code) starts the button fresh rather than still
  * reading "Copied" from the last one.
+ *
+ * **Fix round 2 — the copy is marked sensitive.** [LocalClipboard]/[ClipEntry], not
+ * `LocalClipboardManager`/`AnnotatedString` (round 1's shape): decision E-I calls the invite code
+ * a credential, and on API 33+ the system clipboard preview and IME clipboard history retain
+ * whatever is copied unless the `ClipData` itself carries `ClipDescription.EXTRA_IS_SENSITIVE` —
+ * a flag [ClipEntry]'s `ClipData`-based constructor can set and the older `AnnotatedString`-based
+ * `LocalClipboardManager.setText` cannot. Copying itself is not what E-I forbids — the code exists
+ * to be relayed off-device, and the system clipboard is not this app's own persistence — but
+ * leaving it visible in a clipboard-history UI after that is the same exposure E-I already refuses
+ * to leave in `ActiveGroupStore`/Room. `minSdk` is 29, so [sensitiveInviteCodeClipEntry] guards the
+ * flag behind API 33 — the constant is safe to reference below that (it is a plain string key an
+ * older platform simply never looks for), but setting it has no effect there either way.
  */
 @Composable
 private fun InviteCodeCard(
@@ -269,7 +307,9 @@ private fun InviteCodeCard(
     modifier: Modifier = Modifier,
 ) {
     var copied by remember(invite.inviteCode) { mutableStateOf(false) }
-    val clipboardManager = LocalClipboardManager.current
+    val clipboard = LocalClipboard.current
+    val coroutineScope = rememberCoroutineScope()
+    val clipLabel = stringResource(R.string.groups_invite_clip_label)
     Card(modifier = modifier.fillMaxWidth().padding(all = 12.dp)) {
         Column(
             modifier = Modifier.padding(all = 16.dp),
@@ -286,8 +326,10 @@ private fun InviteCodeCard(
             Row(horizontalArrangement = Arrangement.spacedBy(space = 8.dp)) {
                 TextButton(
                     onClick = {
-                        clipboardManager.setText(AnnotatedString(invite.inviteCode))
-                        copied = true
+                        coroutineScope.launch {
+                            clipboard.setClipEntry(sensitiveInviteCodeClipEntry(clipLabel, invite.inviteCode))
+                            copied = true
+                        }
                     },
                 ) {
                     Text(
@@ -303,6 +345,25 @@ private fun InviteCodeCard(
             }
         }
     }
+}
+
+/**
+ * Builds the `ClipEntry` [InviteCodeCard]'s copy button hands to [LocalClipboard] — pulled out to
+ * a plain function so it is callable (and its `Build.VERSION.SDK_INT` branch testable in
+ * isolation) without composing anything.
+ */
+private fun sensitiveInviteCodeClipEntry(
+    label: String,
+    code: String,
+): ClipEntry {
+    val clipData = ClipData.newPlainText(label, code)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        clipData.description.extras =
+            PersistableBundle().apply {
+                putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
+            }
+    }
+    return ClipEntry(clipData)
 }
 
 @Composable

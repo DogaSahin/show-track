@@ -337,8 +337,11 @@ class GroupsViewModelTest {
             advanceUntilIdle()
 
             assertEquals(1, repository.joinCalls)
+            // isStale = true (fix round 2, BLOCKING 3): the ViewModel knows it never successfully
+            // loaded the list before this — this one group is real, but incomplete — so the banner
+            // and its Retry are the correct affordance, not a screen silently claiming completeness.
             assertEquals(
-                GroupsUiState.Success(groups = listOf(GAMMA), justCreated = joined),
+                GroupsUiState.Success(groups = listOf(GAMMA), justCreated = joined, isStale = true),
                 viewModel.state.value,
             )
         }
@@ -359,8 +362,9 @@ class GroupsViewModelTest {
             advanceUntilIdle()
 
             assertEquals(1, repository.createCalls)
+            // isStale = true — see the join test above's identical note.
             assertEquals(
-                GroupsUiState.Success(groups = listOf(GAMMA), justCreated = created),
+                GroupsUiState.Success(groups = listOf(GAMMA), justCreated = created, isStale = true),
                 viewModel.state.value,
             )
         }
@@ -388,7 +392,10 @@ class GroupsViewModelTest {
             advanceUntilIdle()
 
             assertEquals(1, repository.joinCalls)
-            assertEquals(GAMMA, (viewModel.state.value as GroupsUiState.Success).justCreated?.group)
+            val result = viewModel.state.value as GroupsUiState.Success
+            assertEquals(GAMMA, result.justCreated?.group)
+            // isStale = true here too — Loading never became a successful Success before this.
+            assertEquals(true, result.isStale)
         }
 
     /**
@@ -430,6 +437,104 @@ class GroupsViewModelTest {
 
             assertEquals(false, viewModel.actionState.value.creating)
             assertEquals(GAMMA, (viewModel.state.value as GroupsUiState.Success).justCreated?.group)
+        }
+
+    /**
+     * BLOCKING 1 (fix round 2 review): `GroupRepository.joinGroup` is deliberately idempotent
+     * (decision G-I, `backend/app/groups/service.py`'s `join_by_code`) — redeeming a code for a
+     * group you already belong to returns 200 with that SAME group, not an error. Appending
+     * unconditionally duplicated the id, and `GroupsScreen.kt`'s `LazyColumn` — keyed by
+     * `Group::id` — crashed composition the moment that state was rendered
+     * (`IllegalArgumentException: Key "…" was already used`). A rejoin must REPLACE the existing
+     * row, not duplicate it.
+     */
+    @Test
+    fun `joining a group already in the list replaces it instead of duplicating it`() =
+        runTest(dispatcher) {
+            val repository = FakeGroupRepository(groupsResult = listOf(ALPHA, BETA))
+            val viewModel = GroupsViewModel(repository)
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            // The backend's idempotent rejoin returns the SAME group — same id — the caller
+            // already belongs to.
+            val rejoined = invite(group = ALPHA)
+            repository.joinResult = rejoined
+            viewModel.joinGroup("SAMECODE000000000000")
+            advanceUntilIdle()
+
+            val result = viewModel.state.value as GroupsUiState.Success
+            assertEquals(listOf(BETA, ALPHA), result.groups)
+            assertEquals(1, result.groups.count { it.id == ALPHA.id })
+            assertEquals(rejoined, result.justCreated)
+        }
+
+    /**
+     * BLOCKING 2 (fix round 2 review): [GroupsViewModel.applyGroupChange] used to construct a
+     * brand-new `Success(...)` rather than carry the existing one's `isStale` forward, so ANY
+     * successful create/join silently cleared a stale mark an UNRELATED failed background resume
+     * had set — the banner and its Retry affordance vanished for a reason that had nothing to do
+     * with the list actually being current again.
+     */
+    @Test
+    fun `creating a group while the list is marked stale keeps it stale`() =
+        runTest(dispatcher) {
+            val repository = FakeGroupRepository(groupsResult = listOf(ALPHA))
+            val viewModel = GroupsViewModel(repository)
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            repository.groupsFailure = GroupFailure.Network
+            viewModel.refresh()
+            advanceUntilIdle()
+            assertEquals(true, (viewModel.state.value as GroupsUiState.Success).isStale)
+
+            repository.createResult = invite(group = GAMMA)
+            viewModel.createGroup("Gamma Watchers")
+            advanceUntilIdle()
+
+            assertEquals(true, (viewModel.state.value as GroupsUiState.Success).isStale)
+        }
+
+    /**
+     * Fix round 2, small item 3: reopening the create dialog after a failed attempt must not show
+     * that attempt's error before the user has done anything new.
+     */
+    @Test
+    fun `clearCreateError clears only the create channel`() =
+        runTest(dispatcher) {
+            val repository = FakeGroupRepository(groupsResult = listOf(ALPHA))
+            val viewModel = GroupsViewModel(repository)
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            repository.createFailure = GroupFailure.Network
+            viewModel.createGroup("Gamma Watchers")
+            advanceUntilIdle()
+            assertEquals(GroupFailure.Network, viewModel.actionState.value.createError)
+
+            viewModel.clearCreateError()
+
+            assertEquals(GroupsActionState(), viewModel.actionState.value)
+        }
+
+    /** [clearCreateError]'s mirror — a SEPARATE channel, cleared separately. */
+    @Test
+    fun `clearJoinError clears only the join channel`() =
+        runTest(dispatcher) {
+            val repository = FakeGroupRepository(groupsResult = listOf(ALPHA))
+            val viewModel = GroupsViewModel(repository)
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            repository.joinFailure = GroupFailure.BadRequest
+            viewModel.joinGroup("BADCODE0000000000000")
+            advanceUntilIdle()
+            assertEquals(GroupFailure.BadRequest, viewModel.actionState.value.joinError)
+
+            viewModel.clearJoinError()
+
+            assertEquals(GroupsActionState(), viewModel.actionState.value)
         }
 
     private companion object {

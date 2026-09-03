@@ -179,10 +179,41 @@ class GroupsViewModel
          * must not be reported as if the create/join itself failed), for a completeness guarantee
          * this screen does not need: the next resume's [refresh] re-fetches the canonical list
          * anyway, exactly as it would for any other out-of-band change made elsewhere.
+         *
+         * **Fix round 2, three findings, all repaired here:**
+         *
+         * 1. **[GroupRepository.joinGroup] is deliberately idempotent** — decision G-I,
+         *    `backend/app/groups/service.py`'s `join_by_code`: redeeming a code for a group you
+         *    already belong to is the server's documented happy path, returning 200 with that
+         *    SAME group, not an error. Appending unconditionally duplicated it in [previousGroups],
+         *    and `GroupsList`'s `LazyColumn` — keyed by `Group::id` — crashed composition
+         *    (`IllegalArgumentException: Key "…" was already used`) the moment that render was
+         *    attempted. [invite]'s own group id is now dropped from [previousGroups] before the
+         *    append, so a rejoin REPLACES the existing row (with whatever fresh data the server
+         *    just returned) instead of duplicating it — correct for `createGroup` too, harmlessly:
+         *    a freshly created group's id cannot already be in [previousGroups].
+         * 2. **A successful create/join used to silently clear [GroupsUiState.Success.isStale].**
+         *    This function used to construct a brand-new `Success(...)` rather than `copy` an
+         *    existing one, so `isStale` always reset to its `false` default — an UNRELATED
+         *    successful action erased the one signal (banner + Retry) telling the user their list
+         *    might be out of date. [isStale] below now carries the previous value forward instead.
+         * 3. **Create/join from [GroupsUiState.Error]/[GroupsUiState.Loading] asserted a complete
+         *    list the ViewModel knew it never loaded**, with no in-screen way back — `ErrorState`'s
+         *    and `StaleDataBanner`'s Retry affordances are both gone once [state] is
+         *    [GroupsUiState.Success]. [isStale] below is `true` whenever [state] was NOT already
+         *    [GroupsUiState.Success] — the list genuinely is known-incomplete in that case, so the
+         *    banner and its Retry are exactly the right affordance, and the next successful
+         *    [refresh] clears it exactly as it already does for an ordinary stale mark.
          */
         private fun applyGroupChange(invite: GroupWithInvite) {
-            val previousGroups = (mutableState.value as? GroupsUiState.Success)?.groups.orEmpty()
-            mutableState.value = GroupsUiState.Success(groups = previousGroups + invite.group, justCreated = invite)
+            val previous = mutableState.value as? GroupsUiState.Success
+            val previousGroups = previous?.groups.orEmpty().filterNot { it.id == invite.group.id }
+            mutableState.value =
+                GroupsUiState.Success(
+                    groups = previousGroups + invite.group,
+                    justCreated = invite,
+                    isStale = previous?.isStale ?: true,
+                )
         }
 
         /**
@@ -193,5 +224,21 @@ class GroupsViewModel
         fun dismissJustCreated() {
             val current = mutableState.value as? GroupsUiState.Success ?: return
             mutableState.value = current.copy(justCreated = null)
+        }
+
+        /**
+         * Clears a stale [GroupsActionState.createError] the moment the create dialog is (re)opened
+         * (fix round 2, small item 3) — without this, reopening the dialog after a failed attempt
+         * showed the PREVIOUS attempt's error before the user had done anything this time, which
+         * reads as though the fresh open itself already failed. `GroupsScreen.kt`'s `GroupsTopBar`
+         * `onCreateClick` binding calls this alongside setting the dialog visible.
+         */
+        fun clearCreateError() {
+            mutableActionState.value = mutableActionState.value.copy(createError = null)
+        }
+
+        /** [clearCreateError]'s mirror for the join dialog — a SEPARATE channel, cleared separately. */
+        fun clearJoinError() {
+            mutableActionState.value = mutableActionState.value.copy(joinError = null)
         }
     }

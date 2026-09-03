@@ -21,6 +21,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 private const val PAGE_SIZE = 20
+private const val HTTP_BAD_REQUEST = 400
 private const val HTTP_FORBIDDEN = 403
 private const val HTTP_NOT_FOUND = 404
 private const val HTTP_CONFLICT = 409
@@ -46,8 +47,16 @@ class GroupRepositoryImpl
         override suspend fun createGroup(name: String): GroupWithInvite =
             guarded { api.createGroup(CreateGroupRequestDto(name = name)).toDomain() }
 
+        /**
+         * [GroupFailure.BadRequest] on a 400 here (fix round 2): `POST /v1/groups/join` returns
+         * exactly that status for a bad, unknown, or expired code (`routes.py`'s `_INVALID_CODE`)
+         * — see [GroupFailure.BadRequest]'s own KDoc for why this needed a dedicated case rather
+         * than folding into [GroupFailure.Unknown] the way round 1 originally left it.
+         */
         override suspend fun joinGroup(inviteCode: String): GroupWithInvite =
-            guarded { api.joinGroup(JoinGroupRequestDto(inviteCode = inviteCode)).toDomain() }
+            guarded(badRequest = GroupFailure.BadRequest) {
+                api.joinGroup(JoinGroupRequestDto(inviteCode = inviteCode)).toDomain()
+            }
 
         override suspend fun members(groupId: String): List<GroupMember> =
             guarded { api.groupMembers(groupId).map { it.toDomain() } }
@@ -165,10 +174,16 @@ class GroupRepositoryImpl
  * [mapFailure] derives (decision C-R). [notFound] is decision C-S's "sink is a parameter of the
  * guard helper chosen by the caller" made concrete: every call site above passes the [GroupFailure]
  * a 404 means FOR THAT ENDPOINT, rather than this function branching on `isProposeTitle` internally.
+ *
+ * [badRequest] (fix round 2) is the identical shape for 400, defaulting to `null` — a 400 with no
+ * override still falls through to [GroupFailure.Unknown] via [mapFailure]'s `else` branch, exactly
+ * round 1's behaviour, for every endpoint that has no more specific story for it. Only
+ * [GroupRepositoryImpl.joinGroup] overrides it today.
  */
 @Suppress("TooGenericExceptionCaught")
 private suspend fun <T> guarded(
     notFound: GroupFailure = GroupFailure.NotAMember,
+    badRequest: GroupFailure? = null,
     block: suspend () -> T,
 ): T =
     try {
@@ -176,7 +191,7 @@ private suspend fun <T> guarded(
     } catch (cancellation: CancellationException) {
         throw cancellation
     } catch (failure: Exception) {
-        throw GroupOperationException(mapFailure(failure, notFound))
+        throw GroupOperationException(mapFailure(failure, notFound, badRequest))
     }
 
 /**
@@ -184,16 +199,25 @@ private suspend fun <T> guarded(
  * is: only [GroupRepositoryImpl.createReview] can ever receive one from the backend, so there is no
  * second meaning for [notFound] to disambiguate the way there is for 404 (NotAMember vs. NoSuchTitle).
  * [GroupFailure.AlreadyReviewed.existingReviewId] is always null — see that case's own KDoc.
+ *
+ * The 400 branch is gated on `badRequest != null` (fix round 2), unlike 403/404/409 above: those
+ * three are unconditional because EVERY call site that can receive them wants a [GroupFailure] for
+ * them (403 always means [GroupFailure.NotPermitted]; every 404 call site passes its own
+ * [notFound]). 400 is different — most endpoints here have no distinct story for it and are
+ * correctly served by falling through to the generic [GroupFailure.Unknown] `else` branch, so this
+ * only fires the caller-chosen [badRequest] value when one was actually supplied.
  */
 private fun mapFailure(
     failure: Throwable,
     notFound: GroupFailure,
+    badRequest: GroupFailure?,
 ): GroupFailure =
     when {
         failure is HttpException && failure.code() == HTTP_FORBIDDEN -> GroupFailure.NotPermitted
         failure is HttpException && failure.code() == HTTP_NOT_FOUND -> notFound
         failure is HttpException && failure.code() == HTTP_CONFLICT ->
             GroupFailure.AlreadyReviewed(existingReviewId = null)
+        failure is HttpException && failure.code() == HTTP_BAD_REQUEST && badRequest != null -> badRequest
         failure is IOException -> GroupFailure.Network
         else -> GroupFailure.Unknown(failure)
     }

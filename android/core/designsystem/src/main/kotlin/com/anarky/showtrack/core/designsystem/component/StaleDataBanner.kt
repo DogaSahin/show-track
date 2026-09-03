@@ -17,10 +17,16 @@ import androidx.compose.ui.unit.dp
 import com.anarky.showtrack.core.designsystem.R
 
 /**
- * Sits above a list rendered from a local cache while the network fetch that would normally
- * replace it has not answered yet (decision C-B). In `:core:designsystem`, not the feature that
- * first needed it (`:feature:library`) — decision C-T: a shared presentation belongs here once a
- * second screen backed by a cache is a matter of when, not if.
+ * Sits above a list rendered from the last successfully-fetched data while a background re-fetch
+ * that would normally replace it has failed (decision C-B). "Last successfully-fetched" is
+ * deliberately not "cached to disk": `LibraryScreen`'s rows genuinely come from a Room-backed
+ * upstream, but `FavoritesScreen`'s and `GroupsScreen`'s (fix round 2 correction — this line
+ * previously said "a local cache" unconditionally, which was never true for either) do not — both
+ * are network-only, and "stale" there means "the last in-memory response is still on screen, and
+ * the resume that would have replaced it failed," the identical shape C-B is about either way. In
+ * `:core:designsystem`, not the feature that first needed it (`:feature:library`) — decision C-T:
+ * a shared presentation belongs here once a second screen with the same "is this still current?"
+ * question is a matter of when, not if.
  *
  * [onRetry] is mandatory, not optional with a no-op default: a user looking at rows they cannot
  * be sure are current wants a way to ask again, and a caller with genuinely nothing better to do

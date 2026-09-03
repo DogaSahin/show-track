@@ -37,13 +37,18 @@
     <string name="groups_invite_copy">Copy code</string>
     <string name="groups_invite_copied">Copied</string>
     <string name="groups_invite_dismiss">Got it</string>
+    <!-- Fix round 2: the label ClipData.newPlainText carries — not shown in this app's own UI,
+         but a clipboard-history surface elsewhere on the device may display it, so it goes
+         through a string resource like every other user-facing string (decision C-E). -->
+    <string name="groups_invite_clip_label">Invite code</string>
 
     <string name="groups_error_network">Couldn\'t reach the server. Check your connection and try again.</string>
     <string name="groups_error_unknown">Something went wrong. Please try again.</string>
-    <!-- The single most common outcome of JoinGroupDialog's submit — GroupRepository.joinGroup's
-         own KDoc: a bad or expired code is a 400 the backend deliberately does not distinguish,
-         so it always surfaces as GroupFailure.Unknown. Says the code may be wrong OR expired,
-         never which — the server does not tell the client either. -->
+    <!-- Fix round 2: the single most common outcome of JoinGroupDialog's submit —
+         GroupFailure.BadRequest's own KDoc: a bad or expired code is a 400
+         (backend/app/groups/routes.py's _INVALID_CODE) the backend deliberately does not
+         distinguish further. Says the code may be wrong OR expired, never which — the server
+         does not tell the client either. -->
     <string name="groups_join_error_bad_code">That code didn\'t work. It may be wrong or expired.</string>
 
     <!-- GroupDetailRoute's placeholder destination (GroupsNavigation.kt's groupDetailEntry) —

@@ -61,6 +61,8 @@ class GroupsScreenTest {
                 onCreateGroup = {},
                 onJoinGroup = {},
                 onDismissInvite = {},
+                onCreateDialogOpened = {},
+                onJoinDialogOpened = {},
                 onGroupClick = {},
             )
         }
@@ -87,6 +89,8 @@ class GroupsScreenTest {
                 onCreateGroup = {},
                 onJoinGroup = {},
                 onDismissInvite = {},
+                onCreateDialogOpened = {},
+                onJoinDialogOpened = {},
                 onGroupClick = { clicked = it },
             )
         }
@@ -113,6 +117,8 @@ class GroupsScreenTest {
                 onCreateGroup = {},
                 onJoinGroup = {},
                 onDismissInvite = {},
+                onCreateDialogOpened = {},
+                onJoinDialogOpened = {},
                 onGroupClick = {},
             )
         }
@@ -139,6 +145,8 @@ class GroupsScreenTest {
                 onCreateGroup = { name -> createdName = name },
                 onJoinGroup = {},
                 onDismissInvite = {},
+                onCreateDialogOpened = {},
+                onJoinDialogOpened = {},
                 onGroupClick = {},
             )
         }
@@ -173,6 +181,8 @@ class GroupsScreenTest {
                 onCreateGroup = {},
                 onJoinGroup = {},
                 onDismissInvite = { dismissed = true },
+                onCreateDialogOpened = {},
+                onJoinDialogOpened = {},
                 onGroupClick = {},
             )
         }
@@ -200,6 +210,8 @@ class GroupsScreenTest {
                 onCreateGroup = {},
                 onJoinGroup = {},
                 onDismissInvite = {},
+                onCreateDialogOpened = {},
+                onJoinDialogOpened = {},
                 onGroupClick = {},
             )
         }
@@ -227,6 +239,8 @@ class GroupsScreenTest {
                 onCreateGroup = {},
                 onJoinGroup = {},
                 onDismissInvite = {},
+                onCreateDialogOpened = {},
+                onJoinDialogOpened = {},
                 onGroupClick = {},
             )
         }
@@ -247,9 +261,8 @@ class GroupsScreenTest {
      * BLOCKING 2 (fix round 1 review): deleting `JoinGroupDialog`'s own `error?.let { Text(...) }`
      * left every pre-existing test green, because none of them asserted the error message was
      * actually RENDERED — only that [GroupsActionState.joinError] existed in state, or that the
-     * typed code survived. This is the specific copy for [GroupFailure.Unknown] (`messageRes`'s
-     * `unknownRes` parameter) — a bad or expired code is the single most common outcome of this
-     * form.
+     * typed code survived. This is the specific copy for [GroupFailure.BadRequest] (fix round 2 —
+     * a bad or expired code is the single most common outcome of this form).
      */
     @Test
     fun `a failed join shows its error message in the dialog`() {
@@ -262,6 +275,8 @@ class GroupsScreenTest {
                 onCreateGroup = {},
                 onJoinGroup = {},
                 onDismissInvite = {},
+                onCreateDialogOpened = {},
+                onJoinDialogOpened = {},
                 onGroupClick = {},
             )
         }
@@ -269,10 +284,43 @@ class GroupsScreenTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         composeRule.onNodeWithText(context.getString(R.string.groups_join_action)).performClick()
 
-        actionState = GroupsActionState(joinError = GroupFailure.Unknown(IllegalStateException("bad code")))
+        actionState = GroupsActionState(joinError = GroupFailure.BadRequest)
         composeRule.waitForIdle()
 
         composeRule.onNodeWithText(context.getString(R.string.groups_join_error_bad_code)).assertIsDisplayed()
+    }
+
+    /**
+     * Fix round 2 — the negative control for the test above: a [GroupFailure.Unknown] (a 500, an
+     * expired session) on the SAME form must NOT get the bad-code copy — that was round 1's actual
+     * bug (`messageRes(unknownRes = …)` could not tell a genuine 400 apart from any other unmapped
+     * failure, since both arrived as [GroupFailure.Unknown]).
+     */
+    @Test
+    fun `a join failure that is not a bad code shows the generic message, not the bad-code copy`() {
+        var actionState by mutableStateOf(GroupsActionState())
+        composeRule.setContent {
+            GroupsScreen(
+                state = GroupsUiState.Success(groups = emptyList()),
+                actionState = actionState,
+                onRetry = {},
+                onCreateGroup = {},
+                onJoinGroup = {},
+                onDismissInvite = {},
+                onCreateDialogOpened = {},
+                onJoinDialogOpened = {},
+                onGroupClick = {},
+            )
+        }
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule.onNodeWithText(context.getString(R.string.groups_join_action)).performClick()
+
+        actionState = GroupsActionState(joinError = GroupFailure.Unknown(IllegalStateException("server error")))
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithText(context.getString(R.string.groups_error_unknown)).assertIsDisplayed()
+        composeRule.onNodeWithText(context.getString(R.string.groups_join_error_bad_code)).assertDoesNotExist()
     }
 
     /** [CreateGroupDialog]'s mirror of the join error-rendering test above. */
@@ -287,6 +335,8 @@ class GroupsScreenTest {
                 onCreateGroup = {},
                 onJoinGroup = {},
                 onDismissInvite = {},
+                onCreateDialogOpened = {},
+                onJoinDialogOpened = {},
                 onGroupClick = {},
             )
         }
@@ -318,6 +368,8 @@ class GroupsScreenTest {
                 onCreateGroup = {},
                 onJoinGroup = {},
                 onDismissInvite = {},
+                onCreateDialogOpened = {},
+                onJoinDialogOpened = {},
                 onGroupClick = {},
             )
         }
@@ -355,6 +407,8 @@ class GroupsScreenTest {
                 onCreateGroup = {},
                 onJoinGroup = {},
                 onDismissInvite = {},
+                onCreateDialogOpened = {},
+                onJoinDialogOpened = {},
                 onGroupClick = {},
             )
         }
@@ -366,6 +420,93 @@ class GroupsScreenTest {
             .performClick()
 
         assertTrue(retried)
+    }
+
+    /**
+     * Small item 2 (fix round 1 review, closed in fix round 2): round 1's BLOCKING 1 fix made
+     * create/join work from [GroupsUiState.Error] at the ViewModel level, but no COMMITTED test
+     * pinned the rendering half — hiding `GroupsTopBar`'s Create/Join buttons behind
+     * `state is GroupsUiState.Success` would have left every round-1 test green, since none of
+     * them drove the form from an `Error` state. This test does.
+     */
+    @Test
+    fun `the join form is reachable and submits from an Error state, not only Success`() {
+        var joinedWith: String? = null
+        composeRule.setContent {
+            GroupsScreen(
+                state = GroupsUiState.Error(GroupFailure.Network),
+                actionState = GroupsActionState(),
+                onRetry = {},
+                onCreateGroup = {},
+                onJoinGroup = { code -> joinedWith = code },
+                onDismissInvite = {},
+                onCreateDialogOpened = {},
+                onJoinDialogOpened = {},
+                onGroupClick = {},
+            )
+        }
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule.onNodeWithText(context.getString(R.string.groups_join_action)).performClick()
+        composeRule
+            .onNodeWithText(context.getString(R.string.groups_join_code_label))
+            .performTextInput("ABCDEFGHIJ1234567890")
+        composeRule.onNodeWithText(context.getString(R.string.groups_join_submit)).performClick()
+
+        assertEquals("ABCDEFGHIJ1234567890", joinedWith)
+    }
+
+    /**
+     * Fix round 2, small item 3: opening a dialog after a previous failed attempt must not show
+     * that attempt's error before the user has done anything new. The CLEARING itself is
+     * `GroupsViewModel.clearCreateError`/`clearJoinError` (pinned in `GroupsViewModelTest`); what
+     * only a screen test can see is whether OPENING the dialog actually reaches that callback.
+     */
+    @Test
+    fun `opening the create dialog invokes onCreateDialogOpened`() {
+        var opened = false
+        composeRule.setContent {
+            GroupsScreen(
+                state = GroupsUiState.Success(groups = listOf(ALPHA)),
+                actionState = GroupsActionState(),
+                onRetry = {},
+                onCreateGroup = {},
+                onJoinGroup = {},
+                onDismissInvite = {},
+                onCreateDialogOpened = { opened = true },
+                onJoinDialogOpened = {},
+                onGroupClick = {},
+            )
+        }
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule.onNodeWithText(context.getString(R.string.groups_create_action)).performClick()
+
+        assertTrue(opened)
+    }
+
+    /** [onCreateDialogOpened]'s mirror for the join dialog. */
+    @Test
+    fun `opening the join dialog invokes onJoinDialogOpened`() {
+        var opened = false
+        composeRule.setContent {
+            GroupsScreen(
+                state = GroupsUiState.Success(groups = listOf(ALPHA)),
+                actionState = GroupsActionState(),
+                onRetry = {},
+                onCreateGroup = {},
+                onJoinGroup = {},
+                onDismissInvite = {},
+                onCreateDialogOpened = {},
+                onJoinDialogOpened = { opened = true },
+                onGroupClick = {},
+            )
+        }
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule.onNodeWithText(context.getString(R.string.groups_join_action)).performClick()
+
+        assertTrue(opened)
     }
 
     private companion object {
