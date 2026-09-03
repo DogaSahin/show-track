@@ -257,7 +257,11 @@ private fun GroupsSuccessContent(
             StaleDataBanner(onRetry = onRetry, messageRes = R.string.groups_stale_notice)
         }
         state.justCreated?.let { invite ->
-            InviteCodeCard(invite = invite, onDismiss = onDismissInvite)
+            InviteCodeCard(
+                invite = invite,
+                title = stringResource(R.string.groups_invite_title, invite.group.name),
+                onDismiss = onDismissInvite,
+            )
         }
         Box(modifier = Modifier.weight(weight = 1f).fillMaxWidth()) {
             if (state.groups.isEmpty()) {
@@ -320,10 +324,22 @@ private fun GroupsTopBar(
  * to leave in `ActiveGroupStore`/Room. `minSdk` is 29, so [sensitiveInviteCodeClipEntry] guards the
  * flag behind API 33 — the constant is safe to reference below that (it is a plain string key an
  * older platform simply never looks for), but setting it has no effect there either way.
+ *
+ * **Task 9c.2 — [title] became a parameter, and this became `internal`.** `GroupDetailScreen`
+ * needs the identical "show a credential once, offer sensitive copy-to-clipboard, offer dismiss"
+ * behaviour for a ROTATED code, where "You're in %1$s" (this card's original, hardcoded title) is
+ * nonsensical — the reader is already a member. Decision C-T's own reasoning ("a shared
+ * presentation belongs [in `:core:designsystem`] once a second screen with the same question is a
+ * matter of when, not if") argued for `:core:designsystem` originally; this stays module-internal
+ * instead, because the second caller is `GroupDetailScreen` in this SAME module, not another
+ * feature — an ordinary `internal` Kotlin function already reaches it with no cross-module
+ * dependency to justify moving it. [sensitiveInviteCodeClipEntry] stays `private`: only this
+ * function calls it.
  */
 @Composable
-private fun InviteCodeCard(
+internal fun InviteCodeCard(
     invite: GroupWithInvite,
+    title: String,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -337,7 +353,7 @@ private fun InviteCodeCard(
             verticalArrangement = Arrangement.spacedBy(space = 8.dp),
         ) {
             Text(
-                text = stringResource(R.string.groups_invite_title, invite.group.name),
+                text = title,
                 style = MaterialTheme.typography.titleMedium,
             )
             Text(

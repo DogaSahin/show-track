@@ -25,6 +25,7 @@ import com.anarky.showtrack.core.network.dto.RecommendationPageDto
 import com.anarky.showtrack.core.network.dto.RecommendationReasonDto
 import com.anarky.showtrack.core.network.dto.RegisterTargetRequest
 import com.anarky.showtrack.core.network.dto.ReviewDto
+import com.anarky.showtrack.core.network.dto.UserDto
 import com.anarky.showtrack.core.network.dto.WatchlistItemDto
 import com.anarky.showtrack.core.network.dto.WatchlistPageDto
 import kotlinx.coroutines.test.runTest
@@ -352,6 +353,8 @@ class RecommendationRepositoryTest {
         ): MediaSearchResponseDto = error("this fake only serves refresh/loadMore/remove")
 
         override suspend fun mediaDetail(id: String): MediaDto = error("this fake only serves refresh/loadMore/remove")
+
+        override suspend fun me(): UserDto = error("this fake only serves refresh/loadMore/remove")
 
         override suspend fun registerPushTarget(request: RegisterTargetRequest): PushTargetDto =
             error("this fake only serves refresh/loadMore/remove")

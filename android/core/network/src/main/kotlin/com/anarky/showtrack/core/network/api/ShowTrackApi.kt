@@ -21,6 +21,7 @@ import com.anarky.showtrack.core.network.dto.PushTargetDto
 import com.anarky.showtrack.core.network.dto.RecommendationPageDto
 import com.anarky.showtrack.core.network.dto.RegisterTargetRequest
 import com.anarky.showtrack.core.network.dto.ReviewDto
+import com.anarky.showtrack.core.network.dto.UserDto
 import com.anarky.showtrack.core.network.dto.WatchlistItemDto
 import com.anarky.showtrack.core.network.dto.WatchlistPageDto
 import kotlinx.serialization.json.JsonObject
@@ -168,6 +169,22 @@ interface ShowTrackApi {
         @Query("cursor") cursor: String?,
         @Query("limit") limit: Int,
     ): RecommendationPageDto
+
+    /**
+     * `GET /v1/users/me`. The authenticated caller's own identity (task 9c.2) — mounted under
+     * `/v1` alongside every other route on this authenticated router (`main.py`), unlike
+     * `AuthApi`'s login/refresh/logout/register, which are deliberately served by the
+     * UNauthenticated client (see that interface's own KDoc). [UserDto] already exists for
+     * `AuthApi.register`'s response, whose wire shape is identical to `GET /v1/users/me`'s
+     * (`UserOut` on the backend, `app/users/schemas.py`) — reused rather than minting a second DTO.
+     *
+     * Added for [com.anarky.showtrack.core.data.repository.GroupRepository.currentUserId] — see
+     * that method's own KDoc for why this call exists at all: deriving ownership for the group
+     * detail screen's owner-only affordances (E-F) needs the signed-in user's id, and nothing else
+     * in this client currently resolves one.
+     */
+    @GET("v1/users/me")
+    suspend fun me(): UserDto
 
     // -- Groups (task 9c.0). Twelve endpoints under /v1/groups, plus two review writes that live
     // under /v1/reviews (design doc §1) — every shape read from `app/groups/schemas.py`,

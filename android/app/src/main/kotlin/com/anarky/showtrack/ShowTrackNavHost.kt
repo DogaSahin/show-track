@@ -13,6 +13,8 @@ import com.anarky.showtrack.core.designsystem.component.LoadingState
 import com.anarky.showtrack.core.model.AuthEvent
 import com.anarky.showtrack.core.navigation.AppRoute
 import com.anarky.showtrack.core.navigation.AuthRoute
+import com.anarky.showtrack.core.navigation.GroupDetailRoute
+import com.anarky.showtrack.core.navigation.GroupsRoute
 import com.anarky.showtrack.core.navigation.ImportRoute
 import com.anarky.showtrack.core.navigation.LibraryRoute
 import kotlinx.coroutines.flow.Flow
@@ -193,6 +195,15 @@ private fun ShowTrackGraph(
  * trying to prevent — see [AppViewModel.markSignedIn]'s own KDoc for the measured conflict. The
  * `currentDestination == AuthRoute` check immediately above is therefore the ONLY guard against
  * that demotion, not one half of two.
+ *
+ * **`GroupsRoute` (task 9c.2)** follows the identical `LibraryRoute`/`ImportRoute` pop-vs-push
+ * shape, for the identical reason: `:feature:groups`' `groupDetailEntry` reaches this branch via
+ * `onNavigate(GroupsRoute)` when a member leaves a group (`GroupsNavigation.kt`'s
+ * `leaveNavigation`), and the back stack at that moment is ALWAYS `[..., GroupsRoute,
+ * GroupDetailRoute]` — `GroupDetailRoute`'s own KDoc: it is reached ONLY from `GroupsRoute`'s own
+ * list, never with an invented id. Popping back to that existing `GroupsRoute` rather than pushing
+ * a second one is what keeps Back from returning to the just-left group's own (now stale, and for
+ * a non-member, now 404ing) detail screen.
  */
 internal fun NavHostController.routeShowTrackNavigation(
     route: AppRoute,
@@ -217,6 +228,18 @@ internal fun NavHostController.routeShowTrackNavigation(
             val comingFromAuth = currentDestination?.hasRoute(AuthRoute::class) == true
             navigateToImportClearingAuth()
             if (comingFromAuth) onSignedIn(true)
+        }
+
+        is GroupsRoute -> {
+            val returningFromDetail =
+                currentDestination?.hasRoute(GroupDetailRoute::class) == true && previousBackStackEntry != null
+            if (returningFromDetail) {
+                // A member just left the group on screen — see this function's own KDoc. Pop back
+                // to the existing GroupsRoute rather than pushing a second one on top of it.
+                popBackStack()
+            } else {
+                navigate(route)
+            }
         }
 
         // Navigating TO AuthRoute through this table happens from ProfileNavigation on sign-out

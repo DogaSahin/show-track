@@ -1,7 +1,5 @@
 package com.anarky.showtrack.feature.groups
 
-import androidx.compose.material3.Text
-import androidx.compose.ui.res.stringResource
 import androidx.navigation.NavGraphBuilder
 import androidx.navigation.compose.composable
 import com.anarky.showtrack.core.model.Group
@@ -34,21 +32,42 @@ fun NavGraphBuilder.groupsEntry(onNavigate: (AppRoute) -> Unit) {
 }
 
 /**
- * A placeholder registration for [GroupDetailRoute], introduced in the same task that first makes
- * the route reachable ([groupsEntry]'s tap-through above). `:app`'s `NavGraphRegistrationTest`
- * demands exactly one destination per leaf route declared in `AppRoute`
- * (`` `every declared route appears in appDestinations exactly once` ``/
- * `` `the built nav graph holds one destination per declared route` ``), so a route cannot be
- * declared in `:core:navigation` without also being wired somewhere — the same reason `GroupsRoute`
- * itself shipped with a bare `Text("Groups")` destination when the original nine routes were first
- * declared, well before this task gave it real content.
+ * [GroupDetailRoute]'s real destination (task 9c.2) — task 9c.1 shipped this as a bare placeholder
+ * `Text` purely so `:app`'s `NavGraphRegistrationTest` had a destination to find (that test demands
+ * exactly one per leaf route declared in `AppRoute`, so a route cannot be declared in
+ * `:core:navigation` without also being wired somewhere — the same reason `GroupsRoute` itself
+ * shipped with a bare `Text("Groups")` destination when the original nine routes were first
+ * declared). This function's SIGNATURE gained [onNavigate] in this task — the placeholder took
+ * none, since it had nowhere to go — matching every other destination that needs somewhere real to
+ * navigate (`groupsEntry` just above).
  *
- * Task 9c.2 replaces the body of this destination with the real `GroupDetailScreen` (state, feed,
- * watchlist, members) — this function's SIGNATURE and its `GroupDetailRoute` registration stay;
- * only what `composable<GroupDetailRoute> { }` renders changes.
+ * [leaveNavigation] is `ProfileNavigation.kt`'s `signOutNavigation`/`importNavigation` pattern:
+ * pulled out of this function's `composable<GroupDetailRoute> { }` lambda so the mapping
+ * (`onLeft` → `onNavigate(GroupsRoute)`) is reachable by a plain unit test without composing
+ * anything — `GroupDetailScreen` itself is constructed WITHOUT `viewModel` here, which evaluates
+ * its `hiltViewModel()` default, so a bare unit test cannot drive the BINDING this way; it can
+ * drive this mapping directly, and `GroupDetailEntryHiltTest` covers the binding end to end.
+ *
+ * Task 9c.3 extends this destination with the shared watchlist (plan doc: "Modify:
+ * `GroupDetailUiState.kt`, `GroupDetailViewModel.kt`, `GroupDetailScreen.kt`, `strings.xml`") —
+ * nothing here is written to preclude it.
  */
-fun NavGraphBuilder.groupDetailEntry() {
+fun NavGraphBuilder.groupDetailEntry(onNavigate: (AppRoute) -> Unit) {
     composable<GroupDetailRoute> {
-        Text(text = stringResource(R.string.groups_detail_placeholder))
+        GroupDetailScreen(onLeft = leaveNavigation(onNavigate))
     }
 }
+
+/**
+ * The mapping a successful leave drives — see [groupDetailEntry]'s own KDoc for why this is a
+ * separate, unit-testable function rather than an inline lambda.
+ *
+ * `onNavigate(GroupsRoute)`, not a raw `popBackStack()`: nothing in `:feature:groups` holds a
+ * `NavHostController` (architecture rule 1's whole point — cross-screen navigation goes through
+ * `:core:navigation` route contracts, stitched in `:app`), so "go back to the groups list" is
+ * expressed the same way every other exit in this app is, by NAMING the destination and letting
+ * `:app`'s `routeShowTrackNavigation` decide how to get there. `ShowTrackNavHost.kt`'s own
+ * `GroupsRoute` branch pops back to the existing list rather than pushing a second one, the
+ * identical shape it already gives `LibraryRoute` returning from `ImportRoute`.
+ */
+internal fun leaveNavigation(onNavigate: (AppRoute) -> Unit): () -> Unit = { onNavigate(GroupsRoute) }

@@ -201,4 +201,32 @@ class ShowTrackApiTest {
             assertNull(item.media)
             assertTrue(item.payload.isNotEmpty())
         }
+
+    /**
+     * `GET /v1/users/me` (task 9c.2) — added for `GroupRepository.currentUserId`, see that
+     * method's own KDoc. Asserts the REQUEST shape (path, no body) as well as the decode: a GET
+     * that accidentally carried a body, or hit the wrong path, would 404/405 against the real
+     * backend while still passing a test that only checked the response decode.
+     */
+    @Test
+    fun `me sends a bare GET to v1users me and decodes the response`() =
+        runTest {
+            server.enqueue(
+                MockResponse
+                    .Builder()
+                    .code(200)
+                    .body(
+                        """{"id":"user-42","username":"alex","email":"alex@example.test",""" +
+                            """"created_at":"2026-09-01T10:00:00Z"}""",
+                    ).build(),
+            )
+
+            val response = api.me()
+
+            val request = server.takeRequest()
+            assertEquals("GET", request.method)
+            assertEquals("/v1/users/me", request.url.encodedPath)
+            assertEquals("user-42", response.id)
+            assertEquals("alex", response.username)
+        }
 }

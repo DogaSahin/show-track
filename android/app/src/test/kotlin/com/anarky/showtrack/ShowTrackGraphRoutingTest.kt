@@ -10,6 +10,8 @@ import androidx.test.core.app.ApplicationProvider
 import com.anarky.showtrack.core.navigation.AuthRoute
 import com.anarky.showtrack.core.navigation.DetailRoute
 import com.anarky.showtrack.core.navigation.FavoritesRoute
+import com.anarky.showtrack.core.navigation.GroupDetailRoute
+import com.anarky.showtrack.core.navigation.GroupsRoute
 import com.anarky.showtrack.core.navigation.ImportRoute
 import com.anarky.showtrack.core.navigation.LibraryRoute
 import com.anarky.showtrack.core.navigation.ProfileRoute
@@ -268,6 +270,79 @@ class ShowTrackGraphRoutingTest {
 
         assertEquals(
             listOf(null, ImportRoute::class.qualifiedName, LibraryRoute::class.qualifiedName),
+            controller.backStackRoutes(),
+        )
+    }
+
+    /**
+     * `GroupsRoute` (task 9c.2) — a member leaving the group on screen. Stack shape
+     * `[null, GroupsRoute, GroupDetailRoute]`, `GroupDetailRoute`'s own KDoc: it is reached ONLY
+     * from `GroupsRoute`'s own list, so this is the ONLY shape the back stack is ever actually in
+     * when `leaveNavigation` fires `onNavigate(GroupsRoute)`. Must pop back to the EXISTING
+     * `GroupsRoute` rather than pushing a second one — `LibraryRoute` popping back to `ProfileRoute`
+     * from `ImportRoute`'s identical shape, one screen over.
+     */
+    @Test
+    fun `routing to GroupsRoute pops back to the existing one when returning from GroupDetailRoute`() {
+        val controller = controllerWith { defaultGraph() }
+        controller.navigate(GroupsRoute)
+        controller.navigate(GroupDetailRoute(groupId = "group-1"))
+        assertEquals(4, controller.currentBackStack.value.size)
+
+        controller.routeShowTrackNavigation(GroupsRoute)
+
+        assertEquals(
+            listOf(null, LibraryRoute::class.qualifiedName, GroupsRoute::class.qualifiedName),
+            controller.backStackRoutes(),
+        )
+    }
+
+    /**
+     * The negative control for the pop above, mirroring `` `routing to LibraryRoute from Profile
+     * with Library already underneath is still an ordinary push` ``: current destination is
+     * `LibraryRoute`, not `GroupDetailRoute`, so the pop condition must not match regardless of
+     * what is or is not underneath it.
+     */
+    @Test
+    fun `routing to GroupsRoute from somewhere other than GroupDetailRoute is an ordinary push`() {
+        val controller = controllerWith { defaultGraph() }
+
+        controller.routeShowTrackNavigation(GroupsRoute)
+
+        assertEquals(
+            listOf(null, LibraryRoute::class.qualifiedName, GroupsRoute::class.qualifiedName),
+            controller.backStackRoutes(),
+        )
+    }
+
+    /**
+     * Round 3's own precedent (task 9b.6 fix round), applied to this branch: the
+     * `previousBackStackEntry != null` half of the pop condition, isolated. The graph's OWN start
+     * destination is `GroupDetailRoute` here — the one way to put it on the back stack with
+     * nothing real underneath it (unlike the shape every other test in this file builds by
+     * `navigate`ing there from something else) — mirroring the onboarding `ImportRoute`-with-
+     * nothing-underneath shape one screen over (`` `routing to LibraryRoute from a bare ImportRoute
+     * with nothing underneath pushes rather than pops` ``, whose OWN shape comes from
+     * `navigateToImportClearingAuth`'s `popUpTo<AuthRoute>` rather than this trick — `GroupDetailRoute`
+     * has no such special-cased arrival, so a plain `navigate` never produces this shape on its
+     * own). Must push, not pop — there is nothing to return to.
+     */
+    @Test
+    fun `routing to GroupsRoute from a bare GroupDetailRoute with nothing underneath pushes rather than pops`() {
+        val controller =
+            NavHostController(ApplicationProvider.getApplicationContext<Context>()).apply {
+                navigatorProvider.addNavigator(ComposeNavigator())
+                graph =
+                    createGraph(startDestination = GroupDetailRoute(groupId = "group-1")) {
+                        showTrackDestinations(onNavigate = { })
+                    }
+            }
+        assertEquals(listOf(null, GroupDetailRoute::class.qualifiedName), controller.backStackRoutes())
+
+        controller.routeShowTrackNavigation(GroupsRoute)
+
+        assertEquals(
+            listOf(null, GroupDetailRoute::class.qualifiedName, GroupsRoute::class.qualifiedName),
             controller.backStackRoutes(),
         )
     }

@@ -14,28 +14,37 @@ import com.anarky.showtrack.core.model.WatchlistEntry
 import kotlinx.coroutines.CompletableDeferred
 
 /**
- * Shared by [GroupsViewModelTest] and [GroupsEntryHiltTest] — both exercise [GroupsViewModel]
- * against a fake rather than [com.anarky.showtrack.core.data.repository.GroupRepositoryImpl],
- * which would need Retrofit (neither is on this module's compile classpath — architecture rule 2).
+ * Shared by [GroupsViewModelTest]/[GroupsEntryHiltTest] and, as of task 9c.2,
+ * [GroupDetailViewModelTest]/[GroupDetailScreenTest]/`GroupDetailEntryHiltTest` — every one of
+ * them exercises its ViewModel against a fake rather than
+ * [com.anarky.showtrack.core.data.repository.GroupRepositoryImpl], which would need Retrofit
+ * (neither is on this module's compile classpath — architecture rule 2).
  *
- * Only [groups]/[createGroup]/[joinGroup] are functional — the only three [GroupsViewModel] ever
- * calls. Every other member `error(...)`s rather than silently no-op-ing: a [GroupsViewModel] that
- * accidentally reached one of them fails LOUDLY, with that message, rather than an unexplained
- * `NotImplementedError` or a silently wrong result — [FakeLibraryRepository]'s (`:feature:favorites`)
- * identical discrimination technique.
+ * [groups]/[createGroup]/[joinGroup] (the three [GroupsViewModel] calls) and, since task 9c.2,
+ * [currentUserId]/[members]/[rotateInvite]/[removeMember] (the four [GroupDetailViewModel] calls)
+ * are functional. Every OTHER member `error(...)`s rather than silently no-op-ing: a ViewModel
+ * that accidentally reached one of them fails LOUDLY, with that message, rather than an
+ * unexplained `NotImplementedError` or a silently wrong result —
+ * [FakeLibraryRepository]'s (`:feature:favorites`) identical discrimination technique.
  *
  * Failures are configured as a [GroupFailure] directly, not a [Throwable], and wrapped in
  * [GroupOperationException] here — mirroring exactly what
  * [com.anarky.showtrack.core.data.repository.GroupRepositoryImpl]'s own `guarded` does at the real
- * boundary, so [GroupsViewModel]'s `catch (failure: GroupOperationException)` is exercised the
- * same way it would be against production.
+ * boundary, so a ViewModel's `catch (failure: GroupOperationException)` is exercised the same way
+ * it would be against production.
  *
- * [groupsGate]/[createGate]/[joinGate], when set, are what let a test observe [GroupsViewModel.state]
- * WHILE the corresponding suspend call is still suspended, rather than only before and after —
- * [FakeLibraryRepository.refreshGate]'s identical technique, needed for the same reason: a fake that
- * always resolves synchronously can never make a wrongly-shown intermediate state (e.g. `Loading` on
- * a resume, or a re-entrant second call) observable.
+ * [groupsGate]/[createGate]/[joinGate]/[membersGate]/[removeMemberGate], when set, are what let a
+ * test observe a ViewModel's state WHILE the corresponding suspend call is still suspended, rather
+ * than only before and after — [FakeLibraryRepository.refreshGate]'s identical technique, needed
+ * for the same reason: a fake that always resolves synchronously can never make a wrongly-shown
+ * intermediate state (e.g. `Loading` on a resume, or a re-entrant second call) observable.
+ *
+ * `@Suppress("LongParameterList")`: this fake's constructor is one result/failure pair per
+ * [GroupRepository] method it actually implements — `GroupRepositoryImplTest`'s own
+ * `TooManyFunctions` suppression carries the identical seam-cohesion argument for why the
+ * INTERFACE this mirrors is one type rather than several.
  */
+@Suppress("LongParameterList")
 internal class FakeGroupRepository(
     var groupsResult: List<Group> = emptyList(),
     var groupsFailure: GroupFailure? = null,
@@ -43,10 +52,19 @@ internal class FakeGroupRepository(
     var createFailure: GroupFailure? = null,
     var joinResult: GroupWithInvite? = null,
     var joinFailure: GroupFailure? = null,
+    var currentUserIdResult: String = "user-self",
+    var currentUserIdFailure: GroupFailure? = null,
+    var membersResult: List<GroupMember> = emptyList(),
+    var membersFailure: GroupFailure? = null,
+    var rotateResult: GroupWithInvite? = null,
+    var rotateFailure: GroupFailure? = null,
+    var removeMemberFailure: GroupFailure? = null,
 ) : GroupRepository {
     var groupsGate: CompletableDeferred<Unit>? = null
     var createGate: CompletableDeferred<Unit>? = null
     var joinGate: CompletableDeferred<Unit>? = null
+    var membersGate: CompletableDeferred<Unit>? = null
+    var removeMemberGate: CompletableDeferred<Unit>? = null
 
     var groupsCalls = 0
         private set
@@ -56,6 +74,14 @@ internal class FakeGroupRepository(
 
     var joinCalls = 0
         private set
+
+    var rotateCalls = 0
+        private set
+
+    // Every (groupId, userId) pair removeMember was actually called with, in order — what lets a
+    // test tell "leave (your own id)" apart from "remove (someone else's)" at the repository
+    // boundary, since both are the SAME call with a different argument (design doc §1.1).
+    val removeMemberCalls = mutableListOf<Pair<String, String>>()
 
     override suspend fun groups(): List<Group> {
         groupsCalls++
@@ -78,14 +104,31 @@ internal class FakeGroupRepository(
         return joinResult ?: error("joinResult not set for this test")
     }
 
-    override suspend fun members(groupId: String): List<GroupMember> = error("not exercised by GroupsViewModel")
+    override suspend fun currentUserId(): String {
+        currentUserIdFailure?.let { throw GroupOperationException(it) }
+        return currentUserIdResult
+    }
 
-    override suspend fun rotateInvite(groupId: String): GroupWithInvite = error("not exercised by GroupsViewModel")
+    override suspend fun members(groupId: String): List<GroupMember> {
+        membersGate?.await()
+        membersFailure?.let { throw GroupOperationException(it) }
+        return membersResult
+    }
+
+    override suspend fun rotateInvite(groupId: String): GroupWithInvite {
+        rotateCalls++
+        rotateFailure?.let { throw GroupOperationException(it) }
+        return rotateResult ?: error("rotateResult not set for this test")
+    }
 
     override suspend fun removeMember(
         groupId: String,
         userId: String,
-    ): Unit = error("not exercised by GroupsViewModel")
+    ) {
+        removeMemberCalls += groupId to userId
+        removeMemberGate?.await()
+        removeMemberFailure?.let { throw GroupOperationException(it) }
+    }
 
     override suspend fun feed(
         groupId: String,

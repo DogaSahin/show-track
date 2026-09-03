@@ -51,12 +51,53 @@
          does not tell the client either. -->
     <string name="groups_join_error_bad_code">That code didn\'t work. It may be wrong or expired.</string>
 
-    <!-- GroupDetailRoute's placeholder destination (GroupsNavigation.kt's groupDetailEntry) —
-         task 9c.2 replaces this with the real GroupDetailScreen. -->
-    <string name="groups_detail_placeholder">Group detail</string>
-
     <!-- Fix round 1: StaleDataBanner's own default copy ("Showing saved titles…") names the
          wrong noun for a list of groups — see GroupsUiState.Success's own KDoc for why isStale
          is still meaningful here despite groups having no Room cache. -->
     <string name="groups_stale_notice">Showing your last loaded groups. Tap Retry to check for updates.</string>
+
+    <!-- ===== Group detail (task 9c.2) — GroupDetailScreen.kt, GroupDetailDialogs.kt ===== -->
+
+    <string name="groups_detail_title">Members</string>
+    <string name="groups_detail_role_owner">Owner</string>
+    <string name="groups_detail_role_member">Member</string>
+    <!-- StaleDataBanner's messageRes parameter (fix round 1's own precedent on GroupsScreen) —
+         "your last loaded groups" is the wrong noun for a member list. -->
+    <string name="groups_detail_stale_notice">Showing the last loaded members. Tap Retry to check for updates.</string>
+
+    <!-- Owner only (E-F) — GroupDetailScreen hides this control entirely for a non-owner rather
+         than disabling it (decision E-F: the server enforces the rule regardless, so the UI's
+         only job is not to offer a dead end). -->
+    <string name="groups_detail_rotate_action">Rotate invite code</string>
+    <string name="groups_detail_rotate_confirm_title">Rotate the invite code?</string>
+    <!-- E-I: rotating means the previous code stops working — the copy this task's brief
+         requires ("the copy must say the previous code stops working — that is what rotation
+         means"). -->
+    <string name="groups_detail_rotate_confirm_message">The current invite code will stop working immediately. Anyone who has not joined yet will need the new one.</string>
+    <string name="groups_detail_rotate_confirm_button">Rotate</string>
+    <string name="groups_detail_rotate_cancel">Cancel</string>
+    <!-- The InviteCodeCard reused from GroupsScreen.kt (generalised to take its own title —
+         "You're in %1$s" makes no sense for a rotate, since the reader is already a member). -->
+    <string name="groups_detail_rotated_title">New invite code</string>
+
+    <!-- Offered to EVERY member, owner included (backend's remove_member permits self-removal
+         unconditionally — G-E's ownership-transfer rule only ever gates removing SOMEONE ELSE). -->
+    <string name="groups_detail_leave_action">Leave group</string>
+    <string name="groups_detail_leave_confirm_title">Leave this group?</string>
+    <string name="groups_detail_leave_confirm_message">You\'ll need a new invite code to rejoin.</string>
+    <string name="groups_detail_leave_confirm_button">Leave</string>
+    <string name="groups_detail_leave_cancel">Cancel</string>
+
+    <!-- Owner only (E-F), and never rendered next to the owner's OWN row — see
+         GroupDetailScreen.kt's own note on why "remove yourself" is groups_detail_leave_action
+         instead, not this control reused. -->
+    <string name="groups_detail_remove_action">Remove</string>
+    <string name="groups_detail_remove_confirm_title">Remove %1$s?</string>
+    <string name="groups_detail_remove_confirm_message">They\'ll need a new invite code to rejoin.</string>
+    <!-- Deliberately NOT "Remove" — the per-row groups_detail_remove_action button stays on
+         screen underneath the confirm dialog (GroupDetailScreenTest measured `onNodeWithText`
+         matching three nodes and throwing: two other members' own row buttons plus this one), the
+         identical collision groups_create_submit's own note describes for GroupsScreen. -->
+    <string name="groups_detail_remove_confirm_button">Remove member</string>
+    <string name="groups_detail_remove_cancel">Cancel</string>
 </resources>

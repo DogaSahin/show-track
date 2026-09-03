@@ -42,6 +42,9 @@ class GroupRepositoryImpl
     constructor(
         private val api: ShowTrackApi,
     ) : GroupRepository {
+        /** See [GroupRepository.currentUserId]'s own KDoc for why this exists and lives here. */
+        override suspend fun currentUserId(): String = guarded { api.me().id }
+
         override suspend fun groups(): List<Group> = guarded { api.groups().map { it.toDomain() } }
 
         override suspend fun createGroup(name: String): GroupWithInvite =

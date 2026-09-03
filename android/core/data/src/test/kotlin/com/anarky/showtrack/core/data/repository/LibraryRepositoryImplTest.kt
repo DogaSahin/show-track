@@ -38,6 +38,7 @@ import com.anarky.showtrack.core.network.dto.PushTargetDto
 import com.anarky.showtrack.core.network.dto.RecommendationPageDto
 import com.anarky.showtrack.core.network.dto.RegisterTargetRequest
 import com.anarky.showtrack.core.network.dto.ReviewDto
+import com.anarky.showtrack.core.network.dto.UserDto
 import com.anarky.showtrack.core.network.dto.WatchlistItemDto
 import com.anarky.showtrack.core.network.dto.WatchlistPageDto
 import kotlinx.coroutines.flow.first
@@ -782,6 +783,8 @@ private class FakeShowTrackApi(
 
     override suspend fun mediaDetail(id: String): MediaDto =
         error("this fake only serves observeLibrary/refresh/loadMore")
+
+    override suspend fun me(): UserDto = error("this fake only serves observeLibrary/refresh/loadMore")
 
     override suspend fun registerPushTarget(request: RegisterTargetRequest): PushTargetDto =
         error("the library repository must not touch push registration")

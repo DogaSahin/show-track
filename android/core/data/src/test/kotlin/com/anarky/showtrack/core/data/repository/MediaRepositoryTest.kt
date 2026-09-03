@@ -24,6 +24,7 @@ import com.anarky.showtrack.core.network.dto.PushTargetDto
 import com.anarky.showtrack.core.network.dto.RecommendationPageDto
 import com.anarky.showtrack.core.network.dto.RegisterTargetRequest
 import com.anarky.showtrack.core.network.dto.ReviewDto
+import com.anarky.showtrack.core.network.dto.UserDto
 import com.anarky.showtrack.core.network.dto.WatchlistItemDto
 import com.anarky.showtrack.core.network.dto.WatchlistPageDto
 import kotlinx.coroutines.test.runTest
@@ -211,6 +212,8 @@ class MediaRepositoryTest {
         }
 
         override suspend fun mediaDetail(id: String): MediaDto = TODO("not used")
+
+        override suspend fun me(): UserDto = TODO("not used")
 
         override suspend fun registerPushTarget(request: RegisterTargetRequest): PushTargetDto = TODO("not used")
 

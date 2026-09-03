@@ -59,9 +59,10 @@ internal class AppDestination(
  * this task (9b.4) for the identical reason: it now renders real rows, each with a real
  * `entry.media.id`, so `favoritesEntry` gained the same parameter too. `Groups` moves out of it in
  * task 9c.1 for the same reason again: tapping a loaded or just-created group now needs somewhere
- * real to go, so `groupsEntry` gained the same parameter. `GroupDetailRoute` (introduced by the
- * same task) is registered with no `onNavigate` of its own — its destination is still the task
- * 9c.2 placeholder `groupDetailEntry` builds, which has nowhere to navigate to yet.
+ * real to go, so `groupsEntry` gained the same parameter. `GroupDetailRoute` moves out of it in
+ * task 9c.2: leaving the group now needs somewhere real to go back to, so `groupDetailEntry` gained
+ * the same parameter too — see `ShowTrackNavHost.kt`'s `routeShowTrackNavigation` for how
+ * `onNavigate(GroupsRoute)` resolves to a pop back to the existing list rather than a second push.
  */
 internal val appDestinations: List<AppDestination> =
     listOf(
@@ -73,7 +74,7 @@ internal val appDestinations: List<AppDestination> =
         AppDestination(ProfileRoute::class) { onNavigate -> profileEntry(onNavigate) },
         AppDestination(SearchRoute::class) { onNavigate -> searchEntry(onNavigate) },
         AppDestination(GroupsRoute::class) { onNavigate -> groupsEntry(onNavigate) },
-        AppDestination(GroupDetailRoute::class) { groupDetailEntry() },
+        AppDestination(GroupDetailRoute::class) { onNavigate -> groupDetailEntry(onNavigate) },
         AppDestination(FeedRoute::class) { onNavigate -> feedEntry(onNavigate) },
         AppDestination(ImportRoute::class) { onNavigate -> importEntry(onNavigate) },
     )

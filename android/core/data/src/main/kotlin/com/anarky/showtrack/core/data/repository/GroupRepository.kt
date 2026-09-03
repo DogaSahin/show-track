@@ -54,7 +54,7 @@ class GroupOperationException(
  * seam-cohesion argument [LibraryRepository] settled on for its own `TooManyFunctions` suppression
  * (design decision E-E).
  *
- * `@Suppress("TooManyFunctions")` at fourteen methods. The outcome — one interface, not split by
+ * `@Suppress("TooManyFunctions")` at fifteen methods. The outcome — one interface, not split by
  * sub-concern (groups vs. feed vs. watchlist vs. reviews) — is right for the same reason
  * [LibraryRepository] gives: a `:feature:*` module is meant to see ONE group-domain interface
  * (architecture rule 2's whole point), and splitting by sub-concern would make "which interface do
@@ -62,12 +62,29 @@ class GroupOperationException(
  *
  * The cost this suppression carries, worth stating rather than omitting (the same corrected lesson
  * [LibraryRepository]'s KDoc records): it sits on the TYPE, so the ratchet it disables is off
- * PERMANENTLY, not just for the methods that exist today. A fifteenth or twentieth method added
- * here later gets no signal from `TooManyFunctions` at all — whether it genuinely belongs on this
- * seam has to be judged by hand at review time, every time, from now on.
+ * PERMANENTLY, not just for the methods that exist today. [currentUserId] (task 9c.2) is exactly
+ * the fifteenth method this KDoc's own previous revision predicted — and, judged by hand as
+ * predicted, it is arguably not a groups/feed/watchlist/reviews concern at all, but a users one;
+ * see its own KDoc for why it lives here anyway.
  */
 @Suppress("TooManyFunctions")
 interface GroupRepository {
+    /**
+     * `GET /v1/users/me`, answering the signed-in user's own id (task 9c.2). Not a "users" concern
+     * split onto its own repository: its ONLY caller today is `GroupDetailViewModel`, which derives
+     * owner-only rendering (E-F) by comparing this id against `GroupMember.role` on the live
+     * [members] response — "not from anything cached or inferred" is E-F's own stated mitigation,
+     * and nothing else in this client currently resolves a signed-in identity at all (`AuthRepository`
+     * knows only opaque tokens; `TokenStore` never decodes them — see that interface's own KDoc).
+     * Keeping this on [GroupRepository] rather than `AuthRepository` means `GroupDetailViewModel`'s
+     * existing `catch (failure: GroupOperationException)` covers this call the identical way it
+     * already covers [members]/[rotateInvite]/[removeMember], rather than that ViewModel reconciling
+     * two unrelated failure-domain types for one screen. See `ShowTrackApi.me`'s own KDoc for why
+     * this is NOT served by `AuthApi` (its client carries no `AuthInterceptor`, so an unauthenticated
+     * call to a route that requires one would always 401).
+     */
+    suspend fun currentUserId(): String
+
     /** `GET /v1/groups`. A plain list, not `{items, next_cursor}` (decision G-H): unbounded growth. */
     suspend fun groups(): List<Group>
 
