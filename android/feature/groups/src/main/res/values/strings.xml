@@ -1,0 +1,42 @@
+<resources>
+    <string name="groups_title">Groups</string>
+
+    <string name="groups_create_action">Create</string>
+    <string name="groups_join_action">Join by code</string>
+
+    <string name="groups_empty_message">You\'re not in any groups yet. Create one or join with a code.</string>
+    <string name="groups_error_message">Couldn\'t load your groups. Check your connection and try again.</string>
+
+    <string name="groups_create_title">Create a group</string>
+    <string name="groups_create_name_label">Group name</string>
+    <!-- Deliberately NOT "Create" — the top app bar's own groups_create_action button already
+         uses that word, and both are on screen together while this dialog is open (round 1 fix:
+         GroupsScreenTest measured `onNodeWithText("Create")` matching two nodes and throwing). -->
+    <string name="groups_create_submit">Create group</string>
+    <!-- ImportForm's import_submitting convention: a visibly different label while the request is
+         in flight, on top of the enabled = false guard, so a real user sees why the button stopped
+         responding rather than just a disabled control. -->
+    <string name="groups_create_submitting">Creating…</string>
+    <string name="groups_create_cancel">Cancel</string>
+
+    <string name="groups_join_title">Join a group</string>
+    <string name="groups_join_code_label">Invite code</string>
+    <!-- Deliberately NOT "Join" — see groups_create_submit's identical note for groups_join_action. -->
+    <string name="groups_join_submit">Join group</string>
+    <string name="groups_join_submitting">Joining…</string>
+    <string name="groups_join_cancel">Cancel</string>
+
+    <!-- The invite-code card: shown ONLY in GroupsUiState.Success.justCreated, right after a
+         create or join succeeds — the code is a credential the server withholds everywhere else
+         (GET /v1/groups never returns one), so this copy only ever renders at that one moment. -->
+    <string name="groups_invite_title">You\'re in %1$s</string>
+    <string name="groups_invite_code_label">Invite code: %1$s</string>
+    <string name="groups_invite_dismiss">Got it</string>
+
+    <string name="groups_error_network">Couldn\'t reach the server. Check your connection and try again.</string>
+    <string name="groups_error_unknown">Something went wrong. Please try again.</string>
+
+    <!-- GroupDetailRoute's placeholder destination (GroupsNavigation.kt's groupDetailEntry) —
+         task 9c.2 replaces this with the real GroupDetailScreen. -->
+    <string name="groups_detail_placeholder">Group detail</string>
+</resources>

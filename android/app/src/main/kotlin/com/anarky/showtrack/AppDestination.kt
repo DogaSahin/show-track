@@ -7,6 +7,7 @@ import com.anarky.showtrack.core.navigation.DetailRoute
 import com.anarky.showtrack.core.navigation.DiscoverRoute
 import com.anarky.showtrack.core.navigation.FavoritesRoute
 import com.anarky.showtrack.core.navigation.FeedRoute
+import com.anarky.showtrack.core.navigation.GroupDetailRoute
 import com.anarky.showtrack.core.navigation.GroupsRoute
 import com.anarky.showtrack.core.navigation.ImportRoute
 import com.anarky.showtrack.core.navigation.LibraryRoute
@@ -17,6 +18,7 @@ import com.anarky.showtrack.feature.detail.detailEntry
 import com.anarky.showtrack.feature.discover.discoverEntry
 import com.anarky.showtrack.feature.favorites.favoritesEntry
 import com.anarky.showtrack.feature.feed.feedEntry
+import com.anarky.showtrack.feature.groups.groupDetailEntry
 import com.anarky.showtrack.feature.groups.groupsEntry
 import com.anarky.showtrack.feature.library.libraryEntry
 import com.anarky.showtrack.feature.profile.importEntry
@@ -55,7 +57,11 @@ internal class AppDestination(
  * is persisted and carries a real id — no add-first workaround), so `discoverEntry` gained the same
  * `onNavigate` parameter `libraryEntry`/`searchEntry` already have. `Favorites` moves out of it in
  * this task (9b.4) for the identical reason: it now renders real rows, each with a real
- * `entry.media.id`, so `favoritesEntry` gained the same parameter too.
+ * `entry.media.id`, so `favoritesEntry` gained the same parameter too. `Groups` moves out of it in
+ * task 9c.1 for the same reason again: tapping a loaded or just-created group now needs somewhere
+ * real to go, so `groupsEntry` gained the same parameter. `GroupDetailRoute` (introduced by the
+ * same task) is registered with no `onNavigate` of its own — its destination is still the task
+ * 9c.2 placeholder `groupDetailEntry` builds, which has nowhere to navigate to yet.
  */
 internal val appDestinations: List<AppDestination> =
     listOf(
@@ -66,7 +72,8 @@ internal val appDestinations: List<AppDestination> =
         AppDestination(FavoritesRoute::class) { onNavigate -> favoritesEntry(onNavigate) },
         AppDestination(ProfileRoute::class) { onNavigate -> profileEntry(onNavigate) },
         AppDestination(SearchRoute::class) { onNavigate -> searchEntry(onNavigate) },
-        AppDestination(GroupsRoute::class) { groupsEntry() },
+        AppDestination(GroupsRoute::class) { onNavigate -> groupsEntry(onNavigate) },
+        AppDestination(GroupDetailRoute::class) { groupDetailEntry() },
         AppDestination(FeedRoute::class) { onNavigate -> feedEntry(onNavigate) },
         AppDestination(ImportRoute::class) { onNavigate -> importEntry(onNavigate) },
     )

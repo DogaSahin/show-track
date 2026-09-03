@@ -44,6 +44,21 @@ data object SearchRoute : AppRoute
 @Serializable
 data object GroupsRoute : AppRoute
 
+/**
+ * One group's detail screen (task 9c.1 adds the route; task 9c.2 builds the real screen behind
+ * it — feed, watchlist, members). [groupId] rather than a whole [com.anarky.showtrack.core.model.Group]:
+ * the same reasoning [DetailRoute] carries a bare `mediaId`, not a `Media` — a route argument is a
+ * navigation key, not a data payload, and the destination re-fetches its own state from the id.
+ *
+ * Reached from [GroupsRoute]'s list (`GroupsNavigation.kt`'s `groupsEntry`), never constructed with
+ * an invented id — `:feature:groups`' own screen is the only place a [com.anarky.showtrack.core.model.Group.id]
+ * from a loaded list or a fresh create/join response is in scope.
+ */
+@Serializable
+data class GroupDetailRoute(
+    val groupId: String,
+) : AppRoute
+
 @Serializable
 data object FeedRoute : AppRoute
 
