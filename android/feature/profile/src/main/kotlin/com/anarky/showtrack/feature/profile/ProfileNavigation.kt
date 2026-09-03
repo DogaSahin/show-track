@@ -50,22 +50,36 @@ fun NavGraphBuilder.profileEntry(onNavigate: (AppRoute) -> Unit) {
  * both bindings below actually fire.
  *
  * What used to be open, and how each gap closed (history kept — this module had three such gaps
- * where `:feature:library` had one, corrected review finding round 2, closed task 9c.0):
+ * where `:feature:library` had one, corrected review finding round 2, closed task 9c.0; round 2's
+ * own review then caught this comment itself overstating what was still open — see below):
  *   1. The confirm button's `onClick` inside `ProfileScreen`'s `AlertDialog` → `viewModel.signOut()`.
- *      Reachable the Hilt-free way `ProfileResumeTest` reaches the stats wiring; still open —
- *      nobody has written that test yet, not because anything blocks it.
  *   2. `ProfileScreen`'s `LaunchedEffect(signedOut) { if (signedOut) onSignedOut() }` →
- *      `onSignedOut()`. Same status as gap 1: reachable without Hilt, still open.
+ *      `onSignedOut()`.
  *   3. The BINDING one line above — `onSignedOut = signOutNavigation(onNavigate)` — same failure
  *      mode as [libraryEntry]: change it to `onSignedOut = {}` and every OTHER existing test,
  *      including `ProfileNavigationTest`, stayed green while sign-out went unreachable. THIS one
  *      lives inside [profileEntry]'s own lambda, which evaluates the `hiltViewModel()` default, so
  *      closing it needed a Hilt-composed harness — `:feature:library`'s `LibraryEntryHiltTest` was
  *      the pattern, built against the identical gap in `LibraryNavigation.kt`'s `searchNavigation`
- *      binding. **CLOSED (task 9c.0):** `:feature:profile` now declares its own
- *      `hilt-android-testing`/`HiltTestActivity`/`TestDataModule`, and `ProfileEntryHiltTest`'s
- *      `` `confirming sign-out navigates to AuthRoute` `` composes this exact binding and fails if
- *      it is set to `{}`.
+ *      binding.
+ *
+ *   **All three are CLOSED (task 9c.0), by the SAME test.** `ProfileEntryHiltTest`'s
+ *   `` `confirming sign-out navigates to AuthRoute` `` composes the real [profileEntry], taps the
+ *   screen's "Sign out" button, then the confirm dialog's "Sign out" button, and asserts navigation
+ *   reaches [AuthRoute] — that single assertion can only pass by going through the whole chain: the
+ *   confirm click (gap 1) invoking `viewModel::signOut()` (wired at `ProfileScreen.kt:95`, itself
+ *   pinned separately by `ProfileViewModelTest`), `signedOut` flipping to `true`, the
+ *   `LaunchedEffect` reacting to it (gap 2, `ProfileScreen.kt:63`), and calling the real
+ *   `onSignedOut` binding (gap 3). Mutation-verified independently for gaps 2+3 combined
+ *   (`ProfileScreen.kt:63`'s `if (signedOut) onSignedOut()` → `if (false) onSignedOut()` fails the
+ *   test) and for gap 1+2's wiring (`ProfileScreen.kt:95`'s `onSignOut = viewModel::signOut` → `{ }`
+ *   also fails it) — reaching [AuthRoute] genuinely requires every link.
+ *
+ *   What is genuinely still open: no test drives gap 1 (the confirm click → `signOut()`) or gap 2
+ *   (`signedOut` → the `LaunchedEffect` firing) *in isolation* the cheap, Hilt-free way
+ *   `ProfileResumeTest` reaches the stats wiring — only the end-to-end Hilt test above exercises
+ *   them, and only together. That is a coverage-shape note, not a functional gap: nothing about
+ *   sign-out navigation is currently unreachable by any test.
  */
 internal fun signOutNavigation(onNavigate: (AppRoute) -> Unit): () -> Unit = { onNavigate(AuthRoute) }
 

@@ -29,8 +29,25 @@ sealed interface GroupFailure {
      * 404 on a call scoped to ONE row that is not the group itself: `DELETE
      * /v1/groups/{id}/watchlist/{entryId}` (the entry was already removed — any member may remove
      * any entry, so two members racing to delete the same row is a real, not hypothetical, case) or
-     * `PATCH /v1/reviews/{id}` (no such review, or it is not this account's). Distinct from
-     * [NotAMember]: the caller is still in the group, and telling them otherwise would be wrong.
+     * `PATCH /v1/reviews/{id}` (no such review, or it is not this account's).
+     *
+     * Named to read as distinct from [NotAMember] — but for `DELETE .../watchlist/{entryId}`
+     * specifically, this mapping is a chosen approximation, not a sound one: that route depends on
+     * `GroupMemberDep` (`backend/app/groups/dependencies.py`'s `require_membership`), which raises
+     * its OWN 404 (`_NO_SUCH_GROUP`) when the caller is no longer a member — indistinguishable by
+     * status code from `routes.py`'s "no such watchlist entry" 404, since [guarded] maps on HTTP
+     * status alone (no response-body parsing). So an owner removing you from the group while your
+     * watchlist screen is still open, followed by a tap on remove, surfaces as [NoSuchEntry]
+     * ("that entry is already gone") even though the true cause is [NotAMember] ("you were removed
+     * from the group"). The mapping stays [NoSuchEntry] anyway: the race this KDoc's first
+     * paragraph describes (two members deleting the same row) is far more common than the
+     * membership race, and choosing [NotAMember] as the default would misreport THAT one instead.
+     * `PATCH /v1/reviews/{id}` has no such dependency and no such ambiguity.
+     *
+     * This shadow is systemic, not specific to this member: any `guarded(notFound = ...)` override
+     * on a route that also takes `GroupMemberDep` inherits it — [NoSuchTitle]'s override on
+     * `proposeTitle` (`POST /v1/groups/{id}/watchlist`, same dependency) has the identical
+     * ambiguity for the identical reason.
      */
     data object NoSuchEntry : GroupFailure
 

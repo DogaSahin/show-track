@@ -51,4 +51,17 @@ data class FeedEntry(
     val mediaId: String?,
     val payload: Map<String, String>,
     val createdAt: Instant,
-)
+) {
+    init {
+        // Structural enforcement of E-H (see [media]'s own KDoc above): "null exactly when media
+        // is null" was, until now, a rule a reader had to remember rather than one the compiler or
+        // a constructor could catch — `FeedEntry(media = null, mediaId = "x")` compiled cleanly.
+        // Seven later tasks build fakes/`@Preview` fixtures against this type; one built the wrong
+        // way would silently render an imported row as tappable, exactly what E-H exists to
+        // prevent. A documented invariant has to be remembered into every call site; this check
+        // cannot be forgotten.
+        require((media == null) == (mediaId == null)) {
+            "media and mediaId must both be null or both be non-null (E-H); got media=$media, mediaId=$mediaId"
+        }
+    }
+}
