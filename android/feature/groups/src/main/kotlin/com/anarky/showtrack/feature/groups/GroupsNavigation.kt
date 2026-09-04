@@ -2,6 +2,7 @@ package com.anarky.showtrack.feature.groups
 
 import androidx.navigation.NavGraphBuilder
 import androidx.navigation.compose.composable
+import com.anarky.showtrack.core.model.ActiveGroupState
 import com.anarky.showtrack.core.model.Group
 import com.anarky.showtrack.core.model.WatchlistEntry
 import com.anarky.showtrack.core.navigation.AppRoute
@@ -26,21 +27,22 @@ import kotlinx.coroutines.flow.StateFlow
  * note on why a screen with nowhere to go declares no such parameter rather than accepting and
  * dropping one).
  *
- * [activeGroupId] arrives as a `StateFlow` (task 9c.5), collected by [GroupsScreen]'s stateful
- * overload — `feedEntry`'s identical reasoning (`FeedNavigation.kt`'s own KDoc): this registration
- * runs far less often than the active group can change, so a plain captured value would go stale.
- * No `groups` parameter here, unlike `feedEntry` — [GroupsScreen] already loads the full list for
- * its own [GroupsUiState.Success.groups], and `GroupSwitcher` reads that list directly rather than
- * fetching a second, redundant copy through `:app`.
+ * [activeGroup] arrives as a `StateFlow<ActiveGroupState>` (task 9c.5), collected by
+ * [GroupsScreen]'s stateful overload — `feedEntry`'s identical reasoning (`FeedNavigation.kt`'s own
+ * KDoc): this registration runs far less often than the active group can change, so a plain
+ * captured value would go stale. The [ActiveGroupState.Success.groups] list this carries is not
+ * separately consumed here — [GroupsScreen] already loads its own full list for
+ * [GroupsUiState.Success.groups], and `GroupSwitcher` reads THAT one directly rather than a second,
+ * redundant copy through `:app`.
  */
 fun NavGraphBuilder.groupsEntry(
-    activeGroupId: StateFlow<String?>,
+    activeGroup: StateFlow<ActiveGroupState>,
     onSwitchGroup: (String) -> Unit,
     onNavigate: (AppRoute) -> Unit,
 ) {
     composable<GroupsRoute> {
         GroupsScreen(
-            activeGroupId = activeGroupId,
+            activeGroup = activeGroup,
             onSwitchGroup = onSwitchGroup,
             onGroupClick = { group: Group -> onNavigate(GroupDetailRoute(groupId = group.id)) },
         )

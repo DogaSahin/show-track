@@ -1,7 +1,7 @@
 package com.anarky.showtrack
 
 import androidx.navigation.NavGraphBuilder
-import com.anarky.showtrack.core.model.Group
+import com.anarky.showtrack.core.model.ActiveGroupState
 import com.anarky.showtrack.core.navigation.AppRoute
 import com.anarky.showtrack.core.navigation.AuthRoute
 import com.anarky.showtrack.core.navigation.DetailRoute
@@ -25,7 +25,6 @@ import com.anarky.showtrack.feature.library.libraryEntry
 import com.anarky.showtrack.feature.profile.importEntry
 import com.anarky.showtrack.feature.profile.profileEntry
 import com.anarky.showtrack.feature.search.searchEntry
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlin.reflect.KClass
 
@@ -71,19 +70,29 @@ internal class AppDestination(
  * — a value that changes at runtime (E-C) — and `NavHost`'s own `builder` lambda (the thing that
  * ultimately calls this) is only re-invoked when its `remember(startDestination, ...)` keys change,
  * which for a signed-in session is effectively once. A `val` computed at class-load time would bake
- * in whatever `activeGroupId`/`groups` happened to hold at that one moment, permanently — the exact
- * trap `FeedRoute`'s hard-coded `activeGroupId = null` sidestepped by being a compile-time constant
- * instead of a value that was ever supposed to change. The fix is NOT calling this function more
- * often; it is that [activeGroupId]/[groups] are `StateFlow`s — stable references this function
+ * in whatever [activeGroup] happened to hold at that one moment, permanently — the exact trap
+ * `FeedRoute`'s hard-coded `activeGroupId = null` (task 9c.4) sidestepped by being a compile-time
+ * constant instead of a value that was ever supposed to change. The fix is NOT calling this
+ * function more often; it is that [activeGroup] is a `StateFlow` — a stable reference this function
  * closes over once, which `feedEntry`/`groupsEntry` then read reactively (`collectAsStateWithLifecycle`)
  * from INSIDE their own `composable<Route> { }` content lambda, which recomposes on every emission
  * regardless of how rarely the outer graph itself rebuilds — `ShowTrackNavHost`'s `authEvents:
  * Flow<AuthEvent>` is the exact same technique, one layer further out.
+ *
+ * **No default values, as of fix round 1 (BLOCKING B1).** A prior version defaulted
+ * [activeGroup]/[onSwitchGroup]/`onRetryGroups` so every pre-existing groups-agnostic test kept
+ * compiling — which is also exactly what let a reviewer mutate `ShowTrackNavHost.kt`'s real
+ * `ActiveGroupViewModel` wiring down to those same defaults and leave all 558 tests green: a
+ * permanently invisible switcher and a Feed permanently showing "no groups" to every real user,
+ * pinned by nothing. Design §6 names this directly — E-C's defence is that the active group is
+ * visible at every call site, and a default is precisely what removes that visibility. Every
+ * caller, test or production, now supplies real values; the five pre-existing tests that don't
+ * care about groups pass one explicit, inert `MutableStateFlow`/no-op each.
  */
 internal fun appDestinations(
-    activeGroupId: StateFlow<String?> = MutableStateFlow(null),
-    groups: StateFlow<List<Group>> = MutableStateFlow(emptyList()),
-    onSwitchGroup: (String) -> Unit = {},
+    activeGroup: StateFlow<ActiveGroupState>,
+    onSwitchGroup: (String) -> Unit,
+    onRetryGroups: () -> Unit,
 ): List<AppDestination> =
     listOf(
         AppDestination(AuthRoute::class) { onNavigate -> authEntry(onNavigate) },
@@ -94,14 +103,14 @@ internal fun appDestinations(
         AppDestination(ProfileRoute::class) { onNavigate -> profileEntry(onNavigate) },
         AppDestination(SearchRoute::class) { onNavigate -> searchEntry(onNavigate) },
         AppDestination(GroupsRoute::class) { onNavigate ->
-            groupsEntry(activeGroupId = activeGroupId, onSwitchGroup = onSwitchGroup, onNavigate = onNavigate)
+            groupsEntry(activeGroup = activeGroup, onSwitchGroup = onSwitchGroup, onNavigate = onNavigate)
         },
         AppDestination(GroupDetailRoute::class) { onNavigate -> groupDetailEntry(onNavigate) },
         AppDestination(FeedRoute::class) { onNavigate ->
             feedEntry(
-                activeGroupId = activeGroupId,
-                groups = groups,
+                activeGroup = activeGroup,
                 onSwitchGroup = onSwitchGroup,
+                onRetryGroups = onRetryGroups,
                 onNavigate = onNavigate,
             )
         },
@@ -116,19 +125,15 @@ internal fun appDestinations(
  * graph its own way, it would go on passing after someone replaced this iteration with nine
  * hand-written calls — checking a table nothing reads.
  *
- * [activeGroupId]/[groups]/[onSwitchGroup] default to an empty, static selection so every existing
- * caller that does not care about groups (`NavGraphRegistrationTest`, `ShowTrackGraphRoutingTest`,
- * `AuthNavigationTest`, `TopLevelNavigationTest`, `ShouldShowNavigationTabsTest` — none of them
- * drive Feed or Groups) keeps compiling unchanged; only `ShowTrackNavHost` passes the real,
- * `ActiveGroupViewModel`-backed values.
+ * No default values here either (fix round 1, BLOCKING B1) — [appDestinations]'s own KDoc.
  */
 internal fun NavGraphBuilder.showTrackDestinations(
     onNavigate: (AppRoute) -> Unit,
-    activeGroupId: StateFlow<String?> = MutableStateFlow(null),
-    groups: StateFlow<List<Group>> = MutableStateFlow(emptyList()),
-    onSwitchGroup: (String) -> Unit = {},
+    activeGroup: StateFlow<ActiveGroupState>,
+    onSwitchGroup: (String) -> Unit,
+    onRetryGroups: () -> Unit,
 ) {
-    appDestinations(activeGroupId, groups, onSwitchGroup).forEach { destination ->
+    appDestinations(activeGroup, onSwitchGroup, onRetryGroups).forEach { destination ->
         destination.register(this, onNavigate)
     }
 }

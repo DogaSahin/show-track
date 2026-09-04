@@ -41,6 +41,7 @@ import com.anarky.showtrack.core.designsystem.component.ErrorState
 import com.anarky.showtrack.core.designsystem.component.GroupSwitcher
 import com.anarky.showtrack.core.designsystem.component.LoadingState
 import com.anarky.showtrack.core.designsystem.component.StaleDataBanner
+import com.anarky.showtrack.core.model.ActiveGroupState
 import com.anarky.showtrack.core.model.Group
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -62,19 +63,23 @@ import kotlinx.coroutines.launch
  * Collects [GroupsViewModel.state] AND [GroupsViewModel.actionState] separately (fix round 1) —
  * see [GroupsActionState]'s own KDoc for why they are two independent flows rather than one.
  *
- * [activeGroupId] arrives as a `StateFlow` (task 9c.5) and is collected here, inside this
- * composable's own body — `FeedScreen`'s identical reasoning (`FeedNavigation.kt`'s own KDoc):
- * `groupsEntry`'s registration runs far less often than the active group can change.
+ * [activeGroup] arrives as a `StateFlow<ActiveGroupState>` (task 9c.5) and is collected here,
+ * inside this composable's own body — `FeedScreen`'s identical reasoning (`FeedNavigation.kt`'s own
+ * KDoc): `groupsEntry`'s registration runs far less often than the active group can change. Only
+ * [ActiveGroupState.Success.activeGroupId] is used here — [ActiveGroupState.Loading]/[ActiveGroupState.Error]
+ * both resolve to `null`, which simply means no switcher renders yet (this screen's own,
+ * independent [GroupsViewModel.state] already reports ITS OWN load failures for the list itself).
  */
 @Composable
 fun GroupsScreen(
-    activeGroupId: StateFlow<String?>,
+    activeGroup: StateFlow<ActiveGroupState>,
     onSwitchGroup: (String) -> Unit,
     onGroupClick: (Group) -> Unit,
     modifier: Modifier = Modifier,
     viewModel: GroupsViewModel = hiltViewModel(),
 ) {
-    val currentActiveGroupId by activeGroupId.collectAsStateWithLifecycle()
+    val currentActiveGroup by activeGroup.collectAsStateWithLifecycle()
+    val currentActiveGroupId = (currentActiveGroup as? ActiveGroupState.Success)?.activeGroupId
     LifecycleResumeEffect(viewModel) {
         viewModel.refresh()
         onPauseOrDispose { }

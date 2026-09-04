@@ -6,6 +6,15 @@
          has not shipped. Distinct copy from feed_empty_activity below: "you have no groups" and
          "this group has no activity yet" are different facts and must not share a string. -->
     <string name="feed_no_group_message">Join or create a group to see its activity here.</string>
+    <!-- BLOCKING B2 (task 9c.5 fix round 1): the CTA on feed_no_group_message's EmptyState — a
+         real door to Groups (reached from Profile, design §3.2), not just a sentence with nowhere
+         to go from it. -->
+    <string name="feed_no_group_action">Create or join a group</string>
+
+    <!-- BLOCKING B3 (task 9c.5 fix round 1): ActiveGroupState.Loading/Error, distinct from
+         Success(groups = emptyList()) — "we don\'t know yet" / "the fetch failed" must never read
+         as "you are in no groups", the create-or-join invitation above. -->
+    <string name="feed_groups_error_retry">Couldn\'t load your groups. Tap to retry.</string>
 
     <!-- The active group is known, the fetch succeeded, and it came back with zero rows. -->
     <string name="feed_empty_activity">Nothing has happened in this group yet.</string>

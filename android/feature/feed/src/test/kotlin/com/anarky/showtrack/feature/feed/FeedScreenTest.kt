@@ -8,6 +8,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ApplicationProvider
+import com.anarky.showtrack.core.model.ActiveGroupState
 import com.anarky.showtrack.core.model.ActivityKind
 import com.anarky.showtrack.core.model.FeedEntry
 import com.anarky.showtrack.core.model.Group
@@ -41,10 +42,10 @@ class FeedScreenTest {
     val composeRule = createComposeRule()
 
     @Test
-    fun `the no-groups empty state shows when activeGroupId is null`() {
+    fun `the no-groups empty state shows when the account genuinely has zero groups`() {
         composeRule.setContent {
             FeedScreen(
-                activeGroupId = null,
+                activeGroupState = ActiveGroupState.Success(groups = emptyList(), activeGroupId = null),
                 state = FeedUiState.Loading,
                 onLoadMore = {},
                 onRetry = {},
@@ -56,11 +57,85 @@ class FeedScreenTest {
         composeRule.onNodeWithText(context.getString(R.string.feed_no_group_message)).assertIsDisplayed()
     }
 
+    /**
+     * The brief's own named test, verbatim, and BLOCKING B2's fix: the empty state is a real
+     * create-or-join DOOR, not just a sentence — tapping its action must reach [onCreateOrJoinGroup].
+     */
+    @Test
+    fun `a user in no groups reaches create-or-join, not an empty feed`() {
+        var reachedCreateOrJoin = false
+        composeRule.setContent {
+            FeedScreen(
+                activeGroupState = ActiveGroupState.Success(groups = emptyList(), activeGroupId = null),
+                state = FeedUiState.Loading,
+                onLoadMore = {},
+                onRetry = {},
+                onEntryClick = {},
+                onCreateOrJoinGroup = { reachedCreateOrJoin = true },
+            )
+        }
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule.onNodeWithText(context.getString(R.string.feed_no_group_action)).performClick()
+
+        assertTrue(reachedCreateOrJoin)
+    }
+
+    /**
+     * BLOCKING B3: loading is distinct from a genuinely empty account — the create-or-join
+     * invitation must NOT render while the groups fetch is still in flight.
+     */
+    @Test
+    fun `a groups load in progress shows a spinner, not the create-or-join invitation`() {
+        composeRule.setContent {
+            FeedScreen(
+                activeGroupState = ActiveGroupState.Loading,
+                state = FeedUiState.Loading,
+                onLoadMore = {},
+                onRetry = {},
+                onEntryClick = {},
+            )
+        }
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule.onNodeWithText(context.getString(R.string.feed_no_group_message)).assertDoesNotExist()
+        composeRule.onNodeWithText(context.getString(R.string.feed_no_group_action)).assertDoesNotExist()
+    }
+
+    /**
+     * BLOCKING B3's other half: a failed groups fetch shows an error with its own retry
+     * ([onRetryGroups]) — never the create-or-join invitation, and never [onRetry] (the FEED
+     * retry, decision C-S's separate channel).
+     */
+    @Test
+    fun `a failed groups load shows an error with its own retry, not the create-or-join invitation`() {
+        var retriedGroups = false
+        var retriedFeed = false
+        composeRule.setContent {
+            FeedScreen(
+                activeGroupState = ActiveGroupState.Error(GroupFailure.Network),
+                state = FeedUiState.Loading,
+                onLoadMore = {},
+                onRetry = { retriedFeed = true },
+                onEntryClick = {},
+                onRetryGroups = { retriedGroups = true },
+            )
+        }
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule.onNodeWithText(context.getString(R.string.feed_no_group_message)).assertDoesNotExist()
+        composeRule.onNodeWithText(context.getString(R.string.feed_groups_error_retry)).assertIsDisplayed()
+        composeRule.onNodeWithText(context.getString(DesignSystemR.string.action_retry)).performClick()
+
+        assertTrue(retriedGroups)
+        assertTrue("the FEED retry channel must stay untouched by the groups error's own retry", !retriedFeed)
+    }
+
     @Test
     fun `the empty-activity message shows when a group is active but has no entries`() {
         composeRule.setContent {
             FeedScreen(
-                activeGroupId = GROUP_ID,
+                activeGroupState = ActiveGroupState.Success(groups = emptyList(), activeGroupId = GROUP_ID),
                 state = FeedUiState.Success(entries = emptyList()),
                 onLoadMore = {},
                 onRetry = {},
@@ -85,7 +160,7 @@ class FeedScreenTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         composeRule.setContent {
             FeedScreen(
-                activeGroupId = GROUP_ID,
+                activeGroupState = ActiveGroupState.Success(groups = emptyList(), activeGroupId = GROUP_ID),
                 state = FeedUiState.Success(entries = listOf(IMPORTED)),
                 onLoadMore = {},
                 onRetry = {},
@@ -110,7 +185,7 @@ class FeedScreenTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         composeRule.setContent {
             FeedScreen(
-                activeGroupId = GROUP_ID,
+                activeGroupState = ActiveGroupState.Success(groups = emptyList(), activeGroupId = GROUP_ID),
                 state = FeedUiState.Success(entries = listOf(ADDED, IMPORTED, PROGRESSED, RATED, COMPLETED, DROPPED)),
                 onLoadMore = {},
                 onRetry = {},
@@ -143,7 +218,7 @@ class FeedScreenTest {
     fun `an unknown activity kind renders a generic line rather than crashing`() {
         composeRule.setContent {
             FeedScreen(
-                activeGroupId = GROUP_ID,
+                activeGroupState = ActiveGroupState.Success(groups = emptyList(), activeGroupId = GROUP_ID),
                 state = FeedUiState.Success(entries = listOf(UNKNOWN_KIND)),
                 onLoadMore = {},
                 onRetry = {},
@@ -172,7 +247,7 @@ class FeedScreenTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         composeRule.setContent {
             FeedScreen(
-                activeGroupId = GROUP_ID,
+                activeGroupState = ActiveGroupState.Success(groups = emptyList(), activeGroupId = GROUP_ID),
                 state = FeedUiState.Success(entries = listOf(ADDED, RATED)),
                 onLoadMore = {},
                 onRetry = {},
@@ -193,7 +268,7 @@ class FeedScreenTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         composeRule.setContent {
             FeedScreen(
-                activeGroupId = GROUP_ID,
+                activeGroupState = ActiveGroupState.Success(groups = emptyList(), activeGroupId = GROUP_ID),
                 state = FeedUiState.Success(entries = listOf(ADDED), isStale = true),
                 onLoadMore = {},
                 onRetry = { retried = true },
@@ -220,7 +295,7 @@ class FeedScreenTest {
         var retried = false
         composeRule.setContent {
             FeedScreen(
-                activeGroupId = GROUP_ID,
+                activeGroupState = ActiveGroupState.Success(groups = emptyList(), activeGroupId = GROUP_ID),
                 state = FeedUiState.Error(GroupFailure.Network),
                 onLoadMore = {},
                 onRetry = { retried = true },
@@ -246,8 +321,8 @@ class FeedScreenTest {
         var selected: String? = null
         composeRule.setContent {
             FeedScreen(
-                activeGroupId = GROUP_ID,
-                groups = listOf(GROUP, OTHER_GROUP),
+                activeGroupState =
+                    ActiveGroupState.Success(groups = listOf(GROUP, OTHER_GROUP), activeGroupId = GROUP_ID),
                 onSwitchGroup = { selected = it },
                 state = FeedUiState.Success(entries = listOf(ADDED)),
                 onLoadMore = {},
@@ -266,8 +341,7 @@ class FeedScreenTest {
     fun `a single active group shows no switcher`() {
         composeRule.setContent {
             FeedScreen(
-                activeGroupId = GROUP_ID,
-                groups = listOf(GROUP),
+                activeGroupState = ActiveGroupState.Success(groups = listOf(GROUP), activeGroupId = GROUP_ID),
                 onSwitchGroup = {},
                 state = FeedUiState.Success(entries = listOf(ADDED)),
                 onLoadMore = {},
@@ -284,7 +358,7 @@ class FeedScreenTest {
         var loadedMore = false
         composeRule.setContent {
             FeedScreen(
-                activeGroupId = GROUP_ID,
+                activeGroupState = ActiveGroupState.Success(groups = emptyList(), activeGroupId = GROUP_ID),
                 state = FeedUiState.Success(entries = listOf(ADDED), pageError = GroupFailure.Network),
                 onLoadMore = { loadedMore = true },
                 onRetry = {},

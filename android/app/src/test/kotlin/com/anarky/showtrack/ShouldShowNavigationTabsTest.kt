@@ -7,10 +7,12 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.ComposeNavigator
 import androidx.navigation.createGraph
 import androidx.test.core.app.ApplicationProvider
+import com.anarky.showtrack.core.model.ActiveGroupState
 import com.anarky.showtrack.core.navigation.AuthRoute
 import com.anarky.showtrack.core.navigation.FavoritesRoute
 import com.anarky.showtrack.core.navigation.ImportRoute
 import com.anarky.showtrack.core.navigation.LibraryRoute
+import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -177,11 +179,22 @@ class ShouldShowNavigationTabsTest {
             }
 
     private fun NavHostController.defaultGraph() =
-        createGraph(startDestination = LibraryRoute) { showTrackDestinations(onNavigate = { }) }
+        createGraph(startDestination = LibraryRoute) { testShowTrackDestinations(onNavigate = { }) }
 
     private fun NavHostController.authOnlyGraph() =
-        createGraph(startDestination = AuthRoute) { showTrackDestinations(onNavigate = { }) }
+        createGraph(startDestination = AuthRoute) { testShowTrackDestinations(onNavigate = { }) }
 
     private fun NavHostController.onboardingOnlyGraph() =
-        createGraph(startDestination = ImportRoute) { showTrackDestinations(onNavigate = { }) }
+        createGraph(startDestination = ImportRoute) { testShowTrackDestinations(onNavigate = { }) }
+
+    private fun androidx.navigation.NavGraphBuilder.testShowTrackDestinations(
+        onNavigate: (com.anarky.showtrack.core.navigation.AppRoute) -> Unit,
+    ) {
+        showTrackDestinations(
+            onNavigate = onNavigate,
+            activeGroup = MutableStateFlow(ActiveGroupState.Loading),
+            onSwitchGroup = {},
+            onRetryGroups = {},
+        )
+    }
 }

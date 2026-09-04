@@ -7,6 +7,7 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.ComposeNavigator
 import androidx.navigation.createGraph
 import androidx.test.core.app.ApplicationProvider
+import com.anarky.showtrack.core.model.ActiveGroupState
 import com.anarky.showtrack.core.navigation.AuthRoute
 import com.anarky.showtrack.core.navigation.DetailRoute
 import com.anarky.showtrack.core.navigation.FavoritesRoute
@@ -15,6 +16,7 @@ import com.anarky.showtrack.core.navigation.GroupsRoute
 import com.anarky.showtrack.core.navigation.ImportRoute
 import com.anarky.showtrack.core.navigation.LibraryRoute
 import com.anarky.showtrack.core.navigation.ProfileRoute
+import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -334,7 +336,12 @@ class ShowTrackGraphRoutingTest {
                 navigatorProvider.addNavigator(ComposeNavigator())
                 graph =
                     createGraph(startDestination = GroupDetailRoute(groupId = "group-1")) {
-                        showTrackDestinations(onNavigate = { })
+                        showTrackDestinations(
+                            onNavigate = { },
+                            activeGroup = MutableStateFlow(ActiveGroupState.Loading),
+                            onSwitchGroup = {},
+                            onRetryGroups = {},
+                        )
                     }
             }
         assertEquals(listOf(null, GroupDetailRoute::class.qualifiedName), controller.backStackRoutes())
@@ -409,10 +416,21 @@ class ShowTrackGraphRoutingTest {
             }
 
     private fun NavHostController.defaultGraph() =
-        createGraph(startDestination = LibraryRoute) { showTrackDestinations(onNavigate = { }) }
+        createGraph(startDestination = LibraryRoute) { testShowTrackDestinations(onNavigate = { }) }
 
     private fun NavHostController.authOnlyGraph() =
-        createGraph(startDestination = AuthRoute) { showTrackDestinations(onNavigate = { }) }
+        createGraph(startDestination = AuthRoute) { testShowTrackDestinations(onNavigate = { }) }
+
+    private fun androidx.navigation.NavGraphBuilder.testShowTrackDestinations(
+        onNavigate: (com.anarky.showtrack.core.navigation.AppRoute) -> Unit,
+    ) {
+        showTrackDestinations(
+            onNavigate = onNavigate,
+            activeGroup = MutableStateFlow(ActiveGroupState.Loading),
+            onSwitchGroup = {},
+            onRetryGroups = {},
+        )
+    }
 
     private fun NavHostController.backStackRoutes() =
         currentBackStack.value.map { entry -> entry.destination.route?.substringBefore('/') }

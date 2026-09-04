@@ -7,9 +7,11 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.ComposeNavigator
 import androidx.navigation.createGraph
 import androidx.test.core.app.ApplicationProvider
+import com.anarky.showtrack.core.model.ActiveGroupState
 import com.anarky.showtrack.core.navigation.AppRoute
 import com.anarky.showtrack.core.navigation.LibraryRoute
 import com.anarky.showtrack.core.navigation.detailDeepLink
+import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -72,7 +74,7 @@ class NavGraphRegistrationTest {
     /** The registration table names each declared route exactly once. */
     @Test
     fun `every declared route appears in appDestinations exactly once`() {
-        val registered = appDestinations().map(AppDestination::route)
+        val registered = testAppDestinations().map(AppDestination::route)
 
         assertEquals(
             "appDestinations must name every route in AppRoute's hierarchy and no others",
@@ -113,7 +115,7 @@ class NavGraphRegistrationTest {
         assertEquals(
             "the NavHost's graph must contain exactly one destination per registration call; " +
                 "a smaller graph means two entries registered the same route",
-            appDestinations().size,
+            testAppDestinations().size,
             graphRoutes.size,
         )
         assertEquals(
@@ -167,7 +169,7 @@ class NavGraphRegistrationTest {
     private fun buildGraph() =
         NavHostController(ApplicationProvider.getApplicationContext<Context>())
             .apply { navigatorProvider.addNavigator(ComposeNavigator()) }
-            .createGraph(startDestination = LibraryRoute) { showTrackDestinations(onNavigate = { }) }
+            .createGraph(startDestination = LibraryRoute) { testShowTrackDestinations(onNavigate = { }) }
 
     /**
      * Proves [leafRoutes] recurses, using a hierarchy shaped like the one Phase 9 will introduce
@@ -196,6 +198,23 @@ class NavGraphRegistrationTest {
     private sealed interface DeeperGroup : NestedGroup
 
     private data object DeeperLeaf : DeeperGroup
+}
+
+/**
+ * `appDestinations`/`showTrackDestinations` no longer default `activeGroup`/`onSwitchGroup`/
+ * `onRetryGroups` (fix round 1, BLOCKING B1) — this file's own tests are about route REGISTRATION,
+ * not groups, so a single inert, never-emitting-again fixture stands in for the real
+ * `ActiveGroupViewModel`-backed values `ShowTrackNavHost` supplies in production.
+ */
+private fun testAppDestinations() = appDestinations(MutableStateFlow(ActiveGroupState.Loading), {}, {})
+
+private fun androidx.navigation.NavGraphBuilder.testShowTrackDestinations(onNavigate: (AppRoute) -> Unit) {
+    showTrackDestinations(
+        onNavigate = onNavigate,
+        activeGroup = MutableStateFlow(ActiveGroupState.Loading),
+        onSwitchGroup = {},
+        onRetryGroups = {},
+    )
 }
 
 /**

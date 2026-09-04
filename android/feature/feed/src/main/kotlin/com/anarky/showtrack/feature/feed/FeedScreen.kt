@@ -29,35 +29,33 @@ import com.anarky.showtrack.core.designsystem.component.ErrorState
 import com.anarky.showtrack.core.designsystem.component.GroupSwitcher
 import com.anarky.showtrack.core.designsystem.component.LoadingState
 import com.anarky.showtrack.core.designsystem.component.StaleDataBanner
+import com.anarky.showtrack.core.model.ActiveGroupState
 import com.anarky.showtrack.core.model.ActivityKind
 import com.anarky.showtrack.core.model.FeedEntry
-import com.anarky.showtrack.core.model.Group
 import com.anarky.showtrack.core.model.GroupFailure
 import com.anarky.showtrack.core.navigation.AppRoute
 import com.anarky.showtrack.core.navigation.DetailRoute
+import com.anarky.showtrack.core.navigation.GroupsRoute
 import kotlinx.coroutines.flow.StateFlow
 
 /**
  * The stateful entry point, and the fifth top-level tab (task 9c.4). `hiltViewModel()` is the
  * only line here that touches DI — `GroupsScreen`/`FavoritesScreen`'s shape.
  *
- * [activeGroupId] is a PARAMETER, not read from [FeedViewModel] or any singleton — Ruling 1
- * (`progress.md`'s pre-flight conflict scan) resolves a genuine circularity: this task registers
- * `feedEntry` needing an active group that does not exist until task 9c.5 builds the group
- * switcher, while 9c.5 in turn needs `feedEntry` to already exist to wire the real value in. The
- * resolution is this parameter: `AppDestination.kt` passes `null` today (no group is active until
- * 9c.5 ships an `ActiveGroupStore`-backed value), and this screen already renders correctly for
- * that — see the stateless overload's own KDoc for how. E-C's own requirement — features RECEIVE
- * the active group, they never read a singleton for it — is satisfied by construction: nothing in
- * this module names `ActiveGroupStore` at all.
+ * [activeGroup] is a PARAMETER, not read from [FeedViewModel] or any singleton — E-C's own
+ * requirement ("features RECEIVE the active group, they never read a singleton for it") is
+ * satisfied by construction: nothing in this module names `ActiveGroupStore` at all.
  *
- * [LifecycleResumeEffect] keyed on BOTH [viewModel] and [activeGroupId] — `GroupsScreen`'s
- * identical resume-driven load, widened by one key: a tab revisited after Detail → Back (or after
- * switching TO this tab from another one) reloads, exactly like Groups' own list; the extra
- * [activeGroupId] key is what also re-fires the effect the moment task 9c.5 changes which group is
- * active, without this composable needing to know anything about how or why. Never fires
- * [FeedViewModel.selectGroup] for `activeGroupId == null` — that state has nothing to select,
- * this class's own KDoc.
+ * [activeGroup] is a `StateFlow<ActiveGroupState>`, not a plain value (task 9c.5) — collected here,
+ * inside this composable's own body, so this screen reacts to a switch (`GroupSwitcher`'s own
+ * callback, ultimately `ActiveGroupViewModel.selectGroup`) even though `feedEntry`'s registration
+ * itself runs far less often than that — see `FeedNavigation.kt`'s own KDoc for why a plain value
+ * could not do this. [LifecycleResumeEffect] is keyed on the COLLECTED, resolved group id (only
+ * meaningful for [ActiveGroupState.Success]), not the `StateFlow` reference itself (which never
+ * changes): the effect re-fires the moment the resolved group changes, without this composable
+ * needing to know why. Never fires [FeedViewModel.selectGroup] while [activeGroup] is
+ * [ActiveGroupState.Loading]/[ActiveGroupState.Error]/a [ActiveGroupState.Success] with no active
+ * group — none of those states has anything to select, `FeedViewModel`'s own KDoc.
  *
  * [onEntryClick] resolves a tap into a real navigation call — `entry.mediaId?.let { onNavigate(...) }`
  * building a `DetailRoute(mediaId = it)` — rather than the stateless overload doing it directly, so
@@ -68,74 +66,74 @@ import kotlinx.coroutines.flow.StateFlow
  * no `mediaId` (an [ActivityKind.IMPORTED] row — E-H) is simply never clickable in the first place;
  * see [FeedEntryRow]'s own KDoc.
  *
- * [activeGroupId]/[groups] are `StateFlow`s, not plain values, as of task 9c.5 — collected here,
- * inside this composable's own body, so this screen reacts to a switch (`GroupSwitcher`'s own
- * callback, ultimately `ActiveGroupViewModel.selectGroup`) even though `feedEntry`'s registration
- * itself runs far less often than that — see `FeedNavigation.kt`'s own KDoc for why a plain value
- * could not do this. [LifecycleResumeEffect] keyed on the COLLECTED `String?`, not the `StateFlow`
- * reference itself (which never changes) — this class's own prior KDoc's reasoning is otherwise
- * unchanged: the effect re-fires the moment the resolved group changes, without this composable
- * needing to know why.
+ * [onRetryGroups] retries the GROUPS fetch (`ActiveGroupViewModel.refresh`); `onRetry` on the
+ * stateless overload below retries the FEED fetch (`FeedViewModel.refresh`) — two different
+ * operations behind two different failures (decision C-S, fix round 1 BLOCKING B3), never
+ * conflated into one channel.
  */
 @Suppress("LongParameterList")
 @Composable
 fun FeedScreen(
-    activeGroupId: StateFlow<String?>,
-    groups: StateFlow<List<Group>>,
+    activeGroup: StateFlow<ActiveGroupState>,
     onSwitchGroup: (String) -> Unit,
+    onRetryGroups: () -> Unit,
     onNavigate: (AppRoute) -> Unit,
     modifier: Modifier = Modifier,
     viewModel: FeedViewModel = hiltViewModel(),
 ) {
-    val currentGroupId by activeGroupId.collectAsStateWithLifecycle()
-    val currentGroups by groups.collectAsStateWithLifecycle()
+    val currentActiveGroup by activeGroup.collectAsStateWithLifecycle()
+    val currentGroupId = (currentActiveGroup as? ActiveGroupState.Success)?.activeGroupId
     LifecycleResumeEffect(viewModel, currentGroupId) {
         currentGroupId?.let { groupId -> viewModel.selectGroup(groupId) }
         onPauseOrDispose { }
     }
     val state by viewModel.state.collectAsStateWithLifecycle()
     FeedScreen(
-        activeGroupId = currentGroupId,
-        groups = currentGroups,
-        onSwitchGroup = onSwitchGroup,
+        activeGroupState = currentActiveGroup,
         state = state,
         onLoadMore = viewModel::loadMore,
         onRetry = viewModel::refresh,
         onEntryClick = { entry -> entry.mediaId?.let { mediaId -> onNavigate(DetailRoute(mediaId = mediaId)) } },
+        onSwitchGroup = onSwitchGroup,
+        onRetryGroups = onRetryGroups,
+        onCreateOrJoinGroup = { onNavigate(GroupsRoute) },
         modifier = modifier,
     )
 }
 
 /**
  * The stateless half, split out so it can be previewed and driven by a test with no ViewModel and
- * no Hilt — `GroupsScreen`/`FavoritesScreen`'s pattern. This task's own tests drive THIS overload
- * with a group id directly (Ruling 1), so the task stayed independently testable ahead of 9c.5.
+ * no Hilt — `GroupsScreen`/`FavoritesScreen`'s pattern.
  *
- * [activeGroupId] is read BEFORE [state] in the `when` below on purpose: it renders the no-groups
- * empty state unconditionally when null, regardless of whatever [state] happens to hold (a stale
- * [FeedUiState.Success] left over from a previously active group, most likely, once switching AWAY
- * from every group is a real case — [FeedViewModel] itself never blanks [state] back to
- * [FeedUiState.Loading] just because [activeGroupId] went null, since [FeedViewModel.selectGroup]
- * is never even called for that value in the first place). Reading [state] first would risk
- * briefly showing a stale group's rows under the "join or create a group" message.
+ * [activeGroupState] drives the top-level branch, read BEFORE [state] on purpose — a stale
+ * [FeedUiState.Success] left over from a previously active group must never show under the wrong
+ * branch here (`FeedViewModel` never blanks [state] back to [FeedUiState.Loading] just because the
+ * active group changed away from a value, since [FeedViewModel.selectGroup] is never even called
+ * for that case).
  *
- * [groups]/[onSwitchGroup] default to an empty list/no-op (task 9c.5) so every pre-existing test in
- * this file — none of which exercises the switcher — keeps compiling and passing unchanged; only
- * a genuinely non-empty [groups] list ever renders [GroupSwitcher] at all, and that component's own
- * `groups.size < 2` gate (E-K) means even a single-element default would render nothing here either
- * way. Rendered only once [activeGroupId] is non-null — E-B's header row belongs beside content
- * that is actually group-scoped, not above the create-or-join empty state.
+ * Three [ActiveGroupState] cases, distinct (fix round 1, BLOCKING B3 — the shape this task shipped
+ * with before this fix collapsed all three into "activeGroupId == null" and showed the same
+ * create-or-join invitation for a load in progress, a load failure, AND a genuinely empty account):
+ * - [ActiveGroupState.Loading] → a spinner, not an empty state — we do not know yet.
+ * - [ActiveGroupState.Error] → an error with [onRetryGroups], not an empty state — the fetch failed.
+ * - [ActiveGroupState.Success] with `activeGroupId == null` → E-K's actual empty state: the account
+ *   genuinely has zero groups, so [EmptyState] renders WITH an action (fix round 1, BLOCKING B2:
+ *   §9.11's acceptance criterion is "reaches create-or-join", which a text-only message cannot do
+ *   on a screen with no other door to Groups — Groups is reached from Profile, not a tab).
+ * - [ActiveGroupState.Success] with a non-null `activeGroupId` → the switcher (E-B, gated on 2+
+ *   groups inside [GroupSwitcher] itself) plus the ordinary [FeedContent] rendering.
  */
 @Suppress("LongParameterList")
 @Composable
 internal fun FeedScreen(
-    activeGroupId: String?,
+    activeGroupState: ActiveGroupState,
     state: FeedUiState,
     onLoadMore: () -> Unit,
     onRetry: () -> Unit,
     onEntryClick: (FeedEntry) -> Unit,
-    groups: List<Group> = emptyList(),
     onSwitchGroup: (String) -> Unit = {},
+    onRetryGroups: () -> Unit = {},
+    onCreateOrJoinGroup: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.fillMaxSize()) {
@@ -144,17 +142,40 @@ internal fun FeedScreen(
             style = MaterialTheme.typography.titleLarge,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
         )
-        if (activeGroupId != null) {
-            GroupSwitcher(groups = groups, activeGroupId = activeGroupId, onGroupSelected = onSwitchGroup)
-        }
-        Box(modifier = Modifier.weight(weight = 1f).fillMaxWidth()) {
-            if (activeGroupId == null) {
-                EmptyState(
-                    message = stringResource(R.string.feed_no_group_message),
-                    modifier = Modifier.fillMaxSize(),
+        when (activeGroupState) {
+            is ActiveGroupState.Loading -> LoadingState(modifier = Modifier.weight(weight = 1f).fillMaxWidth())
+            is ActiveGroupState.Error ->
+                ErrorState(
+                    message = stringResource(R.string.feed_groups_error_retry),
+                    onRetry = onRetryGroups,
+                    modifier = Modifier.weight(weight = 1f).fillMaxWidth(),
                 )
-            } else {
-                FeedContent(state = state, onLoadMore = onLoadMore, onRetry = onRetry, onEntryClick = onEntryClick)
+            is ActiveGroupState.Success -> {
+                val activeGroupId = activeGroupState.activeGroupId
+                if (activeGroupId != null) {
+                    GroupSwitcher(
+                        groups = activeGroupState.groups,
+                        activeGroupId = activeGroupId,
+                        onGroupSelected = onSwitchGroup,
+                    )
+                }
+                Box(modifier = Modifier.weight(weight = 1f).fillMaxWidth()) {
+                    if (activeGroupId == null) {
+                        EmptyState(
+                            message = stringResource(R.string.feed_no_group_message),
+                            actionLabel = stringResource(R.string.feed_no_group_action),
+                            onAction = onCreateOrJoinGroup,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    } else {
+                        FeedContent(
+                            state = state,
+                            onLoadMore = onLoadMore,
+                            onRetry = onRetry,
+                            onEntryClick = onEntryClick,
+                        )
+                    }
+                }
             }
         }
     }

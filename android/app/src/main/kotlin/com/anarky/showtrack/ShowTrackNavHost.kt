@@ -10,8 +10,8 @@ import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import com.anarky.showtrack.core.designsystem.component.LoadingState
+import com.anarky.showtrack.core.model.ActiveGroupState
 import com.anarky.showtrack.core.model.AuthEvent
-import com.anarky.showtrack.core.model.Group
 import com.anarky.showtrack.core.navigation.AppRoute
 import com.anarky.showtrack.core.navigation.AuthRoute
 import com.anarky.showtrack.core.navigation.GroupsRoute
@@ -78,9 +78,9 @@ internal fun ShowTrackNavHost(
                 navController = navController,
                 startDestination = startDestinationFor(start),
                 onSignedIn = appViewModel::markSignedIn,
-                activeGroupId = activeGroupViewModel.activeGroupId,
-                groups = activeGroupViewModel.groups,
+                activeGroup = activeGroupViewModel.state,
                 onSwitchGroup = activeGroupViewModel::selectGroup,
+                onRetryGroups = activeGroupViewModel::refresh,
                 modifier = modifier,
             )
     }
@@ -124,9 +124,9 @@ private fun ShowTrackGraph(
     navController: NavHostController,
     startDestination: AppRoute,
     onSignedIn: (Boolean) -> Unit,
-    activeGroupId: StateFlow<String?>,
-    groups: StateFlow<List<Group>>,
+    activeGroup: StateFlow<ActiveGroupState>,
     onSwitchGroup: (String) -> Unit,
+    onRetryGroups: () -> Unit,
     modifier: Modifier,
 ) {
     NavHost(
@@ -136,9 +136,9 @@ private fun ShowTrackGraph(
     ) {
         showTrackDestinations(
             onNavigate = { route -> navController.routeShowTrackNavigation(route, onSignedIn) },
-            activeGroupId = activeGroupId,
-            groups = groups,
+            activeGroup = activeGroup,
             onSwitchGroup = onSwitchGroup,
+            onRetryGroups = onRetryGroups,
         )
     }
 }

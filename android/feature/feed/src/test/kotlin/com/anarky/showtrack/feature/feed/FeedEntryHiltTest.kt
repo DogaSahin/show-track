@@ -1,6 +1,7 @@
 package com.anarky.showtrack.feature.feed
 
 import android.content.Context
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
@@ -14,6 +15,7 @@ import androidx.navigation.toRoute
 import androidx.test.core.app.ApplicationProvider
 import com.anarky.showtrack.core.data.repository.FeedPage
 import com.anarky.showtrack.core.data.repository.GroupRepository
+import com.anarky.showtrack.core.model.ActiveGroupState
 import com.anarky.showtrack.core.model.ActivityKind
 import com.anarky.showtrack.core.model.FeedEntry
 import com.anarky.showtrack.core.model.GroupActor
@@ -22,11 +24,13 @@ import com.anarky.showtrack.core.model.MediaSummary
 import com.anarky.showtrack.core.model.MediaType
 import com.anarky.showtrack.core.navigation.DetailRoute
 import com.anarky.showtrack.core.navigation.FeedRoute
+import com.anarky.showtrack.core.navigation.GroupsRoute
 import dagger.hilt.android.testing.BindValue
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
 import dagger.hilt.android.testing.HiltTestApplication
 import kotlinx.coroutines.flow.MutableStateFlow
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -58,6 +62,16 @@ import java.time.Instant
  * A TWO-element fixture, tapping the SECOND row — `GroupsScreenTest`'s "not the first one" lesson,
  * applied at the entry-binding layer too: a one-item fixture cannot tell "the tapped row's own
  * `mediaId`" apart from "always the first row's `mediaId`".
+ *
+ * **Fix round 1, BLOCKING B1.** Two new tests below compose the REAL `feedEntry` — not a hand-rolled
+ * marker — through Hilt, and are what actually pin the reactive `StateFlow<ActiveGroupState>`
+ * wiring `AppDestination.kt`/`ShowTrackNavHost.kt` depend on. Review measured that mutating
+ * `ShowTrackNavHost.kt`'s real `ActiveGroupViewModel` wiring down to inert `MutableStateFlow`
+ * defaults left all 558 pre-fix-round-1 tests green — the composed-`NavHost` test this task
+ * shipped for that (`GroupSwitchNavHostTest`) never referenced `feedEntry`/`appDestinations`/
+ * `showTrackDestinations` at all, so it could not have caught it either. These two do: they call
+ * `feedEntry` itself, and a regression in `AppDestination.kt`'s wiring cannot make them pass, only
+ * a regression here that this file does not exercise could hide.
  */
 @HiltAndroidTest
 @RunWith(RobolectricTestRunner::class)
@@ -76,7 +90,11 @@ class FeedEntryHiltTest {
     @JvmField
     val groupRepository: GroupRepository =
         FakeGroupRepository(
-            feedPages = mutableMapOf((GROUP_ID to null) to FeedPage(items = listOf(ADDED, RATED), nextCursor = null)),
+            feedPages =
+                mutableMapOf(
+                    (GROUP_ID to null) to FeedPage(items = listOf(ADDED, RATED), nextCursor = null),
+                    (OTHER_GROUP_ID to null) to FeedPage(items = listOf(ADDED), nextCursor = null),
+                ),
         )
 
     @Before
@@ -87,17 +105,15 @@ class FeedEntryHiltTest {
         lateinit var navController: TestNavHostController
 
         composeRule.setContent {
-            navController =
-                remember {
-                    TestNavHostController(ApplicationProvider.getApplicationContext<Context>()).apply {
-                        navigatorProvider.addNavigator(ComposeNavigator())
-                    }
-                }
+            navController = rememberTestNavController()
             NavHost(navController = navController, startDestination = FeedRoute) {
                 feedEntry(
-                    activeGroupId = MutableStateFlow(GROUP_ID),
-                    groups = MutableStateFlow(emptyList()),
+                    activeGroup =
+                        MutableStateFlow(
+                            ActiveGroupState.Success(groups = emptyList(), activeGroupId = GROUP_ID),
+                        ),
                     onSwitchGroup = {},
+                    onRetryGroups = {},
                     onNavigate = navController::navigate,
                 )
                 composable<DetailRoute> { }
@@ -114,8 +130,83 @@ class FeedEntryHiltTest {
         assertTrue(navController.currentBackStackEntry?.toRoute<DetailRoute>()?.mediaId == RATED.mediaId)
     }
 
+    /**
+     * BLOCKING B1's actual proof: the REAL `feedEntry`, driven by a `StateFlow<ActiveGroupState>`
+     * this test itself mutates — no navigation happens (the back stack shape is asserted unchanged
+     * before and after), so the re-fetch can only be explained by the reactive collection this
+     * task's design decision depends on.
+     */
+    @Test
+    fun `changing the activeGroup flow re-scopes the fetch to the new group, without navigating`() {
+        val activeGroup =
+            MutableStateFlow<ActiveGroupState>(ActiveGroupState.Success(groups = emptyList(), activeGroupId = GROUP_ID))
+        lateinit var navController: TestNavHostController
+
+        composeRule.setContent {
+            navController = rememberTestNavController()
+            NavHost(navController = navController, startDestination = FeedRoute) {
+                feedEntry(
+                    activeGroup = activeGroup,
+                    onSwitchGroup = {},
+                    onRetryGroups = {},
+                    onNavigate = navController::navigate,
+                )
+            }
+        }
+        composeRule.waitForIdle()
+        assertEquals(listOf(GROUP_ID to null), (groupRepository as FakeGroupRepository).feedCalls)
+
+        activeGroup.value = ActiveGroupState.Success(groups = emptyList(), activeGroupId = OTHER_GROUP_ID)
+        composeRule.waitForIdle()
+
+        val expectedCalls = listOf(GROUP_ID to null, OTHER_GROUP_ID to null)
+        assertEquals(expectedCalls, (groupRepository as FakeGroupRepository).feedCalls)
+        // No navigation happened at all — the back stack is exactly what it was at start.
+        assertEquals(listOf(null, FeedRoute::class.qualifiedName), navController.backStackRoutes())
+    }
+
+    /** BLOCKING B2's real-binding proof: the create-or-join action reaches a genuine `GroupsRoute`. */
+    @Test
+    fun `tapping the no-groups action navigates to GroupsRoute`() {
+        val activeGroup =
+            MutableStateFlow<ActiveGroupState>(ActiveGroupState.Success(groups = emptyList(), activeGroupId = null))
+        lateinit var navController: TestNavHostController
+
+        composeRule.setContent {
+            navController = rememberTestNavController()
+            NavHost(navController = navController, startDestination = FeedRoute) {
+                feedEntry(
+                    activeGroup = activeGroup,
+                    onSwitchGroup = {},
+                    onRetryGroups = {},
+                    onNavigate = navController::navigate,
+                )
+                composable<GroupsRoute> { }
+            }
+        }
+        composeRule.waitForIdle()
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule.onNodeWithText(context.getString(R.string.feed_no_group_action)).performClick()
+        composeRule.waitForIdle()
+
+        assertTrue(navController.currentDestination?.hasRoute(GroupsRoute::class) == true)
+    }
+
+    @Composable
+    private fun rememberTestNavController(): TestNavHostController {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        return remember {
+            TestNavHostController(context).apply { navigatorProvider.addNavigator(ComposeNavigator()) }
+        }
+    }
+
+    private fun TestNavHostController.backStackRoutes() =
+        currentBackStack.value.map { entry -> entry.destination.route?.substringBefore('/') }
+
     private companion object {
         const val GROUP_ID = "group-1"
+        const val OTHER_GROUP_ID = "group-2"
         val ACTOR = GroupActor(id = "user-1", username = "alex")
         val MEDIA_ADDED =
             MediaSummary(

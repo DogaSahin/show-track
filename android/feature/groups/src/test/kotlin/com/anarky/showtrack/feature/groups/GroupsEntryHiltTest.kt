@@ -1,8 +1,12 @@
 package com.anarky.showtrack.feature.groups
 
 import android.content.Context
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.navigation.compose.ComposeNavigator
@@ -13,6 +17,7 @@ import androidx.navigation.toRoute
 import androidx.test.core.app.ApplicationProvider
 import com.anarky.showtrack.core.data.repository.AuthRepository
 import com.anarky.showtrack.core.data.repository.GroupRepository
+import com.anarky.showtrack.core.model.ActiveGroupState
 import com.anarky.showtrack.core.model.Group
 import com.anarky.showtrack.core.navigation.GroupDetailRoute
 import com.anarky.showtrack.core.navigation.GroupsRoute
@@ -51,6 +56,12 @@ import java.time.Instant
  * actually discriminates "reads the tapped group" from "reads some fixed group" — the same failure
  * shape the dispatch named for `entry.media.id` vs `entry.id`, one layer lower (the row itself,
  * not just the navigation binding above it).
+ *
+ * **Fix round 2 (task 9c.5), BLOCKING B1.** A new test below composes the REAL `groupsEntry`
+ * through Hilt, driven by a `StateFlow<ActiveGroupState>` this test mutates directly — the same
+ * discipline `FeedEntryHiltTest`'s own two new tests apply, for the identical reason: a
+ * hand-rolled marker (`GroupSwitchNavHostTest`'s original, now-removed test) can prove a navigation
+ * library property, never this module's own wiring.
  */
 @HiltAndroidTest
 @RunWith(RobolectricTestRunner::class)
@@ -86,20 +97,15 @@ class GroupsEntryHiltTest {
         lateinit var navController: TestNavHostController
 
         composeRule.setContent {
-            navController =
-                remember {
-                    TestNavHostController(ApplicationProvider.getApplicationContext<Context>()).apply {
-                        navigatorProvider.addNavigator(ComposeNavigator())
-                    }
-                }
+            navController = rememberTestNavController()
             NavHost(navController = navController, startDestination = GroupsRoute) {
-                // activeGroupId = no selection (a static, never-emitting-again MutableStateFlow):
+                // activeGroup = no selection (a static, never-emitting-again MutableStateFlow):
                 // this test is about the navigation binding, not the switcher — see
-                // GroupsScreenTest's own switcher tests for that. With no active group, the
-                // switcher never renders (GroupsScreen's own null check), so BETA.name below stays
-                // unambiguous — the plain list row, not also a switcher tab.
+                // GroupsScreenTest's own switcher tests, and this class's own switcher test below.
+                // Loading resolves to no active group, so the switcher never renders (GroupsScreen's
+                // own null check), keeping BETA.name unambiguous — the plain list row only.
                 groupsEntry(
-                    activeGroupId = MutableStateFlow(null),
+                    activeGroup = MutableStateFlow(ActiveGroupState.Loading),
                     onSwitchGroup = {},
                     onNavigate = navController::navigate,
                 )
@@ -112,6 +118,52 @@ class GroupsEntryHiltTest {
         val groupId = navController.currentBackStackEntry?.toRoute<GroupDetailRoute>()?.groupId
         assertEquals(BETA.id, groupId)
     }
+
+    /**
+     * BLOCKING B1's proof for `groupsEntry`: the REAL screen, through Hilt, reacts to the
+     * `activeGroup` flow changing — no navigation involved — by moving which switcher tab reports
+     * itself selected.
+     */
+    @Test
+    fun `changing the activeGroup flow moves which switcher tab is selected, without navigating`() {
+        val activeGroup =
+            MutableStateFlow<ActiveGroupState>(
+                ActiveGroupState.Success(groups = listOf(ALPHA, BETA), activeGroupId = ALPHA.id),
+            )
+        lateinit var navController: TestNavHostController
+
+        composeRule.setContent {
+            navController = rememberTestNavController()
+            NavHost(navController = navController, startDestination = GroupsRoute) {
+                groupsEntry(activeGroup = activeGroup, onSwitchGroup = {}, onNavigate = navController::navigate)
+                composable<GroupDetailRoute> { }
+            }
+        }
+        composeRule.waitForIdle()
+
+        // ALPHA.name is genuinely ambiguous with two groups active (the switcher tab AND the list
+        // row both render it) — .onFirst() is the switcher's own tab, GroupsScreen's own ordering
+        // (the switcher renders above GroupsContent).
+        composeRule.onAllNodesWithText(ALPHA.name).onFirst().assertIsSelected()
+
+        activeGroup.value = ActiveGroupState.Success(groups = listOf(ALPHA, BETA), activeGroupId = BETA.id)
+        composeRule.waitForIdle()
+
+        composeRule.onAllNodesWithText(BETA.name).onFirst().assertIsSelected()
+        // No navigation happened — still on GroupsRoute alone.
+        assertEquals(listOf(null, GroupsRoute::class.qualifiedName), navController.backStackRoutes())
+    }
+
+    @Composable
+    private fun rememberTestNavController(): TestNavHostController {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        return remember {
+            TestNavHostController(context).apply { navigatorProvider.addNavigator(ComposeNavigator()) }
+        }
+    }
+
+    private fun TestNavHostController.backStackRoutes() =
+        currentBackStack.value.map { entry -> entry.destination.route?.substringBefore('/') }
 
     private companion object {
         val ALPHA =

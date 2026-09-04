@@ -123,21 +123,32 @@ fun ShowTrackApp(authEvents: Flow<AuthEvent>) {
 
     // The same Activity-scoped instance ShowTrackNavHost resolves for its own destination table
     // (that composable's own comment on the identical AppViewModel pattern applies here too) — a
-    // second read of the existing StateFlow, not a second decision. Refreshed here, rather than
-    // from inside :feature:feed/:feature:groups, because ActiveGroupViewModel has no
-    // NavBackStackEntry of its own to hang a LifecycleResumeEffect off (ActiveGroupViewModel's own
-    // KDoc): this LaunchedEffect is the resume-shaped trigger instead, firing whenever the current
-    // destination BECOMES the Feed or Groups tab — a tab switch included, not only an app
-    // foreground — so a group created or left on one tab is reflected in the switcher the next
-    // time either tab is visited, without either feature module knowing this ViewModel exists.
+    // second read of the existing StateFlow, not a second decision. Driven here, rather than from
+    // inside :feature:feed/:feature:groups, because ActiveGroupViewModel has no NavBackStackEntry
+    // of its own to hang a LifecycleResumeEffect off (ActiveGroupViewModel's own KDoc): this
+    // LaunchedEffect is the resume-shaped trigger instead, firing whenever the current destination
+    // CHANGES.
+    //
+    // reset() on AuthRoute (fix round 1, BLOCKING B4): AuthRoute is the one destination BOTH a
+    // session-expiry logout (AuthGate's reactive collector) and a user-initiated sign-out
+    // (ProfileNavigation's door) land on, via the SAME navigateToAuthClearingStack() call
+    // (ShowTrackNavHost.kt) — so this is the one place that sees "the session just ended" for
+    // either cause, without ActiveGroupViewModel needing an AuthEvent dependency of its own. A
+    // signed-out cold start also lands here and calls reset() harmlessly (nothing loaded yet).
+    // Without this, ActiveGroupViewModel — Activity-scoped, and a logout is a navigate, not an
+    // Activity recreation — would carry the PREVIOUS account's groups and active selection
+    // straight into the next one signing in inside the same process.
+    //
+    // refresh() on Feed or Groups: a group created or left on one tab is reflected in the switcher
+    // the next time either tab is visited, without either feature module knowing this ViewModel
+    // exists.
     val activeGroupViewModel: ActiveGroupViewModel = hiltViewModel()
     val currentDestination = currentBackStackEntry?.destination
     LaunchedEffect(currentDestination) {
-        val onFeedOrGroupsTab =
-            currentDestination?.hasRoute(FeedRoute::class) == true ||
-                currentDestination?.hasRoute(GroupsRoute::class) == true
-        if (onFeedOrGroupsTab) {
-            activeGroupViewModel.refresh()
+        when {
+            currentDestination?.hasRoute(AuthRoute::class) == true -> activeGroupViewModel.reset()
+            currentDestination?.hasRoute(FeedRoute::class) == true -> activeGroupViewModel.refresh()
+            currentDestination?.hasRoute(GroupsRoute::class) == true -> activeGroupViewModel.refresh()
         }
     }
 

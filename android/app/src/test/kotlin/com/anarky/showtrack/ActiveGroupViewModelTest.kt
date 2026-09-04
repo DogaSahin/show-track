@@ -1,6 +1,9 @@
 package com.anarky.showtrack
 
+import com.anarky.showtrack.core.model.ActiveGroupState
 import com.anarky.showtrack.core.model.Group
+import com.anarky.showtrack.core.model.GroupFailure
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -11,6 +14,7 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.time.Instant
@@ -20,9 +24,9 @@ import java.time.Instant
  * JUnit, no Robolectric (nothing here touches Android beyond `androidx.lifecycle.ViewModel`, which
  * needs only a `Dispatchers.Main` substitute for `viewModelScope` to run at all).
  *
- * The task brief's own three named tests, verbatim, are pinned below, plus the two additional
- * cases E-K names that those three do not, on their own, discriminate: no groups at all, and
- * [selectGroup] actually persisting through to [ActiveGroupStore].
+ * The task brief's own three named tests, verbatim, are pinned below, plus the cases fix round 1
+ * added: BLOCKING B3 (loading/error distinct from a genuinely empty list), BLOCKING B4 ([reset]),
+ * and the two smaller items ([refresh]'s generation guard, the fallback write-back).
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class ActiveGroupViewModelTest {
@@ -38,7 +42,8 @@ class ActiveGroupViewModelTest {
      * The brief's own named test, verbatim. A "cold start" is simulated the way
      * [com.anarky.showtrack.core.data.group.ActiveGroupStoreTest] itself frames survival — a store
      * that already holds a value BEFORE this ViewModel is ever constructed, standing in for a
-     * process that persisted a selection on a previous run and is now starting fresh.
+     * process that persisted a selection on a previous run and is now starting fresh. `refresh()`
+     * is called explicitly (fix round 1, BLOCKING B4): this class no longer fetches from `init`.
      */
     @Test
     fun `the active group survives a cold start`() =
@@ -47,9 +52,13 @@ class ActiveGroupViewModelTest {
             val repository = FakeGroupRepository(groups = listOf(ALPHA, BETA))
             val viewModel = ActiveGroupViewModel(repository, store)
 
+            viewModel.refresh()
             advanceUntilIdle()
 
-            assertEquals(BETA.id, viewModel.activeGroupId.value)
+            assertEquals(
+                ActiveGroupState.Success(groups = listOf(ALPHA, BETA), activeGroupId = BETA.id),
+                viewModel.state.value,
+            )
         }
 
     /** The brief's own named test, verbatim. */
@@ -62,9 +71,11 @@ class ActiveGroupViewModelTest {
             val repository = FakeGroupRepository(groups = listOf(BETA, ALPHA))
             val viewModel = ActiveGroupViewModel(repository, store)
 
+            viewModel.refresh()
             advanceUntilIdle()
 
-            assertEquals(BETA.id, viewModel.activeGroupId.value)
+            val state = viewModel.state.value as ActiveGroupState.Success
+            assertEquals(BETA.id, state.activeGroupId)
         }
 
     /** The brief's own named test, verbatim. */
@@ -75,28 +86,48 @@ class ActiveGroupViewModelTest {
             val repository = FakeGroupRepository(groups = listOf(ALPHA, BETA))
             val viewModel = ActiveGroupViewModel(repository, store)
 
+            viewModel.refresh()
             advanceUntilIdle()
 
-            assertEquals(ALPHA.id, viewModel.activeGroupId.value)
+            val state = viewModel.state.value as ActiveGroupState.Success
+            assertEquals(ALPHA.id, state.activeGroupId)
         }
 
-    /** E-K's first empty state: no groups at all resolves to no active group, not a crash. */
+    /**
+     * Fix round 1, smaller item 1: the fallback above is not just RESOLVED, it is WRITTEN BACK to
+     * the store — otherwise the stored value and the resolved one diverge permanently (this
+     * class's own KDoc on `recompute`).
+     */
     @Test
-    fun `no groups resolves to no active group`() =
+    fun `falling back to the first available group writes it back to the store`() =
+        runTest(dispatcher) {
+            val store = FakeActiveGroupStore(initial = "group-departed")
+            val repository = FakeGroupRepository(groups = listOf(ALPHA, BETA))
+            val viewModel = ActiveGroupViewModel(repository, store)
+
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            assertEquals(listOf(ALPHA.id), store.setCalls)
+        }
+
+    /** E-K's first empty state: no groups at all resolves to a genuinely empty Success, not a crash. */
+    @Test
+    fun `no groups resolves to an empty success, not an error`() =
         runTest(dispatcher) {
             val store = FakeActiveGroupStore(initial = null)
             val repository = FakeGroupRepository(groups = emptyList())
             val viewModel = ActiveGroupViewModel(repository, store)
 
+            viewModel.refresh()
             advanceUntilIdle()
 
-            assertNull(viewModel.activeGroupId.value)
-            assertEquals(emptyList<Group>(), viewModel.groups.value)
+            assertEquals(ActiveGroupState.Success(groups = emptyList(), activeGroupId = null), viewModel.state.value)
         }
 
     /**
      * [ActiveGroupViewModel.selectGroup] writes through to the store, and the resolved
-     * [ActiveGroupViewModel.activeGroupId] reacts to that write — proving the round trip this
+     * [ActiveGroupState.Success.activeGroupId] reacts to that write — proving the round trip this
      * class exists for: [com.anarky.showtrack.core.designsystem.component.GroupSwitcher]'s own
      * callback reaches persistence, and persistence reaches back into the resolved state, entirely
      * through the store's `Flow`, not a locally-mutated field.
@@ -107,14 +138,170 @@ class ActiveGroupViewModelTest {
             val store = FakeActiveGroupStore(initial = null)
             val repository = FakeGroupRepository(groups = listOf(ALPHA, BETA))
             val viewModel = ActiveGroupViewModel(repository, store)
+            viewModel.refresh()
             advanceUntilIdle()
-            assertEquals(ALPHA.id, viewModel.activeGroupId.value)
+            assertEquals(ALPHA.id, (viewModel.state.value as ActiveGroupState.Success).activeGroupId)
 
             viewModel.selectGroup(BETA.id)
             advanceUntilIdle()
 
-            assertEquals(BETA.id, viewModel.activeGroupId.value)
-            assertEquals(listOf(BETA.id), store.setCalls)
+            assertEquals(BETA.id, (viewModel.state.value as ActiveGroupState.Success).activeGroupId)
+        }
+
+    /**
+     * BLOCKING B3: the VERY FIRST fetch failing must surface as [ActiveGroupState.Error], not a
+     * [ActiveGroupState.Success] with an empty list — collapsing the two is exactly what made
+     * Feed's create-or-join invitation (E-K) render for an account that has real groups but hit a
+     * failed request, indistinguishable from one that has none.
+     */
+    @Test
+    fun `a failed first load surfaces as Error, not an empty groups list`() =
+        runTest(dispatcher) {
+            val store = FakeActiveGroupStore(initial = null)
+            val repository = FakeGroupRepository(groups = emptyList())
+            repository.groupsFailure = GroupFailure.Network
+            val viewModel = ActiveGroupViewModel(repository, store)
+
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            assertEquals(ActiveGroupState.Error(GroupFailure.Network), viewModel.state.value)
+        }
+
+    /**
+     * BLOCKING B3's other half — the settled refresh shape: a RETRY failing after a successful
+     * load must keep showing what already resolved, not replace a working switcher with an error.
+     */
+    @Test
+    fun `a failed retry after a successful load keeps showing the loaded groups`() =
+        runTest(dispatcher) {
+            val store = FakeActiveGroupStore(initial = null)
+            val repository = FakeGroupRepository(groups = listOf(ALPHA, BETA))
+            val viewModel = ActiveGroupViewModel(repository, store)
+            viewModel.refresh()
+            advanceUntilIdle()
+            assertEquals(
+                ActiveGroupState.Success(groups = listOf(ALPHA, BETA), activeGroupId = ALPHA.id),
+                viewModel.state.value,
+            )
+
+            repository.groupsFailure = GroupFailure.Network
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            assertEquals(
+                ActiveGroupState.Success(groups = listOf(ALPHA, BETA), activeGroupId = ALPHA.id),
+                viewModel.state.value,
+            )
+        }
+
+    /**
+     * Fix round 1, smaller item 2: `refresh()`'s generation guard. Two calls, the FIRST gated so it
+     * resolves SECOND (after the newer one already landed) — the older, now-stale response must not
+     * overwrite the newer group list, `FeedViewModel.reload`'s identical "myGeneration" shape
+     * applied to a single-shot fetch.
+     */
+    @Test
+    fun `a stale refresh response does not overwrite a newer one`() =
+        runTest(dispatcher) {
+            val store = FakeActiveGroupStore(initial = null)
+            val repository = FakeGroupRepository(groups = listOf(ALPHA))
+            val viewModel = ActiveGroupViewModel(repository, store)
+
+            val gate = CompletableDeferred<Unit>()
+            repository.groupsGate = gate
+            viewModel.refresh() // generation 1
+            advanceUntilIdle() // runs generation 1's groups() up to the gate, where it suspends —
+            // FakeGroupRepository.groups() has already captured ALPHA-only as ITS OWN result by now.
+
+            repository.groupsGate = null
+            repository.groups = listOf(ALPHA, BETA)
+            viewModel.refresh() // generation 2 — no gate, resolves immediately
+            advanceUntilIdle()
+            assertEquals(
+                ActiveGroupState.Success(groups = listOf(ALPHA, BETA), activeGroupId = ALPHA.id),
+                viewModel.state.value,
+            )
+
+            // Release generation 1's gate — its stale, ALPHA-only result (captured before the
+            // mutation above) must be DROPPED rather than overwriting generation 2's already-
+            // rendered, two-group state.
+            gate.complete(Unit)
+            advanceUntilIdle()
+
+            assertEquals(
+                ActiveGroupState.Success(groups = listOf(ALPHA, BETA), activeGroupId = ALPHA.id),
+                viewModel.state.value,
+            )
+        }
+
+    /**
+     * BLOCKING B4: [ActiveGroupViewModel.reset] clears the in-memory groups/selection AND the
+     * persisted store — the round trip a logout/login inside the same (Activity-scoped) process
+     * needs, so the next account never inherits the previous one's group names or active selection.
+     */
+    @Test
+    fun `reset clears the loaded groups, the resolved selection, and the store`() =
+        runTest(dispatcher) {
+            val store = FakeActiveGroupStore(initial = null)
+            val repository = FakeGroupRepository(groups = listOf(ALPHA, BETA))
+            val viewModel = ActiveGroupViewModel(repository, store)
+            viewModel.refresh()
+            advanceUntilIdle()
+            assertEquals(
+                ActiveGroupState.Success(groups = listOf(ALPHA, BETA), activeGroupId = ALPHA.id),
+                viewModel.state.value,
+            )
+
+            viewModel.reset()
+            advanceUntilIdle()
+
+            assertEquals(ActiveGroupState.Loading, viewModel.state.value)
+            assertNull(store.setCalls.last())
+        }
+
+    /**
+     * The other half of B4's fix: after [ActiveGroupViewModel.reset], a NEW account's `refresh()`
+     * must resolve cleanly from that account's own [FakeGroupRepository.groups] — not resurrect the
+     * previous account's list via a stale in-memory field `reset()` failed to clear.
+     */
+    @Test
+    fun `a refresh after reset resolves the next account's own groups, not the previous one's`() =
+        runTest(dispatcher) {
+            val store = FakeActiveGroupStore(initial = null)
+            val repository = FakeGroupRepository(groups = listOf(ALPHA, BETA))
+            val viewModel = ActiveGroupViewModel(repository, store)
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            viewModel.reset()
+            advanceUntilIdle()
+            repository.groups = listOf(GAMMA)
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            assertEquals(
+                ActiveGroupState.Success(groups = listOf(GAMMA), activeGroupId = GAMMA.id),
+                viewModel.state.value,
+            )
+        }
+
+    /**
+     * BLOCKING B4's other consequence: a store-only emission arriving BEFORE the very first
+     * `refresh()` has ever resolved must not write a premature `Success(emptyList(), null)` over
+     * `Loading` — that would look exactly like "loaded, and genuinely empty" (B3's own distinction)
+     * for an account that has not been asked yet.
+     */
+    @Test
+    fun `a store emission before the first successful load does not pre-empt Loading`() =
+        runTest(dispatcher) {
+            val store = FakeActiveGroupStore(initial = "group-x")
+            val repository = FakeGroupRepository(groups = listOf(ALPHA))
+            val viewModel = ActiveGroupViewModel(repository, store)
+            advanceUntilIdle()
+
+            assertEquals(ActiveGroupState.Loading, viewModel.state.value)
+            assertTrue("no fetch was ever requested", repository.groupsCallCount == 0)
         }
 
     private companion object {
@@ -122,5 +309,7 @@ class ActiveGroupViewModelTest {
             Group(id = "group-alpha", name = "Alpha Watchers", createdAt = Instant.parse("2026-08-28T10:15:30Z"))
         val BETA =
             Group(id = "group-beta", name = "Beta Watchers", createdAt = Instant.parse("2026-08-29T09:00:00Z"))
+        val GAMMA =
+            Group(id = "group-gamma", name = "Gamma Watchers", createdAt = Instant.parse("2026-08-30T09:00:00Z"))
     }
 }

@@ -7,10 +7,12 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.ComposeNavigator
 import androidx.navigation.createGraph
 import androidx.test.core.app.ApplicationProvider
+import com.anarky.showtrack.core.model.ActiveGroupState
 import com.anarky.showtrack.core.navigation.DiscoverRoute
 import com.anarky.showtrack.core.navigation.FavoritesRoute
 import com.anarky.showtrack.core.navigation.FeedRoute
 import com.anarky.showtrack.core.navigation.LibraryRoute
+import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -112,8 +114,9 @@ class TopLevelNavigationTest {
      * on its own — `AppDestination.kt`'s own KDoc calls this exact failure mode out: "a route
      * wired into the graph with no door in." Drives a real `NavHostController` through
      * `navigateToTopLevelDestination(FeedRoute)` via `showTrackDestinations` (which calls
-     * `feedEntry`, defaulting `activeGroupId`/`groups` here since this test does not care about
-     * groups), so a broken registration — the
+     * `feedEntry`, given an inert `ActiveGroupState.Loading` fixture here since this test does not
+     * care about groups — fix round 1: no more defaults to fall back on), so a broken
+     * registration — the
      * `AppDestination` entry pointing at the wrong route, or `feedEntry` never actually composing
      * `FeedRoute` — fails here, not silently. `Discover`'s sibling test's identical shape one tab
      * over.
@@ -139,7 +142,18 @@ class TopLevelNavigationTest {
             }
 
     private fun NavHostController.defaultGraph() =
-        createGraph(startDestination = LibraryRoute) { showTrackDestinations(onNavigate = { }) }
+        createGraph(startDestination = LibraryRoute) { testShowTrackDestinations(onNavigate = { }) }
+
+    private fun androidx.navigation.NavGraphBuilder.testShowTrackDestinations(
+        onNavigate: (com.anarky.showtrack.core.navigation.AppRoute) -> Unit,
+    ) {
+        showTrackDestinations(
+            onNavigate = onNavigate,
+            activeGroup = MutableStateFlow(ActiveGroupState.Loading),
+            onSwitchGroup = {},
+            onRetryGroups = {},
+        )
+    }
 
     private fun NavHostController.backStackRoutes() =
         currentBackStack.value.map { entry -> entry.destination.route?.substringBefore('/') }
