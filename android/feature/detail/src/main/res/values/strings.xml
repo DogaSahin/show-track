@@ -43,4 +43,27 @@
     <string name="detail_group_error_not_a_member">You\'re no longer a member of this group.</string>
     <string name="detail_group_propose_error_no_such_title">Couldn\'t propose this title. Try again.</string>
     <string name="detail_group_error_unknown">Something went wrong. Try again.</string>
+
+    <!-- Writing and editing a review (task 9c.7, E-G, design doc §3.6) -->
+    <string name="detail_review_write_button">Write a review</string>
+    <string name="detail_review_write_heading">Write a review</string>
+    <string name="detail_review_edit_heading">Edit your review</string>
+    <string name="detail_review_body_label">Your review</string>
+    <string name="detail_review_spoiler_label">Contains spoilers</string>
+    <string name="detail_review_save_button">Save</string>
+    <string name="detail_review_cancel_button">Cancel</string>
+
+    <!-- ReviewSaveError.messageRes() in ReviewEditor.kt. Checked client-side, before any request
+         is sent — §3.6's own 1-4000 character, whitespace-stripped bound. -->
+    <string name="detail_review_error_body_required">Write something before saving.</string>
+    <string name="detail_review_error_body_too_long">Keep your review under 4000 characters.</string>
+
+    <!-- GroupFailure.reviewSaveFailureMessageRes() in ReviewEditor.kt. -->
+    <string name="detail_review_error_network">Couldn\'t reach the server. Check your connection and try again.</string>
+    <string name="detail_review_error_no_such_title">Couldn\'t save this review. Try again.</string>
+    <string name="detail_review_error_no_such_entry">This review no longer exists.</string>
+    <!-- Only the UNRESOLVED-locally fallback (DetailViewModel.saveReview's own KDoc) — every
+         resolvable 409 is retried transparently and never shows any error at all. -->
+    <string name="detail_review_error_already_reviewed_unresolved">You\'ve already reviewed this title. Open the group section below to edit it.</string>
+    <string name="detail_review_error_unknown">Something went wrong. Try again.</string>
 </resources>

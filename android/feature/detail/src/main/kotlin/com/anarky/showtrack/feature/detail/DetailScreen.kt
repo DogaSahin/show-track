@@ -98,6 +98,9 @@ fun DetailScreen(
         onFavoriteToggle = viewModel::toggleFavorite,
         onProposeToGroup = viewModel::proposeToGroup,
         onRetryGroupSection = viewModel::retryGroupSection,
+        onOpenReviewEditor = viewModel::openReviewEditor,
+        onSaveReview = viewModel::saveReview,
+        onCancelReviewEditor = viewModel::closeReviewEditor,
         modifier = modifier,
     )
 }
@@ -106,15 +109,17 @@ fun DetailScreen(
  * The stateless half, split out so it can be previewed and driven by a test without a graph or a
  * ViewModel — `LibraryScreen`'s pattern.
  *
- * Now eleven parameters (task 9c.6 added [groups], [onProposeToGroup], [onRetryGroupSection]),
- * well past detekt's `LongParameterList` threshold of 6; suppressed rather than bundling the eight
+ * Now fourteen parameters (task 9c.6 added [groups], [onProposeToGroup], [onRetryGroupSection];
+ * task 9c.7 added [onOpenReviewEditor], [onSaveReview], [onCancelReviewEditor]), well past
+ * detekt's `LongParameterList` threshold of 6; suppressed rather than bundling the eleven
  * callbacks into an `Actions` holder class, which would exist for this one call site only —
  * `LibraryScreen`'s own justification for the same suppression, one screen earlier.
  *
- * [onProposeToGroup]/[onRetryGroupSection] carry NO default (`FeedScreen`'s fix-round-2 lesson,
- * BLOCKING F2, restated here before it could be rediscovered): a defaulted `= {}` here would let
- * [DetailScreen]'s own stateful call above compile even if one of these two wires were dropped from
- * it, with every pre-existing test still green — the exact hole that fix closed one screen over.
+ * [onProposeToGroup]/[onRetryGroupSection]/[onOpenReviewEditor]/[onSaveReview]/[onCancelReviewEditor]
+ * carry NO default (`FeedScreen`'s fix-round-2 lesson, BLOCKING F2, restated here before it could be
+ * rediscovered): a defaulted `= {}` here would let [DetailScreen]'s own stateful call above compile
+ * even if one of these wires were dropped from it, with every pre-existing test still green — the
+ * exact hole that fix closed one screen over.
  */
 @Suppress("LongParameterList")
 @Composable
@@ -130,6 +135,9 @@ internal fun DetailScreen(
     onFavoriteToggle: () -> Unit,
     onProposeToGroup: (String) -> Unit,
     onRetryGroupSection: () -> Unit,
+    onOpenReviewEditor: () -> Unit,
+    onSaveReview: (String, Boolean) -> Unit,
+    onCancelReviewEditor: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Box(modifier = modifier.fillMaxSize()) {
@@ -153,6 +161,9 @@ internal fun DetailScreen(
                     onFavoriteToggle = onFavoriteToggle,
                     onProposeToGroup = onProposeToGroup,
                     onRetryGroupSection = onRetryGroupSection,
+                    onOpenReviewEditor = onOpenReviewEditor,
+                    onSaveReview = onSaveReview,
+                    onCancelReviewEditor = onCancelReviewEditor,
                 )
         }
     }
@@ -171,6 +182,9 @@ private fun DetailContent(
     onFavoriteToggle: () -> Unit,
     onProposeToGroup: (String) -> Unit,
     onRetryGroupSection: () -> Unit,
+    onOpenReviewEditor: () -> Unit,
+    onSaveReview: (String, Boolean) -> Unit,
+    onCancelReviewEditor: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val (media, entry) = success.data
@@ -200,6 +214,14 @@ private fun DetailContent(
                 onFavoriteToggle = onFavoriteToggle,
             )
         }
+        // E-G: writing a review is a TITLE action, not a group one — rendered unconditionally,
+        // independent of whether any group is active, unlike GroupSection just below it.
+        ReviewEditorSection(
+            reviewEditor = success.reviewEditor,
+            onOpen = onOpenReviewEditor,
+            onSave = onSaveReview,
+            onCancel = onCancelReviewEditor,
+        )
         // Decision C-S: a failed group section (or a failed propose) leaves everything above it —
         // the title, the Add/Edit controls, saving/actionError — fully usable. GroupSection is
         // rendered unconditionally here; it decides internally whether it has anything to show at

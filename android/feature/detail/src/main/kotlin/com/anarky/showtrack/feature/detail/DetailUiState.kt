@@ -72,6 +72,64 @@ sealed interface GroupSectionState {
     ) : GroupSectionState
 }
 
+/**
+ * What the review editor's last save attempt failed with (task 9c.7, decision C-S's "one error
+ * channel per operation" carried one channel further, alongside [DetailActionError]/`proposeError`).
+ * A dedicated sealed type rather than reusing [GroupFailure] directly for [BodyRequired]/
+ * [BodyTooLong]: those two never reach the server at all — §3.6's 1-4000 character,
+ * whitespace-stripped bound is enforced client-side, before any request is sent, so an
+ * out-of-range body costs no round trip (`ReviewBody`'s server-side `min_length=1` is itself
+ * checked AFTER stripping, `backend/app/library/schemas.py`, so an all-whitespace body is exactly
+ * [BodyRequired], never a value the server would silently accept). Inventing [GroupFailure] cases
+ * for something the server is never even asked about would misrepresent what that type means:
+ * `GroupSection.kt`'s `GroupFailure.messageRes()` already commits to being exhaustive over exactly
+ * the failures the SERVER can produce.
+ */
+sealed interface ReviewSaveError {
+    data object BodyRequired : ReviewSaveError
+
+    data object BodyTooLong : ReviewSaveError
+
+    data class Remote(
+        val failure: GroupFailure,
+    ) : ReviewSaveError
+}
+
+/**
+ * The review editor's own state (task 9c.7, E-G, design doc §3.6) — a SIXTH independent channel on
+ * [DetailUiState.Success], alongside load/edit/[GroupSectionState]/propose (see that case's own
+ * KDoc for why each stays independent rather than sharing one slot).
+ *
+ * [Open.reviewId] carries the same nullable convention [GroupRepository.updateReview]'s own KDoc
+ * and [GroupFailure.AlreadyReviewed] already use: null means "this is a fresh draft, saving POSTs
+ * it"; non-null means "PATCH this review". [DetailViewModel.openReviewEditor] resolves it up front
+ * from whatever the ALREADY-LOADED [GroupSectionState.Loaded.reviews] the active group's section
+ * currently has, matched against the signed-in account's own id — reviews of a title are visible
+ * to every group the author is a member of, so a reviewer's own review, if one exists, is already
+ * present in that list whenever a group is active and its section has loaded.
+ * [DetailViewModel.saveReview] falls back to the SAME resolution, transparently, if a fresh POST
+ * still 409s (the section had not loaded yet when the editor opened, or a review was written from
+ * a second session since) — see that function's own KDoc for why the 409 body itself carries no id
+ * to use instead ([GroupFailure.AlreadyReviewed.existingReviewId]'s own KDoc).
+ *
+ * [Open.seedBody]/[Open.seedContainsSpoilers] are read exactly ONCE, as the initial value of
+ * [ReviewEditor]'s own `remember`ed draft — never patched back into this state field by field as
+ * the reader types, the identical reasoning [GroupsDialogs.CreateGroupDialog]'s own `name` draft
+ * gives for owning its text field state locally rather than routing every keystroke through a
+ * ViewModel.
+ */
+sealed interface ReviewEditorState {
+    data object Closed : ReviewEditorState
+
+    data class Open(
+        val reviewId: String?,
+        val seedBody: String,
+        val seedContainsSpoilers: Boolean,
+        val saving: Boolean = false,
+        val error: ReviewSaveError? = null,
+    ) : ReviewEditorState
+}
+
 sealed interface DetailUiState {
     data object Loading : DetailUiState
 
@@ -111,6 +169,13 @@ sealed interface DetailUiState {
      * switch, until the reader either leaves the screen or proposes again (to the same group or a
      * different one). A reader who proposed once has no reason to have that fact hidden from them
      * by an action that has nothing to do with the propose they just made.
+     *
+     * [reviewEditor] (task 9c.7, E-G) is the SIXTH channel — see [ReviewEditorState]'s own KDoc.
+     * Independent of [groupSection] and [proposing]/[proposeError]/[justProposedToGroupId] for the
+     * identical decision-C-S reason those three are independent of EACH OTHER: writing a review is
+     * a title action, not a group action (E-G's own reasoning), so a failed save must never touch
+     * the group section's rows, and a group-section reload racing an in-flight save must never
+     * touch [reviewEditor].
      */
     data class Success(
         val data: DetailData,
@@ -120,6 +185,7 @@ sealed interface DetailUiState {
         val proposing: Boolean = false,
         val proposeError: GroupFailure? = null,
         val justProposedToGroupId: String? = null,
+        val reviewEditor: ReviewEditorState = ReviewEditorState.Closed,
     ) : DetailUiState
 
     /** Only the initial load (or a retry of it) ever produces this — see [DetailViewModel]'s KDoc. */

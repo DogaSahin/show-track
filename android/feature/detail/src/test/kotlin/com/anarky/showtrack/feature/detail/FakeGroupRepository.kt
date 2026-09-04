@@ -51,6 +51,20 @@ internal class FakeGroupRepository(
     var proposeCalls = 0
         private set
 
+    // task 9c.7: createReview/updateReview, the two GroupRepository members DetailViewModel's
+    // review editor exercises. Calls are recorded as (arg1, body, containsSpoilers) triples — the
+    // identical (mediaId or reviewId, body, spoilers) shape for both, so a test can pin exactly
+    // what DetailViewModel sent without a bespoke fixture per call.
+    var createReviewResult: Review? = null
+    var createReviewFailure: GroupFailure? = null
+    var createReviewGate: CompletableDeferred<Unit>? = null
+    val createReviewCalls = mutableListOf<Triple<String, String, Boolean>>()
+
+    var updateReviewResult: Review? = null
+    var updateReviewFailure: GroupFailure? = null
+    var updateReviewGate: CompletableDeferred<Unit>? = null
+    val updateReviewCalls = mutableListOf<Triple<String, String?, Boolean?>>()
+
     override suspend fun progress(
         groupId: String,
         mediaId: String,
@@ -118,11 +132,21 @@ internal class FakeGroupRepository(
         mediaId: String,
         body: String,
         containsSpoilers: Boolean,
-    ): Review = error("not exercised by DetailViewModel")
+    ): Review {
+        createReviewCalls += Triple(mediaId, body, containsSpoilers)
+        createReviewGate?.await()
+        createReviewFailure?.let { throw GroupOperationException(it) }
+        return createReviewResult ?: error("no createReviewResult configured")
+    }
 
     override suspend fun updateReview(
         reviewId: String,
         body: String?,
         containsSpoilers: Boolean?,
-    ): Review = error("not exercised by DetailViewModel")
+    ): Review {
+        updateReviewCalls += Triple(reviewId, body, containsSpoilers)
+        updateReviewGate?.await()
+        updateReviewFailure?.let { throw GroupOperationException(it) }
+        return updateReviewResult ?: error("no updateReviewResult configured")
+    }
 }

@@ -9,6 +9,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTextInput
 import androidx.test.core.app.ApplicationProvider
 import com.anarky.showtrack.core.model.Group
 import com.anarky.showtrack.core.model.GroupActor
@@ -64,6 +65,9 @@ class DetailScreenTest {
                 onFavoriteToggle = {},
                 onProposeToGroup = {},
                 onRetryGroupSection = {},
+                onOpenReviewEditor = {},
+                onSaveReview = { _, _ -> },
+                onCancelReviewEditor = {},
             )
         }
 
@@ -92,6 +96,9 @@ class DetailScreenTest {
                 onFavoriteToggle = {},
                 onProposeToGroup = {},
                 onRetryGroupSection = {},
+                onOpenReviewEditor = {},
+                onSaveReview = { _, _ -> },
+                onCancelReviewEditor = {},
             )
         }
 
@@ -125,6 +132,9 @@ class DetailScreenTest {
                 onFavoriteToggle = {},
                 onProposeToGroup = {},
                 onRetryGroupSection = {},
+                onOpenReviewEditor = {},
+                onSaveReview = { _, _ -> },
+                onCancelReviewEditor = {},
             )
         }
 
@@ -154,6 +164,9 @@ class DetailScreenTest {
                 onFavoriteToggle = {},
                 onProposeToGroup = { proposedTo = it },
                 onRetryGroupSection = {},
+                onOpenReviewEditor = {},
+                onSaveReview = { _, _ -> },
+                onCancelReviewEditor = {},
             )
         }
         val context = ApplicationProvider.getApplicationContext<Context>()
@@ -190,6 +203,9 @@ class DetailScreenTest {
                 onFavoriteToggle = {},
                 onProposeToGroup = { proposedTo = it },
                 onRetryGroupSection = {},
+                onOpenReviewEditor = {},
+                onSaveReview = { _, _ -> },
+                onCancelReviewEditor = {},
             )
         }
         val context = ApplicationProvider.getApplicationContext<Context>()
@@ -224,6 +240,9 @@ class DetailScreenTest {
                 onFavoriteToggle = {},
                 onProposeToGroup = {},
                 onRetryGroupSection = { groupRetryCalls++ },
+                onOpenReviewEditor = {},
+                onSaveReview = { _, _ -> },
+                onCancelReviewEditor = {},
             )
         }
         val context = ApplicationProvider.getApplicationContext<Context>()
@@ -259,6 +278,9 @@ class DetailScreenTest {
                 onFavoriteToggle = {},
                 onProposeToGroup = {},
                 onRetryGroupSection = {},
+                onOpenReviewEditor = {},
+                onSaveReview = { _, _ -> },
+                onCancelReviewEditor = {},
             )
         }
 
@@ -287,6 +309,9 @@ class DetailScreenTest {
                 onFavoriteToggle = {},
                 onProposeToGroup = {},
                 onRetryGroupSection = {},
+                onOpenReviewEditor = {},
+                onSaveReview = { _, _ -> },
+                onCancelReviewEditor = {},
             )
         }
 
@@ -320,6 +345,9 @@ class DetailScreenTest {
                 onFavoriteToggle = {},
                 onProposeToGroup = {},
                 onRetryGroupSection = {},
+                onOpenReviewEditor = {},
+                onSaveReview = { _, _ -> },
+                onCancelReviewEditor = {},
             )
         }
 
@@ -351,6 +379,9 @@ class DetailScreenTest {
                 onFavoriteToggle = {},
                 onProposeToGroup = {},
                 onRetryGroupSection = {},
+                onOpenReviewEditor = {},
+                onSaveReview = { _, _ -> },
+                onCancelReviewEditor = {},
             )
         }
 
@@ -413,16 +444,227 @@ class DetailScreenTest {
         composeRule.onNodeWithText(SPOILER_B.body).assertDoesNotExist()
     }
 
+    // --- Writing and editing a review (task 9c.7) ---------------------------------------------
+
+    /** [ReviewEditorState.Closed] is the default — a bare door, nothing else, until tapped. */
+    @Test
+    fun `the review editor is a closed door by default, and opening it calls onOpenReviewEditor`() {
+        var opened = 0
+        composeRule.setContent {
+            DetailScreen(
+                state = successState(groupSection = GroupSectionState.Absent),
+                groups = emptyList(),
+                onRetry = {},
+                onAddToLibrary = {},
+                onScoreSelected = {},
+                onScoreCleared = {},
+                onProgressChange = {},
+                onStatusSelected = {},
+                onFavoriteToggle = {},
+                onProposeToGroup = {},
+                onRetryGroupSection = {},
+                onOpenReviewEditor = { opened++ },
+                onSaveReview = { _, _ -> },
+                onCancelReviewEditor = {},
+            )
+        }
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule
+            .onNodeWithText(context.getString(R.string.detail_review_write_button))
+            .performScrollTo()
+            .performClick()
+
+        assertEquals(1, opened)
+    }
+
+    /**
+     * `reviewId == null` is the "write" case — the heading says so, and the body field starts
+     * empty (`seedBody` is blank), so typing and saving sends exactly what was typed, nothing the
+     * editor pre-filled.
+     */
+    @Test
+    fun `writing a fresh review sends the typed body and spoiler flag`() {
+        var savedBody: String? = null
+        var savedSpoilers: Boolean? = null
+        composeRule.setContent {
+            DetailScreen(
+                state =
+                    successState(
+                        groupSection = GroupSectionState.Absent,
+                        reviewEditor =
+                            ReviewEditorState.Open(reviewId = null, seedBody = "", seedContainsSpoilers = false),
+                    ),
+                groups = emptyList(),
+                onRetry = {},
+                onAddToLibrary = {},
+                onScoreSelected = {},
+                onScoreCleared = {},
+                onProgressChange = {},
+                onStatusSelected = {},
+                onFavoriteToggle = {},
+                onProposeToGroup = {},
+                onRetryGroupSection = {},
+                onOpenReviewEditor = {},
+                onSaveReview = { body, spoilers ->
+                    savedBody = body
+                    savedSpoilers = spoilers
+                },
+                onCancelReviewEditor = {},
+            )
+        }
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule.onNodeWithText(context.getString(R.string.detail_review_write_heading)).assertExists()
+        // performScrollTo() first, `proposing with exactly one group...`'s own reasoning: the
+        // review editor sits below EditSection in DetailContent's own verticalScroll Column, off
+        // the (unscrolled) Robolectric viewport, and performClick()/performTextInput() dispatch a
+        // real gesture at the node's CURRENT position — which lands nowhere while still off-screen.
+        composeRule
+            .onNodeWithText(context.getString(R.string.detail_review_body_label))
+            .performScrollTo()
+            .performTextInput("A genuinely great show.")
+        composeRule
+            .onNodeWithText(context.getString(R.string.detail_review_spoiler_label))
+            .performScrollTo()
+            .performClick()
+        composeRule
+            .onNodeWithText(context.getString(R.string.detail_review_save_button))
+            .performScrollTo()
+            .performClick()
+
+        assertEquals("A genuinely great show.", savedBody)
+        assertEquals(true, savedSpoilers)
+    }
+
+    /**
+     * `reviewId != null` — [DetailViewModel.openReviewEditor]'s own pre-resolved edit path — shows
+     * the EDIT heading and pre-fills the existing text, rather than starting the reader from a
+     * blank field they would otherwise have to retype from memory.
+     */
+    @Test
+    fun `opening the editor on an existing review shows the edit heading and pre-fills its body`() {
+        composeRule.setContent {
+            DetailScreen(
+                state =
+                    successState(
+                        groupSection = GroupSectionState.Absent,
+                        reviewEditor =
+                            ReviewEditorState.Open(
+                                reviewId = "review-mine",
+                                seedBody = "Already wrote this one.",
+                                seedContainsSpoilers = true,
+                            ),
+                    ),
+                groups = emptyList(),
+                onRetry = {},
+                onAddToLibrary = {},
+                onScoreSelected = {},
+                onScoreCleared = {},
+                onProgressChange = {},
+                onStatusSelected = {},
+                onFavoriteToggle = {},
+                onProposeToGroup = {},
+                onRetryGroupSection = {},
+                onOpenReviewEditor = {},
+                onSaveReview = { _, _ -> },
+                onCancelReviewEditor = {},
+            )
+        }
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule.onNodeWithText(context.getString(R.string.detail_review_edit_heading)).assertExists()
+        composeRule.onNodeWithText("Already wrote this one.").assertExists()
+        composeRule.onNodeWithText(context.getString(R.string.detail_review_write_heading)).assertDoesNotExist()
+    }
+
+    /** A validation/remote error renders inline, next to the form it belongs to. */
+    @Test
+    fun `a review save error renders inline`() {
+        composeRule.setContent {
+            DetailScreen(
+                state =
+                    successState(
+                        groupSection = GroupSectionState.Absent,
+                        reviewEditor =
+                            ReviewEditorState.Open(
+                                reviewId = null,
+                                seedBody = "",
+                                seedContainsSpoilers = false,
+                                error = ReviewSaveError.BodyRequired,
+                            ),
+                    ),
+                groups = emptyList(),
+                onRetry = {},
+                onAddToLibrary = {},
+                onScoreSelected = {},
+                onScoreCleared = {},
+                onProgressChange = {},
+                onStatusSelected = {},
+                onFavoriteToggle = {},
+                onProposeToGroup = {},
+                onRetryGroupSection = {},
+                onOpenReviewEditor = {},
+                onSaveReview = { _, _ -> },
+                onCancelReviewEditor = {},
+            )
+        }
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule
+            .onNodeWithText(context.getString(R.string.detail_review_error_body_required))
+            .assertExists()
+    }
+
+    /** Cancel discards the draft — the editor's own door back to [ReviewEditorState.Closed]. */
+    @Test
+    fun `cancelling the review editor calls onCancelReviewEditor`() {
+        var cancelled = 0
+        composeRule.setContent {
+            DetailScreen(
+                state =
+                    successState(
+                        groupSection = GroupSectionState.Absent,
+                        reviewEditor =
+                            ReviewEditorState.Open(reviewId = null, seedBody = "", seedContainsSpoilers = false),
+                    ),
+                groups = emptyList(),
+                onRetry = {},
+                onAddToLibrary = {},
+                onScoreSelected = {},
+                onScoreCleared = {},
+                onProgressChange = {},
+                onStatusSelected = {},
+                onFavoriteToggle = {},
+                onProposeToGroup = {},
+                onRetryGroupSection = {},
+                onOpenReviewEditor = {},
+                onSaveReview = { _, _ -> },
+                onCancelReviewEditor = { cancelled++ },
+            )
+        }
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule
+            .onNodeWithText(context.getString(R.string.detail_review_cancel_button))
+            .performScrollTo()
+            .performClick()
+
+        assertEquals(1, cancelled)
+    }
+
     private fun successState(
         groupSection: GroupSectionState,
         justProposedToGroupId: String? = null,
         proposing: Boolean = false,
+        reviewEditor: ReviewEditorState = ReviewEditorState.Closed,
     ): DetailUiState.Success =
         DetailUiState.Success(
             data = DetailData(media = MEDIA, entry = ENTRY),
             groupSection = groupSection,
             justProposedToGroupId = justProposedToGroupId,
             proposing = proposing,
+            reviewEditor = reviewEditor,
         )
 
     private companion object {

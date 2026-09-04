@@ -137,6 +137,7 @@ class DetailResumeTest {
             DetailViewModelTest.FakeMedia(),
             DetailViewModelTest.FakeLibrary(entry = null),
             groups,
+            FakeAuthRepository(),
         )
 
     private companion object {

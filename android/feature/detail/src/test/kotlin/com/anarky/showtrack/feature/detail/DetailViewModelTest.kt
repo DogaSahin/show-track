@@ -55,7 +55,16 @@ import java.time.Instant
  * `NavGraphRegistrationTest` and `:core:database`'s DAO tests pin the same value for the same
  * reason); `application = Application::class` avoids standing up `ShowTrackApplication`'s
  * `@HiltAndroidApp` component, which this test needs neither DataStore nor the Keystore from.
+ *
+ * `@Suppress("LargeClass")` (task 9c.7) — `GroupDetailViewModelTest`'s own identical suppression
+ * and identical reasoning, one feature over: this class pins load, edit, the group section,
+ * propose AND (as of this task) the review editor for ONE screen's ONE ViewModel; splitting it by
+ * sub-concern would scatter the fixtures every test shares (`FakeMedia`/`FakeLibrary`/
+ * `FakeGroupRepository`/`FakeAuthRepository`, the `savedState`/`assertIsError` helpers, the
+ * `MEDIA`/`ENTRY`/`MY_REVIEW` companion fixtures) for a lint threshold's sake rather than a real
+ * cohesion problem.
  */
+@Suppress("LargeClass")
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], application = Application::class)
@@ -77,7 +86,13 @@ class DetailViewModelTest {
             // Reached from search and from a push deep-link. Treating "no entry" as an error
             // would make the deep-link open a broken screen for anything not yet tracked.
             val viewModel =
-                DetailViewModel(savedState("media-1"), FakeMedia(), FakeLibrary(entry = null), FakeGroupRepository())
+                DetailViewModel(
+                    savedState("media-1"),
+                    FakeMedia(),
+                    FakeLibrary(entry = null),
+                    FakeGroupRepository(),
+                    FakeAuthRepository(),
+                )
             advanceUntilIdle()
 
             assertNull((viewModel.state.value as DetailUiState.Success).data.entry)
@@ -92,7 +107,7 @@ class DetailViewModelTest {
             // hard-coded or empty id would actually be caught.
             val media = FakeMedia()
             val library = FakeLibrary(entry = null)
-            DetailViewModel(savedState("media-42"), media, library, FakeGroupRepository())
+            DetailViewModel(savedState("media-42"), media, library, FakeGroupRepository(), FakeAuthRepository())
             advanceUntilIdle()
 
             assertEquals("media-42", media.lastMediaId)
@@ -103,7 +118,13 @@ class DetailViewModelTest {
     fun `a title already in the library loads with its entry`() =
         runTest(dispatcher) {
             val viewModel =
-                DetailViewModel(savedState("media-1"), FakeMedia(), FakeLibrary(entry = ENTRY), FakeGroupRepository())
+                DetailViewModel(
+                    savedState("media-1"),
+                    FakeMedia(),
+                    FakeLibrary(entry = ENTRY),
+                    FakeGroupRepository(),
+                    FakeAuthRepository(),
+                )
             advanceUntilIdle()
 
             assertEquals(ENTRY, (viewModel.state.value as DetailUiState.Success).data.entry)
@@ -120,6 +141,7 @@ class DetailViewModelTest {
                     FakeMedia(detailFailure = failure),
                     FakeLibrary(),
                     FakeGroupRepository(),
+                    FakeAuthRepository(),
                 )
 
             advanceUntilIdle()
@@ -139,7 +161,14 @@ class DetailViewModelTest {
         runTest(dispatcher) {
             val failure = IOException("offline")
             val media = FakeMedia(detailFailure = failure)
-            val viewModel = DetailViewModel(savedState("media-1"), media, FakeLibrary(), FakeGroupRepository())
+            val viewModel =
+                DetailViewModel(
+                    savedState("media-1"),
+                    media,
+                    FakeLibrary(),
+                    FakeGroupRepository(),
+                    FakeAuthRepository(),
+                )
 
             viewModel.state.test {
                 assertEquals(DetailUiState.Loading, awaitItem())
@@ -173,7 +202,14 @@ class DetailViewModelTest {
     fun `retrying while a Success already exists preserves fields load does not touch`() =
         runTest(dispatcher) {
             val groups = FakeGroupRepository(proposeResult = WATCHLIST_ENTRY)
-            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), FakeLibrary(entry = ENTRY), groups)
+            val viewModel =
+                DetailViewModel(
+                    savedState("media-1"),
+                    FakeMedia(),
+                    FakeLibrary(entry = ENTRY),
+                    groups,
+                    FakeAuthRepository(),
+                )
             advanceUntilIdle()
             viewModel.proposeToGroup("group-9")
             advanceUntilIdle()
@@ -189,7 +225,14 @@ class DetailViewModelTest {
     fun `changing the score sends only the score`() =
         runTest(dispatcher) {
             val library = FakeLibrary(entry = ENTRY)
-            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), library, FakeGroupRepository())
+            val viewModel =
+                DetailViewModel(
+                    savedState("media-1"),
+                    FakeMedia(),
+                    library,
+                    FakeGroupRepository(),
+                    FakeAuthRepository(),
+                )
             advanceUntilIdle()
 
             viewModel.setScore(BigDecimal("9.0"))
@@ -205,7 +248,14 @@ class DetailViewModelTest {
             // The third wire state score's own KDoc calls out: absent means "leave it", this
             // means "unrate it" — the one leg of the tri-state with no assertion until now.
             val library = FakeLibrary(entry = ENTRY)
-            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), library, FakeGroupRepository())
+            val viewModel =
+                DetailViewModel(
+                    savedState("media-1"),
+                    FakeMedia(),
+                    library,
+                    FakeGroupRepository(),
+                    FakeAuthRepository(),
+                )
             advanceUntilIdle()
 
             viewModel.clearScore()
@@ -218,7 +268,14 @@ class DetailViewModelTest {
     fun `changing the progress sends only the progress`() =
         runTest(dispatcher) {
             val library = FakeLibrary(entry = ENTRY)
-            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), library, FakeGroupRepository())
+            val viewModel =
+                DetailViewModel(
+                    savedState("media-1"),
+                    FakeMedia(),
+                    library,
+                    FakeGroupRepository(),
+                    FakeAuthRepository(),
+                )
             advanceUntilIdle()
 
             viewModel.setProgress(7)
@@ -231,7 +288,14 @@ class DetailViewModelTest {
     fun `toggling favorite sends the flipped value`() =
         runTest(dispatcher) {
             val library = FakeLibrary(entry = ENTRY)
-            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), library, FakeGroupRepository())
+            val viewModel =
+                DetailViewModel(
+                    savedState("media-1"),
+                    FakeMedia(),
+                    library,
+                    FakeGroupRepository(),
+                    FakeAuthRepository(),
+                )
             advanceUntilIdle()
 
             viewModel.toggleFavorite()
@@ -244,7 +308,14 @@ class DetailViewModelTest {
     fun `changing the status sends only the status`() =
         runTest(dispatcher) {
             val library = FakeLibrary(entry = ENTRY)
-            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), library, FakeGroupRepository())
+            val viewModel =
+                DetailViewModel(
+                    savedState("media-1"),
+                    FakeMedia(),
+                    library,
+                    FakeGroupRepository(),
+                    FakeAuthRepository(),
+                )
             advanceUntilIdle()
 
             viewModel.setStatus(UserMediaStatus.COMPLETED)
@@ -260,7 +331,14 @@ class DetailViewModelTest {
             // guess is how a UI drifts from the database it claims to show.
             val returned = ENTRY.copy(progress = 5)
             val library = FakeLibrary(entry = ENTRY, updateResult = returned)
-            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), library, FakeGroupRepository())
+            val viewModel =
+                DetailViewModel(
+                    savedState("media-1"),
+                    FakeMedia(),
+                    library,
+                    FakeGroupRepository(),
+                    FakeAuthRepository(),
+                )
             advanceUntilIdle()
 
             viewModel.setProgress(99)
@@ -274,7 +352,14 @@ class DetailViewModelTest {
         runTest(dispatcher) {
             val failure = IOException("offline")
             val library = FakeLibrary(entry = ENTRY, updateFailure = failure)
-            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), library, FakeGroupRepository())
+            val viewModel =
+                DetailViewModel(
+                    savedState("media-1"),
+                    FakeMedia(),
+                    library,
+                    FakeGroupRepository(),
+                    FakeAuthRepository(),
+                )
             advanceUntilIdle()
 
             viewModel.setScore(BigDecimal("9.0"))
@@ -292,7 +377,14 @@ class DetailViewModelTest {
     fun `an edit in flight sets saving and clears it on completion`() =
         runTest(dispatcher) {
             val library = FakeLibrary(entry = ENTRY)
-            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), library, FakeGroupRepository())
+            val viewModel =
+                DetailViewModel(
+                    savedState("media-1"),
+                    FakeMedia(),
+                    library,
+                    FakeGroupRepository(),
+                    FakeAuthRepository(),
+                )
 
             viewModel.state.test {
                 assertEquals(DetailUiState.Loading, awaitItem())
@@ -311,7 +403,14 @@ class DetailViewModelTest {
     fun `a second edit is ignored while one is already saving`() =
         runTest(dispatcher) {
             val library = FakeLibrary(entry = ENTRY)
-            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), library, FakeGroupRepository())
+            val viewModel =
+                DetailViewModel(
+                    savedState("media-1"),
+                    FakeMedia(),
+                    library,
+                    FakeGroupRepository(),
+                    FakeAuthRepository(),
+                )
             advanceUntilIdle()
 
             viewModel.setScore(BigDecimal("9.0"))
@@ -325,7 +424,14 @@ class DetailViewModelTest {
     fun `adding to the library replaces the null entry with the one the server returned`() =
         runTest(dispatcher) {
             val library = FakeLibrary(entry = null, addResult = ENTRY)
-            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), library, FakeGroupRepository())
+            val viewModel =
+                DetailViewModel(
+                    savedState("media-1"),
+                    FakeMedia(),
+                    library,
+                    FakeGroupRepository(),
+                    FakeAuthRepository(),
+                )
             advanceUntilIdle()
 
             viewModel.addToLibrary()
@@ -344,7 +450,14 @@ class DetailViewModelTest {
         runTest(dispatcher) {
             val failure = IOException("offline")
             val library = FakeLibrary(entry = null, addFailure = failure)
-            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), library, FakeGroupRepository())
+            val viewModel =
+                DetailViewModel(
+                    savedState("media-1"),
+                    FakeMedia(),
+                    library,
+                    FakeGroupRepository(),
+                    FakeAuthRepository(),
+                )
             advanceUntilIdle()
 
             viewModel.addToLibrary()
@@ -367,7 +480,13 @@ class DetailViewModelTest {
             // Both ActiveGroupState.Loading/Error AND a genuinely-empty account collapse into this
             // same call from DetailScreen's stateful wrapper — GroupSectionState's own KDoc.
             val viewModel =
-                DetailViewModel(savedState("media-1"), FakeMedia(), FakeLibrary(entry = ENTRY), FakeGroupRepository())
+                DetailViewModel(
+                    savedState("media-1"),
+                    FakeMedia(),
+                    FakeLibrary(entry = ENTRY),
+                    FakeGroupRepository(),
+                    FakeAuthRepository(),
+                )
             advanceUntilIdle()
 
             viewModel.setActiveGroup(null)
@@ -384,7 +503,14 @@ class DetailViewModelTest {
                     progressResults = mutableMapOf((GROUP_ID to "media-1") to listOf(PROGRESS_ROW)),
                     reviewsResults = mutableMapOf((GROUP_ID to "media-1") to listOf(REVIEW)),
                 )
-            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), FakeLibrary(entry = ENTRY), groups)
+            val viewModel =
+                DetailViewModel(
+                    savedState("media-1"),
+                    FakeMedia(),
+                    FakeLibrary(entry = ENTRY),
+                    groups,
+                    FakeAuthRepository(),
+                )
             advanceUntilIdle()
 
             viewModel.setActiveGroup(GROUP_ID)
@@ -402,7 +528,13 @@ class DetailViewModelTest {
             // §9.12's acceptance criterion. The fake's default (unconfigured) response for this
             // key is an empty list on both — the honest "nobody else tracks this yet" outcome.
             val viewModel =
-                DetailViewModel(savedState("media-1"), FakeMedia(), FakeLibrary(entry = ENTRY), FakeGroupRepository())
+                DetailViewModel(
+                    savedState("media-1"),
+                    FakeMedia(),
+                    FakeLibrary(entry = ENTRY),
+                    FakeGroupRepository(),
+                    FakeAuthRepository(),
+                )
             advanceUntilIdle()
 
             viewModel.setActiveGroup(GROUP_ID)
@@ -419,7 +551,14 @@ class DetailViewModelTest {
         runTest(dispatcher) {
             val groups = FakeGroupRepository()
             groups.progressFailures[GROUP_ID to "media-1"] = GroupFailure.Network
-            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), FakeLibrary(entry = ENTRY), groups)
+            val viewModel =
+                DetailViewModel(
+                    savedState("media-1"),
+                    FakeMedia(),
+                    FakeLibrary(entry = ENTRY),
+                    groups,
+                    FakeAuthRepository(),
+                )
             advanceUntilIdle()
 
             viewModel.setActiveGroup(GROUP_ID)
@@ -438,7 +577,14 @@ class DetailViewModelTest {
             // retry that fails must never blank or error away rows already on screen.
             val groups =
                 FakeGroupRepository(progressResults = mutableMapOf((GROUP_ID to "media-1") to listOf(PROGRESS_ROW)))
-            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), FakeLibrary(entry = ENTRY), groups)
+            val viewModel =
+                DetailViewModel(
+                    savedState("media-1"),
+                    FakeMedia(),
+                    FakeLibrary(entry = ENTRY),
+                    groups,
+                    FakeAuthRepository(),
+                )
             advanceUntilIdle()
             viewModel.setActiveGroup(GROUP_ID)
             advanceUntilIdle()
@@ -476,7 +622,14 @@ class DetailViewModelTest {
                 )
             val groupAGate = CompletableDeferred<Unit>()
             groups.progressGates["group-a" to "media-1"] = groupAGate
-            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), FakeLibrary(entry = ENTRY), groups)
+            val viewModel =
+                DetailViewModel(
+                    savedState("media-1"),
+                    FakeMedia(),
+                    FakeLibrary(entry = ENTRY),
+                    groups,
+                    FakeAuthRepository(),
+                )
             advanceUntilIdle()
 
             viewModel.setActiveGroup("group-a")
@@ -512,7 +665,7 @@ class DetailViewModelTest {
             library.updateGate = updateGate
             val groups = FakeGroupRepository()
             groups.progressFailures[GROUP_ID to "media-1"] = GroupFailure.Network
-            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), library, groups)
+            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), library, groups, FakeAuthRepository())
             advanceUntilIdle()
 
             viewModel.setScore(BigDecimal("9.0"))
@@ -554,7 +707,14 @@ class DetailViewModelTest {
             media.detailGate = titleGate
             val groups =
                 FakeGroupRepository(progressResults = mutableMapOf((GROUP_ID to "media-1") to listOf(PROGRESS_ROW)))
-            val viewModel = DetailViewModel(savedState("media-1"), media, FakeLibrary(entry = null), groups)
+            val viewModel =
+                DetailViewModel(
+                    savedState("media-1"),
+                    media,
+                    FakeLibrary(entry = null),
+                    groups,
+                    FakeAuthRepository(),
+                )
             // load() is already suspended inside media.detail(), awaiting titleGate — nothing has
             // advanced it yet, so DetailUiState.Success does not exist for setActiveGroup to patch.
 
@@ -589,7 +749,14 @@ class DetailViewModelTest {
             val groups =
                 FakeGroupRepository(progressResults = mutableMapOf((GROUP_ID to "media-1") to listOf(PROGRESS_ROW)))
             groups.reviewsFailures[GROUP_ID to "media-1"] = GroupFailure.Network
-            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), FakeLibrary(entry = ENTRY), groups)
+            val viewModel =
+                DetailViewModel(
+                    savedState("media-1"),
+                    FakeMedia(),
+                    FakeLibrary(entry = ENTRY),
+                    groups,
+                    FakeAuthRepository(),
+                )
             advanceUntilIdle()
 
             viewModel.setActiveGroup(GROUP_ID)
@@ -607,7 +774,14 @@ class DetailViewModelTest {
     fun `proposing to a group calls proposeTitle with that group and this title`() =
         runTest(dispatcher) {
             val groups = FakeGroupRepository(proposeResult = WATCHLIST_ENTRY)
-            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), FakeLibrary(entry = ENTRY), groups)
+            val viewModel =
+                DetailViewModel(
+                    savedState("media-1"),
+                    FakeMedia(),
+                    FakeLibrary(entry = ENTRY),
+                    groups,
+                    FakeAuthRepository(),
+                )
             advanceUntilIdle()
 
             viewModel.proposeToGroup("group-9")
@@ -624,7 +798,14 @@ class DetailViewModelTest {
     fun `a failed propose reports NoSuchTitle without disturbing the rest of the screen`() =
         runTest(dispatcher) {
             val groups = FakeGroupRepository(proposeFailure = GroupFailure.NoSuchTitle)
-            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), FakeLibrary(entry = ENTRY), groups)
+            val viewModel =
+                DetailViewModel(
+                    savedState("media-1"),
+                    FakeMedia(),
+                    FakeLibrary(entry = ENTRY),
+                    groups,
+                    FakeAuthRepository(),
+                )
             advanceUntilIdle()
 
             viewModel.proposeToGroup("group-9")
@@ -641,7 +822,14 @@ class DetailViewModelTest {
     fun `a second propose is ignored while one is already in flight`() =
         runTest(dispatcher) {
             val groups = FakeGroupRepository(proposeResult = WATCHLIST_ENTRY)
-            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), FakeLibrary(entry = ENTRY), groups)
+            val viewModel =
+                DetailViewModel(
+                    savedState("media-1"),
+                    FakeMedia(),
+                    FakeLibrary(entry = ENTRY),
+                    groups,
+                    FakeAuthRepository(),
+                )
             advanceUntilIdle()
 
             viewModel.proposeToGroup("group-9")
@@ -662,7 +850,14 @@ class DetailViewModelTest {
     fun `a successful propose records which group it went to`() =
         runTest(dispatcher) {
             val groups = FakeGroupRepository(proposeResult = WATCHLIST_ENTRY)
-            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), FakeLibrary(entry = ENTRY), groups)
+            val viewModel =
+                DetailViewModel(
+                    savedState("media-1"),
+                    FakeMedia(),
+                    FakeLibrary(entry = ENTRY),
+                    groups,
+                    FakeAuthRepository(),
+                )
             advanceUntilIdle()
 
             viewModel.proposeToGroup("group-9")
@@ -681,7 +876,14 @@ class DetailViewModelTest {
     fun `starting a second propose clears the previous propose's confirmation immediately`() =
         runTest(dispatcher) {
             val groups = FakeGroupRepository(proposeResult = WATCHLIST_ENTRY)
-            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), FakeLibrary(entry = ENTRY), groups)
+            val viewModel =
+                DetailViewModel(
+                    savedState("media-1"),
+                    FakeMedia(),
+                    FakeLibrary(entry = ENTRY),
+                    groups,
+                    FakeAuthRepository(),
+                )
             advanceUntilIdle()
             viewModel.proposeToGroup("group-9")
             advanceUntilIdle()
@@ -693,6 +895,330 @@ class DetailViewModelTest {
             // the same "clear before a retry launches, not only on success" rule actionError/
             // proposeError already follow (decision C-S).
             assertNull((viewModel.state.value as DetailUiState.Success).justProposedToGroupId)
+        }
+
+    // --- Writing and editing a review (task 9c.7) ---------------------------------------------
+
+    /**
+     * The brief's own first named test, E-G. The editor is opened BEFORE the group section has
+     * loaded — [DetailViewModel.findOwnReview]'s own honest-null case — so it starts as a fresh
+     * draft ([ReviewEditorState.Open.reviewId] null). By the time [DetailViewModel.saveReview]
+     * runs, the section HAS loaded (with this account's own existing review already in it, the
+     * same list `list_group_reviews` returns to any of this account's own groups). `POST
+     * /v1/reviews` 409s; the save is retried TRANSPARENTLY as a `PATCH` of that resolved review,
+     * with the SAME text the reader typed — no error ever reaches the screen.
+     */
+    @Test
+    fun `a 409 switches to editing the existing review rather than showing an error`() =
+        runTest(dispatcher) {
+            val groups =
+                FakeGroupRepository(reviewsResults = mutableMapOf((GROUP_ID to "media-1") to listOf(MY_REVIEW)))
+            groups.createReviewFailure = GroupFailure.AlreadyReviewed(existingReviewId = null)
+            groups.updateReviewResult = MY_REVIEW.copy(body = "revised")
+            val viewModel =
+                DetailViewModel(
+                    savedState("media-1"),
+                    FakeMedia(),
+                    FakeLibrary(entry = ENTRY),
+                    groups,
+                    FakeAuthRepository(),
+                )
+            advanceUntilIdle()
+
+            viewModel.openReviewEditor()
+            advanceUntilIdle()
+            val opened = (viewModel.state.value as DetailUiState.Success).reviewEditor as ReviewEditorState.Open
+            assertNull("the section had not loaded yet, so resolution must have failed at open time", opened.reviewId)
+
+            viewModel.setActiveGroup(GROUP_ID)
+            advanceUntilIdle()
+
+            viewModel.saveReview("revised", false)
+            advanceUntilIdle()
+
+            assertEquals(ReviewEditorState.Closed, (viewModel.state.value as DetailUiState.Success).reviewEditor)
+            assertEquals(listOf(Triple("media-1", "revised", false)), groups.createReviewCalls)
+            assertEquals(listOf(Triple(MY_REVIEW.id, "revised", false)), groups.updateReviewCalls)
+        }
+
+    /**
+     * [DetailViewModel.openReviewEditor]'s own resolution branch, direct — no 409 round trip
+     * needed at all when the section is ALREADY loaded by the time the reader taps "Write a
+     * review": [DetailViewModel.findOwnReview] finds this account's own review synchronously, and
+     * the editor opens straight into edit mode, pre-filled.
+     */
+    @Test
+    fun `opening the editor when the section already has this account's own review resolves straight to editing`() =
+        runTest(dispatcher) {
+            val groups =
+                FakeGroupRepository(reviewsResults = mutableMapOf((GROUP_ID to "media-1") to listOf(MY_REVIEW)))
+            val viewModel =
+                DetailViewModel(
+                    savedState("media-1"),
+                    FakeMedia(),
+                    FakeLibrary(entry = ENTRY),
+                    groups,
+                    FakeAuthRepository(),
+                )
+            advanceUntilIdle()
+            viewModel.setActiveGroup(GROUP_ID)
+            advanceUntilIdle()
+
+            viewModel.openReviewEditor()
+            advanceUntilIdle()
+
+            val editor = (viewModel.state.value as DetailUiState.Success).reviewEditor as ReviewEditorState.Open
+            assertEquals(MY_REVIEW.id, editor.reviewId)
+            assertEquals(MY_REVIEW.body, editor.seedBody)
+            assertEquals(MY_REVIEW.containsSpoilers, editor.seedContainsSpoilers)
+        }
+
+    /** [saveReview]'s own re-entrancy guard — `edit`'s identical "a second edit is ignored" shape. */
+    @Test
+    fun `a second review save is ignored while one is already saving`() =
+        runTest(dispatcher) {
+            val groups = FakeGroupRepository()
+            groups.createReviewResult = MY_REVIEW
+            val viewModel =
+                DetailViewModel(
+                    savedState("media-1"),
+                    FakeMedia(),
+                    FakeLibrary(entry = ENTRY),
+                    groups,
+                    FakeAuthRepository(),
+                )
+            advanceUntilIdle()
+            viewModel.openReviewEditor()
+            advanceUntilIdle()
+
+            viewModel.saveReview("first attempt", false)
+            viewModel.saveReview("second attempt", false)
+            advanceUntilIdle()
+
+            assertEquals(1, groups.createReviewCalls.size)
+        }
+
+    /**
+     * The reverse of the test above: no active group exists to resolve the id from at all, so
+     * there is nothing for [DetailViewModel.handleCreateFailure] to retry against. `existingReviewId`
+     * is null on the server's own 409 body (`GroupFailure.AlreadyReviewed`'s own KDoc) — this pins
+     * that the honest degradation actually happens, rather than the save silently hanging or the
+     * reader's typed text being discarded.
+     */
+    @Test
+    fun `a 409 that cannot be resolved locally is reported, keeping the typed draft`() =
+        runTest(dispatcher) {
+            val groups = FakeGroupRepository()
+            groups.createReviewFailure = GroupFailure.AlreadyReviewed(existingReviewId = null)
+            val viewModel =
+                DetailViewModel(
+                    savedState("media-1"),
+                    FakeMedia(),
+                    FakeLibrary(entry = ENTRY),
+                    groups,
+                    FakeAuthRepository(),
+                )
+            advanceUntilIdle()
+            viewModel.openReviewEditor()
+            advanceUntilIdle()
+
+            viewModel.saveReview("nobody else can see this yet", false)
+            advanceUntilIdle()
+
+            val editor = (viewModel.state.value as DetailUiState.Success).reviewEditor as ReviewEditorState.Open
+            assertNull("no active group means no data to switch to editing WITH", editor.reviewId)
+            assertEquals(ReviewSaveError.Remote(GroupFailure.AlreadyReviewed(null)), editor.error)
+            assertFalse(editor.saving)
+        }
+
+    /** The brief's own second named test — `ReviewBody`'s server-side `min_length=1`, mirrored client-side. */
+    @Test
+    fun `an empty body cannot be submitted`() =
+        runTest(dispatcher) {
+            val groups = FakeGroupRepository()
+            val viewModel =
+                DetailViewModel(
+                    savedState("media-1"),
+                    FakeMedia(),
+                    FakeLibrary(entry = ENTRY),
+                    groups,
+                    FakeAuthRepository(),
+                )
+            advanceUntilIdle()
+            viewModel.openReviewEditor()
+            advanceUntilIdle()
+
+            // All-whitespace, not literally empty: the bound is checked AFTER stripping — the
+            // exact server-side behaviour this client-side check mirrors.
+            viewModel.saveReview("     ", false)
+            advanceUntilIdle()
+
+            assertEquals(0, groups.createReviewCalls.size)
+            val editor = (viewModel.state.value as DetailUiState.Success).reviewEditor as ReviewEditorState.Open
+            assertEquals(ReviewSaveError.BodyRequired, editor.error)
+        }
+
+    /** The brief's own third named test — §3.6's 4000-character bound, mirrored client-side. */
+    @Test
+    fun `a body over 4000 characters cannot be submitted`() =
+        runTest(dispatcher) {
+            val groups = FakeGroupRepository()
+            val viewModel =
+                DetailViewModel(
+                    savedState("media-1"),
+                    FakeMedia(),
+                    FakeLibrary(entry = ENTRY),
+                    groups,
+                    FakeAuthRepository(),
+                )
+            advanceUntilIdle()
+            viewModel.openReviewEditor()
+            advanceUntilIdle()
+
+            viewModel.saveReview("x".repeat(4001), false)
+            advanceUntilIdle()
+
+            assertEquals(0, groups.createReviewCalls.size)
+            val editor = (viewModel.state.value as DetailUiState.Success).reviewEditor as ReviewEditorState.Open
+            assertEquals(ReviewSaveError.BodyTooLong, editor.error)
+        }
+
+    /**
+     * The brief's own fourth named test. Closes the loop with task 9c.6: a review written with
+     * `containsSpoilers = true` must be exactly what [GroupRepository.createReview] is CALLED
+     * with, and exactly what the reloaded [GroupSectionState.Loaded.reviews] then carries — the
+     * round trip, not a re-test of [SpoilerReview]'s own collapse (already covered elsewhere,
+     * Global Constraints' own instruction).
+     */
+    @Test
+    fun `the spoiler flag set at write time is what the group section honours`() =
+        runTest(dispatcher) {
+            val saved = MY_REVIEW.copy(id = "review-new", containsSpoilers = true, body = "spoilery")
+            val groups = FakeGroupRepository()
+            groups.createReviewResult = saved
+            val viewModel =
+                DetailViewModel(
+                    savedState("media-1"),
+                    FakeMedia(),
+                    FakeLibrary(entry = ENTRY),
+                    groups,
+                    FakeAuthRepository(),
+                )
+            advanceUntilIdle()
+            viewModel.setActiveGroup(GROUP_ID)
+            advanceUntilIdle()
+            // Nothing configured for GROUP_ID/media-1 yet, so the section loads EMPTY —
+            // findOwnReview() finds nothing, and the editor below opens in CREATE mode.
+            viewModel.openReviewEditor()
+            advanceUntilIdle()
+
+            // The server now "has" the review this save is about to create — configured so the
+            // POST-SAVE reload (onReviewSaved -> reloadGroupSection), not this account already
+            // owning a review before the save, is what makes it visible below.
+            groups.reviewsResults[GROUP_ID to "media-1"] = listOf(saved)
+
+            viewModel.saveReview("spoilery", true)
+            advanceUntilIdle()
+
+            assertEquals(listOf(Triple("media-1", "spoilery", true)), groups.createReviewCalls)
+            val section = (viewModel.state.value as DetailUiState.Success).groupSection as GroupSectionState.Loaded
+            assertTrue(section.reviews.single().containsSpoilers)
+        }
+
+    /**
+     * One of the pairs Global Constraints calls out by name for this task: a group switch racing
+     * an in-flight save. [DetailViewModel.onReviewSaved]'s own reload must target whichever group
+     * is ACTIVE when the save actually FINISHES, not whichever was active when it STARTED — the
+     * server-supplied `reviewsResults` for "group-b" is changed only AFTER group B's own initial
+     * (pre-save) fetch has already landed, so the assertion below can only pass if the SAVE's own
+     * completion is what triggers a SECOND fetch.
+     */
+    @Test
+    fun `switching the active group while a save is in flight reloads the new group's section, not the old`() =
+        runTest(dispatcher) {
+            val savedReview = MY_REVIEW.copy(id = "review-new")
+            val groups =
+                FakeGroupRepository(
+                    progressResults =
+                        mutableMapOf(
+                            ("group-a" to "media-1") to listOf(PROGRESS_ROW),
+                            ("group-b" to "media-1") to listOf(OTHER_PROGRESS_ROW),
+                        ),
+                )
+            groups.createReviewResult = savedReview
+            val createGate = CompletableDeferred<Unit>()
+            groups.createReviewGate = createGate
+            val viewModel =
+                DetailViewModel(
+                    savedState("media-1"),
+                    FakeMedia(),
+                    FakeLibrary(entry = ENTRY),
+                    groups,
+                    FakeAuthRepository(),
+                )
+            advanceUntilIdle()
+            viewModel.setActiveGroup("group-a")
+            advanceUntilIdle()
+            viewModel.openReviewEditor()
+            advanceUntilIdle()
+            viewModel.saveReview("body", false)
+            advanceUntilIdle() // createReview launches and suspends on createGate.
+
+            viewModel.setActiveGroup("group-b")
+            advanceUntilIdle() // group B's own (ungated) fetch lands immediately, with no review yet.
+            groups.reviewsResults["group-b" to "media-1"] = listOf(savedReview)
+
+            createGate.complete(Unit)
+            advanceUntilIdle() // the save resolves; onReviewSaved() reloads under the CURRENT groupId.
+
+            val after = viewModel.state.value as DetailUiState.Success
+            assertEquals(ReviewEditorState.Closed, after.reviewEditor)
+            val section = after.groupSection as GroupSectionState.Loaded
+            assertEquals(listOf(savedReview), section.reviews)
+            assertEquals(listOf(OTHER_PROGRESS_ROW), section.progress)
+        }
+
+    /**
+     * The other pair Global Constraints calls out by name: a review save failing while a library
+     * edit is still in flight. Decision C-S — one error channel per operation — means neither
+     * direction may clobber the other, the identical shape the existing group-section/edit pair
+     * test above already pins for a different pair of channels.
+     */
+    @Test
+    fun `a review save failure and an in-flight library edit leave each other's channel untouched`() =
+        runTest(dispatcher) {
+            val library = FakeLibrary(entry = ENTRY)
+            val updateGate = CompletableDeferred<Unit>()
+            library.updateGate = updateGate
+            val groups = FakeGroupRepository()
+            groups.createReviewFailure = GroupFailure.Network
+            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), library, groups, FakeAuthRepository())
+            advanceUntilIdle()
+            viewModel.openReviewEditor()
+            advanceUntilIdle()
+
+            viewModel.setScore(BigDecimal("9.0"))
+            // The synchronous half of edit() has already run — saving is true before the
+            // coroutine that awaits updateGate is even dispatched.
+            assertTrue((viewModel.state.value as DetailUiState.Success).saving)
+
+            viewModel.saveReview("a real review", false)
+            advanceUntilIdle()
+
+            val midEdit = viewModel.state.value as DetailUiState.Success
+            assertTrue("the library edit must still be in flight", midEdit.saving)
+            val editor = midEdit.reviewEditor as ReviewEditorState.Open
+            assertEquals(ReviewSaveError.Remote(GroupFailure.Network), editor.error)
+            assertFalse(editor.saving)
+
+            updateGate.complete(Unit)
+            advanceUntilIdle()
+
+            val afterEdit = viewModel.state.value as DetailUiState.Success
+            assertFalse(afterEdit.saving)
+            assertNull(afterEdit.actionError)
+            val editorAfter = afterEdit.reviewEditor as ReviewEditorState.Open
+            assertEquals(ReviewSaveError.Remote(GroupFailure.Network), editorAfter.error)
         }
 
     private fun savedState(mediaId: String): SavedStateHandle = SavedStateHandle(mapOf("mediaId" to mediaId))
@@ -859,6 +1385,19 @@ class DetailViewModelTest {
                 author = GroupActor(id = "user-1", username = "alice"),
                 mediaId = "media-1",
                 body = "Great pacing.",
+                containsSpoilers = false,
+                createdAt = Instant.parse("2026-08-28T10:15:30Z"),
+                updatedAt = Instant.parse("2026-08-28T10:15:30Z"),
+            )
+
+        // Authored by "user-self" — FakeAuthRepository's own default currentUserIdResult — so
+        // findOwnReview() matches it once the group section has loaded, task 9c.7's own tests.
+        val MY_REVIEW =
+            Review(
+                id = "review-mine",
+                author = GroupActor(id = "user-self", username = "me"),
+                mediaId = "media-1",
+                body = "already reviewed this one",
                 containsSpoilers = false,
                 createdAt = Instant.parse("2026-08-28T10:15:30Z"),
                 updatedAt = Instant.parse("2026-08-28T10:15:30Z"),
