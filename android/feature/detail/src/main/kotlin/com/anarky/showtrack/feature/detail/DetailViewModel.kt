@@ -146,6 +146,22 @@ class DetailViewModel
         // it does not fix (a cold start).
         private var lastOwnReview: Review? = null
 
+        // Fix round 3, BLOCKING: the [groupSectionGeneration] a successfully-applied [GroupSectionState.Loaded]
+        // was actually FETCHED under — distinct from [groupSectionGeneration] itself, which also
+        // changes the instant a switch or a save is REQUESTED, before that request's own fetch has
+        // resolved. Written ONLY in [reloadGroupSection]'s success branch, never on a failure: a
+        // failed reload keeps the OLD data (the settled refresh shape), so its true freshness is
+        // whatever this already was, not the failed attempt's own generation. [findOwnReview] reads
+        // this to tell "the section already reflects the write [lastOwnReview] recorded" apart from
+        // "the section still predates it" — see that function's own KDoc.
+        private var groupSectionAppliedGeneration = -1
+
+        // Fix round 3, BLOCKING: the [groupSectionGeneration] that was current at the MOMENT
+        // [lastOwnReview] was last written, captured in [onReviewSaved] BEFORE that function's own
+        // bump — so a [groupSectionAppliedGeneration] EQUAL to this belongs to a fetch that was
+        // already in flight (or already applied) at save time, not one requested because of it.
+        private var lastOwnReviewGeneration = -1
+
         init {
             load()
             resolveCurrentUserId()
@@ -450,9 +466,19 @@ class DetailViewModel
          * (this class's own KDoc) — the reload above is what keeps [groupSection] itself honest, not
          * an optimistic insert of [saved] into it. A no-op reload when there is no active group —
          * nothing in [groupSection] needs refreshing if it was never scoped to one.
+         *
+         * [lastOwnReviewGeneration] is stamped BEFORE the bump below (fix round 3, BLOCKING) — see
+         * [findOwnReview]'s own KDoc for what that ordering buys: a [groupSectionAppliedGeneration]
+         * EQUAL to this value means the currently-shown section was fetched no later than THIS
+         * save, so it must never be trusted over [lastOwnReview] — covers a post-save reload that
+         * FAILS (the section then keeps its pre-write data, marked stale, forever, with nothing
+         * else to ever refresh it) as well as one still in flight, neither of which the generation
+         * bump alone (fix round 2) touches: that bump only ever decided which FETCH's RESULT gets
+         * WRITTEN, never how trustworthy an already-written result still is once time has passed.
          */
         private fun onReviewSaved(saved: Review) {
             lastOwnReview = saved
+            lastOwnReviewGeneration = groupSectionGeneration
             replaceSuccess { it.copy(reviewEditor = ReviewEditorState.Closed) }
             if (groupId != null) {
                 // Fix round 2, SHOULD-FIX: bumping the generation FIRST is what makes an EARLIER,
@@ -465,10 +491,12 @@ class DetailViewModel
                 // a switch. Without the bump, [reloadGroupSection]'s re-entrancy guard
                 // (`loadingGroupSectionGeneration == groupSectionGeneration`) silently DROPS this
                 // call whenever a resume-triggered fetch is still in flight — the older fetch then
-                // lands, `findOwnReview` trusts its (pre-write) "no match" outright over a
-                // genuinely fresher [lastOwnReview], and a no-groups-shaped 409 dead end reappears
-                // even with an active group. Bumping first forces the guard open for a fresh fetch,
-                // and makes the OLDER fetch's own landing a no-op via the SAME check.
+                // lands, and (WITHOUT [lastOwnReviewGeneration]'s own freshness check above) would
+                // get trusted outright over a genuinely fresher [lastOwnReview]. Bumping first forces
+                // the guard open for a fresh fetch, and makes the OLDER fetch's own landing a no-op
+                // via the SAME check — the two fixes are complementary, not redundant: this bump
+                // decides which fetch's result gets APPLIED; [lastOwnReviewGeneration] decides
+                // whether an ALREADY-APPLIED result is still trustworthy once this save has happened.
                 groupSectionGeneration++
                 reloadGroupSection()
             }
@@ -480,7 +508,10 @@ class DetailViewModel
          * the ACTIVE group's section already has loaded. Reviews of a title are visible to every
          * group the author is a member of (`list_group_reviews`, `backend/app/groups/service.py`),
          * so a reviewer looking at this screen with an active, loaded group section is necessarily
-         * looking at a list that already includes their own review, if one exists.
+         * looking at a list that already includes their own review, if one exists — PROVIDED that
+         * section actually reflects a fetch made at or after the account's own last write. That
+         * proviso is new in fix round 3; see below for why round 1's original "trust it outright"
+         * claim did not hold.
          *
          * **[lastOwnReview] is the fallback when the section itself is not [GroupSectionState.Loaded]**
          * (fix round 1, BLOCKING B2) — `Absent`/`Loading`/`Error`, or [currentUserId] has not
@@ -495,17 +526,27 @@ class DetailViewModel
          * server-side "my own review" lookup this phase's API surface does not have, out of scope
          * here (recorded as a follow-up, not silently dropped).
          *
-         * When the section IS [GroupSectionState.Loaded] and [currentUserId] IS known, its own
-         * answer is trusted OUTRIGHT, including a genuine "no match" — that combination is the
-         * authoritative, live source of truth (the account is verifiably a member of the active
-         * group, so `list_group_reviews` would include its own review if the review still exists),
-         * so a loaded section reporting no match is never overridden by a possibly-stale
-         * [lastOwnReview].
+         * **When the section IS [GroupSectionState.Loaded] and [currentUserId] IS known but reports
+         * NO match, that answer is trusted only if [groupSectionAppliedGeneration] is STRICTLY
+         * GREATER than [lastOwnReviewGeneration]** (fix round 3, BLOCKING — round 1's own version of
+         * this KDoc claimed the section is trusted "outright" once loaded; that was wrong, proven by
+         * a direct probe: write a review with an active group already `Loaded(reviews = [])`, then
+         * let the post-save reload fail with a transient [GroupFailure.Network] — the settled
+         * refresh shape correctly KEEPS the pre-write `Loaded` data rather than blanking it, marked
+         * `isStale`, and nothing else ever re-fetches it, so that stale "no match" would otherwise be
+         * trusted PERMANENTLY, for the life of the screen, over a [lastOwnReview] that is actually
+         * correct). The two generations answer exactly one question — did the data CURRENTLY on
+         * screen come from a fetch that started no earlier than this save — which fix round 2's
+         * generation BUMP does not answer on its own: that bump only ever decided which fetch's
+         * RESULT gets WRITTEN into [groupSection], never how trustworthy an already-written result
+         * still is once a save has since happened without a corresponding successful refresh.
          */
         private fun findOwnReview(): Review? {
             val loaded = groupSection as? GroupSectionState.Loaded ?: return lastOwnReview
             val userId = currentUserId ?: return lastOwnReview
-            return loaded.reviews.firstOrNull { review -> review.author.id == userId }
+            val match = loaded.reviews.firstOrNull { review -> review.author.id == userId }
+            if (match != null) return match
+            return if (groupSectionAppliedGeneration > lastOwnReviewGeneration) null else lastOwnReview
         }
 
         /**
@@ -650,6 +691,11 @@ class DetailViewModel
          * is ready, [groupSectionGeneration] no longer equals [myGeneration] — so the result (success
          * OR failure) is dropped rather than being written over whatever the new group has already
          * rendered.
+         *
+         * **The success branch alone stamps [groupSectionAppliedGeneration]** (fix round 3,
+         * BLOCKING) — a FAILURE keeps the OLD data on screen (marked stale), so it must NOT claim
+         * that data is as fresh as this attempt; only a genuinely NEW, successfully-applied
+         * [GroupSectionState.Loaded] advances what [findOwnReview] is willing to trust.
          */
         private fun reloadGroupSection() {
             val currentGroupId = groupId ?: return
@@ -670,6 +716,7 @@ class DetailViewModel
                             progressDeferred.await() to reviewsDeferred.await()
                         }
                     if (groupSectionGeneration == myGeneration) {
+                        groupSectionAppliedGeneration = myGeneration
                         applyGroupSection(GroupSectionState.Loaded(progress = progressList, reviews = reviewsList))
                     }
                 } catch (cancellation: CancellationException) {

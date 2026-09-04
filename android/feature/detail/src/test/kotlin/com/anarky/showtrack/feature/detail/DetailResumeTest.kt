@@ -2,21 +2,30 @@ package com.anarky.showtrack.feature.detail
 
 import android.content.Context
 import androidx.activity.ComponentActivity
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.lifecycle.SavedStateHandle
 import androidx.test.core.app.ApplicationProvider
+import com.anarky.showtrack.core.data.repository.LibraryRepository
 import com.anarky.showtrack.core.model.ActiveGroupState
 import com.anarky.showtrack.core.model.Group
 import com.anarky.showtrack.core.model.GroupActor
 import com.anarky.showtrack.core.model.GroupFailure
+import com.anarky.showtrack.core.model.LibraryPatch
 import com.anarky.showtrack.core.model.MediaSource
 import com.anarky.showtrack.core.model.MediaSummary
 import com.anarky.showtrack.core.model.MediaType
 import com.anarky.showtrack.core.model.Review
+import com.anarky.showtrack.core.model.ScoreChange
+import com.anarky.showtrack.core.model.UserMediaStatus
 import com.anarky.showtrack.core.model.WatchlistEntry
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertEquals
@@ -24,6 +33,8 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import java.io.IOException
+import java.math.BigDecimal
 import java.time.Instant
 import com.anarky.showtrack.core.designsystem.R as DesignSystemR
 
@@ -67,6 +78,15 @@ import com.anarky.showtrack.core.designsystem.R as DesignSystemR
  * way round 1's three did before this file existed. The working rule going forward: any NEW
  * callback added to the stateful wrapper gets its OWN case here in the SAME change — this file is
  * not a one-time fix, it is the standing gate for this seam.
+ *
+ * **Fix round 3 addition — a full callback sweep** (stubbing EVERY wire on the stateful wrapper
+ * simultaneously, not just the ones already reported broken) found the identical hole on the SEVEN
+ * wires this task never touched: `onRetry`, `onAddToLibrary`, `onScoreSelected`, `onScoreCleared`,
+ * `onProgressChange`, `onStatusSelected`, `onFavoriteToggle` — all predating this task, all inert-safe
+ * the same way. `the library edit controls on the real, composed screen actually save` covers five
+ * of the seven in one flow (score select, score clear, progress, status, favourite — one screen,
+ * one natural sequence, per the coordinator's own steer against seven separate cases);
+ * `the Add to library button...`/`the retry button on a failed initial load...` cover the other two.
  */
 @RunWith(RobolectricTestRunner::class)
 class DetailResumeTest {
@@ -261,11 +281,152 @@ class DetailResumeTest {
             .assertDoesNotExist()
     }
 
-    private fun detailViewModel(groups: FakeGroupRepository): DetailViewModel =
+    /**
+     * Fix round 3: the full callback sweep's own five-in-one case. `FakeLibrary.updateResult`
+     * defaults to `ENTRY` itself (unchanged by whatever patch was actually sent), so the screen
+     * keeps rendering the SAME score/progress/status/favourite values between taps — letting each
+     * control be found by its stable, unchanging text rather than by a value this test would
+     * otherwise have to keep recomputing. Each tap's effect is checked directly against
+     * `library.lastPatch`/`updateCalls`, not against anything re-rendered.
+     */
+    @Test
+    fun `the library edit controls on the real, composed screen actually save`() {
+        val groups = FakeGroupRepository()
+        val library = DetailViewModelTest.FakeLibrary(entry = DetailViewModelTest.ENTRY)
+        val viewModel = detailViewModel(groups, library = library)
+        val activeGroup =
+            MutableStateFlow<ActiveGroupState>(ActiveGroupState.Success(groups = emptyList(), activeGroupId = null))
+
+        composeRule.setContent { DetailScreen(activeGroup = activeGroup, viewModel = viewModel) }
+        composeRule.waitForIdle()
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+
+        // Score: select 9.0 (ENTRY.score is 8.5, so the chip's own text names the tap target).
+        // The chip itself is a plain clickable Surface, not inside a Popup, so an ordinary
+        // performClick() opens the dropdown reliably — confirmed by the "Clear score" item (unique
+        // to the open menu) actually existing afterward.
+        composeRule.onNodeWithText("8.5").performScrollTo().performClick()
+        composeRule.waitForIdle()
+        composeRule
+            .onNodeWithText(context.getString(R.string.detail_score_clear))
+            .assertExists("the score dropdown did not open")
+        composeRule.onAllNodesWithText("9.0").onFirst().performSemanticsClick()
+        composeRule.waitForIdle()
+        assertEquals(1, library.updateCalls)
+        assertEquals(LibraryPatch(score = ScoreChange.Set(BigDecimal("9.0"))), library.lastPatch)
+
+        // Score: clear it — the chip still reads "8.5" (FakeLibrary.updateResult is unchanged).
+        composeRule.onNodeWithText("8.5").performScrollTo().performClick()
+        composeRule.onNodeWithText(context.getString(R.string.detail_score_clear)).performSemanticsClick()
+        composeRule.waitForIdle()
+        assertEquals(2, library.updateCalls)
+        assertEquals(LibraryPatch(score = ScoreChange.Clear), library.lastPatch)
+
+        // Progress: increase (ENTRY.progress is 3).
+        composeRule
+            .onNodeWithText(context.getString(R.string.detail_progress_increase))
+            .performScrollTo()
+            .performClick()
+        composeRule.waitForIdle()
+        assertEquals(3, library.updateCalls)
+        assertEquals(LibraryPatch(progress = 4), library.lastPatch)
+
+        // Status: select Completed (ENTRY.status is WATCHING).
+        composeRule
+            .onNodeWithText(context.getString(DesignSystemR.string.status_completed))
+            .performScrollTo()
+            .performClick()
+        composeRule.waitForIdle()
+        assertEquals(4, library.updateCalls)
+        assertEquals(LibraryPatch(status = UserMediaStatus.COMPLETED), library.lastPatch)
+
+        // Favourite: toggle (ENTRY.favorite is false).
+        composeRule
+            .onNodeWithText(context.getString(R.string.detail_favorite_label))
+            .performScrollTo()
+            .performClick()
+        composeRule.waitForIdle()
+        assertEquals(5, library.updateCalls)
+        assertEquals(LibraryPatch(favorite = true), library.lastPatch)
+    }
+
+    /** Fix round 3: the sixth of the seven swept wires. */
+    @Test
+    fun `the Add to library button on the real, composed screen actually adds`() {
+        val groups = FakeGroupRepository()
+        val library = DetailViewModelTest.FakeLibrary(entry = null, addResult = DetailViewModelTest.ENTRY)
+        val viewModel = detailViewModel(groups, library = library)
+        val activeGroup =
+            MutableStateFlow<ActiveGroupState>(ActiveGroupState.Success(groups = emptyList(), activeGroupId = null))
+
+        composeRule.setContent { DetailScreen(activeGroup = activeGroup, viewModel = viewModel) }
+        composeRule.waitForIdle()
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule
+            .onNodeWithText(context.getString(R.string.detail_add_button))
+            .performScrollTo()
+            .performClick()
+        composeRule.waitForIdle()
+
+        assertEquals(MediaSource.ANILIST, library.lastAddSource)
+        assertEquals("21", library.lastAddExternalId)
+    }
+
+    /** Fix round 3: the seventh of the seven swept wires — only reachable from a failed initial load. */
+    @Test
+    fun `the retry button on a failed initial load, on the real composed screen, actually retries`() {
+        val groups = FakeGroupRepository()
+        val media = DetailViewModelTest.FakeMedia(detailFailure = IOException("offline"))
+        val viewModel = detailViewModel(groups, media = media)
+        val activeGroup =
+            MutableStateFlow<ActiveGroupState>(ActiveGroupState.Success(groups = emptyList(), activeGroupId = null))
+
+        composeRule.setContent { DetailScreen(activeGroup = activeGroup, viewModel = viewModel) }
+        composeRule.waitForIdle()
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule.onNodeWithText(context.getString(R.string.detail_error_message)).assertExists()
+
+        media.detailFailure = null
+        composeRule
+            .onNodeWithText(context.getString(DesignSystemR.string.action_retry))
+            .performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithText(context.getString(R.string.detail_error_message)).assertDoesNotExist()
+    }
+
+    /**
+     * Fix round 3, discovered writing the library-controls flow test below: an ordinary
+     * `performClick()` — a real, coordinate-based gesture at the node's measured bounds — is
+     * unreliable against content INSIDE a Material3 `DropdownMenu`'s own `Popup` under Robolectric.
+     * The node is genuinely found by a text query (`assertExists` on it passes), so the popup IS
+     * composed and its semantics tree IS attached; the click gesture itself is what does not
+     * reliably land, most likely a Robolectric window/popup bounds quirk this project's test suite
+     * has never exercised before (no existing test anywhere in this codebase interacts with a
+     * `DropdownMenu`'s open contents). Invoking the node's own `OnClick` semantics action directly
+     * — the same action a real click would eventually trigger — sidesteps the coordinate question
+     * entirely and is reliable. Used ONLY for the two taps that land inside the open popup (a
+     * score value, "Clear score"); every other control in this file is a plain, non-popup
+     * clickable and keeps using ordinary `performClick()`.
+     */
+    private fun SemanticsNodeInteraction.performSemanticsClick() {
+        val node = fetchSemanticsNode()
+        val onClick = node.config.getOrNull(SemanticsActions.OnClick)
+        checkNotNull(onClick) { "node has no OnClick semantics action" }.action?.invoke()
+    }
+
+    private fun detailViewModel(
+        groups: FakeGroupRepository,
+        media: DetailViewModelTest.FakeMedia = DetailViewModelTest.FakeMedia(),
+        library: LibraryRepository = DetailViewModelTest.FakeLibrary(entry = null),
+    ): DetailViewModel =
         DetailViewModel(
             SavedStateHandle(mapOf("mediaId" to "media-1")),
-            DetailViewModelTest.FakeMedia(),
-            DetailViewModelTest.FakeLibrary(entry = null),
+            media,
+            library,
             groups,
             FakeAuthRepository(),
         )

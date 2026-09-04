@@ -1234,6 +1234,108 @@ class DetailViewModelTest {
         }
 
     /**
+     * Fix round 3, BLOCKING (the coordinator's own probe, reproduced here): the generation BUMP
+     * (fix round 2) only decides which fetch's RESULT gets written — it says nothing about how
+     * trustworthy an ALREADY-WRITTEN result still is. A save whose OWN post-save reload then FAILS
+     * leaves the section exactly where the settled refresh shape says it should — holding the
+     * PRE-write data, marked stale — and nothing else ever re-fetches it. Without
+     * [DetailViewModel]'s own freshness stamp (`groupSectionAppliedGeneration` vs
+     * `lastOwnReviewGeneration`), [DetailViewModel.findOwnReview] would trust that stale "no match"
+     * PERMANENTLY, for the life of this ViewModel instance, over a [lastOwnReview] that is actually
+     * correct — the identical dead end BLOCKING B2 fixed, reachable a THIRD way.
+     */
+    @Test
+    fun `a failed post-save reload does not permanently hide the review behind stale pre-write data`() =
+        runTest(dispatcher) {
+            val key = GROUP_ID to "media-1"
+            val groups = FakeGroupRepository(reviewsResults = mutableMapOf(key to emptyList()))
+            val saved = MY_REVIEW.copy(id = "review-mine")
+            groups.createReviewResult = saved
+            val viewModel =
+                DetailViewModel(
+                    savedState("media-1"),
+                    FakeMedia(),
+                    FakeLibrary(entry = ENTRY),
+                    groups,
+                    FakeAuthRepository(),
+                )
+            advanceUntilIdle()
+            viewModel.setActiveGroup(GROUP_ID)
+            advanceUntilIdle()
+            // The section is now Loaded(reviews = emptyList()) — nobody has reviewed this yet.
+
+            viewModel.openReviewEditor()
+            advanceUntilIdle()
+
+            groups.reviewsFailures[key] = GroupFailure.Network
+            viewModel.saveReview("first draft", false)
+            advanceUntilIdle()
+
+            val afterFailedReload =
+                (viewModel.state.value as DetailUiState.Success).groupSection as GroupSectionState.Loaded
+            assertTrue(
+                "a failed reload keeps the OLD (pre-write) data, marked stale — the settled refresh shape",
+                afterFailedReload.isStale,
+            )
+            assertEquals(emptyList<Review>(), afterFailedReload.reviews)
+
+            viewModel.openReviewEditor()
+            advanceUntilIdle()
+
+            val reopened = (viewModel.state.value as DetailUiState.Success).reviewEditor as ReviewEditorState.Open
+            assertEquals(
+                "the stale, pre-write section must not be trusted over the fresher cache",
+                "review-mine",
+                reopened.reviewId,
+            )
+        }
+
+    /**
+     * Fix round 3, BLOCKING's own companion: the freshness check has TWO ways to fail, not one.
+     * This pins the direction the coordinator's probe did not — a section that genuinely IS
+     * fresher than the cache (a successful load completed AFTER the write) must still be trusted
+     * when it reports no match, not overridden by a now-stale [lastOwnReview]. Mutation-verified
+     * separately: deleting `groupSectionAppliedGeneration = myGeneration` from
+     * `reloadGroupSection`'s success branch leaves it stuck at its initial `-1` forever, so this
+     * exact scenario would otherwise resolve to the stale cached id instead of `null`.
+     */
+    @Test
+    fun `a genuinely fresh no-match is trusted over a now-stale cache`() =
+        runTest(dispatcher) {
+            val groups = FakeGroupRepository()
+            groups.createReviewResult = MY_REVIEW.copy(id = "review-mine")
+            val viewModel =
+                DetailViewModel(
+                    savedState("media-1"),
+                    FakeMedia(),
+                    FakeLibrary(entry = ENTRY),
+                    groups,
+                    FakeAuthRepository(),
+                )
+            advanceUntilIdle()
+            viewModel.openReviewEditor()
+            advanceUntilIdle()
+            viewModel.saveReview("first draft", false)
+            advanceUntilIdle()
+            // lastOwnReview now caches "review-mine", with no active group involved yet.
+
+            // A group becomes active AFTER the write and its section loads successfully, showing
+            // no review from this account — e.g. the review was deleted through some other client.
+            groups.reviewsResults[GROUP_ID to "media-1"] = emptyList()
+            viewModel.setActiveGroup(GROUP_ID)
+            advanceUntilIdle()
+
+            viewModel.openReviewEditor()
+            advanceUntilIdle()
+
+            val reopened = (viewModel.state.value as DetailUiState.Success).reviewEditor as ReviewEditorState.Open
+            assertNull(
+                "a fresh, successful no-match must win over a now-stale cache entry",
+                reopened.reviewId,
+            )
+        }
+
+    /**
      * Fix round 2, small item 2: a `PATCH` 404 ([GroupFailure.NoSuchEntry]) on the id
      * [DetailViewModel] itself cached means the CACHE is wrong, not just this one attempt — left
      * uncleared, [DetailViewModel.findOwnReview] would keep resolving every future open to the SAME
@@ -1280,6 +1382,63 @@ class DetailViewModelTest {
             val reopenedAfterFailure =
                 (viewModel.state.value as DetailUiState.Success).reviewEditor as ReviewEditorState.Open
             assertNull("the dead cached review must not be offered again", reopenedAfterFailure.reviewId)
+        }
+
+    /**
+     * Fix round 3, small item: [handleSaveFailure]'s `lastOwnReview?.id == editor.reviewId` scoping
+     * clause had no test of its own — pins the claim its own comment makes, that a 404 naming some
+     * OTHER id never clears an unrelated, still-good cache entry. `lastOwnReview` ("review-old") is
+     * cached with no active group; a LIVE, loaded section then resolves the editor to a genuinely
+     * DIFFERENT id ("review-different") — an edge case a real backend would never produce for one
+     * account+title, constructed directly here to exercise the scoping clause in isolation — and
+     * ONLY that different id's own 404 is fired.
+     */
+    @Test
+    fun `a NoSuchEntry failure on a different id than the cache leaves the cache untouched`() =
+        runTest(dispatcher) {
+            val groups = FakeGroupRepository()
+            groups.createReviewResult = MY_REVIEW.copy(id = "review-old")
+            val viewModel =
+                DetailViewModel(
+                    savedState("media-1"),
+                    FakeMedia(),
+                    FakeLibrary(entry = ENTRY),
+                    groups,
+                    FakeAuthRepository(),
+                )
+            advanceUntilIdle()
+            viewModel.openReviewEditor()
+            advanceUntilIdle()
+            viewModel.saveReview("first draft", false)
+            advanceUntilIdle()
+            // lastOwnReview now caches "review-old".
+
+            groups.reviewsResults[GROUP_ID to "media-1"] = listOf(MY_REVIEW.copy(id = "review-different"))
+            viewModel.setActiveGroup(GROUP_ID)
+            advanceUntilIdle()
+
+            viewModel.openReviewEditor()
+            advanceUntilIdle()
+            val opened = (viewModel.state.value as DetailUiState.Success).reviewEditor as ReviewEditorState.Open
+            assertEquals("the live section resolves first, not the cache", "review-different", opened.reviewId)
+
+            groups.updateReviewFailure = GroupFailure.NoSuchEntry
+            viewModel.saveReview("edited", false)
+            advanceUntilIdle()
+            // The 404 named "review-different" — never the cached "review-old".
+
+            viewModel.closeReviewEditor()
+            viewModel.setActiveGroup(null)
+            advanceUntilIdle()
+            viewModel.openReviewEditor()
+            advanceUntilIdle()
+
+            val reopened = (viewModel.state.value as DetailUiState.Success).reviewEditor as ReviewEditorState.Open
+            assertEquals(
+                "a 404 on a DIFFERENT id must not clear an unrelated, still-good cache entry",
+                "review-old",
+                reopened.reviewId,
+            )
         }
 
     /**
@@ -1681,7 +1840,10 @@ class DetailViewModelTest {
         override suspend fun importAniList(username: String) = error("not exercised by DetailViewModel")
     }
 
-    private companion object {
+    // internal, not private (fix round 3): DetailResumeTest reuses MEDIA/ENTRY directly rather
+    // than duplicating these fixtures — the same reasoning FakeMedia/FakeLibrary's own KDoc
+    // already gives for being internal.
+    internal companion object {
         val MEDIA =
             Media(
                 id = "media-1",
