@@ -419,6 +419,18 @@ class DetailViewModel
                     null
                 }
             if (ownReview == null) {
+                // Fix round 2, small item 2: a PATCH 404 (NoSuchEntry) on the id this ViewModel
+                // itself cached means the CACHE is the thing that is wrong — the review it points
+                // at is gone server-side. Left alone, [lastOwnReview] would keep resolving future
+                // opens to the SAME dead id, reproducing the identical 404 for the life of this
+                // instance; a delete is client-unreachable today (no `GroupRepository.deleteReview`
+                // exists), so this is a defensive self-heal for whenever that changes, not a path
+                // any current UI action can trigger. Scoped to the id that actually failed —
+                // [editor.reviewId] — so a 404 on some OTHER resolved id never clears a still-good
+                // cache entry for a different review.
+                if (failure.failure is GroupFailure.NoSuchEntry && lastOwnReview?.id == editor.reviewId) {
+                    lastOwnReview = null
+                }
                 replaceOpenReviewEditor { it.copy(saving = false, error = ReviewSaveError.Remote(failure.failure)) }
                 return
             }
@@ -442,7 +454,24 @@ class DetailViewModel
         private fun onReviewSaved(saved: Review) {
             lastOwnReview = saved
             replaceSuccess { it.copy(reviewEditor = ReviewEditorState.Closed) }
-            if (groupId != null) reloadGroupSection()
+            if (groupId != null) {
+                // Fix round 2, SHOULD-FIX: bumping the generation FIRST is what makes an EARLIER,
+                // still in-flight progress/reviews fetch (launched before this save resolved) get
+                // its eventual result DISCARDED instead of overwriting the section with pre-write
+                // data — [reloadGroupSection]'s own generation check
+                // (`groupSectionGeneration == myGeneration`) already exists for exactly this shape,
+                // [setActiveGroup]'s identical mechanism for a group switch; this reuses it for a
+                // SECOND trigger (a write racing a still-running read for the SAME group), not only
+                // a switch. Without the bump, [reloadGroupSection]'s re-entrancy guard
+                // (`loadingGroupSectionGeneration == groupSectionGeneration`) silently DROPS this
+                // call whenever a resume-triggered fetch is still in flight — the older fetch then
+                // lands, `findOwnReview` trusts its (pre-write) "no match" outright over a
+                // genuinely fresher [lastOwnReview], and a no-groups-shaped 409 dead end reappears
+                // even with an active group. Bumping first forces the guard open for a fresh fetch,
+                // and makes the OLDER fetch's own landing a no-op via the SAME check.
+                groupSectionGeneration++
+                reloadGroupSection()
+            }
         }
 
         /**

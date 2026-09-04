@@ -5,6 +5,7 @@ import androidx.lifecycle.SavedStateHandle
 import app.cash.turbine.test
 import com.anarky.showtrack.core.data.repository.LibraryRepository
 import com.anarky.showtrack.core.data.repository.MediaRepository
+import com.anarky.showtrack.core.model.AuthFailure
 import com.anarky.showtrack.core.model.GroupActor
 import com.anarky.showtrack.core.model.GroupFailure
 import com.anarky.showtrack.core.model.LibraryEntry
@@ -905,8 +906,12 @@ class DetailViewModelTest {
      * draft ([ReviewEditorState.Open.reviewId] null). By the time [DetailViewModel.saveReview]
      * runs, the section HAS loaded (with this account's own existing review already in it, the
      * same list `list_group_reviews` returns to any of this account's own groups). `POST
-     * /v1/reviews` 409s; the save is retried TRANSPARENTLY as a `PATCH` of that resolved review,
-     * with the SAME text the reader typed — no error ever reaches the screen.
+     * /v1/reviews` 409s; [DetailViewModel.handleSaveFailure] resolves it to that review and sets
+     * [ReviewEditorState.Open.confirmOverwrite] (fix round 1 — round 0's ORIGINAL shape retried
+     * transparently as a `PATCH` here, with no confirmation step; that shape is GONE, replaced by
+     * this two-tap one — see [ReviewEditorState.Open.confirmOverwrite]'s own KDoc for why). This
+     * test drives BOTH taps: the first produces the confirm state with nothing yet sent, the
+     * second is what actually reaches `PATCH`.
      */
     @Test
     fun `a 409 switches to editing the existing review rather than showing an error`() =
@@ -941,9 +946,12 @@ class DetailViewModelTest {
             // (reviewId set) and asks for one more explicit tap (confirmOverwrite) instead.
             val confirming = (viewModel.state.value as DetailUiState.Success).reviewEditor as ReviewEditorState.Open
             assertEquals(MY_REVIEW.id, confirming.reviewId)
-            assertTrue(confirming.confirmOverwrite)
-            assertNull(confirming.error)
-            assertFalse(confirming.saving)
+            assertTrue(
+                "a resolved 409 must ask for one more explicit Save, not send anything yet",
+                confirming.confirmOverwrite,
+            )
+            assertNull("no error is ever shown for a RESOLVED 409 — E-G's own wording", confirming.error)
+            assertFalse("nothing has been sent for this first tap", confirming.saving)
             assertEquals(listOf(Triple("media-1", "revised", false)), groups.createReviewCalls)
             assertEquals(0, groups.updateReviewCalls.size)
 
@@ -1140,6 +1148,174 @@ class DetailViewModelTest {
             assertEquals(MY_REVIEW.id, editor.reviewId)
             assertEquals(MY_REVIEW.body, editor.seedBody)
             assertEquals(MY_REVIEW.containsSpoilers, editor.seedContainsSpoilers)
+        }
+
+    /**
+     * Fix round 2, SHOULD-FIX (proven by the coordinator's own scratch reproduction,
+     * `expected:<review-mine> but was:<null>`): [DetailViewModel.onReviewSaved] caches
+     * [lastOwnReview] and calls `reloadGroupSection()` — but round 1's own re-entrancy guard drops
+     * that call whenever an OLDER `reviews()` fetch (launched before the write, e.g. by a resume)
+     * is still in flight. That older fetch then lands with PRE-write data, `findOwnReview` trusts
+     * its `Loaded` "no match" outright, and a fresher, correct [lastOwnReview] is discarded anyway
+     * — the identical dead end BLOCKING B2 fixed for a no-groups account, reappearing WITH an
+     * active group. [DetailViewModel.onReviewSaved] now bumps `groupSectionGeneration` before
+     * reloading, reusing the SAME mechanism [DetailViewModel.setActiveGroup] already uses for a
+     * group switch, so the older fetch's late landing is discarded instead.
+     *
+     * The two `reviews()` calls are given DIFFERENT gates (round 0's own `progressGates`/
+     * `reviewsGates` per-key technique does not by itself separate two calls for the SAME key —
+     * this test reassigns the map entry between the two, which only affects a call whose OWN gate
+     * lookup happens AFTER the reassignment; the older, already-suspended call keeps awaiting the
+     * SPECIFIC `CompletableDeferred` it already captured) so the test does not depend on dispatcher
+     * scheduling order to decide which call sees which data.
+     */
+    @Test
+    fun `a save does not lose the group section to an older, still in-flight reviews fetch`() =
+        runTest(dispatcher) {
+            val key = GROUP_ID to "media-1"
+            val groups = FakeGroupRepository(reviewsResults = mutableMapOf(key to emptyList()))
+            val oldFetchGate = CompletableDeferred<Unit>()
+            groups.reviewsGates[key] = oldFetchGate
+            val saved = MY_REVIEW.copy(id = "review-mine")
+            groups.createReviewResult = saved
+            val viewModel =
+                DetailViewModel(
+                    savedState("media-1"),
+                    FakeMedia(),
+                    FakeLibrary(entry = ENTRY),
+                    groups,
+                    FakeAuthRepository(),
+                )
+            advanceUntilIdle()
+
+            viewModel.setActiveGroup(GROUP_ID)
+            advanceUntilIdle()
+            // The initial (generation 1) reviews() call is suspended on oldFetchGate; its progress()
+            // sibling already resolved, but the enclosing coroutineScope waits for both.
+
+            viewModel.openReviewEditor()
+            advanceUntilIdle()
+
+            // Simulate the write landing server-side: a FRESH reviews() call (not the one already
+            // suspended above) would now see the review. Clearing the map entry only affects a
+            // call whose OWN lookup happens from here on — the old, already-suspended call is
+            // unaffected, since it is awaiting the SPECIFIC CompletableDeferred it already found.
+            groups.reviewsGates.remove(key)
+            groups.reviewsResults[key] = listOf(saved)
+
+            viewModel.saveReview("first draft", false)
+            advanceUntilIdle()
+
+            assertEquals(
+                "the save must trigger a SECOND reviews() fetch, not be dropped by the re-entrancy guard",
+                2,
+                groups.reviewsCalls.size,
+            )
+            val afterSave = (viewModel.state.value as DetailUiState.Success).groupSection as GroupSectionState.Loaded
+            assertEquals(listOf(saved), afterSave.reviews)
+
+            // The OLD (generation 1) fetch finally resolves — its result must be DISCARDED, not
+            // overwrite what the fresh (generation 2) fetch already applied.
+            oldFetchGate.complete(Unit)
+            advanceUntilIdle()
+
+            val afterOldFetchLands =
+                (viewModel.state.value as DetailUiState.Success).groupSection as GroupSectionState.Loaded
+            assertEquals(
+                "the older fetch's late landing must not clobber the fresher, already-applied state",
+                listOf(saved),
+                afterOldFetchLands.reviews,
+            )
+
+            viewModel.openReviewEditor()
+            advanceUntilIdle()
+            val reopened = (viewModel.state.value as DetailUiState.Success).reviewEditor as ReviewEditorState.Open
+            assertEquals("review-mine", reopened.reviewId)
+        }
+
+    /**
+     * Fix round 2, small item 2: a `PATCH` 404 ([GroupFailure.NoSuchEntry]) on the id
+     * [DetailViewModel] itself cached means the CACHE is wrong, not just this one attempt — left
+     * uncleared, [DetailViewModel.findOwnReview] would keep resolving every future open to the SAME
+     * dead id, reproducing the identical 404 for the life of this ViewModel instance. Reopening
+     * after the failure must start a FRESH draft instead.
+     */
+    @Test
+    fun `a NoSuchEntry failure clears the cached review it points at, so a reopen starts fresh`() =
+        runTest(dispatcher) {
+            val groups = FakeGroupRepository()
+            groups.createReviewResult = MY_REVIEW.copy(id = "review-mine")
+            val viewModel =
+                DetailViewModel(
+                    savedState("media-1"),
+                    FakeMedia(),
+                    FakeLibrary(entry = ENTRY),
+                    groups,
+                    FakeAuthRepository(),
+                )
+            advanceUntilIdle()
+            viewModel.openReviewEditor()
+            advanceUntilIdle()
+            viewModel.saveReview("first draft", false)
+            advanceUntilIdle()
+            // lastOwnReview now caches "review-mine" — no active group, so this is the only path
+            // back to it (BLOCKING B2's own fallback).
+
+            viewModel.openReviewEditor()
+            advanceUntilIdle()
+            val reopenedBeforeFailure =
+                (viewModel.state.value as DetailUiState.Success).reviewEditor as ReviewEditorState.Open
+            assertEquals("review-mine", reopenedBeforeFailure.reviewId)
+
+            groups.updateReviewFailure = GroupFailure.NoSuchEntry
+            viewModel.saveReview("edited", false)
+            advanceUntilIdle()
+            val afterFailure = (viewModel.state.value as DetailUiState.Success).reviewEditor as ReviewEditorState.Open
+            assertEquals(ReviewSaveError.Remote(GroupFailure.NoSuchEntry), afterFailure.error)
+
+            viewModel.closeReviewEditor()
+            viewModel.openReviewEditor()
+            advanceUntilIdle()
+
+            val reopenedAfterFailure =
+                (viewModel.state.value as DetailUiState.Success).reviewEditor as ReviewEditorState.Open
+            assertNull("the dead cached review must not be offered again", reopenedAfterFailure.reviewId)
+        }
+
+    /**
+     * Fix round 2, small item 4: [DetailViewModel.findOwnReview]'s SECOND fallback
+     * (`currentUserId ?: return lastOwnReview`) had no test of its own — every existing test either
+     * left [FakeAuthRepository] at its default (a resolving `currentUserId`) or exercised the
+     * FIRST fallback (`groupSection` not `Loaded`) instead. Constructs identity resolution genuinely
+     * failing (never retried — [DetailViewModel.resolveCurrentUserId]'s own KDoc) while the section
+     * IS `Loaded`, so only the cache can possibly answer.
+     */
+    @Test
+    fun `findOwnReview falls back to the cache when identity never resolved, even with a loaded section`() =
+        runTest(dispatcher) {
+            val groups = FakeGroupRepository(reviewsResults = mutableMapOf((GROUP_ID to "media-1") to emptyList()))
+            val created = MY_REVIEW.copy(id = "review-mine")
+            groups.createReviewResult = created
+            val auth = FakeAuthRepository(currentUserIdFailure = AuthFailure.Offline(IOException("offline")))
+            val viewModel =
+                DetailViewModel(savedState("media-1"), FakeMedia(), FakeLibrary(entry = ENTRY), groups, auth)
+            advanceUntilIdle()
+
+            viewModel.openReviewEditor()
+            advanceUntilIdle()
+            viewModel.saveReview("first draft", false)
+            advanceUntilIdle()
+
+            viewModel.setActiveGroup(GROUP_ID)
+            advanceUntilIdle()
+            // The section IS Loaded now — nobody's review is in it, but that is irrelevant, since
+            // there is no resolved identity to match against at all.
+
+            viewModel.openReviewEditor()
+            advanceUntilIdle()
+
+            val opened = (viewModel.state.value as DetailUiState.Success).reviewEditor as ReviewEditorState.Open
+            assertEquals(created.id, opened.reviewId)
         }
 
     /** [saveReview]'s own re-entrancy guard — `edit`'s identical "a second edit is ignored" shape. */

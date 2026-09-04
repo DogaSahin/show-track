@@ -4,7 +4,11 @@ import android.content.Context
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -858,6 +862,97 @@ class DetailScreenTest {
             .performTextInput("x")
 
         assertEquals(1, cleared)
+    }
+
+    /**
+     * Fix round 2, small item 1: [ReviewEditorState.Open.confirmOverwrite] and `.error` are meant
+     * to be mutually exclusive, but that invariant used to live entirely in ONE
+     * [DetailViewModel]-side line — this state is constructed directly, bypassing the ViewModel
+     * entirely, to prove the RENDERING side holds the line on its own: `error` must win.
+     */
+    @Test
+    fun `error takes precedence over confirm-overwrite when a state somehow carries both`() {
+        composeRule.setContent {
+            DetailScreen(
+                state =
+                    successState(
+                        groupSection = GroupSectionState.Absent,
+                        reviewEditor =
+                            ReviewEditorState.Open(
+                                reviewId = "review-mine",
+                                seedBody = "typed",
+                                seedContainsSpoilers = false,
+                                error = ReviewSaveError.Remote(GroupFailure.Network),
+                                confirmOverwrite = true,
+                            ),
+                    ),
+                groups = emptyList(),
+                onRetry = {},
+                onAddToLibrary = {},
+                onScoreSelected = {},
+                onScoreCleared = {},
+                onProgressChange = {},
+                onStatusSelected = {},
+                onFavoriteToggle = {},
+                onProposeToGroup = {},
+                onRetryGroupSection = {},
+                onOpenReviewEditor = {},
+                onSaveReview = { _, _ -> },
+                onCancelReviewEditor = {},
+                onClearReviewError = {},
+            )
+        }
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule
+            .onNodeWithText(context.getString(R.string.detail_review_error_network))
+            .assertExists()
+        composeRule
+            .onNodeWithText(context.getString(R.string.detail_review_confirm_overwrite))
+            .assertDoesNotExist()
+    }
+
+    /**
+     * Fix round 2, small item 3: `Modifier.toggleable(role = Role.Checkbox)` and the DEFECTIVE
+     * `Modifier.clickable` it replaced both make the spoiler row respond to a click — every
+     * existing test up to this one only proved THAT, which the bug also satisfied. This is the one
+     * assertion that actually distinguishes the fix: mutating `Role.Checkbox` to `Role.Button`
+     * (or removing the role entirely, `clickable`'s own default) fails this specific matcher while
+     * leaving every click-based test green.
+     */
+    @Test
+    fun `the spoiler toggle is announced as a checkbox`() {
+        composeRule.setContent {
+            DetailScreen(
+                state =
+                    successState(
+                        groupSection = GroupSectionState.Absent,
+                        reviewEditor =
+                            ReviewEditorState.Open(reviewId = null, seedBody = "", seedContainsSpoilers = false),
+                    ),
+                groups = emptyList(),
+                onRetry = {},
+                onAddToLibrary = {},
+                onScoreSelected = {},
+                onScoreCleared = {},
+                onProgressChange = {},
+                onStatusSelected = {},
+                onFavoriteToggle = {},
+                onProposeToGroup = {},
+                onRetryGroupSection = {},
+                onOpenReviewEditor = {},
+                onSaveReview = { _, _ -> },
+                onCancelReviewEditor = {},
+                onClearReviewError = {},
+            )
+        }
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule
+            .onNode(
+                hasText(context.getString(R.string.detail_review_spoiler_label)) and
+                    SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Checkbox),
+            ).assertExists()
     }
 
     private fun successState(

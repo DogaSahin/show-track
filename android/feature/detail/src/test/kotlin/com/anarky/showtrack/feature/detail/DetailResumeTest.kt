@@ -60,6 +60,13 @@ import com.anarky.showtrack.core.designsystem.R as DesignSystemR
  * leaves `DetailScreenTest` fully green, because that suite supplies its own working lambda and
  * never exercises the STATEFUL wiring above it. The two tests below are what actually prove
  * `DetailScreen`'s own three review-editor callbacks reach a real [DetailViewModel].
+ *
+ * **Fix round 2 addition — the SAME hole, introduced by the fix for round 1's own small item 5, in
+ * the SAME commit whose KDoc immediately above this one explains the seam.** `onClearReviewError`
+ * is a fourth callback added alongside the three round 1 named, and it shipped stubbed exactly the
+ * way round 1's three did before this file existed. The working rule going forward: any NEW
+ * callback added to the stateful wrapper gets its OWN case here in the SAME change — this file is
+ * not a one-time fix, it is the standing gate for this seam.
  */
 @RunWith(RobolectricTestRunner::class)
 class DetailResumeTest {
@@ -209,6 +216,49 @@ class DetailResumeTest {
             .performScrollTo()
             .assertExists()
         assertEquals(0, groups.createReviewCalls.size)
+    }
+
+    /**
+     * Fix round 2, BLOCKING: `onClearReviewError`, added by fix round 1's own small item 5, had the
+     * IDENTICAL hole `onOpenReviewEditor`/`onSaveReview`/`onCancelReviewEditor` were just fixed for,
+     * in the SAME commit whose own KDoc names this exact seam — a stubbed `{}` compiles, passes
+     * every stateless-overload test, and leaves a stale "Write something before saving." on screen
+     * while the reader is visibly typing the fix. Drives the real, composed screen: trigger the
+     * validation error with an empty Save, then type, then assert the error is actually gone.
+     */
+    @Test
+    fun `typing after a validation error on the real, composed screen actually clears it`() {
+        val groups = FakeGroupRepository()
+        val viewModel = detailViewModel(groups)
+        val activeGroup =
+            MutableStateFlow<ActiveGroupState>(ActiveGroupState.Success(groups = emptyList(), activeGroupId = null))
+
+        composeRule.setContent { DetailScreen(activeGroup = activeGroup, viewModel = viewModel) }
+        composeRule.waitForIdle()
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule
+            .onNodeWithText(context.getString(R.string.detail_review_write_button))
+            .performScrollTo()
+            .performClick()
+        composeRule
+            .onNodeWithText(context.getString(R.string.detail_review_save_button))
+            .performScrollTo()
+            .performClick()
+        composeRule.waitForIdle()
+        composeRule
+            .onNodeWithText(context.getString(R.string.detail_review_error_body_required))
+            .assertExists()
+
+        composeRule
+            .onNodeWithText(context.getString(R.string.detail_review_body_label))
+            .performScrollTo()
+            .performTextInput("now typing a real review")
+        composeRule.waitForIdle()
+
+        composeRule
+            .onNodeWithText(context.getString(R.string.detail_review_error_body_required))
+            .assertDoesNotExist()
     }
 
     private fun detailViewModel(groups: FakeGroupRepository): DetailViewModel =

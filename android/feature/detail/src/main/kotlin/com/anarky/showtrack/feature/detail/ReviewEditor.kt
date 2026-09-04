@@ -164,29 +164,37 @@ private fun SpoilerCheckboxRow(
 }
 
 /**
- * [ReviewEditorState.Open.confirmOverwrite] and `.error` are mutually exclusive by construction —
- * [DetailViewModel.handleSaveFailure]/`.saveReview` never set both at once — so rendering both
- * branches unconditionally here can never show two contradictory lines at once. Neither shares the
- * red `error` color with the other: confirmation is not a failure.
+ * [ReviewEditorState.Open.confirmOverwrite] and `.error` are meant to be mutually exclusive — but
+ * (fix round 2, small item 1) that invariant lives entirely in ONE line, [DetailViewModel.saveReview]'s
+ * own `confirmOverwrite = false` on the transient "saving" copy: delete that single reset and every
+ * existing test still passes, because nothing before this round ever rendered the two together.
+ * Structural regression, reproduced in review: a 409 resolves (`confirmOverwrite = true`) → the
+ * reader taps Save to confirm → THAT attempt's own `PATCH` fails (`Network`) →
+ * [DetailViewModel.handleSaveFailure] copies `error` onto the CURRENT editor, which still carries
+ * `confirmOverwrite = true` if the one-line reset above were ever lost — two unconditional `if`s
+ * would then render both lines at once. `else if`, not two sealed cases (over-engineering for two
+ * booleans): `error` wins when both are somehow true — a real failure explaining why nothing was
+ * sent is more useful than a nudge about a save that has not gone through — so THIS branch order is
+ * itself a second, independent guard against the exact regression above, not merely documentation
+ * of an intent the ViewModel is trusted to uphold alone.
  */
 @Composable
 private fun ReviewEditorStatusMessage(
     editor: ReviewEditorState.Open,
     modifier: Modifier = Modifier,
 ) {
-    if (editor.confirmOverwrite) {
-        Text(
-            text = stringResource(R.string.detail_review_confirm_overwrite),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = modifier,
-        )
-    }
     if (editor.error != null) {
         Text(
             text = stringResource(editor.error.messageRes()),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.error,
+            modifier = modifier,
+        )
+    } else if (editor.confirmOverwrite) {
+        Text(
+            text = stringResource(R.string.detail_review_confirm_overwrite),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = modifier,
         )
     }
