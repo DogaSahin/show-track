@@ -100,10 +100,17 @@ sealed interface DetailUiState {
      * gets when the picker never opened at all — the `groups.size == 1` direct-propose path
      * ([GroupSection.kt]'s own KDoc) has no confirmation dialog to close, so without this field a
      * single-group user tapping "Propose to a group" sees literally nothing happen, indistinguishable
-     * from a dead button. `GroupsUiState.Success.justCreated`/`GroupDetailUiState.Success.rotatedInvite`'s
-     * identical discipline: set on success, held only in memory, and cleared by the very next
-     * [DetailViewModel.proposeToGroup] call — never by anything else, so it survives an unrelated
-     * edit or a group-section reload untouched.
+     * from a dead button.
+     *
+     * **Not** `GroupsUiState.Success.justCreated`/`GroupDetailUiState.Success.rotatedInvite`'s
+     * discipline (fix round 2 correction — an earlier version of this KDoc claimed it was): those
+     * two are cleared by an explicit dismiss AND dropped on the next refresh. This field has
+     * neither — it is cleared ONLY by the very next [DetailViewModel.proposeToGroup] call, which
+     * is deliberate: "Proposed to Alpha Watchers." is meant to stay under the button for the life
+     * of this ViewModel instance, surviving an unrelated edit, a group-section reload, and a group
+     * switch, until the reader either leaves the screen or proposes again (to the same group or a
+     * different one). A reader who proposed once has no reason to have that fact hidden from them
+     * by an action that has nothing to do with the propose they just made.
      */
     data class Success(
         val data: DetailData,

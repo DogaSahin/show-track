@@ -3,6 +3,7 @@ package com.anarky.showtrack.core.designsystem.component
 import android.content.Context
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ApplicationProvider
@@ -66,6 +67,28 @@ class SpoilerReviewTest {
         }
 
         composeRule.onNodeWithText(SPOILER_REVIEW.author.username).assertIsDisplayed()
+    }
+
+    /**
+     * Fix round 2, coordinator finding 6: N reviews render N otherwise-identical "Show spoiler"
+     * buttons — a screen reader cannot tell them apart on the visible label alone. The reveal
+     * button's own `contentDescription` names the review's author; verified directly with
+     * `onNodeWithContentDescription`, not merely asserted to exist. This does NOT remove the
+     * button's `Text` semantics property (the child [Text] composable still contributes it), so
+     * the OTHER two tests above — both matching on `onNodeWithText(spoiler_review_reveal)` —
+     * keep passing unchanged.
+     */
+    @Test
+    fun `the reveal button names the review's author, for a screen reader`() {
+        composeRule.setContent {
+            SpoilerReview(review = SPOILER_REVIEW)
+        }
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule
+            .onNodeWithContentDescription(
+                context.getString(R.string.spoiler_review_reveal_by, SPOILER_REVIEW.author.username),
+            ).assertIsDisplayed()
     }
 
     private companion object {

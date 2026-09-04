@@ -161,6 +161,30 @@ class DetailViewModelTest {
             }
         }
 
+    /**
+     * Fix round 2, coordinator finding 5: `load()`'s success branch used to name only two of
+     * (now) seven `DetailUiState.Success` fields, silently resetting every other one to its
+     * default whenever `load()` ran with a Success already on screen. Unreachable through any
+     * wired button today (retry() is only wired from the Error branch — this class's own KDoc),
+     * but `retry()` itself is a public function with no such guard, so this drives it directly
+     * while a Success — with a field `load()` itself never touches — is already showing.
+     */
+    @Test
+    fun `retrying while a Success already exists preserves fields load does not touch`() =
+        runTest(dispatcher) {
+            val groups = FakeGroupRepository(proposeResult = WATCHLIST_ENTRY)
+            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), FakeLibrary(entry = ENTRY), groups)
+            advanceUntilIdle()
+            viewModel.proposeToGroup("group-9")
+            advanceUntilIdle()
+            assertEquals("group-9", (viewModel.state.value as DetailUiState.Success).justProposedToGroupId)
+
+            viewModel.retry()
+            advanceUntilIdle()
+
+            assertEquals("group-9", (viewModel.state.value as DetailUiState.Success).justProposedToGroupId)
+        }
+
     @Test
     fun `changing the score sends only the score`() =
         runTest(dispatcher) {

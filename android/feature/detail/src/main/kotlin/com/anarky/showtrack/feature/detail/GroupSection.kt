@@ -129,14 +129,22 @@ private fun GroupSectionContent(
                     // positional slot reuse across a recomposition — a reload that replaces
                     // review N at this position with a DIFFERENT review must not inherit whatever
                     // composition state (SpoilerReview's own `revealed`) the old occupant of this
-                    // slot left behind. REDUNDANT with SpoilerReview's own
-                    // `rememberSaveable(review.id)` brace, measured, not assumed: mutating either
-                    // ONE of the two alone leaves `DetailScreenTest`'s own swap test green — each
-                    // is independently sufficient — and only removing BOTH at once reddens it.
-                    // Kept anyway: this call site is the one place that can see the whole LIST
-                    // (SpoilerReview itself only ever sees one [Review] at a time), so it is the
-                    // right place to state the invariant even though today it is provably not the
-                    // only thing enforcing it.
+                    // slot left behind. Redundant with SpoilerReview's own
+                    // `rememberSaveable(review.id)` brace FOR RECOMPOSITION ONLY, measured not
+                    // assumed (fix round 2 correction — an earlier version of this comment said
+                    // "redundant" with no qualifier): mutating either ONE of the two alone leaves
+                    // `DetailScreenTest`'s own swap test green — each is independently sufficient
+                    // there — and only removing BOTH at once reddens it. The two are NOT redundant
+                    // on the process-death / SAVED-STATE path: `rememberSaveable`'s `inputs`
+                    // parameter (`review.id` there) drives only `remember`-style invalidation —
+                    // the key `rememberSaveable` actually SAVES under is `currentCompositeKeyHash`,
+                    // which is positional unless something wraps the call in an explicit `key()`.
+                    // This `key(review.id)` is that wrap: on a process-death restore that lands
+                    // with a re-ordered review list, it is what stops a review's SAVED `revealed`
+                    // value from resurrecting onto a different review at the same position. Not
+                    // measured directly — `StateRestorationTester` cannot vary the list between
+                    // save and restore — reasoned from the documented `rememberSaveable` contract;
+                    // kept for exactly that reason, not removed for being provably unneeded above.
                     loaded.reviews.forEach { review -> key(review.id) { SpoilerReview(review = review) } }
                 }
             }

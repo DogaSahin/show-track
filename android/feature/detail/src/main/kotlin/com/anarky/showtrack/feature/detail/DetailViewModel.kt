@@ -249,6 +249,20 @@ class DetailViewModel
 
         @Suppress("TooGenericExceptionCaught")
         private fun load() {
+            // Captured BEFORE the blank below, not after: this is what [previous] means in the
+            // success branch — whatever Success existed at the moment load() was CALLED, not at
+            // the moment it finished (by then mutableState is always Loading, this function's own
+            // next line). Safe today either way — load() is reachable only from init (nothing
+            // exists yet) and retry() (the screen wires that button only under the Error branch,
+            // so there is never a Success to capture) — but a plain, capture-nothing rebuild here
+            // is the exact bug class this phase has now hit three times (fix round 2, coordinator
+            // finding 5): a Success gains an eighth field later, this line is not the one anyone
+            // remembers to update, and every field load() itself does not touch — [DetailUiState.Success.proposing]/
+            // `.proposeError`/`.justProposedToGroupId`, [DetailActionError] — silently resets to
+            // its default the next time load() runs, WHENEVER that becomes reachable with a
+            // Success already on screen. `.copy()` over [previous] makes that safe by
+            // construction instead of by a fact every future field addition has to remember.
+            val previous = mutableState.value as? DetailUiState.Success
             // Set synchronously, before a coroutine is even launched: a retry from
             // DetailUiState.Error must not leave the OLD error on screen for the round trip's
             // whole duration (9a.8's other carried-forward lesson). Replacing the entire state
@@ -269,8 +283,14 @@ class DetailViewModel
                     // groupSection = groupSection (not the default GroupSectionState.Absent): the
                     // class KDoc's own race — a group-section fetch that resolved BEFORE this load
                     // did must not be discarded just because there was no DetailUiState.Success to
-                    // patch it into yet.
-                    mutableState.value = DetailUiState.Success(data = data, groupSection = groupSection)
+                    // patch it into yet. [previous]'s own `.copy()` is what carries every OTHER
+                    // field (saving/actionError/proposing/proposeError/justProposedToGroupId)
+                    // forward unchanged when there is a Success to carry them FROM — see this
+                    // function's own KDoc for why that case is unreachable today but not free to
+                    // get wrong.
+                    mutableState.value =
+                        previous?.copy(data = data, groupSection = groupSection)
+                            ?: DetailUiState.Success(data = data, groupSection = groupSection)
                 } catch (cancellation: CancellationException) {
                     throw cancellation
                 } catch (failure: Exception) {

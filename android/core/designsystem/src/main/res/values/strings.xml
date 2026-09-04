@@ -40,4 +40,8 @@
     <!-- SpoilerReview's own reveal control (decision E-J) — tapping it is the only way the body
          ever enters composition. -->
     <string name="spoiler_review_reveal">Show spoiler</string>
+    <!-- Fix round 2: the reveal button's own contentDescription — %1$s is the review author's
+         username — so a screen reader can tell N otherwise-identical "Show spoiler" buttons
+         apart. Decision C-E: every contentDescription comes from R.string. -->
+    <string name="spoiler_review_reveal_by">Show spoiler review by %1$s</string>
 </resources>

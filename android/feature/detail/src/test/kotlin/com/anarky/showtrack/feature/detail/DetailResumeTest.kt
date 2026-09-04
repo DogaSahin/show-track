@@ -10,6 +10,7 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.test.core.app.ApplicationProvider
 import com.anarky.showtrack.core.model.ActiveGroupState
 import com.anarky.showtrack.core.model.Group
+import com.anarky.showtrack.core.model.GroupFailure
 import com.anarky.showtrack.core.model.MediaSource
 import com.anarky.showtrack.core.model.MediaSummary
 import com.anarky.showtrack.core.model.MediaType
@@ -21,6 +22,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import java.time.Instant
+import com.anarky.showtrack.core.designsystem.R as DesignSystemR
 
 /**
  * The seam `DetailScreenTest` cannot see (fix round 1, BLOCKING B1): that suite drives only the
@@ -32,6 +34,13 @@ import java.time.Instant
  * no-op) all compiled and left the whole suite green — `FeedEntryHiltTest`'s identical finding one
  * task ago, for the identical `StateFlow<ActiveGroupState>` → `LifecycleResumeEffect` → ViewModel
  * shape.
+ *
+ * **Fix round 2 addition:** the propose wire's own sibling, `onRetryGroupSection`, had the
+ * identical hole — B1's own finding "when you fix a wire, check its siblings." A defaulted or
+ * dropped `onRetryGroupSection` leaves the group section's Retry button permanently inert on the
+ * REAL screen (a member removed from a group while Detail is open, `progress()` 404s, and nothing
+ * short of leaving the screen recovers) while every stateless-overload test stays green, since
+ * those tests supply the callback explicitly.
  *
  * `createAndroidComposeRule<ComponentActivity>()`, not `createComposeRule()`, and no Hilt harness:
  * [DetailScreen]'s `viewModel` parameter has a `hiltViewModel()` DEFAULT that is never evaluated
@@ -90,6 +99,36 @@ class DetailResumeTest {
         assertEquals(1, groups.proposeCalls)
         assertEquals("group-a", groups.lastProposeGroupId)
         assertEquals("media-1", groups.lastProposeMediaId)
+    }
+
+    /**
+     * Fix round 2, coordinator finding 1: `onRetryGroupSection`, `onProposeToGroup`'s own sibling
+     * wire, had the identical hole. `progressFailures` seeds a real, un-recovered 404; tapping the
+     * REAL Retry button must reach [DetailViewModel.retryGroupSection] and fire a second fetch —
+     * `progressCalls.size == 2` is the direct proof, not merely that SOME state changed.
+     */
+    @Test
+    fun `the retry button on the real, composed screen actually retries`() {
+        val groups = FakeGroupRepository()
+        groups.progressFailures["group-a" to "media-1"] = GroupFailure.Network
+        val viewModel = detailViewModel(groups)
+        val activeGroup =
+            MutableStateFlow<ActiveGroupState>(
+                ActiveGroupState.Success(groups = listOf(ALPHA), activeGroupId = "group-a"),
+            )
+
+        composeRule.setContent { DetailScreen(activeGroup = activeGroup, viewModel = viewModel) }
+        composeRule.waitForIdle()
+        assertEquals(1, groups.progressCalls.size)
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule
+            .onNodeWithText(context.getString(DesignSystemR.string.action_retry))
+            .performScrollTo()
+            .performClick()
+        composeRule.waitForIdle()
+
+        assertEquals(2, groups.progressCalls.size)
     }
 
     private fun detailViewModel(groups: FakeGroupRepository): DetailViewModel =

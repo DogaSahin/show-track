@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -297,6 +298,70 @@ class DetailScreenTest {
     }
 
     /**
+     * Fix round 2, coordinator finding 3: the generic-fallback branch
+     * (`?: stringResource(detail_group_propose_success_generic)`) had zero coverage — every
+     * other propose-success test names a group that IS in `groups`. This is the defensive case:
+     * `justProposedToGroupId` names an id `groups` does not contain (the account left that group,
+     * or the list is stale) — the copy must still say SOMETHING, not silently render nothing or
+     * crash on a null group name.
+     */
+    @Test
+    fun `a successful propose to a group no longer in the list shows the generic confirmation`() {
+        composeRule.setContent {
+            DetailScreen(
+                state = successState(groupSection = GroupSectionState.Absent, justProposedToGroupId = "group-gone"),
+                groups = listOf(ALPHA),
+                onRetry = {},
+                onAddToLibrary = {},
+                onScoreSelected = {},
+                onScoreCleared = {},
+                onProgressChange = {},
+                onStatusSelected = {},
+                onFavoriteToggle = {},
+                onProposeToGroup = {},
+                onRetryGroupSection = {},
+            )
+        }
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule
+            .onNodeWithText(context.getString(R.string.detail_group_propose_success_generic))
+            .performScrollTo()
+            .assertExists()
+    }
+
+    /**
+     * Fix round 2, coordinator finding 3: `enabled = !proposing` (round 0) had zero coverage —
+     * every existing propose test leaves `proposing` at its default `false`. Disabled while a
+     * propose is already in flight is what stops a double-tap racing two proposals for the same
+     * title into two different groups.
+     */
+    @Test
+    fun `the propose button is disabled while a propose is already in flight`() {
+        composeRule.setContent {
+            DetailScreen(
+                state = successState(groupSection = GroupSectionState.Absent, proposing = true),
+                groups = listOf(ALPHA),
+                onRetry = {},
+                onAddToLibrary = {},
+                onScoreSelected = {},
+                onScoreCleared = {},
+                onProgressChange = {},
+                onStatusSelected = {},
+                onFavoriteToggle = {},
+                onProposeToGroup = {},
+                onRetryGroupSection = {},
+            )
+        }
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule
+            .onNodeWithText(context.getString(R.string.detail_group_propose_button))
+            .performScrollTo()
+            .assertIsNotEnabled()
+    }
+
+    /**
      * Fix round 1, coordinator finding 2: `GroupSectionContent` renders reviews in a plain
      * `Column.forEach` — not a `LazyColumn` — so a reload that swaps in a DIFFERENT review at the
      * SAME list position risks the new review inheriting whatever composition state (SpoilerReview's
@@ -305,11 +370,19 @@ class DetailScreenTest {
      * independent `setContent` calls — two calls would each start a brand-new composition and could
      * never observe a slot-reuse bug at all.
      *
-     * **Measured, not assumed: the two guards are REDUNDANT, not each independently required.**
+     * **Measured, not assumed, for THIS test's own path — recomposition, not process death.**
      * `GroupSection.kt`'s `key(review.id)` wrapper and `SpoilerReview.kt`'s own
      * `rememberSaveable(review.id)` each individually held this test green when mutated alone —
-     * either one on its own already prevents the leak. Only removing BOTH at once reddens it,
-     * confirmed by mutating both together before writing this KDoc's claim.
+     * either one on its own already prevents a recomposition leak. Only removing BOTH at once
+     * reddens it, confirmed by mutating both together before writing this KDoc's claim.
+     *
+     * **Not evidence the two are redundant on the SAVED-STATE path (fix round 2 correction):**
+     * `rememberSaveable`'s `inputs` govern only `remember`-style invalidation; what it actually
+     * SAVES under is `currentCompositeKeyHash`, which is positional absent an explicit `key()`
+     * wrap. `key(review.id)` is `GroupSection.kt`'s own defence against a process-death restore
+     * landing with a re-ordered review list — a scenario `StateRestorationTester` cannot vary the
+     * list within, so it is reasoned from the documented contract, not measured by this test or
+     * any other in this file.
      */
     @Test
     fun `a new review replacing an old one at the same position starts collapsed, not still revealed`() {
@@ -343,11 +416,13 @@ class DetailScreenTest {
     private fun successState(
         groupSection: GroupSectionState,
         justProposedToGroupId: String? = null,
+        proposing: Boolean = false,
     ): DetailUiState.Success =
         DetailUiState.Success(
             data = DetailData(media = MEDIA, entry = ENTRY),
             groupSection = groupSection,
             justProposedToGroupId = justProposedToGroupId,
+            proposing = proposing,
         )
 
     private companion object {

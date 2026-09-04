@@ -15,6 +15,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.anarky.showtrack.core.designsystem.R
 import com.anarky.showtrack.core.model.Review
@@ -43,6 +45,16 @@ import com.anarky.showtrack.core.model.Review
  * The backend flag means "this review talks about plot events the reader may not have reached
  * yet," not "keep re-asking"; once a reader has chosen to see it, re-collapsing on every
  * recomposition would be surprising, not protective.
+ *
+ * **The reveal button carries its own `contentDescription`** (fix round 2, coordinator finding
+ * 6) — naming the review's author, e.g. "Show spoiler review by alice" — so a screen reader can
+ * tell N reviews' worth of otherwise-identical "Show spoiler" buttons apart. This does NOT remove
+ * `SemanticsProperties.Text` from the button's merged node (that property still comes from the
+ * child [Text] composable below), so [SpoilerReviewTest]'s own `onNodeWithText` matchers on the
+ * visible "Show spoiler" label keep working unchanged; a real accessibility service prefers the
+ * explicit `ContentDescription` over the plain `Text` when both are present on the same node,
+ * which is what makes this the announcement a screen reader actually reads. Verified on the JVM
+ * with `onNodeWithContentDescription`, not merely asserted.
  */
 @Composable
 fun SpoilerReview(
@@ -50,6 +62,7 @@ fun SpoilerReview(
     modifier: Modifier = Modifier,
 ) {
     var revealed by rememberSaveable(review.id) { mutableStateOf(false) }
+    val revealDescription = stringResource(R.string.spoiler_review_reveal_by, review.author.username)
     Card(modifier = modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(all = 12.dp),
@@ -57,7 +70,13 @@ fun SpoilerReview(
         ) {
             Text(text = review.author.username, style = MaterialTheme.typography.labelLarge)
             if (review.containsSpoilers && !revealed) {
-                TextButton(onClick = { revealed = true }) {
+                TextButton(
+                    onClick = { revealed = true },
+                    modifier =
+                        Modifier.semantics {
+                            contentDescription = revealDescription
+                        },
+                ) {
                     Text(text = stringResource(R.string.spoiler_review_reveal))
                 }
             } else {
