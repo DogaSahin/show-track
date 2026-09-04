@@ -434,6 +434,150 @@ class FeedViewModelTest {
             assertEquals(listOf(ADDED), (viewModel.state.value as FeedUiState.Success).entries)
         }
 
+    /**
+     * **Round 2 — pins [reload]'s SUCCESS-path generation check independently.** Round 1's own
+     * cross-group tests happened to only exercise [reload]'s FAILURE path and [loadMore]'s SUCCESS
+     * path; removing this specific check alone left all 22 round-1 tests green. A retry for group A
+     * that will SUCCEED is gated in flight while the screen switches to group B; A's late (and, to
+     * make a silent overwrite detectable, DIFFERENT) page must never land on B's screen.
+     */
+    @Test
+    fun `a stale successful reload from an old group does not overwrite the new group's fresh success`() =
+        runTest(dispatcher) {
+            val repository =
+                FakeGroupRepository(
+                    feedPages =
+                        mutableMapOf(
+                            (GROUP_ID to null) to FeedPage(items = listOf(ADDED), nextCursor = null),
+                            (OTHER_GROUP_ID to null) to FeedPage(items = listOf(COMPLETED), nextCursor = null),
+                        ),
+                )
+            val viewModel = FeedViewModel(repository)
+            viewModel.selectGroup(GROUP_ID)
+            advanceUntilIdle()
+            assertEquals(listOf(ADDED), (viewModel.state.value as FeedUiState.Success).entries)
+
+            // A retry for group A that will SUCCEED once it lands — gated so it stays in flight,
+            // and reconfigured to return a DIFFERENT page so a silent overwrite is detectable.
+            repository.feedGates[GROUP_ID to null] = CompletableDeferred()
+            repository.feedPages[GROUP_ID to null] = FeedPage(items = listOf(ADDED, RATED), nextCursor = null)
+            viewModel.refresh()
+
+            viewModel.selectGroup(OTHER_GROUP_ID)
+            advanceUntilIdle()
+
+            assertEquals(FeedUiState.Success(entries = listOf(COMPLETED)), viewModel.state.value)
+
+            // A's retry finally resolves — as a SUCCESS, with a page B never asked for.
+            repository.feedGates.getValue(GROUP_ID to null).complete(Unit)
+            advanceUntilIdle()
+
+            // B's screen must still show B's own feed, not A's late page.
+            assertEquals(FeedUiState.Success(entries = listOf(COMPLETED)), viewModel.state.value)
+        }
+
+    /**
+     * **Round 2 — pins [loadMore]'s FAILURE-path generation check independently.** Round 1's
+     * `` `a group switch does not let a stale in-flight page overwrite the new group's feed` ``
+     * only exercised [loadMore]'s SUCCESS path; removing the FAILURE-path check alone left all 22
+     * round-1 tests green. Concrete consequence this guards against: group A's page-2 fetch is in
+     * flight and about to fail, the user switches to group B (which renders a clean
+     * [FeedUiState.Success]), and A's failure then lands and would otherwise write
+     * [FeedUiState.Success.pageError] onto B's state — B shows a page-error retry footer for a page
+     * fetch it never made.
+     */
+    @Test
+    fun `a stale loadMore failure from an old group does not surface a page error on the new group's feed`() =
+        runTest(dispatcher) {
+            val repository =
+                FakeGroupRepository(
+                    feedPages =
+                        mutableMapOf(
+                            (GROUP_ID to null) to FeedPage(items = listOf(ADDED), nextCursor = "cursor-2"),
+                            (OTHER_GROUP_ID to null) to FeedPage(items = listOf(COMPLETED), nextCursor = null),
+                        ),
+                )
+            val viewModel = FeedViewModel(repository)
+            viewModel.selectGroup(GROUP_ID)
+            advanceUntilIdle()
+            assertEquals(listOf(ADDED), (viewModel.state.value as FeedUiState.Success).entries)
+
+            // group A's page-2 fetch will FAIL once it lands — gated so it stays in flight, and its
+            // failure configured PER KEY so it cannot leak onto group B's unrelated fetch below.
+            repository.feedGates[GROUP_ID to "cursor-2"] = CompletableDeferred()
+            repository.feedFailures[GROUP_ID to "cursor-2"] = GroupFailure.Network
+            viewModel.loadMore()
+
+            viewModel.selectGroup(OTHER_GROUP_ID)
+            advanceUntilIdle()
+
+            assertEquals(FeedUiState.Success(entries = listOf(COMPLETED)), viewModel.state.value)
+
+            // A's page-2 fetch finally resolves — as a failure.
+            repository.feedGates.getValue(GROUP_ID to "cursor-2").complete(Unit)
+            advanceUntilIdle()
+
+            // B's screen must still be a clean Success with no page error — A's failed page-2 fetch
+            // is not B's problem.
+            assertEquals(FeedUiState.Success(entries = listOf(COMPLETED)), viewModel.state.value)
+        }
+
+    /**
+     * **Round 2 — pins the `finally` qualifier `if (loadingGeneration == myGeneration)
+     * loadingGeneration = null` independently.** An unconditional clear lets a stale (OLD)
+     * generation's `finally` erase a NEWER generation's still-genuinely-in-flight guard, letting a
+     * third caller slip a redundant fetch in behind it. Needs TWO generations and a THIRD caller,
+     * not two gated calls on one generation (round 1's own miss) — shape: gate A's first load,
+     * `selectGroup(A)` (gen 1, left in flight); gate B's first load, `selectGroup(B)` (gen 2, left
+     * in flight); release A's gate so its now-irrelevant `finally` unwinds; call [FeedViewModel.refresh]
+     * as the third caller while B's own reload is STILL in flight; only then release B's gate. The
+     * redundant third fetch is queued behind [CursorPaginator]'s own mutex (which B's own in-flight
+     * reload still holds), so it is invisible in [FakeGroupRepository.feedCalls] until B's gate is
+     * released — asserting before that release would pass against the mutant, the exact trap round
+     * 1's own attempt at this fell into.
+     */
+    @Test
+    fun `a stale generation's finally does not clear the guard for a newer generation still in flight`() =
+        runTest(dispatcher) {
+            val repository =
+                FakeGroupRepository(
+                    feedPages =
+                        mutableMapOf(
+                            (GROUP_ID to null) to FeedPage(items = listOf(ADDED), nextCursor = null),
+                            (OTHER_GROUP_ID to null) to FeedPage(items = listOf(COMPLETED), nextCursor = null),
+                        ),
+                )
+            val viewModel = FeedViewModel(repository)
+
+            repository.feedGates[GROUP_ID to null] = CompletableDeferred()
+            viewModel.selectGroup(GROUP_ID)
+            advanceUntilIdle()
+
+            repository.feedGates[OTHER_GROUP_ID to null] = CompletableDeferred()
+            viewModel.selectGroup(OTHER_GROUP_ID)
+            advanceUntilIdle()
+
+            assertEquals(listOf(GROUP_ID to null, OTHER_GROUP_ID to null), repository.feedCalls)
+
+            // Release group A's gate — its own (generation-1) reload resolves, drops its write (the
+            // success-path check above), and its `finally` runs for a generation nobody is looking
+            // at any more.
+            repository.feedGates.getValue(GROUP_ID to null).complete(Unit)
+            advanceUntilIdle()
+
+            // A third caller — a resume, a retry — while group B's own reload (generation 2) is
+            // STILL genuinely in flight.
+            viewModel.refresh()
+
+            // Release group B's gate. B's own reload resolves here; if the guard failed to hold,
+            // this is also where the redundant third fetch — queued behind the mutex until now —
+            // finally executes and shows up in feedCalls.
+            repository.feedGates.getValue(OTHER_GROUP_ID to null).complete(Unit)
+            advanceUntilIdle()
+
+            assertEquals(listOf(GROUP_ID to null, OTHER_GROUP_ID to null), repository.feedCalls)
+        }
+
     private companion object {
         const val GROUP_ID = "group-1"
         const val OTHER_GROUP_ID = "group-2"
