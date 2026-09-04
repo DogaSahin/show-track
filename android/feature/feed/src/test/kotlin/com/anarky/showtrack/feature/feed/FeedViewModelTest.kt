@@ -52,7 +52,7 @@ class FeedViewModelTest {
         runTest(dispatcher) {
             val repository =
                 FakeGroupRepository(
-                    feedPages = mutableMapOf(null to FeedPage(items = listOf(ADDED), nextCursor = null)),
+                    feedPages = mutableMapOf((GROUP_ID to null) to FeedPage(items = listOf(ADDED), nextCursor = null)),
                 )
             val viewModel = FeedViewModel(repository)
 
@@ -105,8 +105,8 @@ class FeedViewModelTest {
                 FakeGroupRepository(
                     feedPages =
                         mutableMapOf(
-                            null to FeedPage(items = listOf(ADDED), nextCursor = "cursor-2"),
-                            "cursor-2" to FeedPage(items = listOf(RATED), nextCursor = null),
+                            (GROUP_ID to null) to FeedPage(items = listOf(ADDED), nextCursor = "cursor-2"),
+                            (GROUP_ID to "cursor-2") to FeedPage(items = listOf(RATED), nextCursor = null),
                         ),
                 )
             val viewModel = FeedViewModel(repository)
@@ -147,9 +147,9 @@ class FeedViewModelTest {
                 FakeGroupRepository(
                     feedPages =
                         mutableMapOf(
-                            null to FeedPage(items = listOf(ADDED), nextCursor = "cursor-2"),
-                            "cursor-2" to FeedPage(items = listOf(RATED), nextCursor = "cursor-3"),
-                            "cursor-3" to FeedPage(items = listOf(COMPLETED), nextCursor = null),
+                            (GROUP_ID to null) to FeedPage(items = listOf(ADDED), nextCursor = "cursor-2"),
+                            (GROUP_ID to "cursor-2") to FeedPage(items = listOf(RATED), nextCursor = "cursor-3"),
+                            (GROUP_ID to "cursor-3") to FeedPage(items = listOf(COMPLETED), nextCursor = null),
                         ),
                 )
             val viewModel = FeedViewModel(repository)
@@ -186,7 +186,8 @@ class FeedViewModelTest {
         runTest(dispatcher) {
             val repository =
                 FakeGroupRepository(
-                    feedPages = mutableMapOf(null to FeedPage(items = listOf(ADDED), nextCursor = "cursor-2")),
+                    feedPages =
+                        mutableMapOf((GROUP_ID to null) to FeedPage(items = listOf(ADDED), nextCursor = "cursor-2")),
                 )
             val viewModel = FeedViewModel(repository)
             viewModel.selectGroup(GROUP_ID)
@@ -202,7 +203,7 @@ class FeedViewModelTest {
             assertTrue(!afterFailure.loadingMore)
 
             repository.feedFailure = null
-            repository.feedPages[null] = FeedPage(items = listOf(ADDED, RATED), nextCursor = null)
+            repository.feedPages[GROUP_ID to null] = FeedPage(items = listOf(ADDED, RATED), nextCursor = null)
             viewModel.refresh()
             advanceUntilIdle()
 
@@ -220,7 +221,7 @@ class FeedViewModelTest {
         runTest(dispatcher) {
             val repository =
                 FakeGroupRepository(
-                    feedPages = mutableMapOf(null to FeedPage(items = listOf(ADDED), nextCursor = null)),
+                    feedPages = mutableMapOf((GROUP_ID to null) to FeedPage(items = listOf(ADDED), nextCursor = null)),
                 )
             val viewModel = FeedViewModel(repository)
             viewModel.selectGroup(GROUP_ID)
@@ -254,7 +255,7 @@ class FeedViewModelTest {
                 FakeGroupRepository(
                     feedPages =
                         mutableMapOf(
-                            null to FeedPage(items = listOf(ADDED), nextCursor = null),
+                            (GROUP_ID to null) to FeedPage(items = listOf(ADDED), nextCursor = null),
                         ),
                 )
             val viewModel = FeedViewModel(repository)
@@ -262,7 +263,7 @@ class FeedViewModelTest {
             advanceUntilIdle()
             assertEquals(listOf(ADDED), (viewModel.state.value as FeedUiState.Success).entries)
 
-            repository.feedPages[null] = FeedPage(items = listOf(RATED), nextCursor = null)
+            repository.feedPages[OTHER_GROUP_ID to null] = FeedPage(items = listOf(RATED), nextCursor = null)
             viewModel.selectGroup(OTHER_GROUP_ID)
 
             // Blanked to Loading synchronously, BEFORE the new group's fetch has resolved — the
@@ -286,7 +287,7 @@ class FeedViewModelTest {
         runTest(dispatcher) {
             val repository =
                 FakeGroupRepository(
-                    feedPages = mutableMapOf(null to FeedPage(items = listOf(ADDED), nextCursor = null)),
+                    feedPages = mutableMapOf((GROUP_ID to null) to FeedPage(items = listOf(ADDED), nextCursor = null)),
                 )
             val viewModel = FeedViewModel(repository)
             viewModel.selectGroup(GROUP_ID)
@@ -303,6 +304,134 @@ class FeedViewModelTest {
             advanceUntilIdle()
 
             assertEquals(listOf(GROUP_ID to null, GROUP_ID to null), repository.feedCalls)
+        }
+
+    /**
+     * **Round 1, BLOCKING.** Reviewer-reproduced: `loadMore()` for group A queued behind
+     * [CursorPaginator]'s mutex must not, once unblocked, write group A's late page over group B's
+     * already-rendered feed after [selectGroup] switches subjects mid-fetch. [FeedViewModel] is
+     * the first ViewModel in this codebase to outlive the subject it pages — see that class's own
+     * KDoc — so rebuilding [paginator] per group (which stops a stale CURSOR) was never enough on
+     * its own; this pins the [generation] check that stops a stale CONTINUATION too.
+     */
+    @Test
+    fun `a group switch does not let a stale in-flight page overwrite the new group's feed`() =
+        runTest(dispatcher) {
+            val repository =
+                FakeGroupRepository(
+                    feedPages =
+                        mutableMapOf(
+                            (GROUP_ID to null) to FeedPage(items = listOf(ADDED), nextCursor = "cursor-2"),
+                            (GROUP_ID to "cursor-2") to FeedPage(items = listOf(RATED), nextCursor = null),
+                            (OTHER_GROUP_ID to null) to FeedPage(items = listOf(COMPLETED), nextCursor = null),
+                        ),
+                )
+            val viewModel = FeedViewModel(repository)
+            viewModel.selectGroup(GROUP_ID)
+            advanceUntilIdle()
+            assertEquals(listOf(ADDED), (viewModel.state.value as FeedUiState.Success).entries)
+
+            // Gate group A's page-2 fetch so it stays in flight while the switch below happens.
+            repository.feedGates[GROUP_ID to "cursor-2"] = CompletableDeferred()
+            viewModel.loadMore()
+
+            viewModel.selectGroup(OTHER_GROUP_ID)
+            advanceUntilIdle()
+
+            // Group B's own page has already landed and rendered — this is what a real screen
+            // would be showing at this point, well before A's late page ever arrives.
+            assertEquals(listOf(COMPLETED), (viewModel.state.value as FeedUiState.Success).entries)
+
+            // A's page-2 fetch finally resolves.
+            repository.feedGates.getValue(GROUP_ID to "cursor-2").complete(Unit)
+            advanceUntilIdle()
+
+            // Must still be showing group B's own feed — the reviewer-reproduced repro this fix
+            // closes: `FEED CALLS: [(group-A, null), (group-A, cursor-2), (group-B, null)]` must
+            // NOT land as `Success(entries=[a1, a2])`.
+            assertEquals(listOf(COMPLETED), (viewModel.state.value as FeedUiState.Success).entries)
+            assertEquals(
+                listOf(GROUP_ID to null, GROUP_ID to "cursor-2", OTHER_GROUP_ID to null),
+                repository.feedCalls,
+            )
+        }
+
+    /**
+     * **Round 1, BLOCKING — the [reload] failure-path half of the same bug.** A retry for group A
+     * that is still in flight when [selectGroup] switches to group B must not, on failing, mark
+     * group B's already-rendered [FeedUiState.Success] stale — B's data is fresh; A's failure is
+     * not B's problem, and belongs to a generation nobody is looking at any more.
+     */
+    @Test
+    fun `a stale reload failure from an old group does not mark the new group's fresh success stale`() =
+        runTest(dispatcher) {
+            val repository =
+                FakeGroupRepository(
+                    feedPages =
+                        mutableMapOf(
+                            (GROUP_ID to null) to FeedPage(items = listOf(ADDED), nextCursor = null),
+                            (OTHER_GROUP_ID to null) to FeedPage(items = listOf(COMPLETED), nextCursor = null),
+                        ),
+                )
+            val viewModel = FeedViewModel(repository)
+            viewModel.selectGroup(GROUP_ID)
+            advanceUntilIdle()
+            assertEquals(listOf(ADDED), (viewModel.state.value as FeedUiState.Success).entries)
+
+            // A retry for group A that will FAIL once it lands — gated so it stays in flight, and
+            // its failure configured PER KEY so it cannot leak onto group B's unrelated fetch below.
+            repository.feedGates[GROUP_ID to null] = CompletableDeferred()
+            repository.feedFailures[GROUP_ID to null] = GroupFailure.Network
+            viewModel.refresh()
+
+            viewModel.selectGroup(OTHER_GROUP_ID)
+            advanceUntilIdle()
+
+            assertEquals(FeedUiState.Success(entries = listOf(COMPLETED)), viewModel.state.value)
+
+            // A's retry finally resolves — as a failure.
+            repository.feedGates.getValue(GROUP_ID to null).complete(Unit)
+            advanceUntilIdle()
+
+            // B's screen must still be a clean, non-stale Success.
+            assertEquals(FeedUiState.Success(entries = listOf(COMPLETED)), viewModel.state.value)
+        }
+
+    /**
+     * **Round 1, small item 1.** Double-tapping Retry, or a resume racing a retry still in flight,
+     * must not launch a second `restart()` — `FavoritesViewModel.refresh`'s identical unfixed gap,
+     * closed here because [loadingGeneration] already exists for the BLOCKING fix above and this is
+     * one extra comparison to also guard [refresh] itself. Not a correctness fix
+     * ([CursorPaginator]'s own `Mutex` already keeps state consistent either way — this class's own
+     * KDoc) — only a wasted-round-trip fix.
+     */
+    @Test
+    fun `refresh does not launch a second reload while one is already in flight`() =
+        runTest(dispatcher) {
+            val repository =
+                FakeGroupRepository(
+                    feedPages = mutableMapOf((GROUP_ID to null) to FeedPage(items = listOf(ADDED), nextCursor = null)),
+                )
+            val viewModel = FeedViewModel(repository)
+            viewModel.selectGroup(GROUP_ID)
+            advanceUntilIdle()
+            assertEquals(listOf(GROUP_ID to null), repository.feedCalls)
+
+            repository.feedGates[GROUP_ID to null] = CompletableDeferred()
+            viewModel.refresh()
+            viewModel.refresh()
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            // Only ONE additional fetch queued behind the gate — the two re-entrant calls above
+            // must not have launched a second/third restart() while the first was still in flight.
+            assertEquals(listOf(GROUP_ID to null, GROUP_ID to null), repository.feedCalls)
+
+            repository.feedGates.getValue(GROUP_ID to null).complete(Unit)
+            advanceUntilIdle()
+
+            assertEquals(listOf(GROUP_ID to null, GROUP_ID to null), repository.feedCalls)
+            assertEquals(listOf(ADDED), (viewModel.state.value as FeedUiState.Success).entries)
         }
 
     private companion object {

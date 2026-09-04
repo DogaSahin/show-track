@@ -74,7 +74,9 @@ class FeedEntryHiltTest {
     @BindValue
     @JvmField
     val groupRepository: GroupRepository =
-        FakeGroupRepository(feedPages = mutableMapOf(null to FeedPage(items = listOf(ADDED, RATED), nextCursor = null)))
+        FakeGroupRepository(
+            feedPages = mutableMapOf((GROUP_ID to null) to FeedPage(items = listOf(ADDED, RATED), nextCursor = null)),
+        )
 
     @Before
     fun setUp() = hiltRule.inject()

@@ -151,9 +151,12 @@ class FeedScreenTest {
         }
 
         val context = ApplicationProvider.getApplicationContext<Context>()
-        composeRule
-            .onNodeWithText(context.getString(R.string.feed_entry_unknown, ACTOR.username))
-            .assertIsDisplayed()
+        val row = composeRule.onNodeWithText(context.getString(R.string.feed_entry_unknown, ACTOR.username))
+        row.assertIsDisplayed()
+        // Round 1, small item 2: FeedEntryRow's KDoc claims UNKNOWN is handled "with no code
+        // change" via the mediaId != null check — this is what actually pins that claim rather
+        // than only asserting the copy renders.
+        row.assertHasNoClickAction()
     }
 
     /**

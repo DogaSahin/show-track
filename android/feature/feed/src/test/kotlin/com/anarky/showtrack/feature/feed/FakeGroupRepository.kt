@@ -24,10 +24,14 @@ import kotlinx.coroutines.CompletableDeferred
  * one of them fails LOUDLY, with that message, rather than an unexplained result —
  * `:feature:groups`' own `FakeGroupRepository`'s identical discrimination technique.
  *
- * [feedPages] defaults to a single, EMPTY, successful first page — the identical default
- * `:feature:groups`' `FakeGroupRepository.watchlistPages` uses, for the identical reason: a test
- * that never mentions the feed at all still needs `selectGroup`'s own fetch to resolve to
- * something rather than an `error(...)`.
+ * [feedPages] is keyed by `(groupId, cursor)`, not `cursor` alone (round 1 fix widening — this
+ * task's own BLOCKING finding needs it): a cross-group test drives TWO groups through the SAME
+ * fake, and group A's `cursor = null` page and group B's `cursor = null` page are genuinely
+ * different pages. Keying by cursor alone — round 0's shape — could not represent that at all; it
+ * is not merely a convenience change, it is what makes the round 1 regression test constructible.
+ * Defaults to empty: a test that reaches [feed] without configuring an entry for the exact
+ * `(groupId, cursor)` it calls with fails loudly via the `error(...)` below, the same discrimination
+ * discipline every OTHER method on this fake already uses.
  *
  * [feedFailure] is a [GroupFailure] directly, not a [Throwable], wrapped in
  * [GroupOperationException] here — mirroring exactly what `GroupRepositoryImpl`'s own `guarded`
@@ -37,13 +41,25 @@ import kotlinx.coroutines.CompletableDeferred
  * [feedGate], when set, is what lets a test observe [FeedViewModel.state] WHILE `feed()` is still
  * suspended, rather than only before and after — `FakeLibraryRepository.refreshGate`'s identical
  * technique, needed to make a re-entrant `loadMore()` call's rejection actually observable.
+ *
+ * [feedGates] (round 1 addition) is [feedGate]'s per-`(groupId, cursor)` sibling: the group-switch
+ * regression test needs to suspend ONE specific call (group A's page-2 fetch) while a LATER call
+ * (group B's page-1 fetch) resolves immediately, which a single shared gate cannot express — every
+ * call would suspend on it, including the one the test needs to complete first. Both gates are
+ * checked; either can hold a call open.
  */
 internal class FakeGroupRepository(
-    var feedPages: MutableMap<String?, FeedPage> =
-        mutableMapOf(null to FeedPage(items = emptyList(), nextCursor = null)),
+    var feedPages: MutableMap<Pair<String, String?>, FeedPage> = mutableMapOf(),
     var feedFailure: GroupFailure? = null,
 ) : GroupRepository {
     var feedGate: CompletableDeferred<Unit>? = null
+    var feedGates: MutableMap<Pair<String, String?>, CompletableDeferred<Unit>> = mutableMapOf()
+
+    // Round 1 addition: a PER-(groupId, cursor) failure, checked ahead of the global [feedFailure].
+    // The group-switch regression tests need group A's retry to fail while group B's unrelated
+    // fetch succeeds in the SAME test — a single shared [feedFailure] cannot express that, since it
+    // would fail every call regardless of which group it named.
+    var feedFailures: MutableMap<Pair<String, String?>, GroupFailure> = mutableMapOf()
 
     // Every (groupId, cursor) pair `feed` was actually called with, in order — what a paging test
     // uses to prove EXACTLY one fetch per page, neither a duplicate first-page re-fetch nor a
@@ -54,10 +70,12 @@ internal class FakeGroupRepository(
         groupId: String,
         cursor: String?,
     ): FeedPage {
-        feedCalls += groupId to cursor
+        val key = groupId to cursor
+        feedCalls += key
+        feedGates[key]?.await()
         feedGate?.await()
-        feedFailure?.let { throw GroupOperationException(it) }
-        return feedPages[cursor] ?: error("no feedPages entry configured for cursor=$cursor")
+        (feedFailures[key] ?: feedFailure)?.let { throw GroupOperationException(it) }
+        return feedPages[key] ?: error("no feedPages entry configured for groupId=$groupId cursor=$cursor")
     }
 
     override suspend fun groups(): List<Group> = error("not exercised by FeedViewModel")
