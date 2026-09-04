@@ -26,6 +26,7 @@ import dagger.hilt.android.testing.BindValue
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
 import dagger.hilt.android.testing.HiltTestApplication
+import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -93,7 +94,12 @@ class FeedEntryHiltTest {
                     }
                 }
             NavHost(navController = navController, startDestination = FeedRoute) {
-                feedEntry(activeGroupId = GROUP_ID, onNavigate = navController::navigate)
+                feedEntry(
+                    activeGroupId = MutableStateFlow(GROUP_ID),
+                    groups = MutableStateFlow(emptyList()),
+                    onSwitchGroup = {},
+                    onNavigate = navController::navigate,
+                )
                 composable<DetailRoute> { }
             }
         }

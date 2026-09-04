@@ -20,6 +20,7 @@ import dagger.hilt.android.testing.BindValue
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
 import dagger.hilt.android.testing.HiltTestApplication
+import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Rule
@@ -92,7 +93,16 @@ class GroupsEntryHiltTest {
                     }
                 }
             NavHost(navController = navController, startDestination = GroupsRoute) {
-                groupsEntry(onNavigate = navController::navigate)
+                // activeGroupId = no selection (a static, never-emitting-again MutableStateFlow):
+                // this test is about the navigation binding, not the switcher — see
+                // GroupsScreenTest's own switcher tests for that. With no active group, the
+                // switcher never renders (GroupsScreen's own null check), so BETA.name below stays
+                // unambiguous — the plain list row, not also a switcher tab.
+                groupsEntry(
+                    activeGroupId = MutableStateFlow(null),
+                    onSwitchGroup = {},
+                    onNavigate = navController::navigate,
+                )
                 composable<GroupDetailRoute> { }
             }
         }

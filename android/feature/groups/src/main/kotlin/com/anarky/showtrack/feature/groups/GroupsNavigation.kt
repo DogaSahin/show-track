@@ -8,6 +8,7 @@ import com.anarky.showtrack.core.navigation.AppRoute
 import com.anarky.showtrack.core.navigation.DetailRoute
 import com.anarky.showtrack.core.navigation.GroupDetailRoute
 import com.anarky.showtrack.core.navigation.GroupsRoute
+import kotlinx.coroutines.flow.StateFlow
 
 /**
  * This module's contribution to the app's nav graph for [GroupsRoute]. `:app` calls it; nothing
@@ -24,10 +25,23 @@ import com.anarky.showtrack.core.navigation.GroupsRoute
  * rendered a bare placeholder and `groupsEntry` took no `onNavigate` at all (`AppDestination.kt`'s own
  * note on why a screen with nowhere to go declares no such parameter rather than accepting and
  * dropping one).
+ *
+ * [activeGroupId] arrives as a `StateFlow` (task 9c.5), collected by [GroupsScreen]'s stateful
+ * overload — `feedEntry`'s identical reasoning (`FeedNavigation.kt`'s own KDoc): this registration
+ * runs far less often than the active group can change, so a plain captured value would go stale.
+ * No `groups` parameter here, unlike `feedEntry` — [GroupsScreen] already loads the full list for
+ * its own [GroupsUiState.Success.groups], and `GroupSwitcher` reads that list directly rather than
+ * fetching a second, redundant copy through `:app`.
  */
-fun NavGraphBuilder.groupsEntry(onNavigate: (AppRoute) -> Unit) {
+fun NavGraphBuilder.groupsEntry(
+    activeGroupId: StateFlow<String?>,
+    onSwitchGroup: (String) -> Unit,
+    onNavigate: (AppRoute) -> Unit,
+) {
     composable<GroupsRoute> {
         GroupsScreen(
+            activeGroupId = activeGroupId,
+            onSwitchGroup = onSwitchGroup,
             onGroupClick = { group: Group -> onNavigate(GroupDetailRoute(groupId = group.id)) },
         )
     }

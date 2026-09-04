@@ -11,12 +11,14 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import com.anarky.showtrack.core.designsystem.component.LoadingState
 import com.anarky.showtrack.core.model.AuthEvent
+import com.anarky.showtrack.core.model.Group
 import com.anarky.showtrack.core.navigation.AppRoute
 import com.anarky.showtrack.core.navigation.AuthRoute
 import com.anarky.showtrack.core.navigation.GroupsRoute
 import com.anarky.showtrack.core.navigation.ImportRoute
 import com.anarky.showtrack.core.navigation.LibraryRoute
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.StateFlow
 
 /**
  * The app's single nav graph, plus the auth gate that can redirect out of any of it.
@@ -65,6 +67,7 @@ internal fun ShowTrackNavHost(
     authEvents: Flow<AuthEvent>,
     modifier: Modifier = Modifier,
     appViewModel: AppViewModel = hiltViewModel(),
+    activeGroupViewModel: ActiveGroupViewModel = hiltViewModel(),
 ) {
     AuthGate(authEvents = authEvents, onLoggedOut = navController::navigateToAuthClearingStack)
 
@@ -75,6 +78,9 @@ internal fun ShowTrackNavHost(
                 navController = navController,
                 startDestination = startDestinationFor(start),
                 onSignedIn = appViewModel::markSignedIn,
+                activeGroupId = activeGroupViewModel.activeGroupId,
+                groups = activeGroupViewModel.groups,
+                onSwitchGroup = activeGroupViewModel::selectGroup,
                 modifier = modifier,
             )
     }
@@ -112,11 +118,15 @@ internal fun startDestinationFor(start: AppStart): AppRoute =
  * `start` any more; [startDestination] (already derived from it, one layer up) is all this
  * composable's `NavHost` call needs.
  */
+@Suppress("LongParameterList")
 @Composable
 private fun ShowTrackGraph(
     navController: NavHostController,
     startDestination: AppRoute,
     onSignedIn: (Boolean) -> Unit,
+    activeGroupId: StateFlow<String?>,
+    groups: StateFlow<List<Group>>,
+    onSwitchGroup: (String) -> Unit,
     modifier: Modifier,
 ) {
     NavHost(
@@ -124,7 +134,12 @@ private fun ShowTrackGraph(
         startDestination = startDestination,
         modifier = modifier,
     ) {
-        showTrackDestinations(onNavigate = { route -> navController.routeShowTrackNavigation(route, onSignedIn) })
+        showTrackDestinations(
+            onNavigate = { route -> navController.routeShowTrackNavigation(route, onSignedIn) },
+            activeGroupId = activeGroupId,
+            groups = groups,
+            onSwitchGroup = onSwitchGroup,
+        )
     }
 }
 

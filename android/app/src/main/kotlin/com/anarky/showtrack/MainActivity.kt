@@ -15,6 +15,7 @@ import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffo
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffoldDefaults
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteType
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
@@ -33,6 +34,7 @@ import com.anarky.showtrack.core.navigation.AuthRoute
 import com.anarky.showtrack.core.navigation.DiscoverRoute
 import com.anarky.showtrack.core.navigation.FavoritesRoute
 import com.anarky.showtrack.core.navigation.FeedRoute
+import com.anarky.showtrack.core.navigation.GroupsRoute
 import com.anarky.showtrack.core.navigation.LibraryRoute
 import com.anarky.showtrack.core.navigation.ProfileRoute
 import dagger.hilt.android.AndroidEntryPoint
@@ -118,6 +120,26 @@ fun ShowTrackApp(authEvents: Flow<AuthEvent>) {
     val appViewModel: AppViewModel = hiltViewModel()
     val start by appViewModel.start.collectAsStateWithLifecycle()
     val showNavigationTabs = shouldShowNavigationTabs(start, currentBackStackEntry?.destination)
+
+    // The same Activity-scoped instance ShowTrackNavHost resolves for its own destination table
+    // (that composable's own comment on the identical AppViewModel pattern applies here too) — a
+    // second read of the existing StateFlow, not a second decision. Refreshed here, rather than
+    // from inside :feature:feed/:feature:groups, because ActiveGroupViewModel has no
+    // NavBackStackEntry of its own to hang a LifecycleResumeEffect off (ActiveGroupViewModel's own
+    // KDoc): this LaunchedEffect is the resume-shaped trigger instead, firing whenever the current
+    // destination BECOMES the Feed or Groups tab — a tab switch included, not only an app
+    // foreground — so a group created or left on one tab is reflected in the switcher the next
+    // time either tab is visited, without either feature module knowing this ViewModel exists.
+    val activeGroupViewModel: ActiveGroupViewModel = hiltViewModel()
+    val currentDestination = currentBackStackEntry?.destination
+    LaunchedEffect(currentDestination) {
+        val onFeedOrGroupsTab =
+            currentDestination?.hasRoute(FeedRoute::class) == true ||
+                currentDestination?.hasRoute(GroupsRoute::class) == true
+        if (onFeedOrGroupsTab) {
+            activeGroupViewModel.refresh()
+        }
+    }
 
     NavigationSuiteScaffold(
         // An empty navigationSuiteItems block does not remove the bar: NavigationSuiteScaffold

@@ -111,8 +111,9 @@ class TopLevelNavigationTest {
      * The actual reachability pin `Feed is registered as a top-level destination` cannot provide
      * on its own — `AppDestination.kt`'s own KDoc calls this exact failure mode out: "a route
      * wired into the graph with no door in." Drives a real `NavHostController` through
-     * `navigateToTopLevelDestination(FeedRoute)` via `showTrackDestinations` (which now calls
-     * `feedEntry(activeGroupId = null, onNavigate = ...)`), so a broken registration — the
+     * `navigateToTopLevelDestination(FeedRoute)` via `showTrackDestinations` (which calls
+     * `feedEntry`, defaulting `activeGroupId`/`groups` here since this test does not care about
+     * groups), so a broken registration — the
      * `AppDestination` entry pointing at the wrong route, or `feedEntry` never actually composing
      * `FeedRoute` — fails here, not silently. `Discover`'s sibling test's identical shape one tab
      * over.

@@ -72,7 +72,7 @@ class NavGraphRegistrationTest {
     /** The registration table names each declared route exactly once. */
     @Test
     fun `every declared route appears in appDestinations exactly once`() {
-        val registered = appDestinations.map(AppDestination::route)
+        val registered = appDestinations().map(AppDestination::route)
 
         assertEquals(
             "appDestinations must name every route in AppRoute's hierarchy and no others",
@@ -113,7 +113,7 @@ class NavGraphRegistrationTest {
         assertEquals(
             "the NavHost's graph must contain exactly one destination per registration call; " +
                 "a smaller graph means two entries registered the same route",
-            appDestinations.size,
+            appDestinations().size,
             graphRoutes.size,
         )
         assertEquals(

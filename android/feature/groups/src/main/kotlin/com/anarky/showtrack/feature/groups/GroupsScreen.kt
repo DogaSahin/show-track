@@ -38,9 +38,11 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.anarky.showtrack.core.data.repository.GroupWithInvite
 import com.anarky.showtrack.core.designsystem.component.EmptyState
 import com.anarky.showtrack.core.designsystem.component.ErrorState
+import com.anarky.showtrack.core.designsystem.component.GroupSwitcher
 import com.anarky.showtrack.core.designsystem.component.LoadingState
 import com.anarky.showtrack.core.designsystem.component.StaleDataBanner
 import com.anarky.showtrack.core.model.Group
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
 /**
@@ -59,13 +61,20 @@ import kotlinx.coroutines.launch
  *
  * Collects [GroupsViewModel.state] AND [GroupsViewModel.actionState] separately (fix round 1) —
  * see [GroupsActionState]'s own KDoc for why they are two independent flows rather than one.
+ *
+ * [activeGroupId] arrives as a `StateFlow` (task 9c.5) and is collected here, inside this
+ * composable's own body — `FeedScreen`'s identical reasoning (`FeedNavigation.kt`'s own KDoc):
+ * `groupsEntry`'s registration runs far less often than the active group can change.
  */
 @Composable
 fun GroupsScreen(
+    activeGroupId: StateFlow<String?>,
+    onSwitchGroup: (String) -> Unit,
     onGroupClick: (Group) -> Unit,
     modifier: Modifier = Modifier,
     viewModel: GroupsViewModel = hiltViewModel(),
 ) {
+    val currentActiveGroupId by activeGroupId.collectAsStateWithLifecycle()
     LifecycleResumeEffect(viewModel) {
         viewModel.refresh()
         onPauseOrDispose { }
@@ -73,6 +82,8 @@ fun GroupsScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val actionState by viewModel.actionState.collectAsStateWithLifecycle()
     GroupsScreen(
+        activeGroupId = currentActiveGroupId,
+        onSwitchGroup = onSwitchGroup,
         state = state,
         actionState = actionState,
         onRetry = viewModel::refresh,
@@ -138,6 +149,14 @@ fun GroupsScreen(
  * reading as though the fresh attempt had already failed. Wired to
  * `GroupsViewModel.clearCreateError`/`clearJoinError`, which clear only their own
  * [GroupsActionState] field — the SEPARATE channel discipline (decision C-S) applies here too.
+ *
+ * **[activeGroupId]/[onSwitchGroup] (task 9c.5), defaulting to `null`/no-op** so every pre-existing
+ * test in this file keeps compiling and passing unchanged — with [activeGroupId] `null`,
+ * [GroupSwitcher] is never reached. The row reads its group list from [state]'s own
+ * [GroupsUiState.Success.groups] rather than a separate parameter: this screen already loads the
+ * full list for its own content, and [GroupSwitcher]'s own `groups.size < 2` gate (E-K) means an
+ * empty/loading/error [state] (no [GroupsUiState.Success] to read from) simply renders nothing
+ * here, same as a genuinely single-group account would.
  */
 @Suppress("LongParameterList")
 @Composable
@@ -151,6 +170,8 @@ internal fun GroupsScreen(
     onCreateDialogOpened: () -> Unit,
     onJoinDialogOpened: () -> Unit,
     onGroupClick: (Group) -> Unit,
+    activeGroupId: String? = null,
+    onSwitchGroup: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var showCreateDialog by remember { mutableStateOf(false) }
@@ -175,6 +196,10 @@ internal fun GroupsScreen(
                 showJoinDialog = true
             },
         )
+        if (activeGroupId != null) {
+            val switcherGroups = (state as? GroupsUiState.Success)?.groups ?: emptyList()
+            GroupSwitcher(groups = switcherGroups, activeGroupId = activeGroupId, onGroupSelected = onSwitchGroup)
+        }
         GroupsContent(
             state = state,
             onRetry = onRetry,

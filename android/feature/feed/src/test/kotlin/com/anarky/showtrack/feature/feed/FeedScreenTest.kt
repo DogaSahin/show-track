@@ -10,6 +10,7 @@ import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ApplicationProvider
 import com.anarky.showtrack.core.model.ActivityKind
 import com.anarky.showtrack.core.model.FeedEntry
+import com.anarky.showtrack.core.model.Group
 import com.anarky.showtrack.core.model.GroupActor
 import com.anarky.showtrack.core.model.GroupFailure
 import com.anarky.showtrack.core.model.MediaSource
@@ -234,6 +235,50 @@ class FeedScreenTest {
         assertTrue(retried)
     }
 
+    /**
+     * The switcher's own gating/selection behaviour is [GroupSwitcherTest]'s job
+     * (`:core:designsystem`) — this is only the WIRING check: [FeedScreen] actually plugs
+     * [com.anarky.showtrack.core.designsystem.component.GroupSwitcher] into its own [groups]/
+     * [onSwitchGroup] parameters, rather than, say, swapping them or dropping the callback.
+     */
+    @Test
+    fun `tapping a group in the switcher invokes onSwitchGroup with that group's id`() {
+        var selected: String? = null
+        composeRule.setContent {
+            FeedScreen(
+                activeGroupId = GROUP_ID,
+                groups = listOf(GROUP, OTHER_GROUP),
+                onSwitchGroup = { selected = it },
+                state = FeedUiState.Success(entries = listOf(ADDED)),
+                onLoadMore = {},
+                onRetry = {},
+                onEntryClick = {},
+            )
+        }
+
+        composeRule.onNodeWithText(OTHER_GROUP.name).performClick()
+
+        assertEquals(OTHER_GROUP.id, selected)
+    }
+
+    /** The negative control: a single active group renders no switcher at all (E-K). */
+    @Test
+    fun `a single active group shows no switcher`() {
+        composeRule.setContent {
+            FeedScreen(
+                activeGroupId = GROUP_ID,
+                groups = listOf(GROUP),
+                onSwitchGroup = {},
+                state = FeedUiState.Success(entries = listOf(ADDED)),
+                onLoadMore = {},
+                onRetry = {},
+                onEntryClick = {},
+            )
+        }
+
+        composeRule.onNodeWithText(GROUP.name).assertDoesNotExist()
+    }
+
     @Test
     fun `a page error footer appears under the list and tapping it invokes onLoadMore`() {
         var loadedMore = false
@@ -257,6 +302,9 @@ class FeedScreenTest {
         const val GROUP_ID = "group-1"
         const val TITLE = "Frieren"
         val ACTOR = GroupActor(id = "user-1", username = "alex")
+        val GROUP = Group(id = GROUP_ID, name = "Alpha Watchers", createdAt = Instant.parse("2026-08-28T09:00:00Z"))
+        val OTHER_GROUP =
+            Group(id = "group-2", name = "Beta Watchers", createdAt = Instant.parse("2026-08-29T09:00:00Z"))
         val MEDIA =
             MediaSummary(
                 source = MediaSource.ANILIST,

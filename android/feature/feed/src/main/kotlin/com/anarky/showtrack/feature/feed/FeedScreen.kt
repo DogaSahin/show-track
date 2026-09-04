@@ -26,13 +26,16 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.anarky.showtrack.core.designsystem.component.EmptyState
 import com.anarky.showtrack.core.designsystem.component.EndOfListTrigger
 import com.anarky.showtrack.core.designsystem.component.ErrorState
+import com.anarky.showtrack.core.designsystem.component.GroupSwitcher
 import com.anarky.showtrack.core.designsystem.component.LoadingState
 import com.anarky.showtrack.core.designsystem.component.StaleDataBanner
 import com.anarky.showtrack.core.model.ActivityKind
 import com.anarky.showtrack.core.model.FeedEntry
+import com.anarky.showtrack.core.model.Group
 import com.anarky.showtrack.core.model.GroupFailure
 import com.anarky.showtrack.core.navigation.AppRoute
 import com.anarky.showtrack.core.navigation.DetailRoute
+import kotlinx.coroutines.flow.StateFlow
 
 /**
  * The stateful entry point, and the fifth top-level tab (task 9c.4). `hiltViewModel()` is the
@@ -64,21 +67,37 @@ import com.anarky.showtrack.core.navigation.DetailRoute
  * and id, not merely that navigation happened" — `GroupDetailEntryHiltTest`'s model). An entry with
  * no `mediaId` (an [ActivityKind.IMPORTED] row — E-H) is simply never clickable in the first place;
  * see [FeedEntryRow]'s own KDoc.
+ *
+ * [activeGroupId]/[groups] are `StateFlow`s, not plain values, as of task 9c.5 — collected here,
+ * inside this composable's own body, so this screen reacts to a switch (`GroupSwitcher`'s own
+ * callback, ultimately `ActiveGroupViewModel.selectGroup`) even though `feedEntry`'s registration
+ * itself runs far less often than that — see `FeedNavigation.kt`'s own KDoc for why a plain value
+ * could not do this. [LifecycleResumeEffect] keyed on the COLLECTED `String?`, not the `StateFlow`
+ * reference itself (which never changes) — this class's own prior KDoc's reasoning is otherwise
+ * unchanged: the effect re-fires the moment the resolved group changes, without this composable
+ * needing to know why.
  */
+@Suppress("LongParameterList")
 @Composable
 fun FeedScreen(
-    activeGroupId: String?,
+    activeGroupId: StateFlow<String?>,
+    groups: StateFlow<List<Group>>,
+    onSwitchGroup: (String) -> Unit,
     onNavigate: (AppRoute) -> Unit,
     modifier: Modifier = Modifier,
     viewModel: FeedViewModel = hiltViewModel(),
 ) {
-    LifecycleResumeEffect(viewModel, activeGroupId) {
-        if (activeGroupId != null) viewModel.selectGroup(activeGroupId)
+    val currentGroupId by activeGroupId.collectAsStateWithLifecycle()
+    val currentGroups by groups.collectAsStateWithLifecycle()
+    LifecycleResumeEffect(viewModel, currentGroupId) {
+        currentGroupId?.let { groupId -> viewModel.selectGroup(groupId) }
         onPauseOrDispose { }
     }
     val state by viewModel.state.collectAsStateWithLifecycle()
     FeedScreen(
-        activeGroupId = activeGroupId,
+        activeGroupId = currentGroupId,
+        groups = currentGroups,
+        onSwitchGroup = onSwitchGroup,
         state = state,
         onLoadMore = viewModel::loadMore,
         onRetry = viewModel::refresh,
@@ -90,15 +109,22 @@ fun FeedScreen(
 /**
  * The stateless half, split out so it can be previewed and driven by a test with no ViewModel and
  * no Hilt — `GroupsScreen`/`FavoritesScreen`'s pattern. This task's own tests drive THIS overload
- * with a group id directly (Ruling 1), so the task stays independently testable ahead of 9c.5.
+ * with a group id directly (Ruling 1), so the task stayed independently testable ahead of 9c.5.
  *
  * [activeGroupId] is read BEFORE [state] in the `when` below on purpose: it renders the no-groups
  * empty state unconditionally when null, regardless of whatever [state] happens to hold (a stale
- * [FeedUiState.Success] left over from a previously active group, most likely, once 9c.5 makes
- * switching AWAY from every group a real case — [FeedViewModel] itself never blanks [state] back
- * to [FeedUiState.Loading] just because [activeGroupId] went null, since [FeedViewModel.selectGroup]
+ * [FeedUiState.Success] left over from a previously active group, most likely, once switching AWAY
+ * from every group is a real case — [FeedViewModel] itself never blanks [state] back to
+ * [FeedUiState.Loading] just because [activeGroupId] went null, since [FeedViewModel.selectGroup]
  * is never even called for that value in the first place). Reading [state] first would risk
  * briefly showing a stale group's rows under the "join or create a group" message.
+ *
+ * [groups]/[onSwitchGroup] default to an empty list/no-op (task 9c.5) so every pre-existing test in
+ * this file — none of which exercises the switcher — keeps compiling and passing unchanged; only
+ * a genuinely non-empty [groups] list ever renders [GroupSwitcher] at all, and that component's own
+ * `groups.size < 2` gate (E-K) means even a single-element default would render nothing here either
+ * way. Rendered only once [activeGroupId] is non-null — E-B's header row belongs beside content
+ * that is actually group-scoped, not above the create-or-join empty state.
  */
 @Suppress("LongParameterList")
 @Composable
@@ -108,6 +134,8 @@ internal fun FeedScreen(
     onLoadMore: () -> Unit,
     onRetry: () -> Unit,
     onEntryClick: (FeedEntry) -> Unit,
+    groups: List<Group> = emptyList(),
+    onSwitchGroup: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.fillMaxSize()) {
@@ -116,6 +144,9 @@ internal fun FeedScreen(
             style = MaterialTheme.typography.titleLarge,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
         )
+        if (activeGroupId != null) {
+            GroupSwitcher(groups = groups, activeGroupId = activeGroupId, onGroupSelected = onSwitchGroup)
+        }
         Box(modifier = Modifier.weight(weight = 1f).fillMaxWidth()) {
             if (activeGroupId == null) {
                 EmptyState(

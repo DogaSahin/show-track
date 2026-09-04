@@ -6,8 +6,11 @@ import android.content.Context
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
@@ -620,6 +623,70 @@ class GroupsScreenTest {
         composeRule.waitForIdle()
 
         composeRule.onNodeWithText(context.getString(R.string.groups_join_code_label)).assertDoesNotExist()
+    }
+
+    /**
+     * The switcher's own gating/selection behaviour is `GroupSwitcherTest`'s job
+     * (`:core:designsystem`) — this is only the WIRING check: [GroupsScreen] actually plugs
+     * `GroupSwitcher` into its own `activeGroupId`/`onSwitchGroup` parameters and reads its group
+     * list from [GroupsUiState.Success.groups], rather than, say, dropping the callback.
+     *
+     * With two groups, [GroupsList] ALSO renders a row for `BETA.name` — [GroupSwitcher] and the
+     * list share the same source (`state.groups`), so `BETA.name` is genuinely ambiguous on this
+     * screen. `.onFirst()` is the switcher's own tab: [GroupSwitcher] renders unconditionally ABOVE
+     * `GroupsContent` in this screen's `Column` — production ordering this test relies on, not an
+     * assumption about traversal order in general.
+     */
+    @Test
+    fun `tapping a group in the switcher invokes onSwitchGroup with that group's id`() {
+        var selected: String? = null
+        composeRule.setContent {
+            GroupsScreen(
+                state = GroupsUiState.Success(groups = listOf(ALPHA, BETA)),
+                actionState = GroupsActionState(),
+                onRetry = {},
+                onCreateGroup = {},
+                onJoinGroup = {},
+                onDismissInvite = {},
+                onCreateDialogOpened = {},
+                onJoinDialogOpened = {},
+                onGroupClick = {},
+                activeGroupId = ALPHA.id,
+                onSwitchGroup = { selected = it },
+            )
+        }
+
+        composeRule.onAllNodesWithText(BETA.name).onFirst().performClick()
+
+        assertEquals(BETA.id, selected)
+    }
+
+    /**
+     * The negative control: a single active group renders no switcher at all (E-K). `ALPHA.name`
+     * still renders once, as the ordinary list row — [onAllNodesWithText]'s count is what actually
+     * discriminates "the switcher also rendered a tab with the same name" from "only the list row
+     * exists": a plain `onNodeWithText` would merely throw on an ambiguous match either way, which
+     * reads as a broken test, not a failing assertion, if this regressed.
+     */
+    @Test
+    fun `a single active group shows no switcher`() {
+        composeRule.setContent {
+            GroupsScreen(
+                state = GroupsUiState.Success(groups = listOf(ALPHA)),
+                actionState = GroupsActionState(),
+                onRetry = {},
+                onCreateGroup = {},
+                onJoinGroup = {},
+                onDismissInvite = {},
+                onCreateDialogOpened = {},
+                onJoinDialogOpened = {},
+                onGroupClick = {},
+                activeGroupId = ALPHA.id,
+                onSwitchGroup = {},
+            )
+        }
+
+        composeRule.onAllNodesWithText(ALPHA.name).assertCountEquals(1)
     }
 
     private companion object {
