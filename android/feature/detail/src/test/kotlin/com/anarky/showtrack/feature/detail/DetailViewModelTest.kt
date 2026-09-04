@@ -5,15 +5,22 @@ import androidx.lifecycle.SavedStateHandle
 import app.cash.turbine.test
 import com.anarky.showtrack.core.data.repository.LibraryRepository
 import com.anarky.showtrack.core.data.repository.MediaRepository
+import com.anarky.showtrack.core.model.GroupActor
+import com.anarky.showtrack.core.model.GroupFailure
 import com.anarky.showtrack.core.model.LibraryEntry
 import com.anarky.showtrack.core.model.LibraryPatch
 import com.anarky.showtrack.core.model.Media
 import com.anarky.showtrack.core.model.MediaSource
 import com.anarky.showtrack.core.model.MediaStatus
+import com.anarky.showtrack.core.model.MediaSummary
 import com.anarky.showtrack.core.model.MediaType
+import com.anarky.showtrack.core.model.MemberProgress
+import com.anarky.showtrack.core.model.Review
 import com.anarky.showtrack.core.model.ScoreChange
 import com.anarky.showtrack.core.model.SearchResults
 import com.anarky.showtrack.core.model.UserMediaStatus
+import com.anarky.showtrack.core.model.WatchlistEntry
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -69,7 +76,8 @@ class DetailViewModelTest {
         runTest(dispatcher) {
             // Reached from search and from a push deep-link. Treating "no entry" as an error
             // would make the deep-link open a broken screen for anything not yet tracked.
-            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), FakeLibrary(entry = null))
+            val viewModel =
+                DetailViewModel(savedState("media-1"), FakeMedia(), FakeLibrary(entry = null), FakeGroupRepository())
             advanceUntilIdle()
 
             assertNull((viewModel.state.value as DetailUiState.Success).data.entry)
@@ -84,7 +92,7 @@ class DetailViewModelTest {
             // hard-coded or empty id would actually be caught.
             val media = FakeMedia()
             val library = FakeLibrary(entry = null)
-            DetailViewModel(savedState("media-42"), media, library)
+            DetailViewModel(savedState("media-42"), media, library, FakeGroupRepository())
             advanceUntilIdle()
 
             assertEquals("media-42", media.lastMediaId)
@@ -94,7 +102,8 @@ class DetailViewModelTest {
     @Test
     fun `a title already in the library loads with its entry`() =
         runTest(dispatcher) {
-            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), FakeLibrary(entry = ENTRY))
+            val viewModel =
+                DetailViewModel(savedState("media-1"), FakeMedia(), FakeLibrary(entry = ENTRY), FakeGroupRepository())
             advanceUntilIdle()
 
             assertEquals(ENTRY, (viewModel.state.value as DetailUiState.Success).data.entry)
@@ -105,7 +114,13 @@ class DetailViewModelTest {
     fun `a failing load reports Error instead of escaping the coroutine`() =
         runTest(dispatcher) {
             val failure = IOException("offline")
-            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(detailFailure = failure), FakeLibrary())
+            val viewModel =
+                DetailViewModel(
+                    savedState("media-1"),
+                    FakeMedia(detailFailure = failure),
+                    FakeLibrary(),
+                    FakeGroupRepository(),
+                )
 
             advanceUntilIdle()
 
@@ -124,7 +139,7 @@ class DetailViewModelTest {
         runTest(dispatcher) {
             val failure = IOException("offline")
             val media = FakeMedia(detailFailure = failure)
-            val viewModel = DetailViewModel(savedState("media-1"), media, FakeLibrary())
+            val viewModel = DetailViewModel(savedState("media-1"), media, FakeLibrary(), FakeGroupRepository())
 
             viewModel.state.test {
                 assertEquals(DetailUiState.Loading, awaitItem())
@@ -150,7 +165,7 @@ class DetailViewModelTest {
     fun `changing the score sends only the score`() =
         runTest(dispatcher) {
             val library = FakeLibrary(entry = ENTRY)
-            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), library)
+            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), library, FakeGroupRepository())
             advanceUntilIdle()
 
             viewModel.setScore(BigDecimal("9.0"))
@@ -166,7 +181,7 @@ class DetailViewModelTest {
             // The third wire state score's own KDoc calls out: absent means "leave it", this
             // means "unrate it" — the one leg of the tri-state with no assertion until now.
             val library = FakeLibrary(entry = ENTRY)
-            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), library)
+            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), library, FakeGroupRepository())
             advanceUntilIdle()
 
             viewModel.clearScore()
@@ -179,7 +194,7 @@ class DetailViewModelTest {
     fun `changing the progress sends only the progress`() =
         runTest(dispatcher) {
             val library = FakeLibrary(entry = ENTRY)
-            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), library)
+            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), library, FakeGroupRepository())
             advanceUntilIdle()
 
             viewModel.setProgress(7)
@@ -192,7 +207,7 @@ class DetailViewModelTest {
     fun `toggling favorite sends the flipped value`() =
         runTest(dispatcher) {
             val library = FakeLibrary(entry = ENTRY)
-            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), library)
+            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), library, FakeGroupRepository())
             advanceUntilIdle()
 
             viewModel.toggleFavorite()
@@ -205,7 +220,7 @@ class DetailViewModelTest {
     fun `changing the status sends only the status`() =
         runTest(dispatcher) {
             val library = FakeLibrary(entry = ENTRY)
-            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), library)
+            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), library, FakeGroupRepository())
             advanceUntilIdle()
 
             viewModel.setStatus(UserMediaStatus.COMPLETED)
@@ -221,7 +236,7 @@ class DetailViewModelTest {
             // guess is how a UI drifts from the database it claims to show.
             val returned = ENTRY.copy(progress = 5)
             val library = FakeLibrary(entry = ENTRY, updateResult = returned)
-            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), library)
+            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), library, FakeGroupRepository())
             advanceUntilIdle()
 
             viewModel.setProgress(99)
@@ -235,7 +250,7 @@ class DetailViewModelTest {
         runTest(dispatcher) {
             val failure = IOException("offline")
             val library = FakeLibrary(entry = ENTRY, updateFailure = failure)
-            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), library)
+            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), library, FakeGroupRepository())
             advanceUntilIdle()
 
             viewModel.setScore(BigDecimal("9.0"))
@@ -253,7 +268,7 @@ class DetailViewModelTest {
     fun `an edit in flight sets saving and clears it on completion`() =
         runTest(dispatcher) {
             val library = FakeLibrary(entry = ENTRY)
-            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), library)
+            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), library, FakeGroupRepository())
 
             viewModel.state.test {
                 assertEquals(DetailUiState.Loading, awaitItem())
@@ -272,7 +287,7 @@ class DetailViewModelTest {
     fun `a second edit is ignored while one is already saving`() =
         runTest(dispatcher) {
             val library = FakeLibrary(entry = ENTRY)
-            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), library)
+            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), library, FakeGroupRepository())
             advanceUntilIdle()
 
             viewModel.setScore(BigDecimal("9.0"))
@@ -286,7 +301,7 @@ class DetailViewModelTest {
     fun `adding to the library replaces the null entry with the one the server returned`() =
         runTest(dispatcher) {
             val library = FakeLibrary(entry = null, addResult = ENTRY)
-            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), library)
+            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), library, FakeGroupRepository())
             advanceUntilIdle()
 
             viewModel.addToLibrary()
@@ -305,7 +320,7 @@ class DetailViewModelTest {
         runTest(dispatcher) {
             val failure = IOException("offline")
             val library = FakeLibrary(entry = null, addFailure = failure)
-            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), library)
+            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), library, FakeGroupRepository())
             advanceUntilIdle()
 
             viewModel.addToLibrary()
@@ -318,6 +333,234 @@ class DetailViewModelTest {
             assertNull(success.data.entry)
             assertEquals(DetailActionError.Add(failure), success.actionError)
             assertFalse(success.saving)
+        }
+
+    // --- The group section (task 9c.6) -------------------------------------------------------
+
+    @Test
+    fun `the group section stays absent when there is no active group`() =
+        runTest(dispatcher) {
+            // Both ActiveGroupState.Loading/Error AND a genuinely-empty account collapse into this
+            // same call from DetailScreen's stateful wrapper — GroupSectionState's own KDoc.
+            val viewModel =
+                DetailViewModel(savedState("media-1"), FakeMedia(), FakeLibrary(entry = ENTRY), FakeGroupRepository())
+            advanceUntilIdle()
+
+            viewModel.setActiveGroup(null)
+            advanceUntilIdle()
+
+            assertEquals(GroupSectionState.Absent, (viewModel.state.value as DetailUiState.Success).groupSection)
+        }
+
+    @Test
+    fun `selecting an active group loads its progress and reviews`() =
+        runTest(dispatcher) {
+            val groups =
+                FakeGroupRepository(
+                    progressResults = mutableMapOf((GROUP_ID to "media-1") to listOf(PROGRESS_ROW)),
+                    reviewsResults = mutableMapOf((GROUP_ID to "media-1") to listOf(REVIEW)),
+                )
+            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), FakeLibrary(entry = ENTRY), groups)
+            advanceUntilIdle()
+
+            viewModel.setActiveGroup(GROUP_ID)
+            advanceUntilIdle()
+
+            val section = (viewModel.state.value as DetailUiState.Success).groupSection as GroupSectionState.Loaded
+            assertEquals(listOf(PROGRESS_ROW), section.progress)
+            assertEquals(listOf(REVIEW), section.reviews)
+            assertFalse(section.isStale)
+        }
+
+    @Test
+    fun `a title nobody else tracks shows an empty Loaded section, not a broken one`() =
+        runTest(dispatcher) {
+            // §9.12's acceptance criterion. The fake's default (unconfigured) response for this
+            // key is an empty list on both — the honest "nobody else tracks this yet" outcome.
+            val viewModel =
+                DetailViewModel(savedState("media-1"), FakeMedia(), FakeLibrary(entry = ENTRY), FakeGroupRepository())
+            advanceUntilIdle()
+
+            viewModel.setActiveGroup(GROUP_ID)
+            advanceUntilIdle()
+
+            assertEquals(
+                GroupSectionState.Loaded(progress = emptyList(), reviews = emptyList()),
+                (viewModel.state.value as DetailUiState.Success).groupSection,
+            )
+        }
+
+    @Test
+    fun `a failed first fetch for a group reports GroupSectionState Error`() =
+        runTest(dispatcher) {
+            val groups = FakeGroupRepository()
+            groups.progressFailures[GROUP_ID to "media-1"] = GroupFailure.Network
+            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), FakeLibrary(entry = ENTRY), groups)
+            advanceUntilIdle()
+
+            viewModel.setActiveGroup(GROUP_ID)
+            advanceUntilIdle()
+
+            assertEquals(
+                GroupSectionState.Error(GroupFailure.Network),
+                (viewModel.state.value as DetailUiState.Success).groupSection,
+            )
+        }
+
+    @Test
+    fun `a failed reload over an already-loaded section keeps the rows and marks them stale`() =
+        runTest(dispatcher) {
+            // The settled refresh shape (Global Constraints), applied to the group section: a
+            // retry that fails must never blank or error away rows already on screen.
+            val groups =
+                FakeGroupRepository(progressResults = mutableMapOf((GROUP_ID to "media-1") to listOf(PROGRESS_ROW)))
+            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), FakeLibrary(entry = ENTRY), groups)
+            advanceUntilIdle()
+            viewModel.setActiveGroup(GROUP_ID)
+            advanceUntilIdle()
+            val before = (viewModel.state.value as DetailUiState.Success).groupSection as GroupSectionState.Loaded
+            assertEquals(listOf(PROGRESS_ROW), before.progress)
+            assertFalse(before.isStale)
+
+            groups.progressFailures[GROUP_ID to "media-1"] = GroupFailure.Network
+            viewModel.retryGroupSection()
+            advanceUntilIdle()
+
+            val after = (viewModel.state.value as DetailUiState.Success).groupSection as GroupSectionState.Loaded
+            assertEquals(listOf(PROGRESS_ROW), after.progress)
+            assertTrue(after.isStale)
+        }
+
+    /**
+     * One of the two pairs the Global Constraints call out by name: "the active group changing
+     * while a progress or reviews fetch is in flight". Group A's fetch is held open with a gate
+     * while the active group switches to B; B's own (ungated) fetch must land normally, and A's
+     * late response — arriving only after the switch — must be DROPPED rather than overwriting B's
+     * already-rendered rows. This is what [DetailViewModel.groupSectionGeneration] exists to
+     * prevent; deleting its check is exactly the mutation this test is built to catch.
+     */
+    @Test
+    fun `switching the active group while its fetch is in flight drops the stale response`() =
+        runTest(dispatcher) {
+            val groups =
+                FakeGroupRepository(
+                    progressResults =
+                        mutableMapOf(
+                            ("group-a" to "media-1") to listOf(PROGRESS_ROW),
+                            ("group-b" to "media-1") to listOf(OTHER_PROGRESS_ROW),
+                        ),
+                )
+            val groupAGate = CompletableDeferred<Unit>()
+            groups.progressGates["group-a" to "media-1"] = groupAGate
+            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), FakeLibrary(entry = ENTRY), groups)
+            advanceUntilIdle()
+
+            viewModel.setActiveGroup("group-a")
+            advanceUntilIdle() // group A's fetch launches and suspends on groupAGate.
+
+            viewModel.setActiveGroup("group-b")
+            advanceUntilIdle() // group B's own fetch is ungated and lands immediately.
+
+            val whileAPending =
+                (viewModel.state.value as DetailUiState.Success).groupSection as GroupSectionState.Loaded
+            assertEquals(listOf(OTHER_PROGRESS_ROW), whileAPending.progress)
+
+            groupAGate.complete(Unit)
+            advanceUntilIdle()
+
+            val afterALands = (viewModel.state.value as DetailUiState.Success).groupSection as GroupSectionState.Loaded
+            assertEquals(listOf(OTHER_PROGRESS_ROW), afterALands.progress)
+        }
+
+    /**
+     * The OTHER named pair: "a group-scoped failure arriving while a library edit is in
+     * progress". Decision C-S — one error channel per operation — means neither direction may
+     * clobber the other: the edit finishing later must not erase the group failure, and the group
+     * failure landing mid-edit must not touch `saving`/`actionError`. A `.copy()`-based update on
+     * either channel that regressed to a field-by-field rebuild (Global Constraints' own named
+     * failure shape) would fail one of the two assertions below.
+     */
+    @Test
+    fun `a group section failure mid-edit and the edit finishing leave each other's channel untouched`() =
+        runTest(dispatcher) {
+            val library = FakeLibrary(entry = ENTRY)
+            val updateGate = CompletableDeferred<Unit>()
+            library.updateGate = updateGate
+            val groups = FakeGroupRepository()
+            groups.progressFailures[GROUP_ID to "media-1"] = GroupFailure.Network
+            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), library, groups)
+            advanceUntilIdle()
+
+            viewModel.setScore(BigDecimal("9.0"))
+            // The synchronous half of edit() has already run — saving is true before the
+            // coroutine that awaits updateGate is even dispatched.
+            assertTrue((viewModel.state.value as DetailUiState.Success).saving)
+
+            viewModel.setActiveGroup(GROUP_ID)
+            advanceUntilIdle()
+
+            val midEdit = viewModel.state.value as DetailUiState.Success
+            assertTrue("the edit must still be in flight", midEdit.saving)
+            assertEquals(GroupFailure.Network, (midEdit.groupSection as GroupSectionState.Error).cause)
+
+            updateGate.complete(Unit)
+            advanceUntilIdle()
+
+            val afterEdit = viewModel.state.value as DetailUiState.Success
+            assertFalse(afterEdit.saving)
+            assertNull(afterEdit.actionError)
+            assertEquals(GroupFailure.Network, (afterEdit.groupSection as GroupSectionState.Error).cause)
+        }
+
+    // --- Propose to a group (task 9c.6) -------------------------------------------------------
+
+    @Test
+    fun `proposing to a group calls proposeTitle with that group and this title`() =
+        runTest(dispatcher) {
+            val groups = FakeGroupRepository(proposeResult = WATCHLIST_ENTRY)
+            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), FakeLibrary(entry = ENTRY), groups)
+            advanceUntilIdle()
+
+            viewModel.proposeToGroup("group-9")
+            advanceUntilIdle()
+
+            assertEquals("group-9", groups.lastProposeGroupId)
+            assertEquals("media-1", groups.lastProposeMediaId)
+            val success = viewModel.state.value as DetailUiState.Success
+            assertFalse(success.proposing)
+            assertNull(success.proposeError)
+        }
+
+    @Test
+    fun `a failed propose reports NoSuchTitle without disturbing the rest of the screen`() =
+        runTest(dispatcher) {
+            val groups = FakeGroupRepository(proposeFailure = GroupFailure.NoSuchTitle)
+            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), FakeLibrary(entry = ENTRY), groups)
+            advanceUntilIdle()
+
+            viewModel.proposeToGroup("group-9")
+            advanceUntilIdle()
+
+            val success = viewModel.state.value as DetailUiState.Success
+            assertEquals(GroupFailure.NoSuchTitle, success.proposeError)
+            assertFalse(success.proposing)
+            // The title itself, and its library entry, are untouched by a propose failure.
+            assertEquals(ENTRY, success.data.entry)
+        }
+
+    @Test
+    fun `a second propose is ignored while one is already in flight`() =
+        runTest(dispatcher) {
+            val groups = FakeGroupRepository(proposeResult = WATCHLIST_ENTRY)
+            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), FakeLibrary(entry = ENTRY), groups)
+            advanceUntilIdle()
+
+            viewModel.proposeToGroup("group-9")
+            viewModel.proposeToGroup("group-10")
+            advanceUntilIdle()
+
+            assertEquals(1, groups.proposeCalls)
+            assertEquals("group-9", groups.lastProposeGroupId)
         }
 
     private fun savedState(mediaId: String): SavedStateHandle = SavedStateHandle(mapOf("mediaId" to mediaId))
@@ -373,6 +616,11 @@ class DetailViewModelTest {
         var lastEntryForMediaId: String? = null
             private set
 
+        // Task 9c.6 addition: lets a test hold `update()` suspended so an edit can be observed
+        // genuinely IN FLIGHT — needed to construct the "a group section failure arrives while a
+        // library edit is in progress" pair the Global Constraints call out by name.
+        var updateGate: CompletableDeferred<Unit>? = null
+
         override fun observeLibrary() = error("not exercised by DetailViewModel")
 
         override suspend fun refresh(): Unit = error("not exercised by DetailViewModel")
@@ -398,6 +646,7 @@ class DetailViewModelTest {
         ): LibraryEntry {
             lastPatch = patch
             updateCalls++
+            updateGate?.await()
             updateFailure?.let { throw it }
             return updateResult
         }
@@ -445,6 +694,48 @@ class DetailViewModelTest {
                 favorite = false,
                 updatedAt = Instant.parse("2026-08-28T10:15:30Z"),
                 media = MEDIA,
+            )
+
+        const val GROUP_ID = "group-1"
+
+        val PROGRESS_ROW =
+            MemberProgress(
+                member = GroupActor(id = "user-1", username = "alice"),
+                status = UserMediaStatus.WATCHING,
+                progress = 12,
+            )
+        val OTHER_PROGRESS_ROW =
+            MemberProgress(
+                member = GroupActor(id = "user-2", username = "bob"),
+                status = UserMediaStatus.COMPLETED,
+                progress = 24,
+            )
+        val REVIEW =
+            Review(
+                id = "review-1",
+                author = GroupActor(id = "user-1", username = "alice"),
+                mediaId = "media-1",
+                body = "Great pacing.",
+                containsSpoilers = false,
+                createdAt = Instant.parse("2026-08-28T10:15:30Z"),
+                updatedAt = Instant.parse("2026-08-28T10:15:30Z"),
+            )
+        val WATCHLIST_ENTRY =
+            WatchlistEntry(
+                id = "watchlist-1",
+                media =
+                    MediaSummary(
+                        source = MediaSource.ANILIST,
+                        externalId = "21",
+                        type = MediaType.ANIME,
+                        title = "One Piece",
+                        year = 1999,
+                        genres = listOf("Action"),
+                        coverImageUrl = null,
+                    ),
+                mediaId = "media-1",
+                proposedBy = "user-1",
+                createdAt = Instant.parse("2026-08-28T10:15:30Z"),
             )
     }
 }

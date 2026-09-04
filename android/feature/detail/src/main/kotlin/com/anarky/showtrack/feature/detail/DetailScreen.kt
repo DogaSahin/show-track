@@ -29,6 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.anarky.showtrack.core.designsystem.component.CountdownBadge
 import com.anarky.showtrack.core.designsystem.component.ErrorState
@@ -36,9 +37,12 @@ import com.anarky.showtrack.core.designsystem.component.LoadingState
 import com.anarky.showtrack.core.designsystem.component.MediaCover
 import com.anarky.showtrack.core.designsystem.component.ScoreChip
 import com.anarky.showtrack.core.designsystem.component.StatusTab
+import com.anarky.showtrack.core.model.ActiveGroupState
+import com.anarky.showtrack.core.model.Group
 import com.anarky.showtrack.core.model.LibraryEntry
 import com.anarky.showtrack.core.model.Media
 import com.anarky.showtrack.core.model.UserMediaStatus
+import kotlinx.coroutines.flow.StateFlow
 import java.math.BigDecimal
 
 private val PosterWidth = 120.dp
@@ -56,15 +60,35 @@ private val ScoreOptions: List<BigDecimal> = (2..20).map { half -> BigDecimal(ha
  * No `mediaId` parameter: unlike the earlier skeleton, [DetailViewModel] reads it itself from the
  * `SavedStateHandle` Hilt hands it, which is already populated from `DetailRoute`'s argument by
  * the surrounding `NavBackStackEntry` (see `DetailNavigation.kt`).
+ *
+ * [activeGroup] is a PARAMETER, not read from a singleton — E-C's own requirement ("features
+ * RECEIVE the active group, they never read a singleton for it"), `FeedScreen`'s identical shape.
+ * Collected here, inside this composable's own body, so this screen reacts to a switch even though
+ * `detailEntry`'s registration itself runs far less often than that (`FeedNavigation.kt`'s own KDoc
+ * explains why a `StateFlow` rather than a plain value is what makes that possible).
+ * [LifecycleResumeEffect] is keyed on the RESOLVED group id — only meaningful for
+ * [ActiveGroupState.Success] — so [DetailViewModel.setActiveGroup] is called with the group id
+ * itself (never [ActiveGroupState] as a whole): [DetailViewModel] has no reason to know the
+ * difference between "still loading" and "loaded, zero groups" the way `FeedScreen` does, since
+ * both collapse into the identical [GroupSectionState.Absent] outcome here.
  */
 @Composable
 fun DetailScreen(
+    activeGroup: StateFlow<ActiveGroupState>,
     modifier: Modifier = Modifier,
     viewModel: DetailViewModel = hiltViewModel(),
 ) {
+    val currentActiveGroup by activeGroup.collectAsStateWithLifecycle()
+    val currentGroupId = (currentActiveGroup as? ActiveGroupState.Success)?.activeGroupId
+    val groups = (currentActiveGroup as? ActiveGroupState.Success)?.groups.orEmpty()
+    LifecycleResumeEffect(viewModel, currentGroupId) {
+        viewModel.setActiveGroup(currentGroupId)
+        onPauseOrDispose { }
+    }
     val state by viewModel.state.collectAsStateWithLifecycle()
     DetailScreen(
         state = state,
+        groups = groups,
         onRetry = viewModel::retry,
         onAddToLibrary = viewModel::addToLibrary,
         onScoreSelected = viewModel::setScore,
@@ -72,6 +96,8 @@ fun DetailScreen(
         onProgressChange = viewModel::setProgress,
         onStatusSelected = viewModel::setStatus,
         onFavoriteToggle = viewModel::toggleFavorite,
+        onProposeToGroup = viewModel::proposeToGroup,
+        onRetryGroupSection = viewModel::retryGroupSection,
         modifier = modifier,
     )
 }
@@ -80,14 +106,21 @@ fun DetailScreen(
  * The stateless half, split out so it can be previewed and driven by a test without a graph or a
  * ViewModel — `LibraryScreen`'s pattern.
  *
- * Nine parameters trips detekt's `LongParameterList` (threshold 6); suppressed rather than
- * bundling the six callbacks into an `Actions` holder class, which would exist for this one call
- * site only — `LibraryScreen`'s own justification for the same suppression, one screen earlier.
+ * Now eleven parameters (task 9c.6 added [groups], [onProposeToGroup], [onRetryGroupSection]),
+ * well past detekt's `LongParameterList` threshold of 6; suppressed rather than bundling the eight
+ * callbacks into an `Actions` holder class, which would exist for this one call site only —
+ * `LibraryScreen`'s own justification for the same suppression, one screen earlier.
+ *
+ * [onProposeToGroup]/[onRetryGroupSection] carry NO default (`FeedScreen`'s fix-round-2 lesson,
+ * BLOCKING F2, restated here before it could be rediscovered): a defaulted `= {}` here would let
+ * [DetailScreen]'s own stateful call above compile even if one of these two wires were dropped from
+ * it, with every pre-existing test still green — the exact hole that fix closed one screen over.
  */
 @Suppress("LongParameterList")
 @Composable
 internal fun DetailScreen(
     state: DetailUiState,
+    groups: List<Group>,
     onRetry: () -> Unit,
     onAddToLibrary: () -> Unit,
     onScoreSelected: (BigDecimal) -> Unit,
@@ -95,6 +128,8 @@ internal fun DetailScreen(
     onProgressChange: (Int) -> Unit,
     onStatusSelected: (UserMediaStatus) -> Unit,
     onFavoriteToggle: () -> Unit,
+    onProposeToGroup: (String) -> Unit,
+    onRetryGroupSection: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Box(modifier = modifier.fillMaxSize()) {
@@ -109,12 +144,15 @@ internal fun DetailScreen(
             is DetailUiState.Success ->
                 DetailContent(
                     success = state,
+                    groups = groups,
                     onAddToLibrary = onAddToLibrary,
                     onScoreSelected = onScoreSelected,
                     onScoreCleared = onScoreCleared,
                     onProgressChange = onProgressChange,
                     onStatusSelected = onStatusSelected,
                     onFavoriteToggle = onFavoriteToggle,
+                    onProposeToGroup = onProposeToGroup,
+                    onRetryGroupSection = onRetryGroupSection,
                 )
         }
     }
@@ -124,12 +162,15 @@ internal fun DetailScreen(
 @Composable
 private fun DetailContent(
     success: DetailUiState.Success,
+    groups: List<Group>,
     onAddToLibrary: () -> Unit,
     onScoreSelected: (BigDecimal) -> Unit,
     onScoreCleared: () -> Unit,
     onProgressChange: (Int) -> Unit,
     onStatusSelected: (UserMediaStatus) -> Unit,
     onFavoriteToggle: () -> Unit,
+    onProposeToGroup: (String) -> Unit,
+    onRetryGroupSection: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val (media, entry) = success.data
@@ -159,6 +200,18 @@ private fun DetailContent(
                 onFavoriteToggle = onFavoriteToggle,
             )
         }
+        // Decision C-S: a failed group section (or a failed propose) leaves everything above it —
+        // the title, the Add/Edit controls, saving/actionError — fully usable. GroupSection is
+        // rendered unconditionally here; it decides internally whether it has anything to show at
+        // all (its own KDoc on the Absent-and-no-groups early return).
+        GroupSection(
+            groupSection = success.groupSection,
+            groups = groups,
+            proposing = success.proposing,
+            proposeError = success.proposeError,
+            onProposeToGroup = onProposeToGroup,
+            onRetry = onRetryGroupSection,
+        )
     }
 }
 

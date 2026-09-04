@@ -65,6 +65,10 @@ internal class AppDestination(
  * task 9c.2: leaving the group now needs somewhere real to go back to, so `groupDetailEntry` gained
  * the same parameter too — see `ShowTrackNavHost.kt`'s `routeShowTrackNavigation` for how
  * `onNavigate(GroupsRoute)` resolves to a pop back to the existing list rather than a second push.
+ * `DetailRoute` stays in that no-`onNavigate` set even after task 9c.6 — "propose to a group" and
+ * the group section are both actions ON this screen, never a door to another one — but it gains
+ * [activeGroup] instead, the same value [FeedRoute]/[GroupsRoute] already read, for the identical
+ * reason: E-C requires the active group to arrive as a value, never read from a singleton.
  *
  * **A function, not a `val`, as of task 9c.5.** `GroupsRoute`/`FeedRoute` now need the ACTIVE group
  * — a value that changes at runtime (E-C) — and `NavHost`'s own `builder` lambda (the thing that
@@ -97,7 +101,7 @@ internal fun appDestinations(
     listOf(
         AppDestination(AuthRoute::class) { onNavigate -> authEntry(onNavigate) },
         AppDestination(LibraryRoute::class) { onNavigate -> libraryEntry(onNavigate) },
-        AppDestination(DetailRoute::class) { detailEntry() },
+        AppDestination(DetailRoute::class) { detailEntry(activeGroup = activeGroup) },
         AppDestination(DiscoverRoute::class) { onNavigate -> discoverEntry(onNavigate) },
         AppDestination(FavoritesRoute::class) { onNavigate -> favoritesEntry(onNavigate) },
         AppDestination(ProfileRoute::class) { onNavigate -> profileEntry(onNavigate) },

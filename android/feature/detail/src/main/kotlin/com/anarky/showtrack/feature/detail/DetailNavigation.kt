@@ -3,8 +3,10 @@ package com.anarky.showtrack.feature.detail
 import androidx.navigation.NavGraphBuilder
 import androidx.navigation.compose.composable
 import androidx.navigation.navDeepLink
+import com.anarky.showtrack.core.model.ActiveGroupState
 import com.anarky.showtrack.core.navigation.DETAIL_DEEP_LINK_BASE_PATH
 import com.anarky.showtrack.core.navigation.DetailRoute
+import kotlinx.coroutines.flow.StateFlow
 
 /**
  * The one destination in the graph that carries an argument, and the reason `:core:navigation`
@@ -23,11 +25,19 @@ import com.anarky.showtrack.core.navigation.DetailRoute
  *
  * Registering it here rather than in `:app` keeps the destination and the way in to it in one
  * file: a rename of `mediaId` moves both, or neither.
+ *
+ * [activeGroup] (task 9c.6) threads straight through to [DetailScreen] with no translation —
+ * `FeedNavigation.kt`'s identical shape: `DetailRoute` carries `mediaId`, its OWN argument, but the
+ * active group is a fact from OUTSIDE this graph (`AppDestination.kt` is the caller that supplies
+ * it, from `ActiveGroupViewModel` in `:app`) — the ruling that resolved this (`progress.md`)
+ * deliberately did not widen `DetailRoute` to carry a second, unrelated argument when a plain
+ * parameter says the same thing without touching Library, Search, Discover, Favorites or Feed's
+ * five existing `DetailRoute` call sites.
  */
-fun NavGraphBuilder.detailEntry() {
+fun NavGraphBuilder.detailEntry(activeGroup: StateFlow<ActiveGroupState>) {
     composable<DetailRoute>(
         deepLinks = listOf(navDeepLink<DetailRoute>(basePath = DETAIL_DEEP_LINK_BASE_PATH)),
     ) {
-        DetailScreen()
+        DetailScreen(activeGroup = activeGroup)
     }
 }

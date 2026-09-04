@@ -20,4 +20,23 @@
     <string name="detail_progress_decrease">−</string>
     <string name="detail_progress_increase">+</string>
     <string name="detail_favorite_label">Favorite</string>
+
+    <!-- The group section (task 9c.6, E-J, design doc §3.5) -->
+    <string name="detail_group_section_title">Group</string>
+    <!-- §9.12's acceptance criterion: a title nobody else tracks is an empty state, not a broken
+         section. -->
+    <string name="detail_group_section_empty">No one else in the group is tracking this title yet.</string>
+    <string name="detail_group_stale_notice">Showing saved group data. Tap Retry to check for updates.</string>
+    <!-- %1$s member username, %2$s status label, %3$d episode/chapter progress. -->
+    <string name="detail_group_progress_row">%1$s: %2$s, episode %3$d</string>
+
+    <string name="detail_group_propose_button">Propose to a group</string>
+    <string name="detail_group_propose_picker_title">Choose a group</string>
+    <string name="detail_group_propose_picker_cancel">Cancel</string>
+
+    <!-- GroupFailure.messageRes() in GroupSection.kt. -->
+    <string name="detail_group_error_network">Couldn\'t reach the server. Check your connection and try again.</string>
+    <string name="detail_group_error_not_a_member">You\'re no longer a member of this group.</string>
+    <string name="detail_group_propose_error_no_such_title">Couldn\'t propose this title. Try again.</string>
+    <string name="detail_group_error_unknown">Something went wrong. Try again.</string>
 </resources>

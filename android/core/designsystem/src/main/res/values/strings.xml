@@ -36,4 +36,8 @@
     <!-- ScoreChip's fallback when the user has not scored a title — an em dash, never a raw
          null or empty string. -->
     <string name="score_unset">—</string>
+
+    <!-- SpoilerReview's own reveal control (decision E-J) — tapping it is the only way the body
+         ever enters composition. -->
+    <string name="spoiler_review_reveal">Show spoiler</string>
 </resources>
