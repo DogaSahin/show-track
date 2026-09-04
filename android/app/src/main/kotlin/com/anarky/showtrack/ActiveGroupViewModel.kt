@@ -131,11 +131,24 @@ class ActiveGroupViewModel
          * (`navigateToAuthClearingStack`, `ShowTrackNavHost.kt`), so this needs no `AuthEvent`
          * dependency of its own — a cold, signed-out start also lands on `AuthRoute` and calls this
          * harmlessly (nothing to clear yet).
+         *
+         * **`refreshGeneration++` here too (fix round 2, BLOCKING F1).** [refresh]'s own guard
+         * exists for exactly this shape — a fetch still in flight when the subject it was launched
+         * for stops being current — and [reset] IS a subject change (the account), the same as a
+         * group switch is. Without this bump, account A's `refresh()` left in flight when A signs
+         * out lands AFTER [reset] has already cleared everything, and [refresh]'s own generation
+         * check (`myGeneration != refreshGeneration`) reads as still current — because nothing here
+         * had changed `refreshGeneration` — so A's stale response republishes A's groups over
+         * `Loading`, and [recompute]'s own write-back (this class's own KDoc, smaller item 1) then
+         * writes A's group id back into the store this function just cleared. Measured: a gated
+         * probe reproduces exactly that `Success` where `Loading` was expected — see
+         * `ActiveGroupViewModelTest`'s own test for the shape.
          */
         fun reset() {
             hasLoadedOnce = false
             lastGroups = emptyList()
             storedGroupId = null
+            refreshGeneration++
             mutableState.value = ActiveGroupState.Loading
             viewModelScope.launch { activeGroupStore.setActiveGroup(null) }
         }

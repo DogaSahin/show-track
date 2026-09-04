@@ -145,10 +145,10 @@ fun ShowTrackApp(authEvents: Flow<AuthEvent>) {
     val activeGroupViewModel: ActiveGroupViewModel = hiltViewModel()
     val currentDestination = currentBackStackEntry?.destination
     LaunchedEffect(currentDestination) {
-        when {
-            currentDestination?.hasRoute(AuthRoute::class) == true -> activeGroupViewModel.reset()
-            currentDestination?.hasRoute(FeedRoute::class) == true -> activeGroupViewModel.refresh()
-            currentDestination?.hasRoute(GroupsRoute::class) == true -> activeGroupViewModel.refresh()
+        when (activeGroupActionFor(currentDestination)) {
+            ActiveGroupAction.Reset -> activeGroupViewModel.reset()
+            ActiveGroupAction.Refresh -> activeGroupViewModel.refresh()
+            ActiveGroupAction.None -> Unit
         }
     }
 
@@ -206,6 +206,35 @@ fun ShowTrackApp(authEvents: Flow<AuthEvent>) {
             )
         }
     }
+}
+
+/**
+ * What [ActiveGroupViewModel] should do when the current destination changes — a pure function,
+ * `shouldShowNavigationTabs`/`startDestinationFor`'s own precedent (`ShowTrackNavHost.kt`): `:app`
+ * has no Hilt test harness, so a decision like this has to be extracted to something a plain JUnit
+ * test CAN drive, or it goes untested for the same reason those two did before they were pulled out.
+ *
+ * **Fix round 2, BLOCKING F3.** Before this, the `when` lived inline in [ShowTrackApp]'s
+ * `LaunchedEffect`, and a reviewer measured the cost directly: deleting the `AuthRoute ->
+ * activeGroupViewModel.reset()` branch entirely, or swapping it for `.refresh()`, left the whole
+ * suite green — [ActiveGroupViewModel.reset] itself is well tested (`ActiveGroupViewModelTest`),
+ * but nothing pinned that it is actually CALLED at the right destination. This function is that pin.
+ */
+internal fun activeGroupActionFor(destination: NavDestination?): ActiveGroupAction =
+    when {
+        destination?.hasRoute(AuthRoute::class) == true -> ActiveGroupAction.Reset
+        destination?.hasRoute(FeedRoute::class) == true -> ActiveGroupAction.Refresh
+        destination?.hasRoute(GroupsRoute::class) == true -> ActiveGroupAction.Refresh
+        else -> ActiveGroupAction.None
+    }
+
+/** [activeGroupActionFor]'s own result type — one of three, exhaustively `when`ed at its call site. */
+internal sealed interface ActiveGroupAction {
+    data object Reset : ActiveGroupAction
+
+    data object Refresh : ActiveGroupAction
+
+    data object None : ActiveGroupAction
 }
 
 /**

@@ -261,6 +261,47 @@ class ActiveGroupViewModelTest {
         }
 
     /**
+     * BLOCKING F1 (fix round 2): [ActiveGroupViewModel.reset] must invalidate an in-flight
+     * [ActiveGroupViewModel.refresh] the SAME way a group switch does — `refresh()`'s own
+     * generation guard exists for exactly this shape, and `reset()` was the one caller that did
+     * not bump it. Scenario: account A's `refresh()` is still in flight (gated) when A signs out
+     * and `reset()` runs; A's stale response must not land as a `Success` over the `Loading` reset
+     * left behind, and must not write A's group id back into the store `reset()` just cleared.
+     */
+    @Test
+    fun `reset invalidates an in-flight refresh so the previous account's response cannot land`() =
+        runTest(dispatcher) {
+            val store = FakeActiveGroupStore(initial = null)
+            val repository = FakeGroupRepository(groups = listOf(ALPHA, BETA))
+            val viewModel = ActiveGroupViewModel(repository, store)
+
+            val gate = CompletableDeferred<Unit>()
+            repository.groupsGate = gate
+            viewModel.refresh() // account A's refresh
+            advanceUntilIdle() // runs A's groups() up to the gate, where it suspends
+
+            viewModel.reset() // account A signs out
+            advanceUntilIdle()
+            assertEquals(ActiveGroupState.Loading, viewModel.state.value)
+            val storeCallsAfterReset = store.setCalls.size
+
+            // A's stale response finally lands, well after the reset.
+            gate.complete(Unit)
+            advanceUntilIdle()
+
+            assertEquals(
+                "state after the previous account's response landed",
+                ActiveGroupState.Loading,
+                viewModel.state.value,
+            )
+            assertEquals(
+                "the stale response must not write A's group id back into the store reset() cleared",
+                storeCallsAfterReset,
+                store.setCalls.size,
+            )
+        }
+
+    /**
      * The other half of B4's fix: after [ActiveGroupViewModel.reset], a NEW account's `refresh()`
      * must resolve cleanly from that account's own [FakeGroupRepository.groups] — not resurrect the
      * previous account's list via a stale in-memory field `reset()` failed to clear.

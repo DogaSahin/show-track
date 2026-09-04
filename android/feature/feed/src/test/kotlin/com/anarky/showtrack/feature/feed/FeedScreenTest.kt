@@ -50,6 +50,9 @@ class FeedScreenTest {
                 onLoadMore = {},
                 onRetry = {},
                 onEntryClick = {},
+                onSwitchGroup = {},
+                onRetryGroups = {},
+                onCreateOrJoinGroup = {},
             )
         }
 
@@ -72,6 +75,8 @@ class FeedScreenTest {
                 onRetry = {},
                 onEntryClick = {},
                 onCreateOrJoinGroup = { reachedCreateOrJoin = true },
+                onSwitchGroup = {},
+                onRetryGroups = {},
             )
         }
 
@@ -94,6 +99,9 @@ class FeedScreenTest {
                 onLoadMore = {},
                 onRetry = {},
                 onEntryClick = {},
+                onSwitchGroup = {},
+                onRetryGroups = {},
+                onCreateOrJoinGroup = {},
             )
         }
 
@@ -119,6 +127,8 @@ class FeedScreenTest {
                 onRetry = { retriedFeed = true },
                 onEntryClick = {},
                 onRetryGroups = { retriedGroups = true },
+                onSwitchGroup = {},
+                onCreateOrJoinGroup = {},
             )
         }
 
@@ -140,6 +150,9 @@ class FeedScreenTest {
                 onLoadMore = {},
                 onRetry = {},
                 onEntryClick = {},
+                onSwitchGroup = {},
+                onRetryGroups = {},
+                onCreateOrJoinGroup = {},
             )
         }
 
@@ -165,6 +178,9 @@ class FeedScreenTest {
                 onLoadMore = {},
                 onRetry = {},
                 onEntryClick = { clicked = it },
+                onSwitchGroup = {},
+                onRetryGroups = {},
+                onCreateOrJoinGroup = {},
             )
         }
 
@@ -190,6 +206,9 @@ class FeedScreenTest {
                 onLoadMore = {},
                 onRetry = {},
                 onEntryClick = {},
+                onSwitchGroup = {},
+                onRetryGroups = {},
+                onCreateOrJoinGroup = {},
             )
         }
 
@@ -223,6 +242,9 @@ class FeedScreenTest {
                 onLoadMore = {},
                 onRetry = {},
                 onEntryClick = {},
+                onSwitchGroup = {},
+                onRetryGroups = {},
+                onCreateOrJoinGroup = {},
             )
         }
 
@@ -252,6 +274,9 @@ class FeedScreenTest {
                 onLoadMore = {},
                 onRetry = {},
                 onEntryClick = { clicked = it },
+                onSwitchGroup = {},
+                onRetryGroups = {},
+                onCreateOrJoinGroup = {},
             )
         }
 
@@ -273,6 +298,9 @@ class FeedScreenTest {
                 onLoadMore = {},
                 onRetry = { retried = true },
                 onEntryClick = {},
+                onSwitchGroup = {},
+                onRetryGroups = {},
+                onCreateOrJoinGroup = {},
             )
         }
 
@@ -300,6 +328,9 @@ class FeedScreenTest {
                 onLoadMore = {},
                 onRetry = { retried = true },
                 onEntryClick = {},
+                onSwitchGroup = {},
+                onRetryGroups = {},
+                onCreateOrJoinGroup = {},
             )
         }
 
@@ -328,6 +359,8 @@ class FeedScreenTest {
                 onLoadMore = {},
                 onRetry = {},
                 onEntryClick = {},
+                onRetryGroups = {},
+                onCreateOrJoinGroup = {},
             )
         }
 
@@ -347,6 +380,8 @@ class FeedScreenTest {
                 onLoadMore = {},
                 onRetry = {},
                 onEntryClick = {},
+                onRetryGroups = {},
+                onCreateOrJoinGroup = {},
             )
         }
 
@@ -363,6 +398,9 @@ class FeedScreenTest {
                 onLoadMore = { loadedMore = true },
                 onRetry = {},
                 onEntryClick = {},
+                onSwitchGroup = {},
+                onRetryGroups = {},
+                onCreateOrJoinGroup = {},
             )
         }
 

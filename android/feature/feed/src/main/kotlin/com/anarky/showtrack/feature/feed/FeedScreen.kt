@@ -122,6 +122,13 @@ fun FeedScreen(
  *   on a screen with no other door to Groups — Groups is reached from Profile, not a tab).
  * - [ActiveGroupState.Success] with a non-null `activeGroupId` → the switcher (E-B, gated on 2+
  *   groups inside [GroupSwitcher] itself) plus the ordinary [FeedContent] rendering.
+ *
+ * **[onSwitchGroup]/[onRetryGroups]/[onCreateOrJoinGroup] carry no default (fix round 2, BLOCKING
+ * F2).** They did, briefly — `= {}` on all three, purely so pre-existing tests kept compiling — and
+ * a reviewer measured the actual cost: dropping BOTH real callbacks from the stateful overload's
+ * own call just above still compiled, and the switcher/groups-retry silently did nothing. A default
+ * here is not test ergonomics, it is the exact hole BLOCKING B1 closed one layer up reopened one
+ * layer down. Every test call site in `FeedScreenTest` now passes all three explicitly.
  */
 @Suppress("LongParameterList")
 @Composable
@@ -131,9 +138,9 @@ internal fun FeedScreen(
     onLoadMore: () -> Unit,
     onRetry: () -> Unit,
     onEntryClick: (FeedEntry) -> Unit,
-    onSwitchGroup: (String) -> Unit = {},
-    onRetryGroups: () -> Unit = {},
-    onCreateOrJoinGroup: () -> Unit = {},
+    onSwitchGroup: (String) -> Unit,
+    onRetryGroups: () -> Unit,
+    onCreateOrJoinGroup: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.fillMaxSize()) {

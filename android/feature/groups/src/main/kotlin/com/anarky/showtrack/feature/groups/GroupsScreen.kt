@@ -67,8 +67,21 @@ import kotlinx.coroutines.launch
  * inside this composable's own body — `FeedScreen`'s identical reasoning (`FeedNavigation.kt`'s own
  * KDoc): `groupsEntry`'s registration runs far less often than the active group can change. Only
  * [ActiveGroupState.Success.activeGroupId] is used here — [ActiveGroupState.Loading]/[ActiveGroupState.Error]
- * both resolve to `null`, which simply means no switcher renders yet (this screen's own,
- * independent [GroupsViewModel.state] already reports ITS OWN load failures for the list itself).
+ * both resolve to `null`, so no switcher renders.
+ *
+ * **What that actually looks like for the person on this screen (fix round 2 — an earlier version
+ * of this paragraph described the CODE, not what is on screen).** [GroupsViewModel.state] is
+ * independent of [activeGroup] and loads on its own resume-driven schedule, so it is entirely
+ * possible for [GroupsViewModel.state] to already be a [GroupsUiState.Success] with three groups
+ * fully listed WHILE [activeGroup] is still [ActiveGroupState.Loading] or has landed on
+ * [ActiveGroupState.Error] — the two fetches race, and nothing here waits for one on the other. In
+ * that window, the person sees the full group list and no switcher: no indication of which group is
+ * currently active, and no way to find out from this screen at all. This is accepted, not
+ * overlooked — it self-heals: [ActiveGroupViewModel.refresh] already fires on arrival at Groups
+ * (`ShowTrackApp`'s own `LaunchedEffect`), and Feed offers `activeGroup`'s own [ActiveGroupState.Error]
+ * a real retry ([FeedScreen]'s own `onRetryGroups`) if the fetch is genuinely stuck rather than
+ * merely still in flight — but it is a real, user-visible gap for as long as the race lasts, not
+ * merely an implementation detail.
  */
 @Composable
 fun GroupsScreen(
@@ -155,9 +168,13 @@ fun GroupsScreen(
  * `GroupsViewModel.clearCreateError`/`clearJoinError`, which clear only their own
  * [GroupsActionState] field — the SEPARATE channel discipline (decision C-S) applies here too.
  *
- * **[activeGroupId]/[onSwitchGroup] (task 9c.5), defaulting to `null`/no-op** so every pre-existing
- * test in this file keeps compiling and passing unchanged — with [activeGroupId] `null`,
- * [GroupSwitcher] is never reached. The row reads its group list from [state]'s own
+ * **[activeGroupId]/[onSwitchGroup] (task 9c.5)** carry no default (fix round 2, BLOCKING F2 —
+ * they briefly did, `= null`/`= {}`, purely so pre-existing tests kept compiling, and a reviewer
+ * measured the cost: dropping the real [onSwitchGroup] argument from the stateful overload's own
+ * call above still compiled, and the switcher's tap silently did nothing). Every test call site in
+ * `GroupsScreenTest` now passes both explicitly, most with `activeGroupId = null` — with that,
+ * [GroupSwitcher] is never reached, same rendering outcome the old default produced, but no longer
+ * because a missing argument is invisible. The row reads its group list from [state]'s own
  * [GroupsUiState.Success.groups] rather than a separate parameter: this screen already loads the
  * full list for its own content, and [GroupSwitcher]'s own `groups.size < 2` gate (E-K) means an
  * empty/loading/error [state] (no [GroupsUiState.Success] to read from) simply renders nothing
@@ -175,8 +192,8 @@ internal fun GroupsScreen(
     onCreateDialogOpened: () -> Unit,
     onJoinDialogOpened: () -> Unit,
     onGroupClick: (Group) -> Unit,
-    activeGroupId: String? = null,
-    onSwitchGroup: (String) -> Unit = {},
+    activeGroupId: String?,
+    onSwitchGroup: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var showCreateDialog by remember { mutableStateOf(false) }

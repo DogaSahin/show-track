@@ -71,6 +71,8 @@ class GroupsScreenTest {
                 onCreateDialogOpened = {},
                 onJoinDialogOpened = {},
                 onGroupClick = {},
+                activeGroupId = null,
+                onSwitchGroup = {},
             )
         }
 
@@ -99,6 +101,8 @@ class GroupsScreenTest {
                 onCreateDialogOpened = {},
                 onJoinDialogOpened = {},
                 onGroupClick = { clicked = it },
+                activeGroupId = null,
+                onSwitchGroup = {},
             )
         }
 
@@ -127,6 +131,8 @@ class GroupsScreenTest {
                 onCreateDialogOpened = {},
                 onJoinDialogOpened = {},
                 onGroupClick = {},
+                activeGroupId = null,
+                onSwitchGroup = {},
             )
         }
 
@@ -155,6 +161,8 @@ class GroupsScreenTest {
                 onCreateDialogOpened = {},
                 onJoinDialogOpened = {},
                 onGroupClick = {},
+                activeGroupId = null,
+                onSwitchGroup = {},
             )
         }
 
@@ -191,6 +199,8 @@ class GroupsScreenTest {
                 onCreateDialogOpened = {},
                 onJoinDialogOpened = {},
                 onGroupClick = {},
+                activeGroupId = null,
+                onSwitchGroup = {},
             )
         }
 
@@ -220,6 +230,8 @@ class GroupsScreenTest {
                 onCreateDialogOpened = {},
                 onJoinDialogOpened = {},
                 onGroupClick = {},
+                activeGroupId = null,
+                onSwitchGroup = {},
             )
         }
 
@@ -250,6 +262,8 @@ class GroupsScreenTest {
                 onCreateDialogOpened = {},
                 onJoinDialogOpened = {},
                 onGroupClick = {},
+                activeGroupId = null,
+                onSwitchGroup = {},
             )
         }
 
@@ -282,6 +296,8 @@ class GroupsScreenTest {
                 onCreateDialogOpened = {},
                 onJoinDialogOpened = {},
                 onGroupClick = {},
+                activeGroupId = null,
+                onSwitchGroup = {},
             )
         }
 
@@ -316,6 +332,8 @@ class GroupsScreenTest {
                 onCreateDialogOpened = {},
                 onJoinDialogOpened = {},
                 onGroupClick = {},
+                activeGroupId = null,
+                onSwitchGroup = {},
             )
         }
 
@@ -352,6 +370,8 @@ class GroupsScreenTest {
                 onCreateDialogOpened = {},
                 onJoinDialogOpened = {},
                 onGroupClick = {},
+                activeGroupId = null,
+                onSwitchGroup = {},
             )
         }
 
@@ -384,6 +404,8 @@ class GroupsScreenTest {
                 onCreateDialogOpened = {},
                 onJoinDialogOpened = {},
                 onGroupClick = {},
+                activeGroupId = null,
+                onSwitchGroup = {},
             )
         }
 
@@ -412,6 +434,8 @@ class GroupsScreenTest {
                 onCreateDialogOpened = {},
                 onJoinDialogOpened = {},
                 onGroupClick = {},
+                activeGroupId = null,
+                onSwitchGroup = {},
             )
         }
 
@@ -445,6 +469,8 @@ class GroupsScreenTest {
                 onCreateDialogOpened = {},
                 onJoinDialogOpened = {},
                 onGroupClick = {},
+                activeGroupId = null,
+                onSwitchGroup = {},
             )
         }
 
@@ -484,6 +510,8 @@ class GroupsScreenTest {
                 onCreateDialogOpened = {},
                 onJoinDialogOpened = {},
                 onGroupClick = {},
+                activeGroupId = null,
+                onSwitchGroup = {},
             )
         }
 
@@ -517,6 +545,8 @@ class GroupsScreenTest {
                 onCreateDialogOpened = {},
                 onJoinDialogOpened = {},
                 onGroupClick = {},
+                activeGroupId = null,
+                onSwitchGroup = {},
             )
         }
 
@@ -550,6 +580,8 @@ class GroupsScreenTest {
                 onCreateDialogOpened = { opened = true },
                 onJoinDialogOpened = {},
                 onGroupClick = {},
+                activeGroupId = null,
+                onSwitchGroup = {},
             )
         }
 
@@ -574,6 +606,8 @@ class GroupsScreenTest {
                 onCreateDialogOpened = {},
                 onJoinDialogOpened = { opened = true },
                 onGroupClick = {},
+                activeGroupId = null,
+                onSwitchGroup = {},
             )
         }
 
@@ -607,6 +641,8 @@ class GroupsScreenTest {
                 onCreateDialogOpened = {},
                 onJoinDialogOpened = {},
                 onGroupClick = {},
+                activeGroupId = null,
+                onSwitchGroup = {},
             )
         }
 
