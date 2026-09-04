@@ -6,14 +6,17 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTextInput
 import androidx.lifecycle.SavedStateHandle
 import androidx.test.core.app.ApplicationProvider
 import com.anarky.showtrack.core.model.ActiveGroupState
 import com.anarky.showtrack.core.model.Group
+import com.anarky.showtrack.core.model.GroupActor
 import com.anarky.showtrack.core.model.GroupFailure
 import com.anarky.showtrack.core.model.MediaSource
 import com.anarky.showtrack.core.model.MediaSummary
 import com.anarky.showtrack.core.model.MediaType
+import com.anarky.showtrack.core.model.Review
 import com.anarky.showtrack.core.model.WatchlistEntry
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertEquals
@@ -49,6 +52,14 @@ import com.anarky.showtrack.core.designsystem.R as DesignSystemR
  * [GroupRepository][com.anarky.showtrack.core.data.repository.GroupRepository]. No new Gradle
  * dependency: `androidx.compose.ui:ui-test-junit4` (already a test dependency here) carries
  * `androidx.activity:activity-compose` transitively.
+ *
+ * **Fix round 1 addition, task 9c.7 (BLOCKING B1):** `onOpenReviewEditor`/`onSaveReview`/
+ * `onCancelReviewEditor` had the identical hole one more time over — this time not a DROPPED wire
+ * (`DetailScreen.kt`'s own KDoc now states plainly that a no-default parameter cannot catch this
+ * class of bug at all), but a STUBBED one: `onSaveReview = { _, _ -> }` compiles, type-checks, and
+ * leaves `DetailScreenTest` fully green, because that suite supplies its own working lambda and
+ * never exercises the STATEFUL wiring above it. The two tests below are what actually prove
+ * `DetailScreen`'s own three review-editor callbacks reach a real [DetailViewModel].
  */
 @RunWith(RobolectricTestRunner::class)
 class DetailResumeTest {
@@ -131,6 +142,75 @@ class DetailResumeTest {
         assertEquals(2, groups.progressCalls.size)
     }
 
+    /**
+     * BLOCKING B1's own named test: composes the REAL, stateful [DetailScreen] (not the stateless
+     * overload [DetailScreenTest] drives) and proves the whole chain — tap "Write a review", type
+     * into the real text field, tap Save — actually reaches [DetailViewModel.saveReview] and, from
+     * there, [GroupRepository.createReview][com.anarky.showtrack.core.data.repository.GroupRepository.createReview].
+     * No active group: writing a review is a title action (E-G), reachable with none.
+     */
+    @Test
+    fun `the review editor on the real, composed screen actually saves`() {
+        val groups = FakeGroupRepository()
+        groups.createReviewResult = REVIEW
+        val viewModel = detailViewModel(groups)
+        val activeGroup =
+            MutableStateFlow<ActiveGroupState>(ActiveGroupState.Success(groups = emptyList(), activeGroupId = null))
+
+        composeRule.setContent { DetailScreen(activeGroup = activeGroup, viewModel = viewModel) }
+        composeRule.waitForIdle()
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule
+            .onNodeWithText(context.getString(R.string.detail_review_write_button))
+            .performScrollTo()
+            .performClick()
+        composeRule
+            .onNodeWithText(context.getString(R.string.detail_review_body_label))
+            .performScrollTo()
+            .performTextInput("Written on the real, composed screen.")
+        composeRule
+            .onNodeWithText(context.getString(R.string.detail_review_save_button))
+            .performScrollTo()
+            .performClick()
+        composeRule.waitForIdle()
+
+        assertEquals(1, groups.createReviewCalls.size)
+        assertEquals("Written on the real, composed screen.", groups.createReviewCalls.single().second)
+    }
+
+    /** BLOCKING B1's own Cancel case: the real Cancel button actually closes the real editor. */
+    @Test
+    fun `cancelling the review editor on the real, composed screen actually closes it`() {
+        val groups = FakeGroupRepository()
+        val viewModel = detailViewModel(groups)
+        val activeGroup =
+            MutableStateFlow<ActiveGroupState>(ActiveGroupState.Success(groups = emptyList(), activeGroupId = null))
+
+        composeRule.setContent { DetailScreen(activeGroup = activeGroup, viewModel = viewModel) }
+        composeRule.waitForIdle()
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule
+            .onNodeWithText(context.getString(R.string.detail_review_write_button))
+            .performScrollTo()
+            .performClick()
+        composeRule.onNodeWithText(context.getString(R.string.detail_review_body_label)).assertExists()
+
+        composeRule
+            .onNodeWithText(context.getString(R.string.detail_review_cancel_button))
+            .performScrollTo()
+            .performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithText(context.getString(R.string.detail_review_body_label)).assertDoesNotExist()
+        composeRule
+            .onNodeWithText(context.getString(R.string.detail_review_write_button))
+            .performScrollTo()
+            .assertExists()
+        assertEquals(0, groups.createReviewCalls.size)
+    }
+
     private fun detailViewModel(groups: FakeGroupRepository): DetailViewModel =
         DetailViewModel(
             SavedStateHandle(mapOf("mediaId" to "media-1")),
@@ -160,6 +240,17 @@ class DetailResumeTest {
                 mediaId = "media-1",
                 proposedBy = "user-1",
                 createdAt = Instant.parse("2026-08-28T10:15:30Z"),
+            )
+
+        val REVIEW =
+            Review(
+                id = "review-1",
+                author = GroupActor(id = "user-self", username = "me"),
+                mediaId = "media-1",
+                body = "Written on the real, composed screen.",
+                containsSpoilers = false,
+                createdAt = Instant.parse("2026-08-28T10:15:30Z"),
+                updatedAt = Instant.parse("2026-08-28T10:15:30Z"),
             )
     }
 }

@@ -36,7 +36,14 @@ import com.anarky.showtrack.core.designsystem.R as DesignSystemR
  * reasoning, applied to the group section this task adds. Drives the `internal` stateless
  * [DetailScreen] overload directly, no ViewModel and no Hilt graph — `sdk = 35` from this module's
  * own `src/test/resources/robolectric.properties` (task 9c.6's own addition).
+ *
+ * `@Suppress("LargeClass")` (fix round 1) — [DetailViewModelTest]'s own identical suppression and
+ * identical reasoning, one file over: this class pins the group section's rendering AND (as of this
+ * task) the review editor's, for ONE screen's stateless overload; splitting it by sub-concern would
+ * scatter the fixtures every test shares (`successState`, the `MEDIA`/`ENTRY`/`ALPHA`/`BETA`
+ * companion fixtures) for a lint threshold's sake rather than a real cohesion problem.
  */
+@Suppress("LargeClass")
 @RunWith(RobolectricTestRunner::class)
 class DetailScreenTest {
     @get:Rule
@@ -68,6 +75,7 @@ class DetailScreenTest {
                 onOpenReviewEditor = {},
                 onSaveReview = { _, _ -> },
                 onCancelReviewEditor = {},
+                onClearReviewError = {},
             )
         }
 
@@ -99,6 +107,7 @@ class DetailScreenTest {
                 onOpenReviewEditor = {},
                 onSaveReview = { _, _ -> },
                 onCancelReviewEditor = {},
+                onClearReviewError = {},
             )
         }
 
@@ -135,6 +144,7 @@ class DetailScreenTest {
                 onOpenReviewEditor = {},
                 onSaveReview = { _, _ -> },
                 onCancelReviewEditor = {},
+                onClearReviewError = {},
             )
         }
 
@@ -167,6 +177,7 @@ class DetailScreenTest {
                 onOpenReviewEditor = {},
                 onSaveReview = { _, _ -> },
                 onCancelReviewEditor = {},
+                onClearReviewError = {},
             )
         }
         val context = ApplicationProvider.getApplicationContext<Context>()
@@ -206,6 +217,7 @@ class DetailScreenTest {
                 onOpenReviewEditor = {},
                 onSaveReview = { _, _ -> },
                 onCancelReviewEditor = {},
+                onClearReviewError = {},
             )
         }
         val context = ApplicationProvider.getApplicationContext<Context>()
@@ -243,6 +255,7 @@ class DetailScreenTest {
                 onOpenReviewEditor = {},
                 onSaveReview = { _, _ -> },
                 onCancelReviewEditor = {},
+                onClearReviewError = {},
             )
         }
         val context = ApplicationProvider.getApplicationContext<Context>()
@@ -281,6 +294,7 @@ class DetailScreenTest {
                 onOpenReviewEditor = {},
                 onSaveReview = { _, _ -> },
                 onCancelReviewEditor = {},
+                onClearReviewError = {},
             )
         }
 
@@ -312,6 +326,7 @@ class DetailScreenTest {
                 onOpenReviewEditor = {},
                 onSaveReview = { _, _ -> },
                 onCancelReviewEditor = {},
+                onClearReviewError = {},
             )
         }
 
@@ -348,6 +363,7 @@ class DetailScreenTest {
                 onOpenReviewEditor = {},
                 onSaveReview = { _, _ -> },
                 onCancelReviewEditor = {},
+                onClearReviewError = {},
             )
         }
 
@@ -382,6 +398,7 @@ class DetailScreenTest {
                 onOpenReviewEditor = {},
                 onSaveReview = { _, _ -> },
                 onCancelReviewEditor = {},
+                onClearReviewError = {},
             )
         }
 
@@ -466,6 +483,7 @@ class DetailScreenTest {
                 onOpenReviewEditor = { opened++ },
                 onSaveReview = { _, _ -> },
                 onCancelReviewEditor = {},
+                onClearReviewError = {},
             )
         }
 
@@ -511,6 +529,7 @@ class DetailScreenTest {
                     savedSpoilers = spoilers
                 },
                 onCancelReviewEditor = {},
+                onClearReviewError = {},
             )
         }
 
@@ -569,6 +588,7 @@ class DetailScreenTest {
                 onOpenReviewEditor = {},
                 onSaveReview = { _, _ -> },
                 onCancelReviewEditor = {},
+                onClearReviewError = {},
             )
         }
 
@@ -607,6 +627,7 @@ class DetailScreenTest {
                 onOpenReviewEditor = {},
                 onSaveReview = { _, _ -> },
                 onCancelReviewEditor = {},
+                onClearReviewError = {},
             )
         }
 
@@ -641,6 +662,7 @@ class DetailScreenTest {
                 onOpenReviewEditor = {},
                 onSaveReview = { _, _ -> },
                 onCancelReviewEditor = { cancelled++ },
+                onClearReviewError = {},
             )
         }
 
@@ -651,6 +673,191 @@ class DetailScreenTest {
             .performClick()
 
         assertEquals(1, cancelled)
+    }
+
+    /**
+     * Fix round 1, small item 3: no screen test previously rendered `Open(saving = true)`, so
+     * deleting `enabled = !editor.saving` from the Save/Cancel buttons in `ReviewEditor.kt` left
+     * the whole suite green. The ViewModel's own re-entrancy guard (`if (editor.saving) return`)
+     * makes a stray extra tap harmless either way — this pins the RENDERING decision on its own
+     * terms, per Global Constraints' own "a ViewModel test cannot pin a rendering decision" rule.
+     */
+    @Test
+    fun `the review editor's Save and Cancel are disabled while saving`() {
+        composeRule.setContent {
+            DetailScreen(
+                state =
+                    successState(
+                        groupSection = GroupSectionState.Absent,
+                        reviewEditor =
+                            ReviewEditorState.Open(
+                                reviewId = null,
+                                seedBody = "a draft",
+                                seedContainsSpoilers = false,
+                                saving = true,
+                            ),
+                    ),
+                groups = emptyList(),
+                onRetry = {},
+                onAddToLibrary = {},
+                onScoreSelected = {},
+                onScoreCleared = {},
+                onProgressChange = {},
+                onStatusSelected = {},
+                onFavoriteToggle = {},
+                onProposeToGroup = {},
+                onRetryGroupSection = {},
+                onOpenReviewEditor = {},
+                onSaveReview = { _, _ -> },
+                onCancelReviewEditor = {},
+                onClearReviewError = {},
+            )
+        }
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule
+            .onNodeWithText(context.getString(R.string.detail_review_save_button))
+            .performScrollTo()
+            .assertIsNotEnabled()
+        composeRule
+            .onNodeWithText(context.getString(R.string.detail_review_cancel_button))
+            .performScrollTo()
+            .assertIsNotEnabled()
+    }
+
+    /**
+     * Fix round 1, small item 4: `detail_review_error_already_reviewed_unresolved` — the ONE
+     * string that makes a factual claim about the rest of the UI (fix round 1, BLOCKING B2's own
+     * corrected copy) — had never actually been rendered under test before this.
+     */
+    @Test
+    fun `the unresolved-already-reviewed error renders its own copy`() {
+        composeRule.setContent {
+            DetailScreen(
+                state =
+                    successState(
+                        groupSection = GroupSectionState.Absent,
+                        reviewEditor =
+                            ReviewEditorState.Open(
+                                reviewId = null,
+                                seedBody = "",
+                                seedContainsSpoilers = false,
+                                error = ReviewSaveError.Remote(GroupFailure.AlreadyReviewed(existingReviewId = null)),
+                            ),
+                    ),
+                groups = emptyList(),
+                onRetry = {},
+                onAddToLibrary = {},
+                onScoreSelected = {},
+                onScoreCleared = {},
+                onProgressChange = {},
+                onStatusSelected = {},
+                onFavoriteToggle = {},
+                onProposeToGroup = {},
+                onRetryGroupSection = {},
+                onOpenReviewEditor = {},
+                onSaveReview = { _, _ -> },
+                onCancelReviewEditor = {},
+                onClearReviewError = {},
+            )
+        }
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule
+            .onNodeWithText(context.getString(R.string.detail_review_error_already_reviewed_unresolved))
+            .assertExists()
+    }
+
+    /**
+     * The "should fix" companion to BLOCKING B1: [ReviewEditorState.Open.confirmOverwrite] renders
+     * its own distinct copy, telling the reader a Save here replaces a review they have not been
+     * shown — never the red `error` styling, since this is not a failure.
+     */
+    @Test
+    fun `a resolved 409 shows the confirm-overwrite message, not an error`() {
+        composeRule.setContent {
+            DetailScreen(
+                state =
+                    successState(
+                        groupSection = GroupSectionState.Absent,
+                        reviewEditor =
+                            ReviewEditorState.Open(
+                                reviewId = "review-mine",
+                                seedBody = "typed just now",
+                                seedContainsSpoilers = false,
+                                confirmOverwrite = true,
+                            ),
+                    ),
+                groups = emptyList(),
+                onRetry = {},
+                onAddToLibrary = {},
+                onScoreSelected = {},
+                onScoreCleared = {},
+                onProgressChange = {},
+                onStatusSelected = {},
+                onFavoriteToggle = {},
+                onProposeToGroup = {},
+                onRetryGroupSection = {},
+                onOpenReviewEditor = {},
+                onSaveReview = { _, _ -> },
+                onCancelReviewEditor = {},
+                onClearReviewError = {},
+            )
+        }
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule
+            .onNodeWithText(context.getString(R.string.detail_review_confirm_overwrite))
+            .assertExists()
+        composeRule.onNodeWithText("typed just now").assertExists()
+    }
+
+    /**
+     * Fix round 1, small item 5's UI half: [DetailViewModelTest] pins that
+     * `DetailViewModel.clearReviewError` itself clears the state field; this pins that
+     * `ReviewEditor.kt` actually CALLS it the moment the reader types, while a stale error is on
+     * screen — the wiring a ViewModel test cannot see.
+     */
+    @Test
+    fun `typing after a validation error calls onClearReviewError`() {
+        var cleared = 0
+        composeRule.setContent {
+            DetailScreen(
+                state =
+                    successState(
+                        groupSection = GroupSectionState.Absent,
+                        reviewEditor =
+                            ReviewEditorState.Open(
+                                reviewId = null,
+                                seedBody = "",
+                                seedContainsSpoilers = false,
+                                error = ReviewSaveError.BodyRequired,
+                            ),
+                    ),
+                groups = emptyList(),
+                onRetry = {},
+                onAddToLibrary = {},
+                onScoreSelected = {},
+                onScoreCleared = {},
+                onProgressChange = {},
+                onStatusSelected = {},
+                onFavoriteToggle = {},
+                onProposeToGroup = {},
+                onRetryGroupSection = {},
+                onOpenReviewEditor = {},
+                onSaveReview = { _, _ -> },
+                onCancelReviewEditor = {},
+                onClearReviewError = { cleared++ },
+            )
+        }
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule
+            .onNodeWithText(context.getString(R.string.detail_review_body_label))
+            .performScrollTo()
+            .performTextInput("x")
+
+        assertEquals(1, cleared)
     }
 
     private fun successState(

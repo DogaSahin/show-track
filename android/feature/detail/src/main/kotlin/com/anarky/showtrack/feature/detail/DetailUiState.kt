@@ -103,14 +103,19 @@ sealed interface ReviewSaveError {
  * [Open.reviewId] carries the same nullable convention [GroupRepository.updateReview]'s own KDoc
  * and [GroupFailure.AlreadyReviewed] already use: null means "this is a fresh draft, saving POSTs
  * it"; non-null means "PATCH this review". [DetailViewModel.openReviewEditor] resolves it up front
- * from whatever the ALREADY-LOADED [GroupSectionState.Loaded.reviews] the active group's section
- * currently has, matched against the signed-in account's own id — reviews of a title are visible
- * to every group the author is a member of, so a reviewer's own review, if one exists, is already
- * present in that list whenever a group is active and its section has loaded.
- * [DetailViewModel.saveReview] falls back to the SAME resolution, transparently, if a fresh POST
- * still 409s (the section had not loaded yet when the editor opened, or a review was written from
- * a second session since) — see that function's own KDoc for why the 409 body itself carries no id
- * to use instead ([GroupFailure.AlreadyReviewed.existingReviewId]'s own KDoc).
+ * from whatever [DetailViewModel.findOwnReview] can find — the ALREADY-LOADED
+ * [GroupSectionState.Loaded.reviews] the active group's section currently has, matched against the
+ * signed-in account's own id, falling back to the last review THIS ViewModel instance itself
+ * created or updated when there is no such loaded, matching section (fix round 1 — a no-groups
+ * account was otherwise locked out of ever editing a review it had just written in this same
+ * session; see [DetailViewModel.findOwnReview]'s own KDoc).
+ *
+ * [DetailViewModel.saveReview] resolves the SAME way if a fresh POST still 409s (the section had
+ * not loaded yet when the editor opened, or a review was written from a second session since) —
+ * see that function's own KDoc for why the 409 body itself carries no id to use instead
+ * ([GroupFailure.AlreadyReviewed.existingReviewId]'s own KDoc). That resolution is NOT applied
+ * silently: [confirmOverwrite] is what tells the screen the reader has never seen the review this
+ * save is about to replace (fix round 1) — see [confirmOverwrite]'s own KDoc.
  *
  * [Open.seedBody]/[Open.seedContainsSpoilers] are read exactly ONCE, as the initial value of
  * [ReviewEditor]'s own `remember`ed draft — never patched back into this state field by field as
@@ -121,12 +126,23 @@ sealed interface ReviewSaveError {
 sealed interface ReviewEditorState {
     data object Closed : ReviewEditorState
 
+    /**
+     * [confirmOverwrite] (fix round 1, BLOCKING B1's should-fix companion): true only for the ONE
+     * turn where [DetailViewModel.handleSaveFailure] has just resolved a 409 into an existing
+     * review the reader has never been shown — [reviewId] switches to that review's id so the
+     * NEXT Save is a `PATCH`, but nothing is sent automatically, and [seedBody]/[seedContainsSpoilers]
+     * are left exactly as the reader last typed them, never overwritten with the OLD review's own
+     * text. The reader's own next tap of Save is the confirmation; no separate dialog, no second
+     * control — the same button, now carrying a different meaning the copy states plainly. Cleared
+     * on that same tap ([DetailViewModel.saveReview] resets it before relaunching).
+     */
     data class Open(
         val reviewId: String?,
         val seedBody: String,
         val seedContainsSpoilers: Boolean,
         val saving: Boolean = false,
         val error: ReviewSaveError? = null,
+        val confirmOverwrite: Boolean = false,
     ) : ReviewEditorState
 }
 

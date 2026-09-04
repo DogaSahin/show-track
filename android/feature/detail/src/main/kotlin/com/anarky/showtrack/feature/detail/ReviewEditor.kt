@@ -1,10 +1,10 @@
 package com.anarky.showtrack.feature.detail
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
@@ -19,6 +19,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import com.anarky.showtrack.core.model.GroupFailure
 
@@ -35,12 +36,14 @@ import com.anarky.showtrack.core.model.GroupFailure
  * the full reasoning for why the draft is not routed through the ViewModel keystroke by keystroke;
  * `GroupsDialogs.CreateGroupDialog`'s identical technique, one feature over.
  */
+@Suppress("LongParameterList")
 @Composable
 internal fun ReviewEditorSection(
     reviewEditor: ReviewEditorState,
     onOpen: () -> Unit,
     onSave: (body: String, containsSpoilers: Boolean) -> Unit,
     onCancel: () -> Unit,
+    onClearError: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     when (reviewEditor) {
@@ -50,7 +53,13 @@ internal fun ReviewEditorSection(
             }
 
         is ReviewEditorState.Open ->
-            ReviewEditorForm(editor = reviewEditor, onSave = onSave, onCancel = onCancel, modifier = modifier)
+            ReviewEditorForm(
+                editor = reviewEditor,
+                onSave = onSave,
+                onCancel = onCancel,
+                onClearError = onClearError,
+                modifier = modifier,
+            )
     }
 }
 
@@ -60,11 +69,13 @@ internal fun ReviewEditorSection(
  * [DetailViewModel.saveReview] itself is the one place that decides POST versus PATCH, from the
  * SAME field. Duplicating that branch here would be a second place the two could disagree.
  */
+@Suppress("LongParameterList")
 @Composable
 private fun ReviewEditorForm(
     editor: ReviewEditorState.Open,
     onSave: (body: String, containsSpoilers: Boolean) -> Unit,
     onCancel: () -> Unit,
+    onClearError: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     // rememberSaveable, not a plain remember: ReviewEditorState.Open's own KDoc — seeded once, from
@@ -73,6 +84,11 @@ private fun ReviewEditorForm(
     // reader has already typed).
     var body by rememberSaveable { mutableStateOf(editor.seedBody) }
     var containsSpoilers by rememberSaveable { mutableStateOf(editor.seedContainsSpoilers) }
+    // Fix round 1, small item 5: decision C-S's clear-before-retry rule extended to a keystroke,
+    // not only the next Save tap. Gated on editor.error != null so a keystroke while there is
+    // nothing to clear never reaches the ViewModel at all — shared by the body field and the
+    // spoiler toggle below, both of which can dismiss the SAME stale error.
+    val clearErrorIfAny = { if (editor.error != null) onClearError() }
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(space = 8.dp)) {
         Text(
             text =
@@ -87,31 +103,23 @@ private fun ReviewEditorForm(
         )
         OutlinedTextField(
             value = body,
-            onValueChange = { body = it },
+            onValueChange = {
+                body = it
+                clearErrorIfAny()
+            },
             label = { Text(text = stringResource(R.string.detail_review_body_label)) },
             enabled = !editor.saving,
             modifier = Modifier.fillMaxWidth(),
         )
-        // The Row itself is the tap target, not just the Checkbox — Material's own recommended
-        // shape for a checkbox with a label, and what makes onNodeWithText(spoiler_label) a valid
-        // way to toggle it in a test: Checkbox.onCheckedChange is null here on purpose, so the
-        // click is handled exactly ONCE, by the Row, rather than racing two handlers on one tap.
-        Row(
-            modifier =
-                Modifier.clickable(enabled = !editor.saving) { containsSpoilers = !containsSpoilers },
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(space = 4.dp),
-        ) {
-            Checkbox(checked = containsSpoilers, onCheckedChange = null, enabled = !editor.saving)
-            Text(text = stringResource(R.string.detail_review_spoiler_label))
-        }
-        if (editor.error != null) {
-            Text(
-                text = stringResource(editor.error.messageRes()),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-            )
-        }
+        SpoilerCheckboxRow(
+            checked = containsSpoilers,
+            enabled = !editor.saving,
+            onCheckedChange = {
+                containsSpoilers = it
+                clearErrorIfAny()
+            },
+        )
+        ReviewEditorStatusMessage(editor = editor)
         Row(horizontalArrangement = Arrangement.spacedBy(space = 8.dp)) {
             Button(onClick = { onSave(body, containsSpoilers) }, enabled = !editor.saving) {
                 Text(text = stringResource(R.string.detail_review_save_button))
@@ -120,6 +128,67 @@ private fun ReviewEditorForm(
                 Text(text = stringResource(R.string.detail_review_cancel_button))
             }
         }
+    }
+}
+
+/**
+ * The Row itself is the tap target, not just the [Checkbox] (fix round 1, small item 2:
+ * `Modifier.toggleable(role = Role.Checkbox)`, not `Modifier.clickable` — `clickable` yields a
+ * generic click node, so TalkBack announces neither "checkbox" nor its checked state; `toggleable`
+ * is Material's own shape for that announcement, and — like `clickable` — merges the child [Text]'s
+ * semantics into this one node, which is what still makes `onNodeWithText(spoiler_label)` a valid
+ * way to toggle it in a test). [Checkbox.onCheckedChange] stays null: the click is handled exactly
+ * ONCE, by the [Row]'s own `toggleable`, rather than racing two handlers on one tap.
+ */
+@Composable
+private fun SpoilerCheckboxRow(
+    checked: Boolean,
+    enabled: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier =
+            modifier.toggleable(
+                value = checked,
+                onValueChange = onCheckedChange,
+                enabled = enabled,
+                role = Role.Checkbox,
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(space = 4.dp),
+    ) {
+        Checkbox(checked = checked, onCheckedChange = null, enabled = enabled)
+        Text(text = stringResource(R.string.detail_review_spoiler_label))
+    }
+}
+
+/**
+ * [ReviewEditorState.Open.confirmOverwrite] and `.error` are mutually exclusive by construction —
+ * [DetailViewModel.handleSaveFailure]/`.saveReview` never set both at once — so rendering both
+ * branches unconditionally here can never show two contradictory lines at once. Neither shares the
+ * red `error` color with the other: confirmation is not a failure.
+ */
+@Composable
+private fun ReviewEditorStatusMessage(
+    editor: ReviewEditorState.Open,
+    modifier: Modifier = Modifier,
+) {
+    if (editor.confirmOverwrite) {
+        Text(
+            text = stringResource(R.string.detail_review_confirm_overwrite),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = modifier,
+        )
+    }
+    if (editor.error != null) {
+        Text(
+            text = stringResource(editor.error.messageRes()),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error,
+            modifier = modifier,
+        )
     }
 }
 
@@ -144,16 +213,16 @@ internal fun ReviewSaveError.messageRes(): Int =
  * Exhaustive over all EIGHT [GroupFailure] cases, no `else` — `GroupSection.kt`'s own discipline,
  * so a ninth case added later fails this file to COMPILE rather than silently falling through.
  *
- * Genuinely reachable from [DetailViewModel.saveReview]/`.handleCreateFailure`:
+ * Genuinely reachable from [DetailViewModel.saveReview]/`.handleSaveFailure`:
  * [GroupFailure.Network]; [GroupFailure.NoSuchTitle] (`POST /v1/reviews`'s 404, an invalid
  * `media_id` — defensive, since Detail always has a real one once loaded); [GroupFailure.NoSuchEntry]
  * (`PATCH /v1/reviews/{id}`'s 404 — the review was deleted between load and save, a genuine
- * if rare race); [GroupFailure.AlreadyReviewed] (ONLY the unresolved-locally fallback —
- * [DetailViewModel.saveReview]'s own KDoc — every RESOLVABLE 409 is retried transparently and
- * never reaches this mapping at all). [GroupFailure.NotPermitted]/[GroupFailure.NotAMember]/
- * [GroupFailure.InvalidInviteCode] describe endpoints neither review call ever reaches (403/404
- * shapes belonging to owner-only and group-membership routes) — folded into the same generic copy
- * as [GroupFailure.Unknown].
+ * if rare race); [GroupFailure.AlreadyReviewed] (ONLY the fallback when [DetailViewModel.findOwnReview]
+ * cannot resolve the existing review AT ALL — every RESOLVABLE 409 instead sets
+ * [ReviewEditorState.Open.confirmOverwrite] and never reaches this mapping). [GroupFailure.NotPermitted]/
+ * [GroupFailure.NotAMember]/[GroupFailure.InvalidInviteCode] describe endpoints neither review call
+ * ever reaches (403/404 shapes belonging to owner-only and group-membership routes) — folded into
+ * the same generic copy as [GroupFailure.Unknown].
  */
 private fun GroupFailure.reviewSaveFailureMessageRes(): Int =
     when (this) {

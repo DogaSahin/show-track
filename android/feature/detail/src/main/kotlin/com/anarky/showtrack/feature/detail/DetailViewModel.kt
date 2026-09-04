@@ -139,6 +139,13 @@ class DetailViewModel
         // resolved (or if resolution fails — best-effort, see [resolveCurrentUserId]'s own KDoc).
         private var currentUserId: String? = null
 
+        // This ViewModel instance's own last-known copy of the signed-in account's review for
+        // THIS title (task 9c.7, fix round 1, BLOCKING B2) — set by onReviewSaved from whatever
+        // the server actually returned, read only by findOwnReview as its fallback when the group
+        // section itself cannot answer. See findOwnReview's own KDoc for why this exists and what
+        // it does not fix (a cold start).
+        private var lastOwnReview: Review? = null
+
         init {
             load()
             resolveCurrentUserId()
@@ -294,6 +301,17 @@ class DetailViewModel
         }
 
         /**
+         * Clears a stale [ReviewEditorState.Open.error] the moment the reader starts fixing the
+         * input (fix round 1, small item 5) — decision C-S's "clear before a retry, not only on
+         * success" rule, extended from "the next Save attempt" to "the next keystroke": a
+         * [ReviewSaveError.BodyRequired] left on screen while the reader is visibly typing a fix is
+         * stale information, not a live warning. [ReviewEditor.kt] calls this only when
+         * `editor.error != null`, so a keystroke while there is nothing to clear never reaches the
+         * ViewModel at all — see that file's own call sites.
+         */
+        fun clearReviewError() = replaceOpenReviewEditor { it.copy(error = null) }
+
+        /**
          * Submits the editor's current draft — `POST /v1/reviews` when
          * [ReviewEditorState.Open.reviewId] is null, `PATCH /v1/reviews/{id}` when it is not. Both
          * calls always send a non-null `body`/`containsSpoilers`: the editor form always holds a
@@ -307,23 +325,27 @@ class DetailViewModel
          * (`ReviewBody`, `backend/app/library/schemas.py`), so an all-whitespace body is exactly
          * [ReviewSaveError.BodyRequired], never a value the server would silently accept. Re-entrancy
          * guarded the same way [edit] guards `saving` — a second tap while one save is already in
-         * flight is dropped.
+         * flight is dropped. [ReviewEditorState.Open.confirmOverwrite] is cleared here too, before
+         * relaunching — the confirmation is for exactly ONE tap, [confirmOverwrite]'s own KDoc.
          *
          * **The 409 path (E-G, this task's own reason to exist).** `POST /v1/reviews` answers 409
          * when the account already reviewed this title — [GroupFailure.AlreadyReviewed] — and per
          * that case's own KDoc the body never carries the existing review's id
          * ([GroupRepository]'s own KDoc confirms `backend/app/library/routes.py`'s 409 detail is a
-         * fixed string). [handleCreateFailure] resolves it the same way [openReviewEditor] does —
-         * via [findOwnReview] — and, when resolution succeeds, retries the SAME attempt
-         * transparently as a `PATCH`, with the identical [body]/[containsSpoilers] the reader just
-         * typed. **No error is ever shown for that case**: from the reader's side, the save just
-         * succeeds — E-G's own wording is "switch to editing... rather than an error to display",
-         * and re-opening the editor on the existing review's OWN text (discarding what the reader
-         * just typed) would be a worse reading of that instruction than simply finishing the save
-         * they asked for. Only when resolution FAILS (no active group, or its section has not
-         * loaded — [findOwnReview]'s own KDoc) is there nothing to retry against, and this reports
-         * [GroupFailure.AlreadyReviewed] through the ordinary [ReviewSaveError.Remote] channel
-         * instead — an honest degradation, not a silent failure.
+         * fixed string). [handleSaveFailure] resolves it the same way [openReviewEditor] does — via
+         * [findOwnReview] — but (fix round 1, BLOCKING B1's should-fix companion) does NOT retry
+         * automatically: it switches [ReviewEditorState.Open.reviewId] to the resolved review and
+         * sets [ReviewEditorState.Open.confirmOverwrite], requiring one more explicit Save tap
+         * before anything is actually sent. Silently overwriting on the reader's BEHALF, the first
+         * cut of this task, was wrong: a save-time resolution (the section loads only AFTER the
+         * editor is already open, this function's own [openReviewEditor] never having had the
+         * chance to show the existing text first) means the reader has never SEEN what they are
+         * about to replace. [openReviewEditor] itself still resolves and pre-fills silently — no
+         * confirmation is needed there, because the reader sees the existing text on screen BEFORE
+         * choosing to type over it. Only when resolution FAILS (no active group, no loaded section,
+         * and nothing yet cached in [lastOwnReview] — [findOwnReview]'s own KDoc) is there nothing
+         * to switch to, and this reports [GroupFailure.AlreadyReviewed] through the ordinary
+         * [ReviewSaveError.Remote] channel instead — an honest degradation, not a silent failure.
          */
         @Suppress("TooGenericExceptionCaught")
         fun saveReview(
@@ -339,20 +361,21 @@ class DetailViewModel
                 mutableState.value = current.copy(reviewEditor = editor.copy(error = validation))
                 return
             }
-            mutableState.value = current.copy(reviewEditor = editor.copy(saving = true, error = null))
+            val saving = editor.copy(saving = true, error = null, confirmOverwrite = false)
+            mutableState.value = current.copy(reviewEditor = saving)
             viewModelScope.launch {
                 try {
-                    // The result is discarded deliberately — onReviewSaved()'s own KDoc.
-                    if (editor.reviewId == null) {
-                        groupRepository.createReview(mediaId, trimmed, containsSpoilers)
-                    } else {
-                        groupRepository.updateReview(editor.reviewId, trimmed, containsSpoilers)
-                    }
-                    onReviewSaved()
+                    val saved =
+                        if (editor.reviewId == null) {
+                            groupRepository.createReview(mediaId, trimmed, containsSpoilers)
+                        } else {
+                            groupRepository.updateReview(editor.reviewId, trimmed, containsSpoilers)
+                        }
+                    onReviewSaved(saved)
                 } catch (cancellation: CancellationException) {
                     throw cancellation
                 } catch (failure: GroupOperationException) {
-                    handleCreateFailure(editor, trimmed, containsSpoilers, failure)
+                    handleSaveFailure(editor, failure)
                 }
             }
         }
@@ -364,12 +387,29 @@ class DetailViewModel
                 else -> null
             }
 
-        /** [saveReview]'s own KDoc has the full reasoning for the retry this performs. */
-        @Suppress("TooGenericExceptionCaught")
-        private suspend fun handleCreateFailure(
+        /**
+         * [saveReview]'s own KDoc has the full reasoning for the confirm-don't-overwrite shape.
+         * Named for what it handles now that update failures reach it too (fix round 1, small item
+         * 6 — round 0's `handleCreateFailure` was misleading the moment [saveReview]'s `else`
+         * branch, a `PATCH`, started routing its own failures through the same function): every
+         * `GroupOperationException` [saveReview] catches lands here, and only a CREATE attempt that
+         * 409'd ([editor]'s OWN `reviewId`, captured at the ORIGINAL request — not re-read — is
+         * what that check needs) ever takes the resolve-and-confirm branch below.
+         *
+         * Plain, not `suspend`: unlike round 0, this performs no network call of its own any more —
+         * [findOwnReview] is synchronous, and the actual retry is now the reader's own next
+         * [saveReview] call, not something this function does on their behalf.
+         *
+         * [replaceOpenReviewEditor] (fix round 1, small item 1), not a `.copy()` of the CAPTURED
+         * [editor] parameter: this runs after the one suspend point in [saveReview] (the
+         * create/update call itself), so [editor] may be stale — Cancel is disabled while saving so
+         * nothing reaches this today, but a future programmatic close (deep link, nav-away) must
+         * not have its [ReviewEditorState.Closed] silently overwritten by a snapshot from before it
+         * happened. [replaceOpenReviewEditor] re-reads the CURRENT `reviewEditor` and is a deliberate
+         * no-op when it is no longer [ReviewEditorState.Open].
+         */
+        private fun handleSaveFailure(
             editor: ReviewEditorState.Open,
-            body: String,
-            containsSpoilers: Boolean,
             failure: GroupOperationException,
         ) {
             val ownReview =
@@ -379,33 +419,28 @@ class DetailViewModel
                     null
                 }
             if (ownReview == null) {
-                replaceSuccess {
-                    it.copy(reviewEditor = editor.copy(saving = false, error = ReviewSaveError.Remote(failure.failure)))
-                }
+                replaceOpenReviewEditor { it.copy(saving = false, error = ReviewSaveError.Remote(failure.failure)) }
                 return
             }
-            try {
-                groupRepository.updateReview(ownReview.id, body, containsSpoilers)
-                onReviewSaved()
-            } catch (cancellation: CancellationException) {
-                throw cancellation
-            } catch (retry: GroupOperationException) {
-                val retried =
-                    editor.copy(reviewId = ownReview.id, saving = false, error = ReviewSaveError.Remote(retry.failure))
-                replaceSuccess { it.copy(reviewEditor = retried) }
+            replaceOpenReviewEditor {
+                it.copy(reviewId = ownReview.id, saving = false, error = null, confirmOverwrite = true)
             }
         }
 
         /**
-         * Common success path for both a create and an edit. Closes the editor — E-G's flow has no
-         * "keep editing" step, the save itself is the confirmation — and refreshes the group
-         * section (task 9c.6's own reload path) so the ACTIVE group's reviews list picks up what
-         * the server now has. No optimistic insert of the server's response into [groupSection]
-         * here: the same "the state the server hands back, not the request" discipline [edit]
-         * already follows for a library entry (this class's own KDoc). A no-op when there is no
-         * active group — nothing in [groupSection] needs refreshing if it was never scoped to one.
+         * Common success path for both a create and an edit. [saved] is cached into [lastOwnReview]
+         * (fix round 1, BLOCKING B2) — the ONE time this session will ever hold this account's own
+         * review id/body/spoiler-flag directly from the server without depending on a group section
+         * to have fetched it — before the editor closes and the group section (task 9c.6's own
+         * reload path) is refreshed so the ACTIVE group's reviews list picks up what the server now
+         * has. [saved] is otherwise NOT written into [groupSection] itself: the same "the state the
+         * server hands back, not the request" discipline [edit] already follows for a library entry
+         * (this class's own KDoc) — the reload above is what keeps [groupSection] itself honest, not
+         * an optimistic insert of [saved] into it. A no-op reload when there is no active group —
+         * nothing in [groupSection] needs refreshing if it was never scoped to one.
          */
-        private fun onReviewSaved() {
+        private fun onReviewSaved(saved: Review) {
+            lastOwnReview = saved
             replaceSuccess { it.copy(reviewEditor = ReviewEditorState.Closed) }
             if (groupId != null) reloadGroupSection()
         }
@@ -416,18 +451,46 @@ class DetailViewModel
          * the ACTIVE group's section already has loaded. Reviews of a title are visible to every
          * group the author is a member of (`list_group_reviews`, `backend/app/groups/service.py`),
          * so a reviewer looking at this screen with an active, loaded group section is necessarily
-         * looking at a list that already includes their own review, if one exists — no extra
-         * endpoint is needed for the common case.
+         * looking at a list that already includes their own review, if one exists.
          *
-         * Returns null — the honest "cannot resolve" outcome, not a guess — when there is no active
-         * group, the section has not finished loading yet, or [currentUserId] itself has not
-         * resolved yet. Every one of those is a real, reachable state on a screen the reader may
-         * open moments after signing in or switching groups.
+         * **[lastOwnReview] is the fallback when the section itself is not [GroupSectionState.Loaded]**
+         * (fix round 1, BLOCKING B2) — `Absent`/`Loading`/`Error`, or [currentUserId] has not
+         * resolved yet. Round 0 returned null unconditionally in that case, which permanently locked
+         * a no-groups account out of ever editing a review it had just written IN THIS SAME SESSION:
+         * write once (create succeeds, [onReviewSaved] caches [lastOwnReview]) → close the editor →
+         * open it again → [groupSection] is still [GroupSectionState.Absent] (no active group ever
+         * existed to fetch one from) → resolution failed → a fresh `POST` → 409, forever, on a
+         * review whose id this ViewModel instance already knew. [lastOwnReview] closes that hole for
+         * the life of this screen; it does NOT survive a cold start (a fresh [DetailViewModel]
+         * instance, e.g. after leaving and reopening this title) — that case genuinely needs a
+         * server-side "my own review" lookup this phase's API surface does not have, out of scope
+         * here (recorded as a follow-up, not silently dropped).
+         *
+         * When the section IS [GroupSectionState.Loaded] and [currentUserId] IS known, its own
+         * answer is trusted OUTRIGHT, including a genuine "no match" — that combination is the
+         * authoritative, live source of truth (the account is verifiably a member of the active
+         * group, so `list_group_reviews` would include its own review if the review still exists),
+         * so a loaded section reporting no match is never overridden by a possibly-stale
+         * [lastOwnReview].
          */
         private fun findOwnReview(): Review? {
-            val loaded = groupSection as? GroupSectionState.Loaded ?: return null
-            val userId = currentUserId ?: return null
+            val loaded = groupSection as? GroupSectionState.Loaded ?: return lastOwnReview
+            val userId = currentUserId ?: return lastOwnReview
             return loaded.reviews.firstOrNull { review -> review.author.id == userId }
+        }
+
+        /**
+         * [handleSaveFailure]'s own KDoc explains why a fresh read matters here: [transform] is
+         * applied to whatever [ReviewEditorState.Open] is CURRENT at the moment this runs, not to a
+         * value captured before a suspend point — and this is a deliberate no-op, leaving
+         * [DetailUiState.Success] otherwise untouched, when `reviewEditor` is no longer
+         * [ReviewEditorState.Open] by the time it runs.
+         */
+        private inline fun replaceOpenReviewEditor(transform: (ReviewEditorState.Open) -> ReviewEditorState.Open) {
+            replaceSuccess { success ->
+                val current = success.reviewEditor as? ReviewEditorState.Open
+                if (current == null) success else success.copy(reviewEditor = transform(current))
+            }
         }
 
         /**

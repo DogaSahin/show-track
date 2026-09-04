@@ -101,6 +101,7 @@ fun DetailScreen(
         onOpenReviewEditor = viewModel::openReviewEditor,
         onSaveReview = viewModel::saveReview,
         onCancelReviewEditor = viewModel::closeReviewEditor,
+        onClearReviewError = viewModel::clearReviewError,
         modifier = modifier,
     )
 }
@@ -109,17 +110,30 @@ fun DetailScreen(
  * The stateless half, split out so it can be previewed and driven by a test without a graph or a
  * ViewModel — `LibraryScreen`'s pattern.
  *
- * Now fourteen parameters (task 9c.6 added [groups], [onProposeToGroup], [onRetryGroupSection];
- * task 9c.7 added [onOpenReviewEditor], [onSaveReview], [onCancelReviewEditor]), well past
- * detekt's `LongParameterList` threshold of 6; suppressed rather than bundling the eleven
- * callbacks into an `Actions` holder class, which would exist for this one call site only —
- * `LibraryScreen`'s own justification for the same suppression, one screen earlier.
+ * Now fifteen parameters (task 9c.6 added [groups], [onProposeToGroup], [onRetryGroupSection];
+ * task 9c.7 added [onOpenReviewEditor], [onSaveReview], [onCancelReviewEditor],
+ * [onClearReviewError]), well past detekt's `LongParameterList` threshold of 6; suppressed rather
+ * than bundling the twelve callbacks into an `Actions` holder class, which would exist for this
+ * one call site only — `LibraryScreen`'s own justification for the same suppression, one screen
+ * earlier.
  *
- * [onProposeToGroup]/[onRetryGroupSection]/[onOpenReviewEditor]/[onSaveReview]/[onCancelReviewEditor]
- * carry NO default (`FeedScreen`'s fix-round-2 lesson, BLOCKING F2, restated here before it could be
- * rediscovered): a defaulted `= {}` here would let [DetailScreen]'s own stateful call above compile
- * even if one of these wires were dropped from it, with every pre-existing test still green — the
- * exact hole that fix closed one screen over.
+ * [onProposeToGroup]/[onRetryGroupSection]/[onOpenReviewEditor]/[onSaveReview]/[onCancelReviewEditor]/
+ * [onClearReviewError] carry NO default (`FeedScreen`'s fix-round-2 lesson, BLOCKING F2, restated
+ * here before it could be rediscovered): a defaulted `= {}` here would let [DetailScreen]'s own
+ * stateful call above compile even if one of these wires were DROPPED from it entirely.
+ *
+ * **What a no-default parameter does NOT catch (fix round 1, BLOCKING B1 — the same overclaim this
+ * KDoc made three times over on the way to this task, corrected here rather than repeated a fourth
+ * time): a STUBBED wire.** `:feature:detail`'s own [DetailScreenTest] drives this stateless overload
+ * directly and supplies every one of these callbacks itself — nothing stops the STATEFUL overload
+ * above from wiring `onSaveReview = { _, _ -> }` (present, compiles, type-checks, does nothing) while
+ * every test in that file stays green, because none of them exercises the STATEFUL wiring at all.
+ * [DetailResumeTest] is the harness that exists for exactly this seam — it composes THIS stateful
+ * function with a real [DetailViewModel] and asserts the callback actually reaches it
+ * (`the review editor on the real, composed screen actually saves`, fix round 1's own addition,
+ * `FeedEntryHiltTest`'s and this file's own earlier `onProposeToGroup`/`onRetryGroupSection`
+ * findings' identical lesson). A no-default parameter's real job is narrower than it sounds: it
+ * turns a dropped argument into a compile error. It says nothing about what that argument DOES.
  */
 @Suppress("LongParameterList")
 @Composable
@@ -138,6 +152,7 @@ internal fun DetailScreen(
     onOpenReviewEditor: () -> Unit,
     onSaveReview: (String, Boolean) -> Unit,
     onCancelReviewEditor: () -> Unit,
+    onClearReviewError: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Box(modifier = modifier.fillMaxSize()) {
@@ -164,6 +179,7 @@ internal fun DetailScreen(
                     onOpenReviewEditor = onOpenReviewEditor,
                     onSaveReview = onSaveReview,
                     onCancelReviewEditor = onCancelReviewEditor,
+                    onClearReviewError = onClearReviewError,
                 )
         }
     }
@@ -185,6 +201,7 @@ private fun DetailContent(
     onOpenReviewEditor: () -> Unit,
     onSaveReview: (String, Boolean) -> Unit,
     onCancelReviewEditor: () -> Unit,
+    onClearReviewError: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val (media, entry) = success.data
@@ -221,6 +238,7 @@ private fun DetailContent(
             onOpen = onOpenReviewEditor,
             onSave = onSaveReview,
             onCancel = onCancelReviewEditor,
+            onClearError = onClearReviewError,
         )
         // Decision C-S: a failed group section (or a failed propose) leaves everything above it —
         // the title, the Add/Edit controls, saving/actionError — fully usable. GroupSection is

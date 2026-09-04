@@ -936,9 +936,178 @@ class DetailViewModelTest {
             viewModel.saveReview("revised", false)
             advanceUntilIdle()
 
-            assertEquals(ReviewEditorState.Closed, (viewModel.state.value as DetailUiState.Success).reviewEditor)
+            // Fix round 1: resolving a 409 no longer retries automatically — the reader has never
+            // seen MY_REVIEW's own text, so nothing is sent yet. The editor switches to editing
+            // (reviewId set) and asks for one more explicit tap (confirmOverwrite) instead.
+            val confirming = (viewModel.state.value as DetailUiState.Success).reviewEditor as ReviewEditorState.Open
+            assertEquals(MY_REVIEW.id, confirming.reviewId)
+            assertTrue(confirming.confirmOverwrite)
+            assertNull(confirming.error)
+            assertFalse(confirming.saving)
             assertEquals(listOf(Triple("media-1", "revised", false)), groups.createReviewCalls)
+            assertEquals(0, groups.updateReviewCalls.size)
+
+            // No error was ever shown (E-G's own wording), and the second, explicit Save tap is
+            // what actually sends the PATCH.
+            viewModel.saveReview("revised", false)
+            advanceUntilIdle()
+
+            assertEquals(ReviewEditorState.Closed, (viewModel.state.value as DetailUiState.Success).reviewEditor)
             assertEquals(listOf(Triple(MY_REVIEW.id, "revised", false)), groups.updateReviewCalls)
+        }
+
+    /**
+     * Fix round 1, BLOCKING B2: a no-groups account writes a review, closes the editor, and reopens
+     * it — WITHOUT ever having an active group to resolve from. Round 0 returned null from
+     * [DetailViewModel.findOwnReview] unconditionally in that case, which locked the account out of
+     * ever editing a review it had just written, permanently, in the same session.
+     * [DetailViewModel.onReviewSaved] now caches the server's own response into `lastOwnReview`, and
+     * [DetailViewModel.findOwnReview] falls back to it exactly when the section itself cannot answer.
+     */
+    @Test
+    fun `a no-groups account can still edit a review it just wrote, from the cached copy`() =
+        runTest(dispatcher) {
+            val created = MY_REVIEW.copy(id = "review-fresh", body = "first draft")
+            val groups = FakeGroupRepository()
+            groups.createReviewResult = created
+            val viewModel =
+                DetailViewModel(
+                    savedState("media-1"),
+                    FakeMedia(),
+                    FakeLibrary(entry = ENTRY),
+                    groups,
+                    FakeAuthRepository(),
+                )
+            advanceUntilIdle()
+            // No setActiveGroup call anywhere in this test — groupSection stays Absent throughout,
+            // E-K's own no-groups state.
+
+            viewModel.openReviewEditor()
+            advanceUntilIdle()
+            viewModel.saveReview("first draft", false)
+            advanceUntilIdle()
+            assertEquals(ReviewEditorState.Closed, (viewModel.state.value as DetailUiState.Success).reviewEditor)
+
+            viewModel.openReviewEditor()
+            advanceUntilIdle()
+
+            val reopened = (viewModel.state.value as DetailUiState.Success).reviewEditor as ReviewEditorState.Open
+            assertEquals(created.id, reopened.reviewId)
+            assertEquals("first draft", reopened.seedBody)
+        }
+
+    /**
+     * Fix round 1, small item 1: [DetailViewModel.handleSaveFailure] used to rebuild from the
+     * CAPTURED `editor` snapshot, so a close that ran during the in-flight create could be silently
+     * resurrected as [ReviewEditorState.Open] once the 409 resolved. `saveReview`'s own gate holds
+     * the create call suspended so [DetailViewModel.closeReviewEditor] can run in the genuine gap
+     * between "the request was sent" and "the response arrived".
+     */
+    @Test
+    fun `closing the editor while a 409 resolution is in flight does not resurrect it`() =
+        runTest(dispatcher) {
+            val groups =
+                FakeGroupRepository(reviewsResults = mutableMapOf((GROUP_ID to "media-1") to listOf(MY_REVIEW)))
+            val gate = CompletableDeferred<Unit>()
+            groups.createReviewGate = gate
+            groups.createReviewFailure = GroupFailure.AlreadyReviewed(existingReviewId = null)
+            val viewModel =
+                DetailViewModel(
+                    savedState("media-1"),
+                    FakeMedia(),
+                    FakeLibrary(entry = ENTRY),
+                    groups,
+                    FakeAuthRepository(),
+                )
+            advanceUntilIdle()
+            // The editor opens BEFORE the section has loaded, so it resolves to a fresh draft
+            // (reviewId == null) — test 1's own setup, needed here so the save below actually
+            // reaches createReview (and its gate) rather than resolving straight to an edit.
+            viewModel.openReviewEditor()
+            advanceUntilIdle()
+            viewModel.setActiveGroup(GROUP_ID)
+            advanceUntilIdle()
+
+            viewModel.saveReview("typed while offline", false)
+            // The create call has been made and is suspended on the gate — nothing has resolved yet.
+
+            viewModel.closeReviewEditor()
+            assertEquals(ReviewEditorState.Closed, (viewModel.state.value as DetailUiState.Success).reviewEditor)
+
+            gate.complete(Unit)
+            advanceUntilIdle()
+
+            // The 409 resolves AFTER the close — handleSaveFailure must not reopen the form.
+            assertEquals(ReviewEditorState.Closed, (viewModel.state.value as DetailUiState.Success).reviewEditor)
+        }
+
+    /**
+     * Fix round 1, small item 6: `saveReview`'s `else` branch (a `PATCH`) routes its own failures
+     * through the identical function a failed `POST` does — this pins that an update failure
+     * reaches the ordinary error channel too, not only a create failure.
+     */
+    @Test
+    fun `an update failure surfaces through the same error channel as a create failure`() =
+        runTest(dispatcher) {
+            val groups =
+                FakeGroupRepository(reviewsResults = mutableMapOf((GROUP_ID to "media-1") to listOf(MY_REVIEW)))
+            groups.updateReviewFailure = GroupFailure.Network
+            val viewModel =
+                DetailViewModel(
+                    savedState("media-1"),
+                    FakeMedia(),
+                    FakeLibrary(entry = ENTRY),
+                    groups,
+                    FakeAuthRepository(),
+                )
+            advanceUntilIdle()
+            viewModel.setActiveGroup(GROUP_ID)
+            advanceUntilIdle()
+            viewModel.openReviewEditor()
+            advanceUntilIdle()
+            val opened = (viewModel.state.value as DetailUiState.Success).reviewEditor as ReviewEditorState.Open
+            assertEquals(MY_REVIEW.id, opened.reviewId)
+
+            viewModel.saveReview("edited", false)
+            advanceUntilIdle()
+
+            val editor = (viewModel.state.value as DetailUiState.Success).reviewEditor as ReviewEditorState.Open
+            assertEquals(ReviewSaveError.Remote(GroupFailure.Network), editor.error)
+            assertFalse(editor.confirmOverwrite)
+        }
+
+    /**
+     * Fix round 1, small item 5: decision C-S's clear-before-retry rule, extended to a keystroke —
+     * [DetailViewModel.clearReviewError] is what [ReviewEditor.kt] calls the moment the reader
+     * starts fixing the input, rather than leaving a stale validation message on screen until the
+     * next Save tap.
+     */
+    @Test
+    fun `clearReviewError clears a stale validation error`() =
+        runTest(dispatcher) {
+            val groups = FakeGroupRepository()
+            val viewModel =
+                DetailViewModel(
+                    savedState("media-1"),
+                    FakeMedia(),
+                    FakeLibrary(entry = ENTRY),
+                    groups,
+                    FakeAuthRepository(),
+                )
+            advanceUntilIdle()
+            viewModel.openReviewEditor()
+            advanceUntilIdle()
+            viewModel.saveReview("   ", false)
+            advanceUntilIdle()
+            assertEquals(
+                ReviewSaveError.BodyRequired,
+                ((viewModel.state.value as DetailUiState.Success).reviewEditor as ReviewEditorState.Open).error,
+            )
+
+            viewModel.clearReviewError()
+            advanceUntilIdle()
+
+            assertNull(((viewModel.state.value as DetailUiState.Success).reviewEditor as ReviewEditorState.Open).error)
         }
 
     /**
@@ -1000,7 +1169,7 @@ class DetailViewModelTest {
 
     /**
      * The reverse of the test above: no active group exists to resolve the id from at all, so
-     * there is nothing for [DetailViewModel.handleCreateFailure] to retry against. `existingReviewId`
+     * there is nothing for [DetailViewModel.handleSaveFailure] to retry against. `existingReviewId`
      * is null on the server's own 409 body (`GroupFailure.AlreadyReviewed`'s own KDoc) — this pins
      * that the honest degradation actually happens, rather than the save silently hanging or the
      * reader's typed text being discarded.
