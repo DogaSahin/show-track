@@ -33,6 +33,10 @@
     <string name="detail_group_propose_button">Propose to a group</string>
     <string name="detail_group_propose_picker_title">Choose a group</string>
     <string name="detail_group_propose_picker_cancel">Cancel</string>
+    <!-- Fix round 1: the ONLY feedback a single-group propose gets (no picker, no dialog to
+         close) — ProposeToGroupControl in GroupSection.kt. -->
+    <string name="detail_group_propose_success">Proposed to %1$s.</string>
+    <string name="detail_group_propose_success_generic">Proposed.</string>
 
     <!-- GroupFailure.messageRes() in GroupSection.kt. -->
     <string name="detail_group_error_network">Couldn\'t reach the server. Check your connection and try again.</string>

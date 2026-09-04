@@ -228,11 +228,17 @@ class DetailViewModel
         fun proposeToGroup(groupId: String) {
             val current = mutableState.value as? DetailUiState.Success ?: return
             if (current.proposing) return
-            mutableState.value = current.copy(proposing = true, proposeError = null)
+            // justProposedToGroupId cleared HERE too, not only on success (fix round 1) — decision
+            // C-S's own "clear the error before launching a retry, not only on success" rule,
+            // extended to a success banner: a second propose attempt must not leave a STALE
+            // confirmation for the FIRST group on screen while the second one is still in flight.
+            mutableState.value = current.copy(proposing = true, proposeError = null, justProposedToGroupId = null)
             viewModelScope.launch {
                 try {
                     groupRepository.proposeTitle(groupId, mediaId)
-                    replaceSuccess { it.copy(proposing = false, proposeError = null) }
+                    replaceSuccess {
+                        it.copy(proposing = false, proposeError = null, justProposedToGroupId = groupId)
+                    }
                 } catch (cancellation: CancellationException) {
                     throw cancellation
                 } catch (failure: GroupOperationException) {
@@ -327,7 +333,6 @@ class DetailViewModel
          * OR failure) is dropped rather than being written over whatever the new group has already
          * rendered.
          */
-        @Suppress("TooGenericExceptionCaught")
         private fun reloadGroupSection() {
             val currentGroupId = groupId ?: return
             if (loadingGroupSectionGeneration == groupSectionGeneration) return

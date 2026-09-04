@@ -9,6 +9,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -53,6 +54,7 @@ internal fun GroupSection(
     groups: List<Group>,
     proposing: Boolean,
     proposeError: GroupFailure?,
+    justProposedToGroupId: String?,
     onProposeToGroup: (String) -> Unit,
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
@@ -66,6 +68,7 @@ internal fun GroupSection(
                 groups = groups,
                 proposing = proposing,
                 error = proposeError,
+                justProposedToGroupId = justProposedToGroupId,
                 onPropose = onProposeToGroup,
             )
         }
@@ -122,7 +125,19 @@ private fun GroupSectionContent(
             }
             if (loaded.reviews.isNotEmpty()) {
                 Column(verticalArrangement = Arrangement.spacedBy(space = 8.dp)) {
-                    loaded.reviews.forEach { review -> SpoilerReview(review = review) }
+                    // key(review.id): a PLAIN Column.forEach (not LazyColumn) still uses
+                    // positional slot reuse across a recomposition — a reload that replaces
+                    // review N at this position with a DIFFERENT review must not inherit whatever
+                    // composition state (SpoilerReview's own `revealed`) the old occupant of this
+                    // slot left behind. REDUNDANT with SpoilerReview's own
+                    // `rememberSaveable(review.id)` brace, measured, not assumed: mutating either
+                    // ONE of the two alone leaves `DetailScreenTest`'s own swap test green — each
+                    // is independently sufficient — and only removing BOTH at once reddens it.
+                    // Kept anyway: this call site is the one place that can see the whole LIST
+                    // (SpoilerReview itself only ever sees one [Review] at a time), so it is the
+                    // right place to state the invariant even though today it is provably not the
+                    // only thing enforcing it.
+                    loaded.reviews.forEach { review -> key(review.id) { SpoilerReview(review = review) } }
                 }
             }
         }
@@ -158,6 +173,7 @@ private fun ProposeToGroupControl(
     groups: List<Group>,
     proposing: Boolean,
     error: GroupFailure?,
+    justProposedToGroupId: String?,
     onPropose: (String) -> Unit,
 ) {
     var showPicker by remember { mutableStateOf(false) }
@@ -173,6 +189,20 @@ private fun ProposeToGroupControl(
                 text = stringResource(error.messageRes()),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.error,
+            )
+        }
+        // The ONLY feedback a single-group propose gets: groups.size == 1 opens no picker and no
+        // confirmation dialog, so without this line a successful propose there is indistinguishable
+        // from a dead button (fix round 1, coordinator finding 4). Resolved to the group's own NAME
+        // (server data, decision C-E is unaffected — GroupSwitcher's identical `group.name` precedent),
+        // falling back to a generic string on the defensive case the id names no group in [groups].
+        if (justProposedToGroupId != null) {
+            val groupName = groups.firstOrNull { group -> group.id == justProposedToGroupId }?.name
+            Text(
+                text =
+                    groupName?.let { stringResource(R.string.detail_group_propose_success, it) }
+                        ?: stringResource(R.string.detail_group_propose_success_generic),
+                style = MaterialTheme.typography.bodySmall,
             )
         }
     }

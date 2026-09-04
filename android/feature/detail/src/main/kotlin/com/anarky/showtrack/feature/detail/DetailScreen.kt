@@ -209,6 +209,7 @@ private fun DetailContent(
             groups = groups,
             proposing = success.proposing,
             proposeError = success.proposeError,
+            justProposedToGroupId = success.justProposedToGroupId,
             onProposeToGroup = onProposeToGroup,
             onRetry = onRetryGroupSection,
         )

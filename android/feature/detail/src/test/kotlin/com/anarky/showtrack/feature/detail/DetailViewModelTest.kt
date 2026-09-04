@@ -512,6 +512,71 @@ class DetailViewModelTest {
             assertEquals(GroupFailure.Network, (afterEdit.groupSection as GroupSectionState.Error).cause)
         }
 
+    /**
+     * Fix round 1, BLOCKING B1's companion coverage gap (the reviewer's own item 1): the class
+     * KDoc's canonical-[groupSection]-field race, forced deterministically. [FakeMedia.detailGate]
+     * holds the TITLE load suspended in `mediaRepository.detail(...)` while the group-section
+     * fetch — launched independently by [DetailViewModel.setActiveGroup] — runs to completion
+     * first. `load()`'s own success branch reads the [DetailViewModel]-private `groupSection`
+     * field when it finally builds its [DetailUiState.Success]; deleting `groupSection =
+     * groupSection` there (reverting to the case class's own default, [GroupSectionState.Absent])
+     * reddens this test without touching anything the group-switch/generation tests already cover.
+     */
+    @Test
+    fun `the group section survives when it resolves before the title load does`() =
+        runTest(dispatcher) {
+            val titleGate = CompletableDeferred<Unit>()
+            val media = FakeMedia()
+            media.detailGate = titleGate
+            val groups =
+                FakeGroupRepository(progressResults = mutableMapOf((GROUP_ID to "media-1") to listOf(PROGRESS_ROW)))
+            val viewModel = DetailViewModel(savedState("media-1"), media, FakeLibrary(entry = null), groups)
+            // load() is already suspended inside media.detail(), awaiting titleGate — nothing has
+            // advanced it yet, so DetailUiState.Success does not exist for setActiveGroup to patch.
+
+            viewModel.setActiveGroup(GROUP_ID)
+            advanceUntilIdle() // resolves the group-section fetch fully; the title stays gated.
+
+            assertEquals(DetailUiState.Loading, viewModel.state.value)
+
+            titleGate.complete(Unit)
+            advanceUntilIdle()
+
+            val success = viewModel.state.value as DetailUiState.Success
+            assertEquals(
+                GroupSectionState.Loaded(progress = listOf(PROGRESS_ROW), reviews = emptyList()),
+                success.groupSection,
+            )
+        }
+
+    /**
+     * Residue item (fix round 1): [FakeGroupRepository.reviewsFailures] existed but was never
+     * exercised — this is the first test to use it. Pins a real, if unlovely, existing choice:
+     * [DetailViewModel.reloadGroupSection] fetches progress and reviews inside ONE
+     * `coroutineScope { }` (the class KDoc's own "neither call depends on the other" reasoning,
+     * mirroring `load()`), so a reviews-only failure cancels the sibling `progress` call under
+     * structured concurrency and errors the WHOLE section — a single flaky endpoint takes both
+     * down together. Deliberate (a genuinely partial section — progress shown, reviews silently
+     * missing — would misreport what the group actually has), but unpinned until now.
+     */
+    @Test
+    fun `a reviews-only failure errors the whole section, not just the reviews half`() =
+        runTest(dispatcher) {
+            val groups =
+                FakeGroupRepository(progressResults = mutableMapOf((GROUP_ID to "media-1") to listOf(PROGRESS_ROW)))
+            groups.reviewsFailures[GROUP_ID to "media-1"] = GroupFailure.Network
+            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), FakeLibrary(entry = ENTRY), groups)
+            advanceUntilIdle()
+
+            viewModel.setActiveGroup(GROUP_ID)
+            advanceUntilIdle()
+
+            assertEquals(
+                GroupSectionState.Error(GroupFailure.Network),
+                (viewModel.state.value as DetailUiState.Success).groupSection,
+            )
+        }
+
     // --- Propose to a group (task 9c.6) -------------------------------------------------------
 
     @Test
@@ -563,6 +628,49 @@ class DetailViewModelTest {
             assertEquals("group-9", groups.lastProposeGroupId)
         }
 
+    /**
+     * Fix round 1, coordinator finding 4: a single-group propose opens no picker and no dialog,
+     * so [DetailUiState.Success.justProposedToGroupId] is the ONLY feedback that action gets.
+     * Deleting the `justProposedToGroupId = groupId` write on the success path reddens this test
+     * without touching `proposing`/`proposeError`, which the existing propose tests already pin.
+     */
+    @Test
+    fun `a successful propose records which group it went to`() =
+        runTest(dispatcher) {
+            val groups = FakeGroupRepository(proposeResult = WATCHLIST_ENTRY)
+            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), FakeLibrary(entry = ENTRY), groups)
+            advanceUntilIdle()
+
+            viewModel.proposeToGroup("group-9")
+            advanceUntilIdle()
+
+            assertEquals("group-9", (viewModel.state.value as DetailUiState.Success).justProposedToGroupId)
+        }
+
+    /**
+     * The banner is a ONE-SHOT confirmation, `GroupsUiState.Success.justCreated`'s own discipline:
+     * a second propose — even a FAILED one — must clear the first success's stale confirmation
+     * before its own result is known, or a failed retry would leave "Proposed to group-9" on
+     * screen while the retry for group-10 is still in flight.
+     */
+    @Test
+    fun `starting a second propose clears the previous propose's confirmation immediately`() =
+        runTest(dispatcher) {
+            val groups = FakeGroupRepository(proposeResult = WATCHLIST_ENTRY)
+            val viewModel = DetailViewModel(savedState("media-1"), FakeMedia(), FakeLibrary(entry = ENTRY), groups)
+            advanceUntilIdle()
+            viewModel.proposeToGroup("group-9")
+            advanceUntilIdle()
+            assertEquals("group-9", (viewModel.state.value as DetailUiState.Success).justProposedToGroupId)
+
+            viewModel.proposeToGroup("group-10")
+
+            // Cleared synchronously, before the second propose's own coroutine even launches —
+            // the same "clear before a retry launches, not only on success" rule actionError/
+            // proposeError already follow (decision C-S).
+            assertNull((viewModel.state.value as DetailUiState.Success).justProposedToGroupId)
+        }
+
     private fun savedState(mediaId: String): SavedStateHandle = SavedStateHandle(mapOf("mediaId" to mediaId))
 
     /** See the comment at its call site for why this is type + message rather than `assertEquals`. */
@@ -575,7 +683,11 @@ class DetailViewModelTest {
         assertEquals(expected.message, error.cause.message)
     }
 
-    private class FakeMedia(
+    // internal, not private (fix round 1, BLOCKING B1): DetailResumeTest.kt needs a real
+    // DetailViewModel constructed against a fake it does not have to duplicate — nested-class
+    // access from another file in the same module (`DetailViewModelTest.FakeMedia(...)`) rather
+    // than a second near-identical fixture.
+    internal class FakeMedia(
         var detailFailure: Throwable? = null,
     ) : MediaRepository {
         override val searchResults: StateFlow<SearchResults> = MutableStateFlow(SearchResults.EMPTY)
@@ -583,18 +695,25 @@ class DetailViewModelTest {
         var lastMediaId: String? = null
             private set
 
+        // Fix round 1 addition: lets a test hold `detail()` suspended so the TITLE load can be
+        // observed genuinely in flight while a group-section fetch, launched independently,
+        // resolves first — the canonical-field race `DetailViewModel`'s own KDoc describes.
+        var detailGate: CompletableDeferred<Unit>? = null
+
         override suspend fun search(query: String): Unit = error("not exercised by DetailViewModel")
 
         override suspend fun loadMoreResults(): Unit = error("not exercised by DetailViewModel")
 
         override suspend fun detail(mediaId: String): Media {
             lastMediaId = mediaId
+            detailGate?.await()
             detailFailure?.let { throw it }
             return MEDIA
         }
     }
 
-    private class FakeLibrary(
+    // internal, not private (fix round 1, BLOCKING B1) — see FakeMedia's own KDoc just above.
+    internal class FakeLibrary(
         private val entry: LibraryEntry? = null,
         var updateResult: LibraryEntry = ENTRY,
         var updateFailure: Throwable? = null,

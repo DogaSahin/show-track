@@ -95,6 +95,15 @@ sealed interface DetailUiState {
      * `GroupSection.kt`). Independent of [groupSection] on purpose: the group a reader proposes TO
      * is not necessarily the ACTIVE group [groupSection] is scoped to — a member may want to share
      * a title with a group other than whichever one they are currently comparing progress against.
+     *
+     * [justProposedToGroupId] (fix round 1 addition) is the ONLY feedback a successful propose
+     * gets when the picker never opened at all — the `groups.size == 1` direct-propose path
+     * ([GroupSection.kt]'s own KDoc) has no confirmation dialog to close, so without this field a
+     * single-group user tapping "Propose to a group" sees literally nothing happen, indistinguishable
+     * from a dead button. `GroupsUiState.Success.justCreated`/`GroupDetailUiState.Success.rotatedInvite`'s
+     * identical discipline: set on success, held only in memory, and cleared by the very next
+     * [DetailViewModel.proposeToGroup] call — never by anything else, so it survives an unrelated
+     * edit or a group-section reload untouched.
      */
     data class Success(
         val data: DetailData,
@@ -103,6 +112,7 @@ sealed interface DetailUiState {
         val groupSection: GroupSectionState = GroupSectionState.Absent,
         val proposing: Boolean = false,
         val proposeError: GroupFailure? = null,
+        val justProposedToGroupId: String? = null,
     ) : DetailUiState
 
     /** Only the initial load (or a retry of it) ever produces this — see [DetailViewModel]'s KDoc. */

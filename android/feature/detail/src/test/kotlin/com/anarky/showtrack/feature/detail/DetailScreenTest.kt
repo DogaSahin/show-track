@@ -1,6 +1,9 @@
 package com.anarky.showtrack.feature.detail
 
 import android.content.Context
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -15,6 +18,7 @@ import com.anarky.showtrack.core.model.MediaSource
 import com.anarky.showtrack.core.model.MediaStatus
 import com.anarky.showtrack.core.model.MediaType
 import com.anarky.showtrack.core.model.MemberProgress
+import com.anarky.showtrack.core.model.Review
 import com.anarky.showtrack.core.model.UserMediaStatus
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -232,8 +236,119 @@ class DetailScreenTest {
         assertEquals(0, titleRetryCalls)
     }
 
-    private fun successState(groupSection: GroupSectionState): DetailUiState.Success =
-        DetailUiState.Success(data = DetailData(media = MEDIA, entry = ENTRY), groupSection = groupSection)
+    /**
+     * The brief's own fifth named test, under no dedicated name until fix round 1 (coordinator
+     * finding 3): `a failed group section leaves the rest of the detail screen usable`. Neither
+     * substitute test above asserts this — the ViewModel tests pin the STATE channels, and Global
+     * Constraints is explicit that a RENDERING decision cannot be pinned by a ViewModel test. This
+     * asserts the title and an edit control are still on screen with `groupSection is Error`.
+     */
+    @Test
+    fun `a failed group section leaves the title and edit controls on screen`() {
+        composeRule.setContent {
+            DetailScreen(
+                state = successState(groupSection = GroupSectionState.Error(GroupFailure.Network)),
+                groups = listOf(ALPHA),
+                onRetry = {},
+                onAddToLibrary = {},
+                onScoreSelected = {},
+                onScoreCleared = {},
+                onProgressChange = {},
+                onStatusSelected = {},
+                onFavoriteToggle = {},
+                onProposeToGroup = {},
+                onRetryGroupSection = {},
+            )
+        }
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule.onNodeWithText(MEDIA.title).assertExists()
+        composeRule.onNodeWithText(context.getString(R.string.detail_favorite_label)).assertExists()
+    }
+
+    /**
+     * Coordinator finding 4: `groups.size == 1` opens no picker and no dialog, so this banner is
+     * the ONLY feedback a single-group propose gets — indistinguishable from a dead button
+     * without it (the exact shape mutation 3 in fix round 1's report created).
+     */
+    @Test
+    fun `a successful propose shows which group it went to`() {
+        composeRule.setContent {
+            DetailScreen(
+                state = successState(groupSection = GroupSectionState.Absent, justProposedToGroupId = ALPHA.id),
+                groups = listOf(ALPHA),
+                onRetry = {},
+                onAddToLibrary = {},
+                onScoreSelected = {},
+                onScoreCleared = {},
+                onProgressChange = {},
+                onStatusSelected = {},
+                onFavoriteToggle = {},
+                onProposeToGroup = {},
+                onRetryGroupSection = {},
+            )
+        }
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule
+            .onNodeWithText(context.getString(R.string.detail_group_propose_success, ALPHA.name))
+            .performScrollTo()
+            .assertExists()
+    }
+
+    /**
+     * Fix round 1, coordinator finding 2: `GroupSectionContent` renders reviews in a plain
+     * `Column.forEach` — not a `LazyColumn` — so a reload that swaps in a DIFFERENT review at the
+     * SAME list position risks the new review inheriting whatever composition state (SpoilerReview's
+     * own `revealed`) the old occupant of that slot left behind. Drives [GroupSection] directly,
+     * through ONE composition (a single `setContent`, `reviews` mutated afterward) rather than two
+     * independent `setContent` calls — two calls would each start a brand-new composition and could
+     * never observe a slot-reuse bug at all.
+     *
+     * **Measured, not assumed: the two guards are REDUNDANT, not each independently required.**
+     * `GroupSection.kt`'s `key(review.id)` wrapper and `SpoilerReview.kt`'s own
+     * `rememberSaveable(review.id)` each individually held this test green when mutated alone —
+     * either one on its own already prevents the leak. Only removing BOTH at once reddens it,
+     * confirmed by mutating both together before writing this KDoc's claim.
+     */
+    @Test
+    fun `a new review replacing an old one at the same position starts collapsed, not still revealed`() {
+        var reviews by mutableStateOf(listOf(SPOILER_A))
+        composeRule.setContent {
+            GroupSection(
+                groupSection = GroupSectionState.Loaded(progress = emptyList(), reviews = reviews),
+                groups = listOf(ALPHA),
+                proposing = false,
+                proposeError = null,
+                justProposedToGroupId = null,
+                onProposeToGroup = {},
+                onRetry = {},
+            )
+        }
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        // No performScrollTo() here — unlike DetailScreen's own tests, GroupSection is driven
+        // directly with no surrounding DetailContent scroll container, and this small a tree fits
+        // the viewport outright.
+        composeRule
+            .onNodeWithText(context.getString(DesignSystemR.string.spoiler_review_reveal))
+            .performClick()
+        composeRule.onNodeWithText(SPOILER_A.body).assertExists()
+
+        reviews = listOf(SPOILER_B)
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithText(SPOILER_B.body).assertDoesNotExist()
+    }
+
+    private fun successState(
+        groupSection: GroupSectionState,
+        justProposedToGroupId: String? = null,
+    ): DetailUiState.Success =
+        DetailUiState.Success(
+            data = DetailData(media = MEDIA, entry = ENTRY),
+            groupSection = groupSection,
+            justProposedToGroupId = justProposedToGroupId,
+        )
 
     private companion object {
         val ALICE = GroupActor(id = "u1", username = "alice")
@@ -266,6 +381,27 @@ class DetailScreenTest {
                 favorite = false,
                 updatedAt = Instant.parse("2026-08-28T10:15:30Z"),
                 media = MEDIA,
+            )
+
+        val SPOILER_A =
+            Review(
+                id = "review-a",
+                author = ALICE,
+                mediaId = "media-1",
+                body = "Review A's spoiler body.",
+                containsSpoilers = true,
+                createdAt = Instant.parse("2026-08-28T10:15:30Z"),
+                updatedAt = Instant.parse("2026-08-28T10:15:30Z"),
+            )
+        val SPOILER_B =
+            Review(
+                id = "review-b",
+                author = GroupActor(id = "u2", username = "bob"),
+                mediaId = "media-1",
+                body = "Review B's completely different spoiler body.",
+                containsSpoilers = true,
+                createdAt = Instant.parse("2026-08-29T09:00:00Z"),
+                updatedAt = Instant.parse("2026-08-29T09:00:00Z"),
             )
     }
 }
