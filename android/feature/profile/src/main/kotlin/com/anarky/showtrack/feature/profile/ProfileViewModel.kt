@@ -131,6 +131,12 @@ class ProfileViewModel
         // fetch is still in flight. A private, state-shape-independent field rather than one scoped
         // inside `LibraryStatsUiState.Success`: [refreshStats] can be called while [statsState] is
         // [LibraryStatsUiState.Loading] or [LibraryStatsUiState.Error] too.
+        //
+        // A DROPPED re-entrant call, not a coalesced one (review finding M2, round 1) —
+        // `FavoritesViewModel.refreshInFlight`'s own KDoc has the full reasoning: a second
+        // [refreshStats] landing mid-flight is discarded, not queued, so a slow resume racing a
+        // library change elsewhere can render a response that predates it, with no automatic
+        // follow-up — the next resume is what corrects it.
         private var statsRefreshInFlight = false
 
         init {

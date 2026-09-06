@@ -47,6 +47,15 @@ import kotlinx.coroutines.CompletableDeferred
  * (group B's page-1 fetch) resolves immediately, which a single shared gate cannot express — every
  * call would suspend on it, including the one the test needs to complete first. Both gates are
  * checked; either can hold a call open.
+ *
+ * [feedThrows] (task 9c.8 round 1, review finding B1) throws the exact [Throwable] it is set to,
+ * RAW — never wrapped in [GroupOperationException] the way [feedFailure]/[feedFailures] are. This
+ * is the vehicle for `loadMore()`'s `finally` mutation evidence: `FeedViewModel`'s `catch` names
+ * [GroupOperationException] specifically, so a wrapped failure can never discriminate a missing
+ * `finally` — the `catch` already handles it. A genuine [kotlinx.coroutines.CancellationException]
+ * set here completes the coroutine as CANCELLED rather than FAILED, so `kotlinx-coroutines-test`
+ * never reports it as an uncaught exception and `runTest` does not fail — see
+ * `:feature:groups`' `FakeGroupRepository`'s identical addition and identical reasoning.
  */
 internal class FakeGroupRepository(
     var feedPages: MutableMap<Pair<String, String?>, FeedPage> = mutableMapOf(),
@@ -54,6 +63,7 @@ internal class FakeGroupRepository(
 ) : GroupRepository {
     var feedGate: CompletableDeferred<Unit>? = null
     var feedGates: MutableMap<Pair<String, String?>, CompletableDeferred<Unit>> = mutableMapOf()
+    var feedThrows: Throwable? = null
 
     // Round 1 addition: a PER-(groupId, cursor) failure, checked ahead of the global [feedFailure].
     // The group-switch regression tests need group A's retry to fail while group B's unrelated
@@ -74,6 +84,7 @@ internal class FakeGroupRepository(
         feedCalls += key
         feedGates[key]?.await()
         feedGate?.await()
+        feedThrows?.let { throw it }
         (feedFailures[key] ?: feedFailure)?.let { throw GroupOperationException(it) }
         return feedPages[key] ?: error("no feedPages entry configured for groupId=$groupId cursor=$cursor")
     }

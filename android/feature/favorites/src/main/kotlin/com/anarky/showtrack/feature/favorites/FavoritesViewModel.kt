@@ -47,6 +47,16 @@ import javax.inject.Inject
  * [FavoritesUiState.Loading] or [FavoritesUiState.Error] too, where there is no [FavoritesUiState.Success]
  * to scope a flag inside.
  *
+ * **A dropped re-entrant call, not a coalesced one** (review finding M2, round 1): a second
+ * [refresh] landing while [refreshInFlight] is `true` is discarded outright, not queued to run
+ * again once the first finishes. Concretely: a slow resume-triggered [refresh] is still in flight,
+ * the user goes to Detail, unfavourites a title, and returns — that second resume's [refresh] is
+ * dropped, and the FIRST call's response (fetched before the unfavourite happened) is what renders,
+ * with no automatic follow-up to correct it. `FeedViewModel.loadingGeneration` is the shape that
+ * WOULD coalesce (a generation captured and re-checked, rather than a bare boolean) and was not
+ * adopted here — [refresh] has no "subject" that changes under it the way a group switch does, so
+ * the accepted cost is narrower: the NEXT resume is what corrects a dropped one, not this call.
+ *
  * **No `init { refresh() }`** (review finding, round 2 — an earlier version of this class had
  * one). `FavoritesScreen`'s `LifecycleResumeEffect` already fires on the very first composition,
  * not only a later resume: `Lifecycle` replays `ON_CREATE`/`ON_START`/`ON_RESUME` to a

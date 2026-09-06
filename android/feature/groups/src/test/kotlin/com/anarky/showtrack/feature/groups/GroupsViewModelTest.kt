@@ -3,6 +3,7 @@ package com.anarky.showtrack.feature.groups
 import com.anarky.showtrack.core.data.repository.GroupWithInvite
 import com.anarky.showtrack.core.model.Group
 import com.anarky.showtrack.core.model.GroupFailure
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -13,6 +14,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Before
 import org.junit.Test
 import java.time.Instant
@@ -141,6 +143,48 @@ class GroupsViewModelTest {
 
             assertEquals(GroupsUiState.Success(groups = listOf(ALPHA)), viewModel.state.value)
             assertEquals(GroupsActionState(joinError = failure), viewModel.actionState.value)
+        }
+
+    /**
+     * Task 9c.8 round 1 (review finding B1/M1): [GroupsViewModel.createGroup]'s `finally` reset,
+     * proven with a genuine [CancellationException] as the vehicle rather than a
+     * [GroupOperationException] — this class's own `catch` already handles that type, so it could
+     * never discriminate a missing `finally`. A [CancellationException] completes the coroutine as
+     * CANCELLED, not FAILED, so `kotlinx-coroutines-test` never reports it as an uncaught exception
+     * and this test does not fail for that reason — only the state assertion below is the signal.
+     */
+    @Test
+    fun `createGroup resets creating even when the fetch is cancelled, not merely failed`() =
+        runTest(dispatcher) {
+            val repository = FakeGroupRepository(groupsResult = listOf(ALPHA))
+            val viewModel = GroupsViewModel(repository)
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            repository.createThrows = CancellationException("simulated cancellation mid-fetch")
+            viewModel.createGroup("Gamma Watchers")
+            advanceUntilIdle()
+
+            assertFalse("creating must not stay stuck true", viewModel.actionState.value.creating)
+        }
+
+    /**
+     * [createGroup]'s own mutation test above, applied to [GroupsViewModel.joinGroup] and
+     * [GroupsActionState.joining] instead.
+     */
+    @Test
+    fun `joinGroup resets joining even when the fetch is cancelled, not merely failed`() =
+        runTest(dispatcher) {
+            val repository = FakeGroupRepository(groupsResult = listOf(ALPHA))
+            val viewModel = GroupsViewModel(repository)
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            repository.joinThrows = CancellationException("simulated cancellation mid-fetch")
+            viewModel.joinGroup("SOMECODE0000000000000")
+            advanceUntilIdle()
+
+            assertFalse("joining must not stay stuck true", viewModel.actionState.value.joining)
         }
 
     /**

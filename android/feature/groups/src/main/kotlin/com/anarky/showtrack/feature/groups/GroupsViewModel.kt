@@ -80,6 +80,25 @@ class GroupsViewModel
          * re-enabled and its label flipped back from "Creating…" while the original request was
          * still in flight, and a second tap raced a real second `POST /v1/groups`. Splitting
          * [actionState] out fixes this structurally: [refresh] has no way to reach it at all now.
+         *
+         * **Known gap, not fixed here (task 9c.8 round 1, review finding M1's own aside): this
+         * function is the "flagless" sibling of [createGroup]/[joinGroup] and carries no `finally`.**
+         * Those two guard a `Boolean`-shaped flag that a `finally` can unconditionally reset; this
+         * function's own "flag" IS [GroupsUiState.Loading] itself, and the ONLY safe values to
+         * replace it with on an unrecognised failure are [GroupsUiState.Error] (needs the
+         * [GroupFailure] this class's `catch` deliberately never widens to construct from an
+         * arbitrary [Throwable] — see this class's own KDoc for why that narrowing is load-bearing,
+         * not incidental) or the previous [GroupsUiState.Success] (already handled — see above). A
+         * [kotlinx.coroutines.CancellationException] escaping [repository.groups] (e.g. from an
+         * internal `withTimeout`, never wrapped by `guarded` — this class's own KDoc) therefore
+         * still leaves [GroupsUiState.Loading] stuck with no retry affordance, on the FIRST load or
+         * a retry from [GroupsUiState.Error] specifically (a resume over an already-[GroupsUiState.Success]
+         * screen is unaffected — [state] simply stays the last good [GroupsUiState.Success]). Fixing
+         * it properly needs either widening this class's own catch (undoing the `.failure`-with-no-
+         * suppression discipline every other function here relies on) or a generic fallback
+         * [GroupFailure] built from an unknown [Throwable] — both bigger than a `finally` and out of
+         * this round's scope. Flagged rather than silently left; not one of the five this round
+         * actually fixes.
          */
         fun refresh() {
             if (mutableState.value !is GroupsUiState.Success) {
@@ -117,6 +136,18 @@ class GroupsViewModel
          *
          * On success, [applyGroupChange] folds the created group into whatever [state] currently
          * holds — see that function's own KDoc for why it never re-fetches the whole list.
+         *
+         * **`finally` added, task 9c.8 round 1 (review finding M1).** The `catch` above only names
+         * [GroupOperationException] (this class's own KDoc explains why), so anything else escaping
+         * [repository.createGroup] — a [kotlinx.coroutines.CancellationException] from an internal
+         * `withTimeout`, say — used to leave [GroupsActionState.creating] stuck `true` forever: not
+         * merely a wedged pager the way `GroupDetailViewModel.loadMoreWatchlist`'s finding was, but
+         * a permanently DISABLED submit button — worse, since there is no footer retry affordance
+         * for a stuck action flag the way there is for a stuck page-fetch flag. Mirrors
+         * `GroupDetailViewModel.loadMoreWatchlist`'s own `finally`: no `return@launch` (would
+         * swallow an in-flight exception instead of letting it propagate), and only writes when
+         * [GroupsActionState.creating] is still `true` (a no-op on the two paths above that already
+         * cleared it).
          */
         fun createGroup(name: String) {
             if (mutableActionState.value.creating) return
@@ -129,6 +160,10 @@ class GroupsViewModel
                 } catch (failure: GroupOperationException) {
                     mutableActionState.value =
                         mutableActionState.value.copy(creating = false, createError = failure.failure)
+                } finally {
+                    if (mutableActionState.value.creating) {
+                        mutableActionState.value = mutableActionState.value.copy(creating = false)
+                    }
                 }
             }
         }
@@ -148,6 +183,9 @@ class GroupsViewModel
          * retyping a 20-character invite code because the request failed would be a bad
          * experience, and nothing in this function's failure path touches anything the screen
          * reads to populate that field.
+         *
+         * `finally` added, task 9c.8 round 1 (review finding M1) — [createGroup]'s identical fix
+         * and identical reasoning, applied to [GroupsActionState.joining] instead of `.creating`.
          */
         fun joinGroup(inviteCode: String) {
             if (mutableActionState.value.joining) return
@@ -160,6 +198,10 @@ class GroupsViewModel
                 } catch (failure: GroupOperationException) {
                     mutableActionState.value =
                         mutableActionState.value.copy(joining = false, joinError = failure.failure)
+                } finally {
+                    if (mutableActionState.value.joining) {
+                        mutableActionState.value = mutableActionState.value.copy(joining = false)
+                    }
                 }
             }
         }

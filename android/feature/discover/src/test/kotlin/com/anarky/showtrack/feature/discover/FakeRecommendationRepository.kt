@@ -34,6 +34,10 @@ internal class FakeRecommendationRepository(
 
     var refreshGate: CompletableDeferred<Unit>? = null
 
+    // Set by a test that needs loadMore() to still be genuinely in flight (loadingMore == true)
+    // while it drives a concurrent refresh() — round 1's B2/B3 regression coverage.
+    var loadMoreGate: CompletableDeferred<Unit>? = null
+
     var refreshCalls = 0
         private set
     var loadMoreCalls = 0
@@ -49,6 +53,7 @@ internal class FakeRecommendationRepository(
 
     override suspend fun loadMore() {
         loadMoreCalls++
+        loadMoreGate?.await()
         loadMoreFailure?.let { throw it }
         mutableFeed.value = mutableFeed.value + loadMoreAppends
     }

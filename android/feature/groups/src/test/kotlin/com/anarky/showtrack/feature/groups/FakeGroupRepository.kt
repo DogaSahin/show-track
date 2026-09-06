@@ -56,6 +56,18 @@ import kotlinx.coroutines.CompletableDeferred
  * for the same reason: a fake that always resolves synchronously can never make a wrongly-shown
  * intermediate state (e.g. `Loading` on a resume, or a re-entrant second call) observable.
  *
+ * [createThrows]/[joinThrows]/[rotateThrows]/[removeMemberThrows]/[watchlistThrows]/
+ * [removeWatchlistEntryThrows] (task 9c.8 round 1, review finding B1/M1) each throw the exact
+ * [Throwable] they are set to, RAW — never wrapped in [GroupOperationException] the way
+ * [createFailure] and its siblings are. This is the vehicle for a `finally`'s mutation evidence:
+ * every ViewModel `catch` in this module names [GroupOperationException] specifically (this
+ * module's own architecture note, `GroupsViewModel`'s and `GroupDetailViewModel`'s own KDocs), so
+ * a WRAPPED failure can never discriminate a missing `finally` — the `catch` already handles it. A
+ * genuine [kotlinx.coroutines.CancellationException] set here is what a caller uses instead:
+ * thrown from inside a `Mutex`/`withTimeout` in a real fetch, it completes the coroutine as
+ * CANCELLED rather than FAILED, so `kotlinx-coroutines-test` never reports it as an uncaught
+ * exception and `runTest` does not fail — only the `finally`'s own state write is observable.
+ *
  * `@Suppress("LongParameterList")`: this fake's constructor is one result/failure pair per
  * [GroupRepository] method it actually implements — `GroupRepositoryImplTest`'s own
  * `TooManyFunctions` suppression carries the identical seam-cohesion argument for why the
@@ -86,6 +98,15 @@ internal class FakeGroupRepository(
     var removeMemberGate: CompletableDeferred<Unit>? = null
     var watchlistGate: CompletableDeferred<Unit>? = null
     var removeWatchlistEntryGate: CompletableDeferred<Unit>? = null
+
+    // See this class's own KDoc — round 1's raw (never wrapped) throwables, one per operation
+    // that gained a `finally` (task 9c.8 round 1).
+    var createThrows: Throwable? = null
+    var joinThrows: Throwable? = null
+    var rotateThrows: Throwable? = null
+    var removeMemberThrows: Throwable? = null
+    var watchlistThrows: Throwable? = null
+    var removeWatchlistEntryThrows: Throwable? = null
 
     var groupsCalls = 0
         private set
@@ -121,6 +142,7 @@ internal class FakeGroupRepository(
     override suspend fun createGroup(name: String): GroupWithInvite {
         createCalls++
         createGate?.await()
+        createThrows?.let { throw it }
         createFailure?.let { throw GroupOperationException(it) }
         return createResult ?: error("createResult not set for this test")
     }
@@ -128,6 +150,7 @@ internal class FakeGroupRepository(
     override suspend fun joinGroup(inviteCode: String): GroupWithInvite {
         joinCalls++
         joinGate?.await()
+        joinThrows?.let { throw it }
         joinFailure?.let { throw GroupOperationException(it) }
         return joinResult ?: error("joinResult not set for this test")
     }
@@ -140,6 +163,7 @@ internal class FakeGroupRepository(
 
     override suspend fun rotateInvite(groupId: String): GroupWithInvite {
         rotateCalls++
+        rotateThrows?.let { throw it }
         rotateFailure?.let { throw GroupOperationException(it) }
         return rotateResult ?: error("rotateResult not set for this test")
     }
@@ -150,6 +174,7 @@ internal class FakeGroupRepository(
     ) {
         removeMemberCalls += groupId to userId
         removeMemberGate?.await()
+        removeMemberThrows?.let { throw it }
         removeMemberFailure?.let { throw GroupOperationException(it) }
     }
 
@@ -169,6 +194,7 @@ internal class FakeGroupRepository(
     ): WatchlistPage {
         watchlistCalls += cursor
         watchlistGate?.await()
+        watchlistThrows?.let { throw it }
         watchlistFailure?.let { throw GroupOperationException(it) }
         return watchlistPages[cursor] ?: error("no watchlistPages entry configured for cursor=$cursor")
     }
@@ -184,6 +210,7 @@ internal class FakeGroupRepository(
     ) {
         removeWatchlistEntryCalls += groupId to entryId
         removeWatchlistEntryGate?.await()
+        removeWatchlistEntryThrows?.let { throw it }
         removeWatchlistEntryFailure?.let { throw GroupOperationException(it) }
     }
 

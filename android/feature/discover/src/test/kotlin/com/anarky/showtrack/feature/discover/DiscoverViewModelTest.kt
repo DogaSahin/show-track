@@ -293,6 +293,85 @@ class DiscoverViewModelTest {
             )
         }
 
+    /**
+     * Review finding B2, round 1: a successful [DiscoverViewModel.refresh] used to rebuild
+     * [DiscoverUiState.Success] field-by-field (`Success(items = ...)`), silently defaulting
+     * [DiscoverUiState.Success.loadingMore] back to `false` even while a concurrent [DiscoverViewModel.loadMore]
+     * was genuinely still in flight — freeing `EndOfListTrigger` to fire a SECOND, concurrent
+     * `loadMore()`. `recommendations.loadMoreGate` is what makes "still in flight" observable:
+     * `loadMore()` is called first and gated open, `refresh()` is driven to completion while it is
+     * still suspended, and the assertion below is taken BEFORE the gate is ever released.
+     */
+    @Test
+    fun `a successful refresh preserves loadingMore from a loadMore still genuinely in flight`() =
+        runTest(dispatcher) {
+            val recommendations =
+                FakeRecommendationRepository(refreshResult = listOf(FRIEREN), loadMoreAppends = listOf(BEBOP))
+            val viewModel = DiscoverViewModel(recommendations, FakeLibraryRepository())
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            recommendations.loadMoreGate = CompletableDeferred()
+            viewModel.loadMore()
+            advanceUntilIdle()
+            assertTrue((viewModel.state.value as DiscoverUiState.Success).loadingMore)
+
+            recommendations.refreshResult = listOf(FRIEREN)
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            // The resume's OWN refresh succeeded (recommendations.refreshCalls proves it ran), but
+            // loadMore()'s own loadingMore flag must still read true — a rebuilt Success would have
+            // silently reset it to false here, with the page fetch still genuinely suspended below.
+            assertEquals(2, recommendations.refreshCalls)
+            assertTrue(
+                "a rebuilt Success would have silently cleared loadingMore here",
+                (viewModel.state.value as DiscoverUiState.Success).loadingMore,
+            )
+
+            recommendations.loadMoreGate?.complete(Unit)
+            advanceUntilIdle()
+
+            assertEquals(
+                DiscoverUiState.Success(items = listOf(FRIEREN, BEBOP), loadingMore = false, pageError = null),
+                viewModel.state.value,
+            )
+        }
+
+    /**
+     * Review finding B3, round 1: before this task, [DiscoverViewModel.loadMore] and
+     * [DiscoverViewModel.refresh] were disjoint by construction, so they could never run
+     * concurrently against [RecommendationRepository]. A resume can now call [DiscoverViewModel.refresh]
+     * at any moment, including while a page fetch is in flight, which — per
+     * `RecommendationRepositoryImpl`'s own KDoc — can duplicate a `media.id` in the published feed
+     * and crash `DiscoverScreen`'s keyed `LazyColumn`. [DiscoverViewModel.loadMore] now drops a
+     * call outright while a refresh is known in flight. Asserts the repository call COUNT: a count
+     * on a fake cannot pass when the call never happens, which is what makes it discriminate.
+     */
+    @Test
+    fun `loadMore is dropped while a refresh is genuinely in flight`() =
+        runTest(dispatcher) {
+            val recommendations = FakeRecommendationRepository(refreshResult = listOf(FRIEREN))
+            val viewModel = DiscoverViewModel(recommendations, FakeLibraryRepository())
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            recommendations.refreshGate = CompletableDeferred()
+            viewModel.refresh() // a resume's refresh, held open
+            viewModel.loadMore() // must be dropped — a refresh is known to be in flight
+            advanceUntilIdle()
+
+            assertEquals(0, recommendations.loadMoreCalls)
+
+            recommendations.refreshGate?.complete(Unit)
+            advanceUntilIdle()
+
+            // Once the refresh has actually landed, loadMore() is reachable again.
+            viewModel.loadMore()
+            advanceUntilIdle()
+            assertEquals(1, recommendations.loadMoreCalls)
+        }
+
     @Test
     fun `adding a row removes it from the feed immediately, before the network call resolves`() =
         runTest(dispatcher) {

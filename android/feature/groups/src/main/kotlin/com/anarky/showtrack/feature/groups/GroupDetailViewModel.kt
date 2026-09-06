@@ -437,6 +437,15 @@ class GroupDetailViewModel
          * SILENTLY looking current when it might not be — see that field's own KDoc. Round 0 had no
          * such signal, so a reload failure right after a successful delete left the deleted row on
          * screen with nothing telling the viewer it might be wrong.
+         *
+         * `finally` added, task 9c.8 round 1 (review finding M1) — `GroupsViewModel.createGroup`'s
+         * identical fix and identical reasoning, applied to [GroupDetailActionState.removingEntryId]:
+         * only [groupRepository.removeFromWatchlist] can throw something the `catch` above does not
+         * name ([reloadWatchlist] catches its own failures and never rethrows — that function's own
+         * KDoc), and before this fix that left the DELETE row's own retry affordance permanently
+         * disabled. Checked against [entryId] specifically, not merely non-null, the same
+         * defensive-idempotence shape `GroupDetailViewModel.loadMoreWatchlist`'s own `finally` uses:
+         * a no-op on the two paths above that already cleared it.
          */
         fun removeFromWatchlist(entryId: String) {
             if (mutableActionState.value.removingEntryId != null) return
@@ -449,6 +458,10 @@ class GroupDetailViewModel
                 } catch (failure: GroupOperationException) {
                     mutableActionState.value =
                         mutableActionState.value.copy(removingEntryId = null, removeEntryError = failure.failure)
+                } finally {
+                    if (mutableActionState.value.removingEntryId == entryId) {
+                        mutableActionState.value = mutableActionState.value.copy(removingEntryId = null)
+                    }
                 }
             }
         }
@@ -469,6 +482,11 @@ class GroupDetailViewModel
          * inside `GroupDetailSuccessContent`, gated on `isOwner`, which itself requires a loaded
          * member list to compute) — the guard below makes that restriction real rather than merely
          * true-in-practice-today.
+         *
+         * `finally` added, task 9c.8 round 1 (review finding M1) — `GroupsViewModel.createGroup`'s
+         * identical fix and identical reasoning, applied to [GroupDetailActionState.rotating]:
+         * anything [groupRepository.rotateInvite] throws other than [GroupOperationException] used
+         * to leave the rotate button permanently disabled with no retry affordance.
          */
         fun rotateInvite() {
             if (mutableState.value !is GroupDetailUiState.Success) return
@@ -485,6 +503,10 @@ class GroupDetailViewModel
                 } catch (failure: GroupOperationException) {
                     mutableActionState.value =
                         mutableActionState.value.copy(rotating = false, rotateError = failure.failure)
+                } finally {
+                    if (mutableActionState.value.rotating) {
+                        mutableActionState.value = mutableActionState.value.copy(rotating = false)
+                    }
                 }
             }
         }
@@ -561,6 +583,15 @@ class GroupDetailViewModel
          * add is what a real reload reflects correctly). [GroupDetailActionState.removingUserId]
          * stays non-null for the WHOLE round trip, including the reload — see [reloadMembers]'s own
          * KDoc for why that is not merely the delete call's own duration.
+         *
+         * `finally` added, task 9c.8 round 1 (review finding M1) — `GroupsViewModel.createGroup`'s
+         * identical fix and identical reasoning, applied to [GroupDetailActionState.removingUserId]:
+         * either [groupRepository.removeMember] or [reloadMembers]'s own inner fetch can throw
+         * something the `catch` above does not name ([reloadMembers] catches its OWN
+         * [GroupOperationException] and never rethrows, but not any other type), and before this
+         * fix that left this action's remove control permanently disabled with no retry affordance.
+         * Checked against [userId] specifically, `removeFromWatchlist`'s own defensive-idempotence
+         * shape: a no-op on the two paths above that already cleared it.
          */
         fun removeMember(userId: String) {
             if (mutableActionState.value.removingUserId != null) return
@@ -573,6 +604,10 @@ class GroupDetailViewModel
                 } catch (failure: GroupOperationException) {
                     mutableActionState.value =
                         mutableActionState.value.copy(removingUserId = null, removeError = failure.failure)
+                } finally {
+                    if (mutableActionState.value.removingUserId == userId) {
+                        mutableActionState.value = mutableActionState.value.copy(removingUserId = null)
+                    }
                 }
             }
         }

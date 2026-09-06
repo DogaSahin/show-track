@@ -5,6 +5,7 @@ import com.anarky.showtrack.core.model.ActivityKind
 import com.anarky.showtrack.core.model.FeedEntry
 import com.anarky.showtrack.core.model.GroupActor
 import com.anarky.showtrack.core.model.GroupFailure
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -15,6 +16,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -170,6 +172,41 @@ class FeedViewModelTest {
 
             assertEquals(listOf(GROUP_ID to null, GROUP_ID to "cursor-2"), repository.feedCalls)
             assertEquals(listOf(ADDED, RATED), (viewModel.state.value as FeedUiState.Success).entries)
+        }
+
+    /**
+     * Task 9c.8 round 1 (review finding B1): [FeedViewModel.loadMore]'s `finally` reset, proven
+     * with a genuine [CancellationException] as the vehicle rather than a [GroupOperationException]
+     * — `FeedViewModel`'s own `catch` already handles that type, so a wrapped failure could never
+     * discriminate a missing `finally`. A round-0 attempt at this test used
+     * `FakeGroupRepository.feed`'s own `error("no feedPages entry configured for ...")`
+     * ([IllegalStateException]) as the vehicle instead — that exception is genuinely UNCAUGHT, so
+     * `kotlinx-coroutines-test` reported it and failed this test UNCONDITIONALLY, with or without
+     * the `finally` present, discriminating nothing. [CancellationException] completes the
+     * coroutine as CANCELLED, not FAILED, so `kotlinx-coroutines-test` never reports it as an
+     * uncaught exception — only the state assertion below is the signal.
+     */
+    @Test
+    fun `loadMore resets loadingMore even when the fetch is cancelled, not merely failed`() =
+        runTest(dispatcher) {
+            val repository =
+                FakeGroupRepository(
+                    feedPages =
+                        mutableMapOf(
+                            (GROUP_ID to null) to FeedPage(items = listOf(ADDED), nextCursor = "cursor-2"),
+                        ),
+                )
+            val viewModel = FeedViewModel(repository)
+            viewModel.selectGroup(GROUP_ID)
+            advanceUntilIdle()
+            assertEquals(listOf(ADDED), (viewModel.state.value as FeedUiState.Success).entries)
+
+            repository.feedThrows = CancellationException("simulated cancellation mid-fetch")
+            viewModel.loadMore()
+            advanceUntilIdle()
+
+            val success = viewModel.state.value as FeedUiState.Success
+            assertFalse("loadingMore must not stay stuck true", success.loadingMore)
         }
 
     /**

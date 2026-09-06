@@ -13,6 +13,7 @@ import com.anarky.showtrack.core.model.MediaSource
 import com.anarky.showtrack.core.model.MediaSummary
 import com.anarky.showtrack.core.model.MediaType
 import com.anarky.showtrack.core.model.WatchlistEntry
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -23,6 +24,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -254,6 +256,28 @@ class GroupDetailViewModelTest {
             assertEquals(GroupFailure.NotPermitted, viewModel.actionState.value.rotateError)
         }
 
+    /**
+     * Task 9c.8 round 1 (review finding B1/M1): [GroupDetailViewModel.rotateInvite]'s `finally`
+     * reset, proven with a genuine [CancellationException] as the vehicle rather than a
+     * [GroupOperationException] — this class's own `catch` already handles that type, so it could
+     * never discriminate a missing `finally`. A [CancellationException] completes the coroutine as
+     * CANCELLED, not FAILED, so `kotlinx-coroutines-test` never reports it as an uncaught exception
+     * and this test does not fail for that reason — only the state assertion below is the signal.
+     */
+    @Test
+    fun `rotateInvite resets rotating even when the fetch is cancelled, not merely failed`() =
+        runTest(dispatcher) {
+            val groupRepository = FakeGroupRepository(membersResult = listOf(OWNER))
+            val viewModel = viewModel(groupRepository)
+            advanceUntilIdle()
+
+            groupRepository.rotateThrows = CancellationException("simulated cancellation mid-fetch")
+            viewModel.rotateInvite()
+            advanceUntilIdle()
+
+            assertFalse("rotating must not stay stuck true", viewModel.actionState.value.rotating)
+        }
+
     @Test
     fun `rotate is not fired again while one is already in flight`() =
         runTest(dispatcher) {
@@ -432,6 +456,28 @@ class GroupDetailViewModelTest {
             advanceUntilIdle()
 
             assertEquals(listOf(GROUP_ID to MEMBER.userId), groupRepository.removeMemberCalls)
+        }
+
+    /**
+     * Task 9c.8 round 1 (review finding B1/M1): [GroupDetailViewModel.removeMember]'s `finally`
+     * reset, proven with a genuine [CancellationException] as the vehicle — `rotateInvite`'s own
+     * mutation test above explains why a [GroupOperationException] could never discriminate this.
+     */
+    @Test
+    fun `removeMember resets removingUserId even when the fetch is cancelled, not merely failed`() =
+        runTest(dispatcher) {
+            val groupRepository = FakeGroupRepository(membersResult = listOf(OWNER, MEMBER))
+            val viewModel = viewModel(groupRepository)
+            advanceUntilIdle()
+
+            groupRepository.removeMemberThrows = CancellationException("simulated cancellation mid-fetch")
+            viewModel.removeMember(MEMBER.userId)
+            advanceUntilIdle()
+
+            assertNull(
+                "removingUserId must not stay stuck non-null",
+                viewModel.actionState.value.removingUserId,
+            )
         }
 
     /**
@@ -718,6 +764,40 @@ class GroupDetailViewModelTest {
         }
 
     /**
+     * Task 9c.8 round 1 (review finding B1/M1): [GroupDetailViewModel.loadMoreWatchlist]'s
+     * `finally` reset, proven with a genuine [CancellationException] as the vehicle rather than a
+     * [GroupOperationException] — this class's own `catch` already handles that type, so it could
+     * never discriminate a missing `finally`. A round-0 attempt at this test used
+     * `FakeGroupRepository.watchlist`'s own `error("no watchlistPages entry configured for
+     * cursor=...")` ([IllegalStateException]) as the vehicle instead — that exception is genuinely
+     * UNCAUGHT, so `kotlinx-coroutines-test` reported it and failed this test UNCONDITIONALLY,
+     * with or without the `finally` present, discriminating nothing. [CancellationException]
+     * completes the coroutine as CANCELLED, not FAILED, so `kotlinx-coroutines-test` never reports
+     * it as an uncaught exception — only the state assertion below is the signal.
+     */
+    @Test
+    fun `loadMoreWatchlist resets watchlistLoadingMore even when the fetch is cancelled, not merely failed`() =
+        runTest(dispatcher) {
+            val groupRepository =
+                FakeGroupRepository(
+                    membersResult = listOf(OWNER),
+                    watchlistPages =
+                        mutableMapOf(
+                            null to WatchlistPage(items = listOf(ENTRY_1), nextCursor = "cursor-2"),
+                        ),
+                )
+            val viewModel = viewModel(groupRepository)
+            advanceUntilIdle()
+
+            groupRepository.watchlistThrows = CancellationException("simulated cancellation mid-fetch")
+            viewModel.loadMoreWatchlist()
+            advanceUntilIdle()
+
+            val success = viewModel.state.value as GroupDetailUiState.Success
+            assertFalse("watchlistLoadingMore must not stay stuck true", success.watchlistLoadingMore)
+        }
+
+    /**
      * Fix round 2, smaller item 1: decision C-S requires clearing an operation's error channel
      * BEFORE launching its retry, not only on success. Checked synchronously, right after calling
      * [GroupDetailViewModel.loadMoreWatchlist] and before `advanceUntilIdle()` — the write this
@@ -951,6 +1031,33 @@ class GroupDetailViewModelTest {
             advanceUntilIdle()
 
             assertEquals(listOf(GROUP_ID to ENTRY_2.id), groupRepository.removeWatchlistEntryCalls)
+        }
+
+    /**
+     * Task 9c.8 round 1 (review finding B1/M1): [GroupDetailViewModel.removeFromWatchlist]'s
+     * `finally` reset, proven with a genuine [CancellationException] as the vehicle —
+     * `rotateInvite`'s own mutation test explains why a [GroupOperationException] could never
+     * discriminate this.
+     */
+    @Test
+    fun `removeFromWatchlist resets removingEntryId even when the fetch is cancelled, not merely failed`() =
+        runTest(dispatcher) {
+            val groupRepository =
+                FakeGroupRepository(
+                    membersResult = listOf(OWNER),
+                    watchlistPages = mutableMapOf(null to WatchlistPage(items = listOf(ENTRY_1), nextCursor = null)),
+                )
+            val viewModel = viewModel(groupRepository)
+            advanceUntilIdle()
+
+            groupRepository.removeWatchlistEntryThrows = CancellationException("simulated cancellation mid-fetch")
+            viewModel.removeFromWatchlist(ENTRY_1.id)
+            advanceUntilIdle()
+
+            assertNull(
+                "removingEntryId must not stay stuck non-null",
+                viewModel.actionState.value.removingEntryId,
+            )
         }
 
     @Test
