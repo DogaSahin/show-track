@@ -83,11 +83,21 @@ import kotlinx.coroutines.launch
  * there is ONE owner of "which groups exist" for switching purposes rather than two lists to keep
  * in step.
  *
- * [onGroupsChanged] is what stops that single owner going stale here: a successful create/join
- * fires it, `:app` binds it to `ActiveGroupViewModel::refresh`, and the new group reaches the
- * switcher without the user having to navigate away and back. [GroupsViewModel] keeps its own list
- * for the screen's CONTENT — the rows, the invite banner, the stale banner — which is a different
- * concern with its own failure channel, not a second copy of the switcher's list.
+ * [onRetryGroups] is what stops that single owner going stale here, and it has TWO triggers on this
+ * screen rather than one. `:app` binds it to `ActiveGroupViewModel::refresh` — the same value
+ * `feedEntry` receives under the same name — and it fires (a) when a successful create/join changes
+ * this account's membership, so the new group reaches the switcher without the user navigating away
+ * and back, and (b) from the [ActiveGroupState.Error] banner's Retry. One parameter, not two of the
+ * same type bound to the same function: an `(onGroupsChanged, onRetryGroups)` pair would be exactly
+ * the inert same-type wire this project has shipped five times.
+ *
+ * [GroupsViewModel] keeps its own list for the screen's CONTENT — the rows, the invite banner, the
+ * stale banner — which is a different concern with its own failure channel, not a second copy of
+ * the switcher's list.
+ *
+ * Six parameters trips detekt's `LongParameterList` (threshold 6); suppressed rather than bundled
+ * into a holder, matching the stateless overload's own identical suppression and `FeedScreen`'s —
+ * a holder that exists for this one call site is indirection without fewer moving parts.
  *
  * **What that actually looks like for the person on this screen (fix round 2 — an earlier version
  * of this paragraph described the CODE, not what is on screen).** [GroupsViewModel.state] is
@@ -95,25 +105,29 @@ import kotlinx.coroutines.launch
  * possible for [GroupsViewModel.state] to already be a [GroupsUiState.Success] with three groups
  * fully listed WHILE [activeGroup] is still [ActiveGroupState.Loading] or has landed on
  * [ActiveGroupState.Error] — the two fetches race, and nothing here waits for one on the other. In
- * that window, the person sees the full group list and no switcher: no indication of which group is
- * currently active, and no way to find out from this screen at all. This is accepted, not
- * overlooked — it self-heals: [ActiveGroupViewModel.refresh] already fires on arrival at Groups
- * (`ShowTrackApp`'s own `LaunchedEffect`), and Feed offers `activeGroup`'s own [ActiveGroupState.Error]
- * a real retry ([FeedScreen]'s own `onRetryGroups`) if the fetch is genuinely stuck rather than
- * merely still in flight — but it is a real, user-visible gap for as long as the race lasts, not
- * merely an implementation detail.
+ * the [ActiveGroupState.Loading] half of that window the person sees the full group list and no
+ * switcher: no indication of which group is currently active. That much is still accepted, and it
+ * self-heals — [ActiveGroupViewModel.refresh] fires on arrival at Groups (`ShowTrackApp`'s own
+ * destination effect) and the switcher appears when it lands.
+ *
+ * **The [ActiveGroupState.Error] half is no longer accepted (fix round, M3).** It used to render
+ * exactly the same nothing, and this KDoc pointed at Feed's retry as the recovery — which meant
+ * leaving the screen you are on to fix a failure reported on it, and only if you knew to. That was
+ * not a design choice so much as an omission: `groupsEntry` was the one groups-shaped entry in
+ * `appDestinations` that received no `onRetryGroups` at all, so there was nothing to wire a retry
+ * to even if the screen had rendered one. It now renders a banner with a live Retry.
  */
+@Suppress("LongParameterList")
 @Composable
 fun GroupsScreen(
     activeGroup: StateFlow<ActiveGroupState>,
     onSwitchGroup: (String) -> Unit,
-    onGroupsChanged: () -> Unit,
+    onRetryGroups: () -> Unit,
     onGroupClick: (Group) -> Unit,
     modifier: Modifier = Modifier,
     viewModel: GroupsViewModel = hiltViewModel(),
 ) {
     val currentActiveGroup by activeGroup.collectAsStateWithLifecycle()
-    val resolvedActiveGroup = currentActiveGroup as? ActiveGroupState.Success
     LifecycleResumeEffect(viewModel) {
         viewModel.refresh()
         onPauseOrDispose { }
@@ -121,20 +135,21 @@ fun GroupsScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val actionState by viewModel.actionState.collectAsStateWithLifecycle()
 
-    // Tells `:app` that this account's group MEMBERSHIP just changed, so the active-group list the
-    // switcher renders from is re-read (whole-branch fix round, BLOCKING 3). Keyed exactly the way
-    // the stateless overload's own dialog-closing effect is — see its KDoc for why
-    // `actionState.creating`/`joining` are keys alongside `justCreated`: a repeat join returns an
-    // `equals`-identical `GroupWithInvite`, which `MutableStateFlow` conflates away.
+    // The SECOND of [onRetryGroups]'s two triggers on this screen: a successful create or join
+    // means this account's group membership changed, so `:app` re-reads the one list the switcher
+    // renders from (whole-branch fix round, BLOCKING 3). Keyed exactly the way the stateless
+    // overload's own dialog-closing effect is — see its KDoc for why `actionState.creating`/
+    // `joining` are keys alongside `justCreated`: a repeat join returns an `equals`-identical
+    // `GroupWithInvite`, which `MutableStateFlow` conflates away.
     val justCreated = (state as? GroupsUiState.Success)?.justCreated
     LaunchedEffect(justCreated, actionState.creating, actionState.joining) {
-        if (justCreated != null) onGroupsChanged()
+        if (justCreated != null) onRetryGroups()
     }
 
     GroupsScreen(
-        activeGroupId = resolvedActiveGroup?.activeGroupId,
-        switcherGroups = resolvedActiveGroup?.groups.orEmpty(),
+        activeGroup = currentActiveGroup,
         onSwitchGroup = onSwitchGroup,
+        onRetryGroups = onRetryGroups,
         state = state,
         actionState = actionState,
         onRetry = viewModel::refresh,
@@ -205,15 +220,18 @@ fun GroupsScreen(
  * they briefly did, `= null`/`= {}`, purely so pre-existing tests kept compiling, and a reviewer
  * measured the cost: dropping the real [onSwitchGroup] argument from the stateful overload's own
  * call above still compiled, and the switcher's tap silently did nothing). Every test call site in
- * `GroupsScreenTest` now passes both explicitly, most with `activeGroupId = null` — with that,
+ * `GroupsScreenTest` now passes both explicitly, most with `activeGroup = ActiveGroupState.Loading` — with that,
  * [GroupSwitcher] is never reached, same rendering outcome the old default produced, but no longer
  * because a missing argument is invisible.
  *
- * **[switcherGroups] is a parameter, not read off [state] (whole-branch fix round, BLOCKING 3).**
- * It used to be `(state as? GroupsUiState.Success)?.groups`, which put the switcher's TABS and the
- * switcher's VALIDATION on two independently-refreshed lists — see the stateful overload's own
- * KDoc for the reverted-selection bug that produced. [GroupSwitcher]'s `groups.size < 2` gate
- * (E-K) still means an empty list simply renders nothing here.
+ * **[activeGroup] arrives whole, and the switcher's tabs come from it (whole-branch fix round,
+ * BLOCKING 3).** The tabs used to be read off `(state as? GroupsUiState.Success)?.groups`, which
+ * put the switcher's TABS and the switcher's VALIDATION on two independently-refreshed lists — see
+ * the stateful overload's own KDoc for the reverted-selection bug that produced. Taking the whole
+ * [ActiveGroupState] rather than a `String?`/`List<Group>` pair is `FeedScreen`'s own stateless
+ * shape, and it is what lets this overload distinguish the three cases at all — [ActiveGroupState.Error]
+ * now renders a retry banner instead of the same nothing [ActiveGroupState.Loading] does (M3).
+ * [GroupSwitcher]'s `groups.size < 2` gate (E-K) still means an empty list renders nothing here.
  */
 @Suppress("LongParameterList")
 @Composable
@@ -227,9 +245,9 @@ internal fun GroupsScreen(
     onCreateDialogOpened: () -> Unit,
     onJoinDialogOpened: () -> Unit,
     onGroupClick: (Group) -> Unit,
-    activeGroupId: String?,
-    switcherGroups: List<Group>,
+    activeGroup: ActiveGroupState,
     onSwitchGroup: (String) -> Unit,
+    onRetryGroups: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var showCreateDialog by remember { mutableStateOf(false) }
@@ -254,9 +272,11 @@ internal fun GroupsScreen(
                 showJoinDialog = true
             },
         )
-        if (activeGroupId != null) {
-            GroupSwitcher(groups = switcherGroups, activeGroupId = activeGroupId, onGroupSelected = onSwitchGroup)
-        }
+        ActiveGroupChrome(
+            activeGroup = activeGroup,
+            onSwitchGroup = onSwitchGroup,
+            onRetryGroups = onRetryGroups,
+        )
         GroupsContent(
             state = state,
             onRetry = onRetry,
@@ -285,8 +305,49 @@ internal fun GroupsScreen(
 }
 
 /**
- * The body below [GroupsTopBar] — pulled out of the stateless [GroupsScreen] overload purely to
- * keep that function's own length under detekt's `LongMethod` threshold; no behaviour moved with
+ * The row between [GroupsTopBar] and the group list that belongs to the ACTIVE group rather than to
+ * this screen's own list — pulled out of the stateless [GroupsScreen] overload for the same reason
+ * [GroupsContent] was, to keep that function under detekt's `LongMethod` threshold; no behaviour
+ * moved with it that the caller could observe differently.
+ *
+ * All three [ActiveGroupState] cases are answered here, which they were not before (fix round, M3):
+ *
+ * - [ActiveGroupState.Loading] renders nothing. This screen's own list loads on its own schedule
+ *   and is worth showing meanwhile — the stateful overload's KDoc describes that window.
+ * - [ActiveGroupState.Error] renders a banner with a live Retry, NOT an `ErrorState`. `FeedScreen`
+ *   replaces its whole content for this state because it has nothing else to show; here the
+ *   account's own group list may have loaded perfectly well, and blanking it for a failed
+ *   active-group fetch would destroy working content to report an unrelated failure. Before this,
+ *   `groupsEntry` was handed no retry at all and this state rendered the same nothing `Loading`
+ *   does — a dead end escapable only by navigating to Feed and back.
+ * - [ActiveGroupState.Success] renders [GroupSwitcher], gated by its own `groups.size < 2` (E-K).
+ */
+@Composable
+private fun ActiveGroupChrome(
+    activeGroup: ActiveGroupState,
+    onSwitchGroup: (String) -> Unit,
+    onRetryGroups: () -> Unit,
+) {
+    when (activeGroup) {
+        is ActiveGroupState.Loading -> Unit
+        is ActiveGroupState.Error ->
+            StaleDataBanner(onRetry = onRetryGroups, messageRes = R.string.groups_active_group_error)
+        is ActiveGroupState.Success -> {
+            val activeGroupId = activeGroup.activeGroupId
+            if (activeGroupId != null) {
+                GroupSwitcher(
+                    groups = activeGroup.groups,
+                    activeGroupId = activeGroupId,
+                    onGroupSelected = onSwitchGroup,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * The body below [ActiveGroupChrome] — pulled out of the stateless [GroupsScreen] overload purely
+ * to keep that function's own length under detekt's `LongMethod` threshold; no behaviour moved with
  * it that the caller could observe differently.
  */
 @Composable

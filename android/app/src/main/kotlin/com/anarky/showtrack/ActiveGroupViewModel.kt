@@ -222,7 +222,7 @@ class ActiveGroupViewModel
          *
          * It is now, by construction: every switcher on the app renders from
          * [ActiveGroupState.Success.groups] — the value this function publishes from [lastGroups] —
-         * and `GroupsScreen` additionally reports a create/join back here (`onGroupsChanged` ->
+         * and `GroupsScreen` additionally reports a create/join back here (`onRetryGroups` ->
          * [refresh]) so this list learns about a membership change made on a screen that does not
          * navigate. The fallback therefore now only ever fires for what it was written for: nothing
          * stored, or a stored id naming a group the account has genuinely left.

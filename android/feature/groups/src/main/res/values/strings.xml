@@ -61,6 +61,11 @@
          wrong noun for a list of groups — see GroupsUiState.Success's own KDoc for why isStale
          is still meaningful here despite groups having no Room cache. -->
     <string name="groups_stale_notice">Showing your last loaded groups. Tap Retry to check for updates.</string>
+    <!-- The ACTIVE-GROUP fetch failed, which is a different failure from this screen's own list
+         failing: the list below may be fine, so this is a banner with a retry rather than an
+         ErrorState that would replace working content. Feed uses feed_groups_error_retry with a
+         full ErrorState because it has nothing else to show. -->
+    <string name="groups_active_group_error">Couldn\'t load which group is active.</string>
 
     <!-- ===== Group detail (task 9c.2) — GroupDetailScreen.kt, GroupDetailDialogs.kt ===== -->
 

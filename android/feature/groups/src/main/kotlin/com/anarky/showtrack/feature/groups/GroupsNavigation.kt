@@ -38,23 +38,25 @@ import kotlinx.coroutines.flow.StateFlow
  * selection against its own, so a group created or joined on this screen was offered as a tab and
  * then rejected on tap. See [GroupsScreen]'s stateful overload for the full account.
  *
- * [onGroupsChanged] fires when a create/join succeeds. `:app` binds it to
- * `ActiveGroupViewModel::refresh`, which is also what `feedEntry`'s `onRetryGroups` is bound to —
- * one function, two parameters named for what each CALLER means by it rather than for the binding
- * they happen to share. Without it the single owner of "which groups exist" would not learn about a
- * group created on this very screen until the user navigated away and back.
+ * [onRetryGroups] is `ActiveGroupViewModel::refresh`, the same value under the same name
+ * `feedEntry` already receives — this entry was the one groups-shaped row in `appDestinations` that
+ * did not get it (fix round, M3), which left [ActiveGroupState.Error] on this screen with no retry
+ * affordance at all. [GroupsScreen] drives it from two places: that error banner's Retry, and a
+ * successful create/join, which changes the account's membership and so must re-read the one list
+ * the switcher renders from (BLOCKING 3). One parameter for both, deliberately — two `() -> Unit`
+ * parameters bound to the same function is the inert same-type wire this project keeps shipping.
  */
 fun NavGraphBuilder.groupsEntry(
     activeGroup: StateFlow<ActiveGroupState>,
     onSwitchGroup: (String) -> Unit,
-    onGroupsChanged: () -> Unit,
+    onRetryGroups: () -> Unit,
     onNavigate: (AppRoute) -> Unit,
 ) {
     composable<GroupsRoute> {
         GroupsScreen(
             activeGroup = activeGroup,
             onSwitchGroup = onSwitchGroup,
-            onGroupsChanged = onGroupsChanged,
+            onRetryGroups = onRetryGroups,
             onGroupClick = { group: Group -> onNavigate(GroupDetailRoute(groupId = group.id)) },
         )
     }

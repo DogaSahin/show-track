@@ -117,7 +117,7 @@ class GroupsEntryHiltTest {
                 groupsEntry(
                     activeGroup = MutableStateFlow(ActiveGroupState.Loading),
                     onSwitchGroup = {},
-                    onGroupsChanged = {},
+                    onRetryGroups = {},
                     onNavigate = navController::navigate,
                 )
                 composable<GroupDetailRoute> { }
@@ -151,7 +151,7 @@ class GroupsEntryHiltTest {
                 groupsEntry(
                     activeGroup = activeGroup,
                     onSwitchGroup = {},
-                    onGroupsChanged = {},
+                    onRetryGroups = {},
                     onNavigate = navController::navigate,
                 )
                 composable<GroupDetailRoute> { }
@@ -174,7 +174,7 @@ class GroupsEntryHiltTest {
 
     /**
      * BLOCKING 3 at the `groupsEntry` seam (whole-branch fix round). `GroupsScreenTest` pins the
-     * stateless overload's use of `switcherGroups`; this pins that the REAL entry actually feeds it
+     * stateless overload's use of `activeGroup.groups`; this pins that the REAL entry actually feeds it
      * from `activeGroup` rather than from `GroupsViewModel`'s own list, through Hilt, with the two
      * deliberately disagreeing: the repository (and therefore `GroupsUiState.Success.groups`) has
      * ALPHA alone, while the active-group flow has ALPHA and BETA. That is not a contrived state —
@@ -198,7 +198,7 @@ class GroupsEntryHiltTest {
                 groupsEntry(
                     activeGroup = activeGroup,
                     onSwitchGroup = {},
-                    onGroupsChanged = {},
+                    onRetryGroups = {},
                     onNavigate = navController::navigate,
                 )
                 composable<GroupDetailRoute> { }
@@ -212,9 +212,9 @@ class GroupsEntryHiltTest {
     /**
      * The other half of BLOCKING 3's fix: with one owner of "which groups exist", a create or join
      * made on THIS screen has to tell that owner, or the group the user just joined does not reach
-     * the switcher until they navigate away and back. `:app` binds `onGroupsChanged` to
+     * the switcher until they navigate away and back. `:app` binds `onRetryGroups` to
      * `ActiveGroupViewModel::refresh`; this pins that `groupsEntry` actually invokes it on a
-     * successful join. Mutating the binding in `GroupsNavigation.kt` to `onGroupsChanged = {}`, or
+     * successful join. Mutating the binding in `GroupsNavigation.kt` to `onRetryGroups = {}`, or
      * deleting the `LaunchedEffect` in `GroupsScreen`'s stateful overload, fails only this test.
      */
     @Test
@@ -234,7 +234,7 @@ class GroupsEntryHiltTest {
                 groupsEntry(
                     activeGroup = MutableStateFlow(ActiveGroupState.Loading),
                     onSwitchGroup = {},
-                    onGroupsChanged = { changed++ },
+                    onRetryGroups = { changed++ },
                     onNavigate = navController::navigate,
                 )
                 composable<GroupDetailRoute> { }

@@ -16,6 +16,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.test.core.app.ApplicationProvider
 import com.anarky.showtrack.core.data.repository.GroupWithInvite
+import com.anarky.showtrack.core.model.ActiveGroupState
 import com.anarky.showtrack.core.model.Group
 import com.anarky.showtrack.core.model.GroupFailure
 import org.junit.Assert.assertEquals
@@ -71,9 +72,9 @@ class GroupsScreenTest {
                 onCreateDialogOpened = {},
                 onJoinDialogOpened = {},
                 onGroupClick = {},
-                activeGroupId = null,
-                switcherGroups = emptyList(),
+                activeGroup = ActiveGroupState.Loading,
                 onSwitchGroup = {},
+                onRetryGroups = {},
             )
         }
 
@@ -102,9 +103,9 @@ class GroupsScreenTest {
                 onCreateDialogOpened = {},
                 onJoinDialogOpened = {},
                 onGroupClick = { clicked = it },
-                activeGroupId = null,
-                switcherGroups = emptyList(),
+                activeGroup = ActiveGroupState.Loading,
                 onSwitchGroup = {},
+                onRetryGroups = {},
             )
         }
 
@@ -133,9 +134,9 @@ class GroupsScreenTest {
                 onCreateDialogOpened = {},
                 onJoinDialogOpened = {},
                 onGroupClick = {},
-                activeGroupId = null,
-                switcherGroups = emptyList(),
+                activeGroup = ActiveGroupState.Loading,
                 onSwitchGroup = {},
+                onRetryGroups = {},
             )
         }
 
@@ -164,9 +165,9 @@ class GroupsScreenTest {
                 onCreateDialogOpened = {},
                 onJoinDialogOpened = {},
                 onGroupClick = {},
-                activeGroupId = null,
-                switcherGroups = emptyList(),
+                activeGroup = ActiveGroupState.Loading,
                 onSwitchGroup = {},
+                onRetryGroups = {},
             )
         }
 
@@ -203,9 +204,9 @@ class GroupsScreenTest {
                 onCreateDialogOpened = {},
                 onJoinDialogOpened = {},
                 onGroupClick = {},
-                activeGroupId = null,
-                switcherGroups = emptyList(),
+                activeGroup = ActiveGroupState.Loading,
                 onSwitchGroup = {},
+                onRetryGroups = {},
             )
         }
 
@@ -235,9 +236,9 @@ class GroupsScreenTest {
                 onCreateDialogOpened = {},
                 onJoinDialogOpened = {},
                 onGroupClick = {},
-                activeGroupId = null,
-                switcherGroups = emptyList(),
+                activeGroup = ActiveGroupState.Loading,
                 onSwitchGroup = {},
+                onRetryGroups = {},
             )
         }
 
@@ -268,9 +269,9 @@ class GroupsScreenTest {
                 onCreateDialogOpened = {},
                 onJoinDialogOpened = {},
                 onGroupClick = {},
-                activeGroupId = null,
-                switcherGroups = emptyList(),
+                activeGroup = ActiveGroupState.Loading,
                 onSwitchGroup = {},
+                onRetryGroups = {},
             )
         }
 
@@ -303,9 +304,9 @@ class GroupsScreenTest {
                 onCreateDialogOpened = {},
                 onJoinDialogOpened = {},
                 onGroupClick = {},
-                activeGroupId = null,
-                switcherGroups = emptyList(),
+                activeGroup = ActiveGroupState.Loading,
                 onSwitchGroup = {},
+                onRetryGroups = {},
             )
         }
 
@@ -340,9 +341,9 @@ class GroupsScreenTest {
                 onCreateDialogOpened = {},
                 onJoinDialogOpened = {},
                 onGroupClick = {},
-                activeGroupId = null,
-                switcherGroups = emptyList(),
+                activeGroup = ActiveGroupState.Loading,
                 onSwitchGroup = {},
+                onRetryGroups = {},
             )
         }
 
@@ -379,9 +380,9 @@ class GroupsScreenTest {
                 onCreateDialogOpened = {},
                 onJoinDialogOpened = {},
                 onGroupClick = {},
-                activeGroupId = null,
-                switcherGroups = emptyList(),
+                activeGroup = ActiveGroupState.Loading,
                 onSwitchGroup = {},
+                onRetryGroups = {},
             )
         }
 
@@ -414,9 +415,9 @@ class GroupsScreenTest {
                 onCreateDialogOpened = {},
                 onJoinDialogOpened = {},
                 onGroupClick = {},
-                activeGroupId = null,
-                switcherGroups = emptyList(),
+                activeGroup = ActiveGroupState.Loading,
                 onSwitchGroup = {},
+                onRetryGroups = {},
             )
         }
 
@@ -445,9 +446,9 @@ class GroupsScreenTest {
                 onCreateDialogOpened = {},
                 onJoinDialogOpened = {},
                 onGroupClick = {},
-                activeGroupId = null,
-                switcherGroups = emptyList(),
+                activeGroup = ActiveGroupState.Loading,
                 onSwitchGroup = {},
+                onRetryGroups = {},
             )
         }
 
@@ -481,9 +482,9 @@ class GroupsScreenTest {
                 onCreateDialogOpened = {},
                 onJoinDialogOpened = {},
                 onGroupClick = {},
-                activeGroupId = null,
-                switcherGroups = emptyList(),
+                activeGroup = ActiveGroupState.Loading,
                 onSwitchGroup = {},
+                onRetryGroups = {},
             )
         }
 
@@ -523,9 +524,9 @@ class GroupsScreenTest {
                 onCreateDialogOpened = {},
                 onJoinDialogOpened = {},
                 onGroupClick = {},
-                activeGroupId = null,
-                switcherGroups = emptyList(),
+                activeGroup = ActiveGroupState.Loading,
                 onSwitchGroup = {},
+                onRetryGroups = {},
             )
         }
 
@@ -559,9 +560,9 @@ class GroupsScreenTest {
                 onCreateDialogOpened = {},
                 onJoinDialogOpened = {},
                 onGroupClick = {},
-                activeGroupId = null,
-                switcherGroups = emptyList(),
+                activeGroup = ActiveGroupState.Loading,
                 onSwitchGroup = {},
+                onRetryGroups = {},
             )
         }
 
@@ -595,9 +596,9 @@ class GroupsScreenTest {
                 onCreateDialogOpened = { opened = true },
                 onJoinDialogOpened = {},
                 onGroupClick = {},
-                activeGroupId = null,
-                switcherGroups = emptyList(),
+                activeGroup = ActiveGroupState.Loading,
                 onSwitchGroup = {},
+                onRetryGroups = {},
             )
         }
 
@@ -622,9 +623,9 @@ class GroupsScreenTest {
                 onCreateDialogOpened = {},
                 onJoinDialogOpened = { opened = true },
                 onGroupClick = {},
-                activeGroupId = null,
-                switcherGroups = emptyList(),
+                activeGroup = ActiveGroupState.Loading,
                 onSwitchGroup = {},
+                onRetryGroups = {},
             )
         }
 
@@ -658,9 +659,9 @@ class GroupsScreenTest {
                 onCreateDialogOpened = {},
                 onJoinDialogOpened = {},
                 onGroupClick = {},
-                activeGroupId = null,
-                switcherGroups = emptyList(),
+                activeGroup = ActiveGroupState.Loading,
                 onSwitchGroup = {},
+                onRetryGroups = {},
             )
         }
 
@@ -685,7 +686,7 @@ class GroupsScreenTest {
      * `GroupSwitcher` into its own `activeGroupId`/`onSwitchGroup` parameters and reads its group
      * list from [GroupsUiState.Success.groups], rather than, say, dropping the callback.
      *
-     * `state.groups` and `switcherGroups` are given the SAME two groups here — the ordinary case,
+     * `state.groups` and `activeGroup.groups` are given the SAME two groups here — the ordinary case,
      * where the account's list and the active-group list agree — so [GroupsList] also renders a row
      * for `BETA.name` and the name is genuinely ambiguous on this screen. `.onFirst()` is the
      * switcher's own tab: [GroupSwitcher] renders unconditionally ABOVE `GroupsContent` in this
@@ -706,9 +707,9 @@ class GroupsScreenTest {
                 onCreateDialogOpened = {},
                 onJoinDialogOpened = {},
                 onGroupClick = {},
-                activeGroupId = ALPHA.id,
-                switcherGroups = listOf(ALPHA, BETA),
+                activeGroup = ActiveGroupState.Success(groups = listOf(ALPHA, BETA), activeGroupId = ALPHA.id),
                 onSwitchGroup = { selected = it },
+                onRetryGroups = {},
             )
         }
 
@@ -719,7 +720,7 @@ class GroupsScreenTest {
 
     /**
      * BLOCKING 3's own pin (whole-branch fix round). The switcher's tabs must come from
-     * [switcherGroups] — `ActiveGroupState.Success.groups`, the same list
+     * [activeGroup] — `ActiveGroupState.Success.groups`, the same list
      * `ActiveGroupViewModel.recompute` validates a selection against — and NOT from
      * [GroupsUiState.Success.groups], which this screen refreshes independently and appends to
      * in place the moment a create or join succeeds.
@@ -745,9 +746,9 @@ class GroupsScreenTest {
                 onCreateDialogOpened = {},
                 onJoinDialogOpened = {},
                 onGroupClick = {},
-                activeGroupId = ALPHA.id,
-                switcherGroups = listOf(ALPHA, BETA),
+                activeGroup = ActiveGroupState.Success(groups = listOf(ALPHA, BETA), activeGroupId = ALPHA.id),
                 onSwitchGroup = {},
+                onRetryGroups = {},
             )
         }
 
@@ -776,13 +777,52 @@ class GroupsScreenTest {
                 onCreateDialogOpened = {},
                 onJoinDialogOpened = {},
                 onGroupClick = {},
-                activeGroupId = ALPHA.id,
-                switcherGroups = listOf(ALPHA),
+                activeGroup = ActiveGroupState.Success(groups = listOf(ALPHA), activeGroupId = ALPHA.id),
                 onSwitchGroup = {},
+                onRetryGroups = {},
             )
         }
 
         composeRule.onAllNodesWithText(ALPHA.name).assertCountEquals(1)
+    }
+
+    /**
+     * M3 (whole-branch fix round). `groupsEntry` was the one groups-shaped row in `appDestinations`
+     * that received no `onRetryGroups`, so this screen rendered NOTHING for
+     * [ActiveGroupState.Error] — the same nothing it renders for [ActiveGroupState.Loading], and a
+     * dead end: no message, no retry, escapable only by navigating to Feed and back.
+     *
+     * A banner rather than `ErrorState`, deliberately: the account's own group list below is a
+     * separate fetch and may have loaded fine, so a full-screen error would destroy working content
+     * to report an unrelated failure. The second assertion is what pins that.
+     */
+    @Test
+    fun `a failed active-group fetch shows a retry banner without destroying the list`() {
+        var retried = 0
+        composeRule.setContent {
+            GroupsScreen(
+                state = GroupsUiState.Success(groups = listOf(ALPHA)),
+                actionState = GroupsActionState(),
+                onRetry = {},
+                onCreateGroup = {},
+                onJoinGroup = {},
+                onDismissInvite = {},
+                onCreateDialogOpened = {},
+                onJoinDialogOpened = {},
+                onGroupClick = {},
+                activeGroup = ActiveGroupState.Error(GroupFailure.Network),
+                onSwitchGroup = {},
+                onRetryGroups = { retried++ },
+            )
+        }
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule.onNodeWithText(context.getString(R.string.groups_active_group_error)).assertIsDisplayed()
+        composeRule.onNodeWithText(ALPHA.name).assertIsDisplayed()
+
+        composeRule.onNodeWithText(context.getString(DesignSystemR.string.action_retry)).performClick()
+
+        assertEquals(1, retried)
     }
 
     private companion object {
