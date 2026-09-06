@@ -1037,10 +1037,10 @@ environment it was built in. That is a real boundary rather than an oversight, a
 exists so nobody reads "done" in the table below as "seen working". Three tiers:
 
 **Executed.** The backend suite — **741 tests**, against a real PostgreSQL schema built by the
-migrations rather than by `create_all`. The Android JVM suite — **713 tests**: **681** under
+migrations rather than by `create_all`. The Android JVM suite — **733 tests**: **701** under
 `./gradlew testDebugUnitTest` across the app and feature/core modules (up from 357 before Phase 9c's
 groups, feed, the group switcher, the group section on Detail, review writing and the two carried
-debts from Phase 9b), plus **3** in `:core:model` under plain `./gradlew test` (a pure Kotlin/JVM
+debts from Phase 9b, and up 20 more in the whole-branch fix round), plus **3** in `:core:model` under plain `./gradlew test` (a pure Kotlin/JVM
 module, so `testDebugUnitTest` does not apply to it — new this phase, pinning `FeedEntry`'s
 `media`/`mediaId` invariant: both null or both non-null, never one without the other, which is what
 keeps a future fixture or preview from handing an `imported` row (E-H, `media == null`) a `mediaId`
