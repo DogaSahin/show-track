@@ -5,6 +5,7 @@ import androidx.activity.ComponentActivity
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsNodeInteraction
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
@@ -399,21 +400,44 @@ class DetailResumeTest {
     }
 
     /**
-     * Fix round 3, discovered writing the library-controls flow test below: an ordinary
-     * `performClick()` — a real, coordinate-based gesture at the node's measured bounds — is
-     * unreliable against content INSIDE a Material3 `DropdownMenu`'s own `Popup` under Robolectric.
-     * The node is genuinely found by a text query (`assertExists` on it passes), so the popup IS
-     * composed and its semantics tree IS attached; the click gesture itself is what does not
-     * reliably land, most likely a Robolectric window/popup bounds quirk this project's test suite
-     * has never exercised before (no existing test anywhere in this codebase interacts with a
-     * `DropdownMenu`'s open contents). Invoking the node's own `OnClick` semantics action directly
-     * — the same action a real click would eventually trigger — sidesteps the coordinate question
-     * entirely and is reliable. Used ONLY for the two taps that land inside the open popup (a
-     * score value, "Clear score"); every other control in this file is a plain, non-popup
-     * clickable and keeps using ordinary `performClick()`.
+     * Fix round 3, discovered writing the library-controls flow test below. This is a LIMITATION of
+     * the Compose test harness under Robolectric, not a defect in this codebase — the framing round
+     * 3's own report used ("a real, unrelated bug found in this codebase") was wrong and is
+     * retracted. An ordinary `performClick()` — a real, coordinate-based gesture at the node's
+     * measured bounds — is unreliable against content INSIDE a Material3 `DropdownMenu`'s own
+     * `Popup` under Robolectric. The node is genuinely found by a text query (`assertExists` on it
+     * passes), so the popup IS composed and its semantics tree IS attached; the click gesture
+     * itself is what does not reliably land, most likely a Robolectric window/popup bounds quirk
+     * this project's test suite has never exercised before (no existing test anywhere in this
+     * codebase interacts with a `DropdownMenu`'s open contents — `:feature:library`'s own
+     * `DropdownMenu` is not exposed to it either, simply because no test there interacts with one;
+     * if such a test ever lands, this helper is worth lifting into a shared test util rather than
+     * being rediscovered). Invoking the node's own `OnClick` semantics action directly — the same
+     * action a real click would eventually trigger — sidesteps the coordinate question entirely and
+     * is reliable. Used ONLY for the two taps that land inside the open popup (a score value,
+     * "Clear score"); every other control in this file is a plain, non-popup clickable and keeps
+     * using ordinary `performClick()`.
+     *
+     * **What it gives up, and what is put back** (fix round 4): dispatching the action directly
+     * skips the hit-testing a real gesture performs for free, so a zero-size, occluded or disabled
+     * item would otherwise still "pass". [assertIsEnabled] and the explicit non-zero-size check
+     * below recover the first and last of those.
+     *
+     * An `assertIsDisplayed()` here would have recovered more still — and MEASURABLY does not
+     * work, which is what finally pins round 3's "most likely a bounds quirk" hedge down to a
+     * diagnosis. Adding it made the score-dropdown tap fail with
+     * `Assert failed: The component with (Text + InputText + EditableText contains '9.0')[0] is not
+     * displayed!` (`DetailResumeTest.kt`, this helper) on a node the SAME query had just asserted
+     * into existence. `assertIsDisplayed` is a bounds test — the node's rectangle against its
+     * window's — so the popup's contents having no usable position relative to the main window IS
+     * the reason a coordinate-based `performClick()` never lands on them. One cause, two symptoms;
+     * the assertion cannot be kept, but the failure it produced is the evidence for the workaround
+     * it was meant to guard.
      */
     private fun SemanticsNodeInteraction.performSemanticsClick() {
+        assertIsEnabled()
         val node = fetchSemanticsNode()
+        check(node.size.width > 0 && node.size.height > 0) { "node is zero-sized (${node.size})" }
         val onClick = node.config.getOrNull(SemanticsActions.OnClick)
         checkNotNull(onClick) { "node has no OnClick semantics action" }.action?.invoke()
     }

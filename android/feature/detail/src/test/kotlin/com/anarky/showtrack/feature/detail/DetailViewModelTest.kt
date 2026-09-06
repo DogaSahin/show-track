@@ -1238,11 +1238,17 @@ class DetailViewModelTest {
      * (fix round 2) only decides which fetch's RESULT gets written — it says nothing about how
      * trustworthy an ALREADY-WRITTEN result still is. A save whose OWN post-save reload then FAILS
      * leaves the section exactly where the settled refresh shape says it should — holding the
-     * PRE-write data, marked stale — and nothing else ever re-fetches it. Without
+     * PRE-write data, marked stale — until the next SUCCESSFUL refresh. Without
      * [DetailViewModel]'s own freshness stamp (`groupSectionAppliedGeneration` vs
      * `lastOwnReviewGeneration`), [DetailViewModel.findOwnReview] would trust that stale "no match"
-     * PERMANENTLY, for the life of this ViewModel instance, over a [lastOwnReview] that is actually
-     * correct — the identical dead end BLOCKING B2 fixed, reachable a THIRD way.
+     * for the whole of that window, over a `lastOwnReview` that is actually correct — the identical
+     * dead end BLOCKING B2 fixed, reachable a THIRD way. (Round 3's own version of this KDoc, and
+     * the two in `DetailViewModel` it echoed, claimed the window was PERMANENT, "nothing else ever
+     * re-fetches it". That was inflated: `DetailScreen` wires the section's own Retry button to
+     * `retryGroupSection`, reachable exactly when the section is stale, and every resume reaches
+     * `setActiveGroup` → `reloadGroupSection`. The bug is real; its blast radius is bounded by the
+     * next successful refresh, which the reader cannot see coming and an already-reverted edit does
+     * not survive anyway — fix round 4, small item 1.)
      */
     @Test
     fun `a failed post-save reload does not permanently hide the review behind stale pre-write data`() =
@@ -1331,6 +1337,122 @@ class DetailViewModelTest {
             val reopened = (viewModel.state.value as DetailUiState.Success).reviewEditor as ReviewEditorState.Open
             assertNull(
                 "a fresh, successful no-match must win over a now-stale cache entry",
+                reopened.reviewId,
+            )
+        }
+
+    /**
+     * Fix round 4, BLOCKING: round 3 gated only the NO-match branch of
+     * [DetailViewModel.findOwnReview], leaving its mirror image open. A stale, provably pre-write
+     * section that DOES contain a row for this account won over a strictly fresher
+     * [DetailViewModel.lastOwnReview] — so a successful `PATCH` whose post-save reload then failed
+     * re-seeded the editor from the PRE-edit copy: the old body, and the old spoiler flag. Worse
+     * than a cosmetic regression, because `reviewId` was nonetheless correct, so one Save tap would
+     * have written that old text straight back to the server — a successful edit silently reverted
+     * by one transient network blip, and a spoiler the reader had just marked un-hidden.
+     *
+     * The sibling of `a failed post-save reload does not permanently hide the review behind stale
+     * pre-write data` above, and deliberately kept as its own case: that one drives the same
+     * failure with an EMPTY pre-write list (no match to prefer), which is exactly the branch round
+     * 3 fixed and therefore cannot see this one.
+     */
+    @Test
+    fun `a failed post-save reload does not re-seed the editor from the pre-edit copy of the same review`() =
+        runTest(dispatcher) {
+            val key = GROUP_ID to "media-1"
+            val preEdit = MY_REVIEW.copy(body = "OLD BODY", containsSpoilers = false)
+            val groups = FakeGroupRepository(reviewsResults = mutableMapOf(key to listOf(preEdit)))
+            groups.updateReviewResult = MY_REVIEW.copy(body = "NEW BODY", containsSpoilers = true)
+            val viewModel =
+                DetailViewModel(
+                    savedState("media-1"),
+                    FakeMedia(),
+                    FakeLibrary(entry = ENTRY),
+                    groups,
+                    FakeAuthRepository(),
+                )
+            advanceUntilIdle()
+            viewModel.setActiveGroup(GROUP_ID)
+            advanceUntilIdle()
+
+            viewModel.openReviewEditor()
+            advanceUntilIdle()
+            val beforeEdit = (viewModel.state.value as DetailUiState.Success).reviewEditor as ReviewEditorState.Open
+            assertEquals("OLD BODY", beforeEdit.seedBody)
+
+            // The PATCH itself succeeds; only the post-save reload fails.
+            groups.reviewsFailures[key] = GroupFailure.Network
+            viewModel.saveReview("NEW BODY", true)
+            advanceUntilIdle()
+            assertEquals(listOf(Triple(MY_REVIEW.id, "NEW BODY", true)), groups.updateReviewCalls)
+
+            val section = (viewModel.state.value as DetailUiState.Success).groupSection as GroupSectionState.Loaded
+            assertTrue("the failed reload keeps the PRE-edit rows, marked stale", section.isStale)
+            assertEquals(listOf(preEdit), section.reviews)
+
+            viewModel.openReviewEditor()
+            advanceUntilIdle()
+
+            val reopened = (viewModel.state.value as DetailUiState.Success).reviewEditor as ReviewEditorState.Open
+            assertEquals(MY_REVIEW.id, reopened.reviewId)
+            assertEquals(
+                "the stale section's PRE-edit copy must not be seeded over the fresher cache",
+                "NEW BODY",
+                reopened.seedBody,
+            )
+            assertTrue(
+                "a spoiler flag the reader just set must not be silently reverted to the stale copy's",
+                reopened.seedContainsSpoilers,
+            )
+        }
+
+    /**
+     * Fix round 4, small item 3: the freshness comparison's REAL production path had no test. The
+     * `a genuinely fresh no-match is trusted over a now-stale cache` case above saves with NO
+     * active group, so the section that later wins is one a group SWITCH loaded — the post-save
+     * reload's own stamp is never exercised at all. Here the group is active throughout, so the
+     * fetch that has to out-rank the save is the one the save itself triggered: `lastOwnReview` is
+     * stamped at generation N, [DetailViewModel.onReviewSaved]'s bump makes the reload generation
+     * N+1, and its success stamps that. The review having vanished server-side between the write
+     * and the reload is the only way a no-match can legitimately follow a successful write — the
+     * point is that when it does, the editor must open on a FRESH draft rather than on a cached id
+     * the server no longer has.
+     */
+    @Test
+    fun `a successful post-save reload reporting no match out-ranks the cache it just wrote`() =
+        runTest(dispatcher) {
+            val key = GROUP_ID to "media-1"
+            val groups = FakeGroupRepository(reviewsResults = mutableMapOf(key to emptyList()))
+            groups.createReviewResult = MY_REVIEW.copy(id = "review-mine")
+            val viewModel =
+                DetailViewModel(
+                    savedState("media-1"),
+                    FakeMedia(),
+                    FakeLibrary(entry = ENTRY),
+                    groups,
+                    FakeAuthRepository(),
+                )
+            advanceUntilIdle()
+            viewModel.setActiveGroup(GROUP_ID)
+            advanceUntilIdle()
+
+            viewModel.openReviewEditor()
+            advanceUntilIdle()
+            viewModel.saveReview("first draft", false)
+            advanceUntilIdle()
+
+            assertEquals(
+                "the save must trigger its own post-save reload, not be dropped by the re-entrancy guard",
+                2,
+                groups.reviewsCalls.size,
+            )
+
+            viewModel.openReviewEditor()
+            advanceUntilIdle()
+
+            val reopened = (viewModel.state.value as DetailUiState.Success).reviewEditor as ReviewEditorState.Open
+            assertNull(
+                "a successful post-save reload is strictly fresher than the save it followed",
                 reopened.reviewId,
             )
         }
