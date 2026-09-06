@@ -84,6 +84,27 @@ import javax.inject.Inject
  * the identical reason: `LifecycleResumeEffect` already fires on the very first composition, not
  * only a later resume, so an `init` here would not cover a gap the resume effect misses — it would
  * be a second, wasted `GET` on every cold start.
+ *
+ * **The dropped-call rule (task 9c.8 round 4), governing all three operations.** [refresh],
+ * [loadMore] and [add] can now overlap, and every early `return` any of them makes is a call
+ * somebody asked for and did not get. The rule this class applies, and the one to carry forward:
+ *
+ * > A dropped call is acceptable only if something will re-issue it, or the user can see it was
+ * > dropped. Otherwise defer it, don't discard it.
+ *
+ * This replaces round 3's "never drop a user's tap; accept dropping a background refresh", which
+ * had the wrong discriminator. What made round 2's dropped tap bad was not that it came from a
+ * finger — it was that the drop was UNOBSERVABLE and UNRECOVERED: no spinner, no error, and
+ * nothing to re-issue it. [loadMore]'s own drop is fine for the first clause
+ * ([pendingLoadMoreAfterRefresh] re-fires it), not because a scroll is "unauthored". And the
+ * old wording actively endorsed the guard round 4 had to remove: [refresh] used to drop itself
+ * while [addInFlight] was set, on the stated grounds that it "has no user-visible affordance of
+ * its own" — false, since `DiscoverScreen` wires `onRetry = viewModel::refresh` to both
+ * `ErrorState` and `StaleDataBanner`, so that drop silently swallowed a Retry tap on the stale
+ * banner for the duration of a `POST`.
+ *
+ * Each surviving drop names the clause that justifies it in its own KDoc. One drop is justified by
+ * neither and is kept anyway on a stated correctness precondition — see [add].
  */
 @HiltViewModel
 class DiscoverViewModel
@@ -115,14 +136,21 @@ class DiscoverViewModel
         // and its response, say) can render the OLDER response with no automatic follow-up retry —
         // the next resume is what corrects it, not this call.
         //
-        // **Still checked by [refresh] (task 9c.8 round 2, review finding BLOCKING), no longer
-        // checked by [add] (round 3, review finding BLOCKING — round 2's version of this guard was
-        // reverted).** [add] cross-checking this flag was round 2's original fix for the
-        // duplicate-`media.id` crash — see [add]'s own KDoc for why round 3 removed it: dropping a
-        // direct user tap for the whole of every resume refresh was a worse, more frequent defect
-        // than the crash it prevented. [refresh]'s own cross-check on [addInFlight] stays, closing
-        // the add-first ordering at no interaction cost — see [refresh]'s own KDoc for the reverse
-        // ordering's replacement fix.
+        // **Against the dropped-call rule (round 4, see this class's own KDoc), this drop is
+        // justified by BOTH clauses.** Clause 1 ("something will re-issue it"): the dropped call is
+        // not lost work, it is a duplicate — an identical fetch is ALREADY in flight and its
+        // response is published to this same screen, so a Retry tapped mid-flight gets the thing it
+        // asked for, just from the earlier call. Clause 2 ("the user can see it was dropped"): if
+        // that in-flight fetch fails, [DiscoverUiState.Success.isStale] stays set, the
+        // `StaleDataBanner` stays on screen, and its Retry is live for another tap — the user is
+        // never left looking at a screen that silently ignored them.
+        //
+        // **Cross-checked by NOBODY else.** [add] does not check this flag (round 3, review
+        // finding BLOCKING: dropping a direct tap for the whole of every resume refresh was worse
+        // than the crash it prevented), and [refresh] no longer checks [addInFlight] either
+        // (round 4 — that drop swallowed the `StaleDataBanner` Retry; see [refresh]'s own KDoc for
+        // the mechanism that replaced it). [loadMore] still checks it, and defers rather than
+        // discards — see [pendingLoadMoreAfterRefresh].
         private var refreshInFlight = false
 
         // A single ViewModel-wide guard, not one per row — same shape and same reasoning as
@@ -130,15 +158,43 @@ class DiscoverViewModel
         // shape, rather than a value scoped inside `DiscoverUiState.Success` that a concurrent
         // state replacement could reset out from under it.
         //
-        // **Checked by [refresh] (task 9c.8 round 2, review finding BLOCKING) — see [refresh]'s own
-        // KDoc for the full reasoning.** [add] itself does NOT check [refreshInFlight] any more
-        // (round 3 — see [add]'s own KDoc): dropping the tap outright silently swallowed a direct
-        // user action for the whole of every resume refresh, worse than the crash the drop
-        // prevented. `POST /v1/library` in flight, a resume's [refresh] landing before the server
-        // commits it, and the failed add's own `restore()` afterward is what actually duplicates a
-        // `media.id` on this screen — [refresh]'s own success branch now re-applies this field's
-        // removal instead of dropping the tap that set it.
+        // **This field is about RE-ENTRANCY ONLY — it is no longer what keeps an optimistically
+        // removed row hidden (round 4, review finding BLOCKING 1).** It is cleared by [add]'s own
+        // `finally` the instant the `POST` returns, which is exactly the window the round-3 fix got
+        // wrong: a `POST /v1/library` that resolves BEFORE a concurrent [refresh]'s `GET` lands
+        // left nothing for that refresh to re-remove, and the row the user had just successfully
+        // added was republished — the very defect this task exists to fix, and the likely ordering
+        // rather than an edge case (a small write finishes ahead of a page-1 read that runs scoring
+        // and aggregation). [optimisticallyRemovedIds] is what outlives the `POST`; see its KDoc.
         private var addInFlight: String? = null
+
+        // The ids this screen has optimistically taken off [DiscoverUiState.Success.items] and has
+        // NOT been told to put back — the memory that survives the `POST` (round 4, review finding
+        // BLOCKING 1). An id enters here in [add], next to the [RecommendationRepository.remove]
+        // that hides the row, and leaves on exactly two events:
+        //
+        //  1. the add FAILED and the row is being restored ([add]'s `catch`) — the row is the
+        //     user's to see again, and its retry affordance renders from it;
+        //  2. a successful [refresh]'s fresh page no longer names it — the server has now applied
+        //     the add itself, so there is nothing left to suppress. This prune is what keeps the
+        //     set from growing for the process's lifetime, and what stops a title the user later
+        //     removes from their library from being hidden here forever: once the backend is
+        //     willing to recommend it again, this screen is willing to show it again.
+        //
+        // While an id is in here, EVERY server-sourced republish re-applies its removal — both
+        // [refresh]'s wholesale page-1 replacement and [loadMore]'s append. Doing it per-publish
+        // rather than per-in-flight-POST is the point: the window in which the backend still names
+        // a row the user has added is bounded by the backend's own write, not by the client's
+        // knowledge of it.
+        //
+        // Kept HERE rather than pushed into `RecommendationRepositoryImpl` (the alternative the
+        // review offered): that would make the invariant unmissable for any future consumer of the
+        // repository, which is genuinely better in the abstract, but the repository has no way to
+        // learn that an add FAILED — the event that ends a suppression — so it would have to guess
+        // it from page contents alone, and it would give a process-lifetime `@Singleton` hidden
+        // state on behalf of one screen's optimistic UI. This ViewModel already owns the add's
+        // lifecycle; this field is just that knowledge outliving one `POST`.
+        private val optimisticallyRemovedIds = mutableSetOf<String>()
 
         // Set by [loadMore] when it drops itself because [refreshInFlight] (task 9c.8 round 2,
         // review finding "B3 guard can stall paging"). `EndOfListTrigger` only emits
@@ -195,33 +251,36 @@ class DiscoverViewModel
          * user is already reading. [DiscoverUiState.Error] stays reachable for the case it always
          * covered: nothing usable is on screen yet.
          *
-         * **Drops while [addInFlight] is set BEFORE this call starts (task 9c.8 round 2, review
-         * finding BLOCKING) — the add-first ordering.** `POST /v1/library` already in flight when a
-         * resume fires this function: page 1 might still name the row (the backend has not
-         * excluded it yet), so a plain republish would undo [add]'s own optimistic removal. Dropped
-         * here rather than deferred, [refresh]'s own established discipline (review finding M2): the
-         * next resume corrects a dropped one, and [add] is a single, short-lived POST, not a
-         * standing subscription this screen would otherwise miss forever. This is the one CALLER
-         * of [refresh] this guard drops — [add] itself is never dropped by the reverse ordering any
-         * more (round 3, review finding BLOCKING; see [add]'s own KDoc for why a dropped tap was
-         * worse than the crash the drop prevented, and this class's own KDoc for the field-level
-         * summary).
+         * **No longer drops while an add is in flight (task 9c.8 round 4, review finding
+         * BLOCKING 2 — round 2 added that guard, round 4 removes it).** `if (addInFlight != null)
+         * return` was defended on the grounds that this function "has no user-visible affordance of
+         * its own the way [add] has a tap and a retry". That was simply false: `DiscoverScreen`
+         * wires `onRetry = viewModel::refresh` to BOTH `ErrorState` and `StaleDataBanner`. The
+         * concrete defect it caused: the feed is stale after a failed resume, the user taps Add on
+         * a row (so a `POST` is in flight), then taps Retry on the stale banner — and this function
+         * returned silently, banner still up, no spinner, nothing re-issuing it. That is exactly
+         * the swallowed-tap defect round 3 removed from [add], in the mirror direction, and the
+         * dropped-call rule in this class's KDoc refuses it: nothing re-issues the retry and the
+         * user cannot see it was dropped. (Its reach was narrow — `ErrorState`'s retry is
+         * unreachable this way, since no rows means no Add button means [addInFlight] can never be
+         * set — but the reasoning behind it was load-bearing for the whole round-3 asymmetry.)
          *
-         * **Re-applies [addInFlight]'s removal AFTER a successful fetch — the reverse ordering
-         * (task 9c.8 round 3, review finding BLOCKING).** [add] no longer checks [refreshInFlight],
-         * so it can start WHILE this function's own network call is genuinely in flight — the guard
-         * above only stops the reverse (this function starting while an add is already running). By
-         * the time this call's own `recommendationRepository.refresh()` returns, [addInFlight] may
-         * now be non-null even though it was null when this call began, and the fresh page 1 it
-         * just fetched may still name that row (the backend, at the moment THIS call's own request
-         * was serviced, had not yet seen the add). `addInFlight?.let { recommendationRepository.remove(it) }`
-         * re-applies the same removal [add] already applied once, making the republish IDEMPOTENT
-         * with respect to whatever add is currently in flight — a harmless no-op filter if the id
-         * is not present, and the row-hiding step [add]'s own optimistic removal already did once
-         * if it is. [add]'s own `restore()` on failure still uses its own captured `originalIndex`
-         * against whatever list is current by then; `RecommendationRepository.restore`'s existing
-         * clamp (`coerceIn(0, size)`) is what its own KDoc already argues is defensive for exactly
-         * this kind of reshuffle, so no further change is needed there for this new race.
+         * **Re-applies [optimisticallyRemovedIds] AFTER a successful fetch, and prunes it against
+         * the page it just read (round 4, review finding BLOCKING 1).** Round 3 re-applied
+         * `addInFlight?.let { recommendationRepository.remove(it) }` here instead, which closed only
+         * the sub-window in which the `POST` was still running: a `POST` that resolved BEFORE this
+         * call's `GET` landed had already cleared [addInFlight] in [add]'s `finally`, so nothing was
+         * re-removed and the row the user had SUCCESSFULLY added came back — the likely ordering,
+         * not an edge case, and precisely the wrong-recommendation defect this task exists to fix.
+         * (Tapping Add on the resurrected row then sends a duplicate `POST` and can surface an
+         * [DiscoverUiState.Success.addError] on a title that was in fact added.) The set is what
+         * outlives the `POST`; the prune, `retainAll` against the ids the fresh page still names, is
+         * what ends a suppression once the backend has caught up — see that field's own KDoc.
+         *
+         * [add]'s own `restore()` on failure still uses its captured `originalIndex` against
+         * whatever list is current by then; `RecommendationRepository.restore`'s existing clamp
+         * (`coerceIn(0, size)`) is what its own KDoc already argues is defensive for exactly this
+         * kind of reshuffle, so no change is needed there.
          *
          * **Re-issues a [loadMore] dropped by [refreshInFlight] once this call actually finishes**
          * (task 9c.8 round 2, review finding "B3 guard can stall paging") — see
@@ -231,7 +290,6 @@ class DiscoverViewModel
         @Suppress("TooGenericExceptionCaught")
         fun refresh() {
             if (refreshInFlight) return
-            if (addInFlight != null) return
             refreshInFlight = true
             if (mutableState.value !is DiscoverUiState.Success) {
                 mutableState.value = DiscoverUiState.Loading
@@ -239,10 +297,12 @@ class DiscoverViewModel
             viewModelScope.launch {
                 try {
                     recommendationRepository.refresh()
-                    // Reverse ordering (round 3, BLOCKING): an add that started WHILE this fetch was
-                    // in flight needs its optimistic removal re-applied against the fresh page —
-                    // see this function's own KDoc.
-                    addInFlight?.let { recommendationRepository.remove(it) }
+                    // Round 4, BLOCKING 1: prune first — an id the fresh page no longer names has
+                    // been applied by the backend, so the suppression is over — then re-hide
+                    // whatever it still names. See [optimisticallyRemovedIds]'s own KDoc.
+                    val freshIds = recommendationRepository.feed.value.mapTo(mutableSetOf()) { it.media.id }
+                    optimisticallyRemovedIds.retainAll(freshIds)
+                    optimisticallyRemovedIds.forEach { recommendationRepository.remove(it) }
                     val previous = mutableState.value as? DiscoverUiState.Success
                     val base = previous ?: DiscoverUiState.Success(items = recommendationRepository.feed.value)
                     mutableState.value =
@@ -299,7 +359,19 @@ class DiscoverViewModel
          *
          * A call dropped here sets [pendingLoadMoreAfterRefresh] so [refresh] can re-issue it once
          * it actually finishes — see that field's own KDoc for why `EndOfListTrigger` on its own
-         * would otherwise leave Discover silently stuck.
+         * would otherwise leave Discover silently stuck. Against the dropped-call rule (this
+         * class's KDoc) that satisfies clause 1 outright: this is a DEFERRAL, not a discard. The
+         * other early return here — [DiscoverUiState.Success.loadingMore] already `true` — is
+         * likewise a duplicate of a fetch already running, whose spinner is on screen (clause 2).
+         *
+         * **Re-applies [optimisticallyRemovedIds] to the appended page (round 4).** Server-sourced
+         * republishing resurrecting an optimistically hidden row is not unique to [refresh]'s
+         * wholesale replacement: `RecommendationRepositoryImpl.loadMore` appends whatever the next
+         * page named, and if the backend has not yet applied the add, that page can name a row this
+         * screen has already taken off the list. Same suppression, same set, applied here too —
+         * this function is the second of the two publish paths that read from the server, and
+         * fixing only the reported one is how this task has produced an adjacent regression each
+         * round.
          *
          * Routed through [DiscoverUiState.Success.pageError], never [DiscoverUiState.Error]: the
          * rows a failed page-2 fetch left behind are still valid and still on screen.
@@ -334,6 +406,11 @@ class DiscoverViewModel
             viewModelScope.launch {
                 try {
                     recommendationRepository.loadMore()
+                    // Round 4: an appended page can still name a row this screen optimistically
+                    // hid — see this function's own KDoc. NOT pruned here: a row's absence from
+                    // page N proves nothing about the backend having applied the add, unlike
+                    // [refresh]'s fresh page 1, which IS the whole feed at that instant.
+                    optimisticallyRemovedIds.forEach { recommendationRepository.remove(it) }
                     replaceSuccess {
                         it.copy(items = recommendationRepository.feed.value, loadingMore = false, pageError = null)
                     }
@@ -392,30 +469,44 @@ class DiscoverViewModel
          * screen. A direct, deliberate user action dropped for the whole of every resume — far more
          * frequent than the crash it prevented, which needs a POST failure inside that same narrow
          * window. [loadMore]'s own `refreshInFlight` guard is not the right precedent here despite
-         * looking identical: that drop is a scroll SIDE EFFECT the user never authored, correctable
-         * by [pendingLoadMoreAfterRefresh]'s automatic re-fire; this is a button press, with no
-         * equivalent "the system will retry this for you" story a user could reasonably expect.
+         * looking identical — but NOT for the reason round 3 gave ("a scroll side effect the user
+         * never authored"; see this class's KDoc for why authorship is the wrong discriminator).
+         * The real difference is that [loadMore]'s drop is a deferral — [pendingLoadMoreAfterRefresh]
+         * re-fires it — whereas a dropped tap here was re-issued by nothing and shown to nobody.
          *
-         * **The duplicate-`media.id` crash this class's own KDoc describes is closed differently
-         * now: one-directionally, via [refresh]'s own two-part fix.** [refresh] still drops itself
-         * outright while [addInFlight] is set (the add-first ordering — an add already running when
-         * a resume fires costs nothing to drop, since [refresh] has no user-visible affordance of
-         * its own the way [add] has a tap and a retry). The reverse ordering — [refresh] already
-         * running when this function is tapped — is closed by [refresh]'s own success branch
-         * RE-APPLYING [addInFlight]'s removal against the fresh page it just fetched, rather than
-         * by preventing this function from running at all. See [refresh]'s own KDoc for the full
-         * mechanism. This function's own optimistic [remove] above and `restore()` on failure below
-         * are UNCHANGED by any of this — from this function's own point of view, nothing about a
-         * concurrent [refresh] is special-cased here at all any more.
+         * **The duplicate-`media.id` crash this class's own KDoc describes is closed by neither
+         * operation dropping the other any more (round 4).** Both orderings are closed by the same
+         * thing: [optimisticallyRemovedIds] records the removal here, and every server-sourced
+         * republish ([refresh]'s wholesale page-1 replacement and [loadMore]'s append alike)
+         * re-applies it until the backend stops naming the row. `restore()` below removes the id
+         * from that set FIRST, so the row it re-inserts is the only copy: a republish can never
+         * have put one back, and a later one will not take this one away. Round 3 gated the same
+         * re-application on [addInFlight] instead, which held only for as long as the `POST` did —
+         * see [refresh]'s KDoc for the successful-add resurrection that left open.
          *
-         * A ViewModel-level guard (kept one-directional, on [refresh] alone) was chosen over making
-         * [RecommendationRepository.restore] idempotent (filtering the id before inserting) in
-         * `RecommendationRepositoryImpl` — the alternative the review offered, for round 2's
-         * original (since-reverted) symmetric version of this guard. That repository-level fix
-         * would still only close the CRASH path (a literal duplicate entry); it does nothing for
-         * the success-path republish, since `restore()` is never called on that path at all —
-         * [refresh]'s own re-applied [remove] closes both by construction, the same reasoning round
-         * 2 already established, now attached to the guard that actually survived review.
+         * A ViewModel-level set was chosen over making [RecommendationRepository.restore] idempotent
+         * (filtering the id before inserting) in `RecommendationRepositoryImpl` — the alternative an
+         * earlier review offered. That closes only the CRASH path (a literal duplicate entry) and
+         * does nothing for the success-path republish, since `restore()` is never called on that
+         * path at all. It was also chosen over moving the whole notion of "removed" into
+         * `RecommendationRepositoryImpl`; see [optimisticallyRemovedIds] for that trade-off, which
+         * is the closer call of the two.
+         *
+         * **The one drop here, and the one clause of the dropped-call rule it does NOT satisfy.**
+         * `if (addInFlight != null) return` covers two different taps. A second tap on the SAME row
+         * is fine under clause 2: the effect that tap asks for — the row leaving the list — is
+         * already on screen, so there is nothing for the user to miss. A tap on a DIFFERENT row
+         * while an add is in flight is genuinely swallowed: no [remove], no spinner (there is no
+         * per-row "adding" field to render one from), no
+         * [DiscoverUiState.Success.addError], and nothing re-issues it. It is kept anyway, and not
+         * because the rule forgives it — because the alternative violates a stated correctness
+         * precondition: `RecommendationRepository.restore`'s own KDoc records that its ABSOLUTE
+         * index is safe today "only because `DiscoverViewModel.addInFlight` permits exactly one
+         * outstanding remove/restore pair at a time", and two concurrent adds restoring out of
+         * ascending index order would land a row in the wrong place. Widening this to a set of
+         * in-flight ids therefore needs `restore`'s contract fixed first, plus per-row `adding`
+         * state so the second tap has something to show for itself. Both are outside this task;
+         * the residual is one `POST`'s duration, and is recorded here rather than blessed.
          */
         @Suppress("TooGenericExceptionCaught")
         fun add(recommendation: Recommendation) {
@@ -425,6 +516,7 @@ class DiscoverViewModel
             if (originalIndex < 0) return
 
             addInFlight = recommendation.media.id
+            optimisticallyRemovedIds += recommendation.media.id
             recommendationRepository.remove(recommendation.media.id)
             replaceSuccess { success ->
                 success.copy(items = recommendationRepository.feed.value, addError = null)
@@ -438,6 +530,9 @@ class DiscoverViewModel
                 } catch (cancellation: CancellationException) {
                     throw cancellation
                 } catch (failure: Exception) {
+                    // Before the restore, never after: a republish landing between the two would
+                    // otherwise re-hide the row this branch is putting back.
+                    optimisticallyRemovedIds -= recommendation.media.id
                     recommendationRepository.restore(originalIndex, recommendation)
                     replaceSuccess { success ->
                         success.copy(

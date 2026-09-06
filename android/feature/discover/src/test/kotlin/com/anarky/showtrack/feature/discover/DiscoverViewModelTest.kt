@@ -29,7 +29,17 @@ import java.io.IOException
  * The ViewModel is exercised against FAKE `RecommendationRepository`/`LibraryRepository` — nothing
  * here knows Retrofit exists, mirroring `SearchViewModelTest`'s shape (the ViewModel this one is
  * closest to: a plain `MutableStateFlow`, no `SavedStateHandle`, no Room-backed upstream).
+ *
+ * `@Suppress("LargeClass")` (task 9c.8 round 4): `GroupDetailViewModelTest`/`DetailViewModelTest`'s
+ * own identical suppression and identical reasoning. This class pins all three of one screen's
+ * operations AND every pairwise overlap between them — which is the whole point of it, since every
+ * defect this task has found has lived in an interaction rather than in one operation. Splitting it
+ * by sub-concern would scatter the fixture each test shares
+ * ([FakeRecommendationRepository]/[FakeLibraryRepository] and the `FRIEREN`/`BEBOP`/`DANDADAN`/
+ * `SPY_FAMILY` companion fixtures) and would separate exactly the tests that must be read together,
+ * for a lint threshold's sake rather than a real cohesion problem.
  */
+@Suppress("LargeClass")
 @OptIn(ExperimentalCoroutinesApi::class)
 class DiscoverViewModelTest {
     private val dispatcher = StandardTestDispatcher()
@@ -500,8 +510,10 @@ class DiscoverViewModelTest {
      * Review finding, round 3 (BLOCKING): the "reverse ordering" — [DiscoverViewModel.refresh]
      * already fetching when [DiscoverViewModel.add] starts — is what actually reproduced the
      * review's probe. `recommendations.refreshResult` still names [FRIEREN] (the backend has not
-     * committed the add yet), so without [refresh]'s own re-applied [RecommendationRepository.remove]
-     * the successful fetch would republish the row this optimistic add just removed.
+     * committed the add yet), so without [refresh] re-applying the suppressed id's removal the
+     * successful fetch would republish the row this optimistic add just took off the list. (Round
+     * 4 kept the behaviour and changed what the re-application reads from: the set that outlives
+     * the `POST`, not `addInFlight`, which the sibling test below covers.)
      */
     @Test
     fun `a resume's refresh does not republish a row an in-flight add already removed`() =
@@ -570,14 +582,20 @@ class DiscoverViewModelTest {
         }
 
     /**
-     * The reverse half of [refresh]'s OWN re-entrancy guard — unaffected by any of the above:
-     * [refresh] still drops itself outright while an add is already in flight (the add-first
-     * ordering), which costs nothing to drop since [refresh] has no tap or retry affordance of its
-     * own the way [add] does — see [refresh]'s own KDoc for why the two orderings are closed
-     * differently.
+     * Review finding, round 4 (BLOCKING 2 — round 2 added the guard this asserts the absence of,
+     * on the false premise that [DiscoverViewModel.refresh] "has no user-visible affordance of its
+     * own"; `DiscoverScreen` wires `onRetry = viewModel::refresh` to `StaleDataBanner` as well as
+     * `ErrorState`). The swallowed tap it produced: the feed is stale, the user taps Add on a row
+     * (a `POST` is now in flight), then taps Retry on the stale banner — and nothing happened at
+     * all. Asserted as a repository call COUNT, per the brief: a count cannot pass when the call
+     * never happens.
+     *
+     * The second assertion is the reason this direction was ever guarded, and it must still hold
+     * with the guard gone: the retry's own fetch returns a page that still names the row, and must
+     * not resurrect it.
      */
     @Test
-    fun `refresh is dropped while an add is genuinely in flight`() =
+    fun `a retry proceeds while an add is genuinely in flight`() =
         runTest(dispatcher) {
             val recommendations = FakeRecommendationRepository(refreshResult = listOf(FRIEREN, BEBOP))
             val addGate = CompletableDeferred<Unit>()
@@ -585,24 +603,158 @@ class DiscoverViewModelTest {
             val viewModel = DiscoverViewModel(recommendations, library)
             viewModel.refresh()
             advanceUntilIdle()
+            assertEquals(1, recommendations.refreshCalls)
 
             viewModel.add(FRIEREN) // held open on addGate
             advanceUntilIdle()
             assertEquals(listOf(BEBOP), (viewModel.state.value as DiscoverUiState.Success).items)
 
-            viewModel.refresh() // must be dropped — an add is known to be in flight
+            viewModel.refresh() // the StaleDataBanner's Retry — must NOT be swallowed
             advanceUntilIdle()
 
-            assertEquals(1, recommendations.refreshCalls) // only the very first call above
+            assertEquals("a Retry tap must not be dropped by an in-flight add", 2, recommendations.refreshCalls)
             assertEquals(listOf(BEBOP), (viewModel.state.value as DiscoverUiState.Success).items)
 
             addGate.complete(Unit)
             advanceUntilIdle()
+            assertEquals(listOf(BEBOP), (viewModel.state.value as DiscoverUiState.Success).items)
+        }
 
-            // Once the add has actually landed, refresh() is reachable again.
+    /**
+     * Review finding, round 4 (BLOCKING 1) — the ordering round 3 left open, and the LIKELY one:
+     * `POST /v1/library` is a small write, `GET /v1/recommendations` page 1 runs scoring and
+     * aggregation, so the add resolves FIRST. Round 3 re-applied the optimistic removal only while
+     * `addInFlight` was non-null, and `add`'s own `finally` had already cleared it by the time the
+     * refresh's fetch landed — so the row the user had just SUCCESSFULLY added was republished:
+     * a recommendation for a title they already track, which is the exact defect this task exists
+     * to fix. No `addGate` here, deliberately: the `POST` must complete before the refresh's fetch.
+     */
+    @Test
+    fun `a successful add is not resurrected by a refresh whose fetch lands after the POST`() =
+        runTest(dispatcher) {
+            val recommendations = FakeRecommendationRepository(refreshResult = listOf(FRIEREN, BEBOP))
+            val library = FakeLibraryRepository()
+            val viewModel = DiscoverViewModel(recommendations, library)
             viewModel.refresh()
             advanceUntilIdle()
-            assertEquals(2, recommendations.refreshCalls)
+
+            recommendations.refreshGate = CompletableDeferred()
+            viewModel.refresh() // a resume's refresh, held open on the gate
+            viewModel.add(FRIEREN)
+            advanceUntilIdle()
+            // The POST has already resolved; only the refresh's own fetch is still outstanding.
+            assertEquals(1, library.addCalls.size)
+            assertEquals(listOf(BEBOP), (viewModel.state.value as DiscoverUiState.Success).items)
+
+            // ...and it comes back naming the row, because the backend has not applied the add yet.
+            recommendations.refreshGate?.complete(Unit)
+            advanceUntilIdle()
+
+            val success = viewModel.state.value as DiscoverUiState.Success
+            assertEquals(
+                "a refresh landing after a successful add must not republish the added row",
+                listOf(BEBOP),
+                success.items,
+            )
+            assertNull(success.addError)
+        }
+
+    /**
+     * The other half of round 4's fix, and what keeps the suppression from being permanent: once a
+     * refresh's fresh page stops naming the row, the backend has applied the add and there is
+     * nothing left to suppress. Without the prune, a title the user later REMOVES from their
+     * library — so the backend legitimately recommends it again — would stay hidden here for the
+     * rest of the process's life.
+     */
+    @Test
+    fun `a suppressed row is forgotten once a refresh's page stops naming it`() =
+        runTest(dispatcher) {
+            val recommendations = FakeRecommendationRepository(refreshResult = listOf(FRIEREN, BEBOP))
+            val viewModel = DiscoverViewModel(recommendations, FakeLibraryRepository())
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            viewModel.add(FRIEREN)
+            advanceUntilIdle()
+            assertEquals(listOf(BEBOP), (viewModel.state.value as DiscoverUiState.Success).items)
+
+            // The backend has now applied the add: page 1 no longer names the row.
+            recommendations.refreshResult = listOf(BEBOP)
+            viewModel.refresh()
+            advanceUntilIdle()
+            assertEquals(listOf(BEBOP), (viewModel.state.value as DiscoverUiState.Success).items)
+
+            // The user removes the title from their library elsewhere; the backend recommends it
+            // again, and this screen must be willing to show it again.
+            recommendations.refreshResult = listOf(FRIEREN, BEBOP)
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            assertEquals(
+                "a suppression the backend has caught up with must not outlive it",
+                listOf(FRIEREN, BEBOP),
+                (viewModel.state.value as DiscoverUiState.Success).items,
+            )
+        }
+
+    /**
+     * Round 4: [DiscoverViewModel.refresh]'s wholesale replacement is not the only server-sourced
+     * republish on this screen — [DiscoverViewModel.loadMore] appends whatever the next page named,
+     * and until the backend applies the add that page can still name a row this screen has already
+     * hidden. Same class of defect, second publish path.
+     */
+    @Test
+    fun `a loadMore page naming an optimistically removed row does not resurrect it`() =
+        runTest(dispatcher) {
+            val recommendations =
+                FakeRecommendationRepository(
+                    refreshResult = listOf(FRIEREN, BEBOP),
+                    loadMoreAppends = listOf(DANDADAN, FRIEREN),
+                )
+            val viewModel = DiscoverViewModel(recommendations, FakeLibraryRepository())
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            viewModel.add(FRIEREN)
+            advanceUntilIdle()
+            assertEquals(listOf(BEBOP), (viewModel.state.value as DiscoverUiState.Success).items)
+
+            viewModel.loadMore()
+            advanceUntilIdle()
+
+            assertEquals(
+                "an appended page must not resurrect an optimistically removed row",
+                listOf(BEBOP, DANDADAN),
+                (viewModel.state.value as DiscoverUiState.Success).items,
+            )
+        }
+
+    /**
+     * Round 4: the suppression ends the moment the add FAILS, before
+     * [RecommendationRepository.restore] puts the row back — otherwise the very next refresh would
+     * hide the row again, taking away both the row and the retry affordance that renders inside it.
+     */
+    @Test
+    fun `a failed add stops suppressing the row, so a later refresh republishes it`() =
+        runTest(dispatcher) {
+            val recommendations = FakeRecommendationRepository(refreshResult = listOf(FRIEREN, BEBOP))
+            val library = FakeLibraryRepository(addFailure = IOException("offline"))
+            val viewModel = DiscoverViewModel(recommendations, library)
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            viewModel.add(FRIEREN)
+            advanceUntilIdle()
+            assertEquals(listOf(FRIEREN, BEBOP), (viewModel.state.value as DiscoverUiState.Success).items)
+
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            assertEquals(
+                "a restored row must not be re-hidden by the next refresh",
+                listOf(FRIEREN, BEBOP),
+                (viewModel.state.value as DiscoverUiState.Success).items,
+            )
         }
 
     /**
@@ -809,8 +961,15 @@ class DiscoverViewModelTest {
             assertEquals(AddFailure(FRIEREN.media.id, addFailure), success.addError)
         }
 
+    /**
+     * Renamed in round 4: the old name, `refresh never calls remove — the optimistic add is the
+     * only source of a removal`, states a property the code no longer has (and, since round 3, had
+     * already lost) — [DiscoverViewModel.refresh] re-applies every suppressed id's removal against
+     * the page it just fetched. The scenario and its assertion are unchanged and still valid: with
+     * nothing optimistically hidden, a refresh removes nothing.
+     */
     @Test
-    fun `refresh never calls remove — the optimistic add is the only source of a removal`() =
+    fun `refresh removes nothing when no optimistic add has hidden a row`() =
         runTest(dispatcher) {
             val recommendations = FakeRecommendationRepository(refreshResult = listOf(FRIEREN))
             val viewModel = DiscoverViewModel(recommendations, FakeLibraryRepository())
