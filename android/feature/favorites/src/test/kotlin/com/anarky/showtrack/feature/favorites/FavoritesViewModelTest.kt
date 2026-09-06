@@ -321,6 +321,50 @@ class FavoritesViewModelTest {
             assertEquals(1, repository.loadMoreCalls)
         }
 
+    /**
+     * SF3 (whole-branch fix round). `refresh()` used to write a fresh
+     * `FavoritesUiState.Success(entries = ...)`, resetting the other three fields to their
+     * defaults. `loadingMore` is the damaging one: it is [FavoritesViewModel.loadMore]'s own
+     * re-entrancy guard, so clearing it mid-fetch made the footer spinner vanish while the page was
+     * still loading AND let a scroll edge admit a second, concurrent `loadMoreFavorites()` — the
+     * two-overlapping-callers window `LibraryRepositoryImpl` documents and BLOCKING 4 closes at the
+     * other end.
+     *
+     * `pageError = null` and `isStale = false` are asserted alongside it because a `.copy()` that
+     * forgot to name them would carry a stale error forward over an authoritative newer read, which
+     * is the opposite mistake.
+     */
+    @Test
+    fun `a refresh landing during a loadMore preserves the loading-more flag`() =
+        runTest(dispatcher) {
+            val repository = FakeLibraryRepository(refreshResult = listOf(FRIEREN))
+            val viewModel = FavoritesViewModel(repository)
+            viewModel.refresh() // stands in for LifecycleResumeEffect's first call — see class KDoc
+            advanceUntilIdle()
+
+            repository.loadMoreGate = CompletableDeferred()
+            viewModel.loadMore()
+            advanceUntilIdle()
+            assertEquals(true, (viewModel.state.value as FavoritesUiState.Success).loadingMore)
+
+            // The resume-driven refresh resolves first, while the page fetch is still suspended.
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            assertEquals(
+                FavoritesUiState.Success(entries = listOf(FRIEREN), loadingMore = true),
+                viewModel.state.value,
+            )
+
+            // ...and the page fetch, still the only one in flight, finishes normally and clears its
+            // own flag — the guard was never reopened, so no second call ever raced it.
+            repository.loadMoreGate?.complete(Unit)
+            advanceUntilIdle()
+
+            assertEquals(1, repository.loadMoreCalls)
+            assertEquals(false, (viewModel.state.value as FavoritesUiState.Success).loadingMore)
+        }
+
     @Test
     fun `loadMore is not fired again while one is in flight`() =
         runTest(dispatcher) {

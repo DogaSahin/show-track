@@ -46,6 +46,11 @@ internal class FakeLibraryRepository(
     var loadMoreFailure: Throwable? = null,
 ) : LibraryRepository {
     var refreshGate: CompletableDeferred<Unit>? = null
+
+    // [refreshGate]'s counterpart for the page fetch — needed to construct "a refresh lands while a
+    // loadMore is still in flight", which is the interleaving SF3 is about and which no test could
+    // build while `loadMoreFavorites()` resolved synchronously.
+    var loadMoreGate: CompletableDeferred<Unit>? = null
     private val mutableFavorites = MutableStateFlow<List<LibraryEntry>>(emptyList())
     override val favoriteEntries: StateFlow<List<LibraryEntry>> = mutableFavorites.asStateFlow()
 
@@ -88,6 +93,7 @@ internal class FakeLibraryRepository(
 
     override suspend fun loadMoreFavorites() {
         loadMoreCalls++
+        loadMoreGate?.await()
         loadMoreFailure?.let { throw it }
         mutableFavorites.value = mutableFavorites.value + loadMoreAppends
     }

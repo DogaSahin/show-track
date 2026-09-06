@@ -201,7 +201,17 @@ class ProfileViewModel
             viewModelScope.launch {
                 try {
                     val stats = libraryRepository.libraryStats()
-                    mutableStatsState.value = LibraryStatsUiState.Success(stats)
+                    // `.copy()` off the current Success rather than a fresh one (whole-branch fix
+                    // round). Not a live defect — [LibraryStatsUiState.Success] has exactly two
+                    // fields today and this call determines both — but it is the same SHAPE as the
+                    // rebuild that was live in `FavoritesViewModel.refresh`, and this state can be
+                    // Success at the moment of the write (a resume over an already-populated screen
+                    // does not blank it). A third field added later is carried forward here instead
+                    // of silently reset; `isStale = false` stays named, because a successful fetch
+                    // clearing it is a decision, not a default.
+                    val previous = mutableStatsState.value as? LibraryStatsUiState.Success
+                    mutableStatsState.value =
+                        previous?.copy(stats = stats, isStale = false) ?: LibraryStatsUiState.Success(stats)
                 } catch (cancellation: CancellationException) {
                     throw cancellation
                 } catch (failure: Exception) {

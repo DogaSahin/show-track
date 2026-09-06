@@ -475,6 +475,75 @@ class GroupsViewModelTest {
         }
 
     /**
+     * SF2 (whole-branch fix round). The `GET /v1/groups` this test gates was issued BEFORE the
+     * join, so its body cannot contain the joined group — publishing it wipes both halves of what
+     * the join produced: the one-time invite code (unrecoverable; only create/join/rotate ever
+     * return one) and the group's own row, which also removes it from the switcher.
+     *
+     * Two things had to change for this to pass, and the test discriminates both. Reverting
+     * `refresh`'s success write to a field-by-field `GroupsUiState.Success(groups = groups)` is not
+     * enough on its own — the generation check is what stops the stale body publishing at all — and
+     * removing the generation check leaves the `.copy()` faithfully carrying `justCreated` forward
+     * while the group list still reverts. The assertion covers both fields for that reason.
+     */
+    @Test
+    fun `a groups response that predates a join does not wipe the invite code or the new group`() =
+        runTest(dispatcher) {
+            val repository = FakeGroupRepository(groupsResult = listOf(ALPHA))
+            repository.groupsGate = CompletableDeferred()
+            val viewModel = GroupsViewModel(repository)
+            viewModel.refresh()
+            advanceUntilIdle()
+            assertEquals(GroupsUiState.Loading, viewModel.state.value)
+
+            // POST /v1/groups/join answers first — a different, smaller endpoint than the GET that
+            // was issued before it.
+            val joined = invite(group = BETA)
+            repository.joinResult = joined
+            viewModel.joinGroup("GOODCODE00000000000")
+            advanceUntilIdle()
+            assertEquals(
+                GroupsUiState.Success(groups = listOf(BETA), justCreated = joined, isStale = true),
+                viewModel.state.value,
+            )
+
+            repository.groupsGate?.complete(Unit)
+            advanceUntilIdle()
+
+            assertEquals(
+                GroupsUiState.Success(groups = listOf(BETA), justCreated = joined, isStale = true),
+                viewModel.state.value,
+            )
+        }
+
+    /**
+     * The other side of the same guard: an ordinary refresh — one with no create/join racing it —
+     * must still clear [GroupsUiState.Success.justCreated], which is what makes "the invite code is
+     * not shown for a group that came from the list" true after create -> Detail -> Back. Without
+     * this case, making the generation check unconditional (never publishing) would pass the test
+     * above.
+     */
+    @Test
+    fun `an ordinary refresh still clears the invite code`() =
+        runTest(dispatcher) {
+            val repository = FakeGroupRepository(groupsResult = emptyList())
+            repository.joinResult = invite(group = BETA)
+            val viewModel = GroupsViewModel(repository)
+            viewModel.joinGroup("GOODCODE00000000000")
+            advanceUntilIdle()
+            assertEquals(BETA, (viewModel.state.value as GroupsUiState.Success).justCreated?.group)
+
+            repository.groupsResult = listOf(BETA)
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            assertEquals(
+                GroupsUiState.Success(groups = listOf(BETA), justCreated = null, isStale = false),
+                viewModel.state.value,
+            )
+        }
+
+    /**
      * Small item 1 (fix round 1 review): a resume's OWN `refresh()` landing while a create is
      * still in flight must not silently clear `creating`/let a second tap through. Before the
      * fix, `refresh()`'s success wrote a brand new `Success` object — which is where `creating`

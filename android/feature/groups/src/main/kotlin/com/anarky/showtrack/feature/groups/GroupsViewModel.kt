@@ -61,6 +61,25 @@ class GroupsViewModel
         // task 9c.8) — the next resume corrects a dropped one.
         private var refreshInFlight = false
 
+        // Bumped by [applyGroupChange] — i.e. on every successful create or join. [refresh] captures
+        // it before launching and drops its own response if it changed in the meantime
+        // (whole-branch fix round, SF2). `ActiveGroupViewModel.refresh`'s `refreshGeneration` is the
+        // same shape for the same endpoint; this one counts MUTATIONS rather than refreshes, because
+        // the response that must be discarded here is not an older refresh but one whose BODY was
+        // computed before the create/join existed.
+        //
+        // The bug without it: a resume fires `GET /v1/groups`; the user taps Join and submits while
+        // it is in flight; `POST /v1/groups/join` answers first (different endpoint, smaller
+        // response) and [applyGroupChange] publishes the new group plus its one-time invite code;
+        // then the older `GET` lands and overwrites both. The invite code is unrecoverable — only
+        // create/join/rotate ever return one ([GroupsUiState.Success.justCreated]'s own KDoc) — so
+        // the user is left rotating the code they were just shown, and the group they joined
+        // disappears from the list and the switcher until the next resume. Submitting a join during
+        // an in-flight refresh is a designed-for state, not an exotic one: the Create/Join buttons
+        // live in `GroupsTopBar`, above `GroupsContent`, and their dialogs are driven by
+        // [actionState] rather than [state] precisely so they work from Loading and Error too.
+        private var mutationGeneration = 0
+
         /**
          * Called from the initial resume (there is no `init` — see this class's own KDoc) and from
          * [GroupsUiState.Error]'s retry action.
@@ -75,9 +94,17 @@ class GroupsViewModel
          * carried forward from whatever [state] held before this call. This is what makes "the
          * invite code is not shown for a group that came from the list" true even after the
          * round trip create -> tap the new group -> Detail -> Back, which fires this exact
-         * function again: the fresh [GroupsUiState.Success] this produces has no
+         * function again: the [GroupsUiState.Success] this produces has no
          * [GroupsUiState.Success.justCreated] at all, regardless of what the state before this
          * call carried.
+         *
+         * **That is only correct for a refresh the user caused AFTER seeing the code, and until the
+         * whole-branch fix round this function could not tell the difference (SF2).** A `GET` issued
+         * BEFORE a create/join returns a body that predates it, and clearing `justCreated` from that
+         * response destroyed a code the user had not read yet — unrecoverable, since only
+         * create/join/rotate ever return one. [mutationGeneration] is what separates the two: a
+         * response older than the last mutation is dropped whole, so the clear only ever applies to
+         * a genuinely newer read.
          *
          * On failure, the same [GroupsUiState.Success.isStale] marking `FavoritesViewModel.refresh`
          * uses: a resume's failed background fetch marks a populated screen stale instead of
@@ -114,13 +141,27 @@ class GroupsViewModel
         fun refresh() {
             if (refreshInFlight) return
             refreshInFlight = true
+            val myMutation = mutationGeneration
             if (mutableState.value !is GroupsUiState.Success) {
                 mutableState.value = GroupsUiState.Loading
             }
             viewModelScope.launch {
                 try {
                     val groups = repository.groups()
-                    mutableState.value = GroupsUiState.Success(groups = groups)
+                    // A create/join landed while this was in flight, so this body predates it and
+                    // is not merely stale but WRONG — see [mutationGeneration]. Dropped rather than
+                    // merged: [applyGroupChange] has already published the authoritative list plus
+                    // the invite code, and the next resume re-reads the canonical list anyway.
+                    if (myMutation != mutationGeneration) return@launch
+                    // `.copy()` off the current Success, naming every field this call decides
+                    // (whole-branch fix round, SF2). `justCreated = null` is still unconditional and
+                    // still deliberate — an ordinary refresh is exactly when a one-time code stops
+                    // being shown — but it is now a NAMED decision rather than a default that a
+                    // fourth field added later would silently inherit.
+                    val previous = mutableState.value as? GroupsUiState.Success
+                    mutableState.value =
+                        previous?.copy(groups = groups, justCreated = null, isStale = false)
+                            ?: GroupsUiState.Success(groups = groups)
                 } catch (failure: GroupOperationException) {
                     val stillShowing = mutableState.value as? GroupsUiState.Success
                     mutableState.value = stillShowing?.copy(isStale = true) ?: GroupsUiState.Error(failure.failure)
@@ -274,6 +315,7 @@ class GroupsViewModel
          * from the server's `created_at ASC` ordering at all, not merely after the next resume.
          */
         private fun applyGroupChange(invite: GroupWithInvite) {
+            mutationGeneration++
             val previous = mutableState.value as? GroupsUiState.Success
             val previousGroups = previous?.groups.orEmpty()
             val groups =
@@ -282,12 +324,14 @@ class GroupsViewModel
                 } else {
                     previousGroups + invite.group
                 }
+            // `.copy()` when there IS a previous Success (whole-branch fix round, SF2's sweep):
+            // behaviourally identical to the field-by-field version this replaces — `isStale` was
+            // already carried by hand — but a field added later now survives an unrelated
+            // create/join instead of resetting to its default. The `?:` branch is the
+            // Loading/Error case, where `isStale = true` is item 3 below.
             mutableState.value =
-                GroupsUiState.Success(
-                    groups = groups,
-                    justCreated = invite,
-                    isStale = previous?.isStale ?: true,
-                )
+                previous?.copy(groups = groups, justCreated = invite)
+                    ?: GroupsUiState.Success(groups = groups, justCreated = invite, isStale = true)
         }
 
         /**

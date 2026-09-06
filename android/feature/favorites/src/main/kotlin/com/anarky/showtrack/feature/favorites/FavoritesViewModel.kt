@@ -163,7 +163,21 @@ class FavoritesViewModel
             viewModelScope.launch {
                 try {
                     repository.refreshFavorites()
-                    mutableState.value = FavoritesUiState.Success(entries = repository.favoriteEntries.value)
+                    // `.copy()` off whatever Success is current, NOT a fresh Success(entries = ...)
+                    // — whole-branch fix round, the sixth instance of "a field-by-field rebuild
+                    // that drops a field added later" and the one that was live. Success carries
+                    // four fields; naming one reset `loadingMore`, `pageError` and `isStale` to
+                    // their defaults. `loadingMore` is the damaging one: [loadMore]'s own
+                    // re-entrancy guard reads it, so a resume-driven refresh landing mid-page-fetch
+                    // cleared the footer spinner while the fetch was still running AND reopened the
+                    // guard for a second, concurrent `loadMoreFavorites()`. `isStale`/`pageError`
+                    // are cleared DELIBERATELY here — a successful refresh is a newer, authoritative
+                    // read — which is why they are named rather than left to `copy`'s carry-forward.
+                    val previous = mutableState.value as? FavoritesUiState.Success
+                    val entries = repository.favoriteEntries.value
+                    mutableState.value =
+                        previous?.copy(entries = entries, isStale = false, pageError = null)
+                            ?: FavoritesUiState.Success(entries = entries)
                 } catch (cancellation: CancellationException) {
                     throw cancellation
                 } catch (failure: Exception) {
