@@ -532,6 +532,48 @@ class LibraryRepositoryImplTest {
             assertEquals(listOf("planned", null), api.requestedStatuses)
         }
 
+    /**
+     * SF4 (whole-branch fix round). The rollback above is correct for a sequential caller and was
+     * wrong for a concurrent one: it restored a captured `previous` unconditionally, with no check
+     * that the value it was overwriting was still the one THIS call had set.
+     * `LibraryViewModel.applyCurrentFilter` carries no re-entrancy guard, so two chip taps inside
+     * one round trip are two concurrent `applyFilter` calls.
+     *
+     * The sequence: tap WATCHING (call 1 takes the paginator's mutex and its request hangs), tap
+     * PLANNED inside that window (call 2 sets the filter and queues on the mutex), call 1's request
+     * fails. Before the fix, call 1's rollback wrote the DEFAULT filter over call 2's PLANNED, and
+     * call 2 then fetched with `status = null` and succeeded — chips showing PLANNED, list showing
+     * the unfiltered library, no error anywhere. `:feature:library` has no resume refetch, so
+     * nothing corrects it until the user taps another chip.
+     *
+     * The assertion is on what the SECOND request actually asked the server for, not on the
+     * repository's internal field: that is the thing the user sees rows from.
+     */
+    @Test
+    fun `a failed applyFilter does not roll back over a newer concurrent one`() =
+        runTest {
+            val gate = CompletableDeferred<Unit>()
+            api.libraryGate = gate
+
+            val watching = LibraryFilter(status = UserMediaStatus.WATCHING)
+            val planned = LibraryFilter(status = UserMediaStatus.PLANNED)
+            val first = launch { runCatching { repository.applyFilter(watching) } }
+            // The WATCHING fetch now holds the paginator's mutex and is suspended inside it.
+            runCurrent()
+            val second = launch { runCatching { repository.applyFilter(planned) } }
+            // The PLANNED call has already set the filter and is queued on that same mutex.
+            runCurrent()
+
+            // shouldFail is read AFTER the gate in the fake, so this fails the request already in
+            // flight rather than the one queued behind it.
+            api.failNext()
+            gate.complete(Unit)
+            first.join()
+            second.join()
+
+            assertEquals(listOf("watching", "planned"), api.requestedStatuses)
+        }
+
     @Test
     fun `an unrated score is sent as an explicit null, not omitted`() =
         runTest {

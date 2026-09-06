@@ -176,6 +176,29 @@ class LibraryRepositoryImpl
          * was encoded for a different sort column. This is task 9a.4's `MediaRepositoryImpl.search`
          * bug in a new disguise — same fix: capture the previous value and restore it before
          * rethrowing, so `filter` always names the filter [paginator]'s current contents came from.
+         *
+         * **The restore is CONDITIONAL (whole-branch fix round, SF4).** It used to run
+         * unconditionally: a save/restore of shared mutable state with no check that the value being
+         * overwritten was still the one this call put there. `LibraryViewModel.applyCurrentFilter`
+         * has no re-entrancy guard, so two chip taps inside one round trip produce two concurrent
+         * calls — and when the FIRST one failed, its rollback wrote its own `previous` over the
+         * SECOND call's filter. The second call then took the paginator's mutex and fetched under
+         * the rolled-back filter: the chips rendered the user's selection while the list showed
+         * unfiltered, default-sorted rows, with no error, no stale banner, and nothing in
+         * `:feature:library` to re-issue it (that module has no `LifecycleResumeEffect` — its only
+         * load trigger is `init { refresh() }`). Worse than a dropped call: the call was answered,
+         * wrongly, invisibly.
+         *
+         * The check is identity of intent, not of value: this call only rolls back what it itself
+         * set, so a later caller's filter is left alone and that caller owns its own rollback.
+         *
+         * Residual, stated rather than left to be rediscovered: if the LATER call is the one that
+         * fails, it restores its own `previous` — the filter of an earlier call that may itself have
+         * failed — so the repository can still name a filter [paginator]'s contents did not come
+         * from. That path leaves a visible error on screen (`LibraryViewModel.guard` writes one),
+         * which the silent divergence above did not, and closing it properly means tracking the
+         * filter the paginator's contents actually came from rather than the caller's own previous
+         * value. Recorded in the README's known follow-ups.
          */
         @Suppress("TooGenericExceptionCaught")
         override suspend fun applyFilter(filter: LibraryFilter) {
@@ -184,11 +207,21 @@ class LibraryRepositoryImpl
             try {
                 refresh()
             } catch (cancellation: CancellationException) {
-                this.filter.value = previous
+                rollBackFilter(from = filter, to = previous)
                 throw cancellation
             } catch (failure: Exception) {
-                this.filter.value = previous
+                rollBackFilter(from = filter, to = previous)
                 throw failure
+            }
+        }
+
+        /** [applyFilter]'s rollback — see its KDoc for why this is conditional. */
+        private fun rollBackFilter(
+            from: LibraryFilter,
+            to: LibraryFilter,
+        ) {
+            if (filter.value == from) {
+                filter.value = to
             }
         }
 
