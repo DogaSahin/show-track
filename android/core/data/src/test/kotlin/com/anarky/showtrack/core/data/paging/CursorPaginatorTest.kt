@@ -6,6 +6,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
@@ -42,6 +43,30 @@ class CursorPaginatorTest {
             single.loadMore()
 
             assertEquals(before, single.items.value)
+        }
+
+    /**
+     * BLOCKING 4 (whole-branch fix round). `loadMore()` answers the page it fetched, or `null` when
+     * it fetched nothing — the decision made INSIDE the lock and carried out with its own answer,
+     * so a caller that appends only new rows (`LibraryRepositoryImpl.loadMoreFavorites`,
+     * `RecommendationRepositoryImpl.loadMore`) needs neither a `hasMore` read before the suspension
+     * nor a `lastFetchedPage` field read after it. Deleting the `return null` and letting the
+     * function fall through would make this return an empty list instead, which those callers would
+     * append harmlessly — so the assertion is on `null` specifically, not on emptiness.
+     */
+    @Test
+    fun `loadMore returns the page it fetched, and null once exhausted`() =
+        runTest {
+            val pages =
+                mapOf(
+                    null to Page(listOf("a", "b"), "c1"),
+                    "c1" to Page(listOf("c"), null),
+                )
+            val paginator = CursorPaginator<String> { cursor -> pages.getValue(cursor) }
+
+            assertEquals(listOf("a", "b"), paginator.loadMore())
+            assertEquals(listOf("c"), paginator.loadMore())
+            assertNull(paginator.loadMore())
         }
 
     @Test

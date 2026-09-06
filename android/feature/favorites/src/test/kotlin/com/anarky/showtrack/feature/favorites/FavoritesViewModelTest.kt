@@ -287,6 +287,40 @@ class FavoritesViewModelTest {
             }
         }
 
+    /**
+     * BLOCKING 4's ViewModel half (whole-branch fix round). `refreshInFlight` existed here and
+     * guarded [FavoritesViewModel.refresh] only; [FavoritesViewModel.loadMore] — driving the same
+     * repository shape `DiscoverViewModel.loadMore` drives, which HAS this half — did not use it,
+     * so a resume-driven refresh and a scroll-driven page fetch were free to overlap.
+     *
+     * Two assertions, and both are needed. The first pins the DEFER: no `loadMoreFavorites()` while
+     * the refresh is in flight. The second pins the RE-ISSUE, which is what makes the drop legal
+     * under the project's dropped-call rule — `EndOfListTrigger` fires only on its own false->true
+     * edge, and a dropped `loadMore()` changes neither the item count nor the scroll position, so
+     * nothing in the Compose layer would ever ask again. A bare `if (refreshInFlight) return`
+     * passes the first assertion and fails the second.
+     */
+    @Test
+    fun `a loadMore during an in-flight refresh is deferred, then re-issued`() =
+        runTest(dispatcher) {
+            val repository = FakeLibraryRepository(refreshResult = listOf(FRIEREN))
+            val viewModel = FavoritesViewModel(repository)
+            viewModel.refresh() // stands in for LifecycleResumeEffect's first call — see class KDoc
+            advanceUntilIdle()
+
+            repository.refreshGate = CompletableDeferred()
+            viewModel.refresh()
+            viewModel.loadMore()
+            advanceUntilIdle()
+
+            assertEquals(0, repository.loadMoreCalls)
+
+            repository.refreshGate?.complete(Unit)
+            advanceUntilIdle()
+
+            assertEquals(1, repository.loadMoreCalls)
+        }
+
     @Test
     fun `loadMore is not fired again while one is in flight`() =
         runTest(dispatcher) {

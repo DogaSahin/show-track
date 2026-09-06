@@ -41,7 +41,10 @@ import com.anarky.showtrack.core.network.dto.ReviewDto
 import com.anarky.showtrack.core.network.dto.UserDto
 import com.anarky.showtrack.core.network.dto.WatchlistItemDto
 import com.anarky.showtrack.core.network.dto.WatchlistPageDto
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -399,13 +402,11 @@ class LibraryRepositoryImplTest {
         }
 
     /**
-     * The `favoritesPaginator.hasMore.value` guard in `loadMoreFavorites` (review finding, round
-     * 2): without it, `CursorPaginator.loadMore()`'s own internal exhaustion check still stops the
-     * FETCH, but [lastFetchedFavoritesPage] would still hold the last page that WAS fetched, and
-     * `loadMoreFavorites` would keep appending that stale page onto [LibraryRepository.favoriteEntries]
-     * on every call — exactly the bug `RecommendationRepositoryImpl.loadMore`'s own KDoc names for
-     * the identical shape. A single-page favourites list (`nextCursor = null`) is the simplest way
-     * to exhaust the paginator on the very first fetch.
+     * The SEQUENTIAL exhaustion case (review finding, round 2). `CursorPaginator.loadMore()` now
+     * answers `null` when it fetched nothing, so `loadMoreFavorites` appends nothing — this pins
+     * that a scrolled-to-the-bottom list firing `loadMoreFavorites()` again never duplicates the
+     * final page. The CONCURRENT case, which this test cannot reach and which is what the round-2
+     * `hasMore` guard actually got wrong, is the next test down.
      */
     @Test
     fun `loadMoreFavorites after the last page does not re-append it`() =
@@ -415,6 +416,46 @@ class LibraryRepositoryImplTest {
             assertEquals(listOf("Favourite title"), repository.favoriteEntries.value.map { it.media.title })
 
             repository.loadMoreFavorites()
+
+            assertEquals(listOf("Favourite title"), repository.favoriteEntries.value.map { it.media.title })
+        }
+
+    /**
+     * BLOCKING 4 (whole-branch fix round). The round-2 guard this replaces read
+     * `favoritesPaginator.hasMore.value` BEFORE `loadMore()` suspended on the paginator's mutex,
+     * and appended a `lastFetchedFavoritesPage` field read AFTER it returned. Both reads sat
+     * outside the lock the fetch itself takes, which `CursorPaginator`'s own KDoc says does not
+     * work: "checking a flag is not atomic across a suspension point; taking a lock is."
+     *
+     * The interleaving this constructs is the ordinary resume frame: the screen resumes with the
+     * list scrolled to the bottom, so `refresh()` and `EndOfListTrigger` both fire, and the
+     * favourites list has since shrunk to a single page (the user unfavourited rows elsewhere), so
+     * the restart comes back EXHAUSTED while the `loadMore` is queued behind it on the mutex.
+     *
+     * Before the fix: `hasMore` was still `true` when `loadMoreFavorites` read it, the queued
+     * `loadMore()` then short-circuited on `started && cursor == null` and fetched nothing, and the
+     * append ran anyway against the restart's own page — two rows, the same id twice, and
+     * `FavoritesList`'s `LazyColumn` keyed by `LibraryEntry::id` throws
+     * `IllegalArgumentException: Key "…" was already used`.
+     */
+    @Test
+    fun `a loadMoreFavorites queued behind an exhausting refresh does not re-append its page`() =
+        runTest {
+            api.enqueueLibraryPage(pageOf("Favourite title", nextCursor = null))
+            val gate = CompletableDeferred<Unit>()
+            api.libraryGate = gate
+
+            val refresh = launch { repository.refreshFavorites() }
+            // The refresh now holds the paginator's mutex and is suspended inside its fetch.
+            runCurrent()
+            val loadMore = launch { repository.loadMoreFavorites() }
+            // ...and the loadMore is queued on that same mutex, having already passed whatever
+            // pre-fetch checks it makes.
+            runCurrent()
+
+            gate.complete(Unit)
+            refresh.join()
+            loadMore.join()
 
             assertEquals(listOf("Favourite title"), repository.favoriteEntries.value.map { it.media.title })
         }
@@ -706,6 +747,11 @@ private class FakeShowTrackApi(
     var statsResponse = LibraryStatsDto(total = 0, byStatus = emptyMap(), averageScore = null, ratedCount = 0)
     var importResponse = ImportSummaryDto(imported = 0, skipped = 0, failed = 0, truncated = false)
     var importFailure: Throwable? = null
+
+    // Suspends [library] until completed, so a test can observe the repository WHILE a fetch is in
+    // flight — `FakeGroupRepository`'s own gate technique in the feature modules, needed here for
+    // the same reason: an always-synchronous fake cannot construct an interleaving.
+    var libraryGate: CompletableDeferred<Unit>? = null
     var lastImportUsername: String? = null
         private set
     private var shouldFail = false
@@ -743,6 +789,7 @@ private class FakeShowTrackApi(
         requestedSorts += sort
         requestedMediaIds += mediaId
         requestedFavorites += favorite
+        libraryGate?.await()
         if (shouldFail) {
             shouldFail = false
             throw IOException("simulated network failure")

@@ -82,6 +82,25 @@ class FavoritesViewModel
         // FavoritesUiState.Success.
         private var refreshInFlight = false
 
+        // Set when [loadMore] is dropped because a [refresh] is in flight, and drained by that
+        // refresh's own `finally` (whole-branch fix round, BLOCKING 4) — `DiscoverViewModel`'s
+        // identical mechanism, adopted here because this class had the identical hole: the guard
+        // existed on ONE of the two functions that need it.
+        //
+        // Why a bare `if (refreshInFlight) return` in [loadMore] would not do: `EndOfListTrigger`
+        // only emits on the false -> true edge of its own `shouldTrigger` (that composable's own
+        // KDoc), and a dropped `loadMore()` changes neither the item count nor the scroll position,
+        // so the trigger never re-fires on its own — paging would stop silently until the user
+        // scrolled up past the threshold and back down. That is the project's dropped-call rule
+        // ("acceptable only if something will re-issue it, or the user can see it was dropped")
+        // failing both clauses at once.
+        //
+        // Cleared by [loadMore] itself, and only once that call has passed every early return and
+        // is genuinely about to fetch — never unconditionally in [refresh]'s `finally`, which would
+        // drop the same signal a second time if the re-issued call bailed out on its own
+        // `loadingMore` guard (`DiscoverViewModel` round 3's own finding).
+        private var pendingLoadMoreAfterRefresh = false
+
         /**
          * Called from the initial resume (there is no `init` — see this class's own KDoc) and from
          * [FavoritesUiState.Error]'s retry action.
@@ -152,6 +171,11 @@ class FavoritesViewModel
                     mutableState.value = stillShowing?.copy(isStale = true) ?: FavoritesUiState.Error(failure)
                 } finally {
                     refreshInFlight = false
+                    // Cleared by loadMore() itself, only once it actually commits to a fetch — see
+                    // the field's own comment for the stall a premature clear reintroduces.
+                    if (pendingLoadMoreAfterRefresh) {
+                        loadMore()
+                    }
                 }
             }
         }
@@ -162,13 +186,31 @@ class FavoritesViewModel
          * frame near the bottom, and without this a scroll near the bottom would queue up a fetch
          * per frame.
          *
+         * **Also deferred while [refreshInFlight] (whole-branch fix round, BLOCKING 4).** This is
+         * the seventh instance this phase of "a guard that exists but is not applied at the call
+         * site that needs it": [refreshInFlight] was already here and already guarding [refresh],
+         * and `DiscoverViewModel.loadMore` — driving the structurally identical repository —
+         * already had this half. This one did not, so a resume-driven [refresh] and a scroll-driven
+         * [loadMore] were free to overlap. That is the interleaving `LibraryRepositoryImpl`'s
+         * `loadMoreFavorites` fix closes at the data layer; the pair matters because they are the
+         * two ends of the same window, and only closing one leaves the UI reporting "not loading"
+         * during a live fetch and spending a duplicate round trip.
+         *
+         * DEFERRED, not dropped: [pendingLoadMoreAfterRefresh] is what re-issues it — see that
+         * field's own comment for why `EndOfListTrigger` cannot be relied on to do so.
+         *
          * Routed through [FavoritesUiState.Success.pageError], never [FavoritesUiState.Error]: the
          * rows a failed page-2 fetch left behind are still valid and still on screen.
          */
         @Suppress("TooGenericExceptionCaught")
         fun loadMore() {
+            if (refreshInFlight) {
+                pendingLoadMoreAfterRefresh = true
+                return
+            }
             val current = mutableState.value as? FavoritesUiState.Success ?: return
             if (current.loadingMore) return
+            pendingLoadMoreAfterRefresh = false
             mutableState.value = current.copy(loadingMore = true, pageError = null)
             viewModelScope.launch {
                 try {

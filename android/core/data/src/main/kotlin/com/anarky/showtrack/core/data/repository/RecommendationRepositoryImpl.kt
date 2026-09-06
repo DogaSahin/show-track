@@ -26,22 +26,13 @@ class RecommendationRepositoryImpl
     constructor(
         private val api: ShowTrackApi,
     ) : RecommendationRepository {
-        // The most recently FETCHED page's items — not the accumulated list. Captured inside the
-        // fetch lambda the same way MediaRepositoryImpl.latest is: CursorPaginator.loadMore()
-        // itself returns Unit, so this is the only way to learn what a successful loadMore() just
-        // added, as opposed to re-reading `paginator.items.value` (see [mutableFeed]'s KDoc for
-        // why that second option is wrong here).
-        private var lastFetchedPage: List<Recommendation> = emptyList()
-
         // `restart()` drops the cursor; there is no filter/query field on this repository whose
         // agreement with the paginator [applyFilter]-style code elsewhere has to preserve across a
         // throw — recommendations take no client-chosen parameter to go stale.
         private val paginator =
             CursorPaginator<Recommendation> { cursor ->
                 val response = api.recommendations(cursor = cursor, limit = PAGE_SIZE)
-                val items = response.items.map(RecommendationDto::toDomain)
-                lastFetchedPage = items
-                Page(items, response.nextCursor)
+                Page(response.items.map(RecommendationDto::toDomain), response.nextCursor)
             }
 
         // A SEPARATE published list from `paginator.items`, deliberately — not merely a
@@ -51,8 +42,9 @@ class RecommendationRepositoryImpl
         // If `feed` instead re-published straight from `paginator.items.value` on every
         // `loadMore()` (the way `MediaRepositoryImpl.publish()` does), a later `loadMore()` would
         // silently RESURRECT whatever `remove()` had just taken off screen, because the paginator
-        // itself never learned the row was gone. Appending only `lastFetchedPage` onto whatever
-        // `mutableFeed` currently holds is what keeps a removal permanent across further paging.
+        // itself never learned the row was gone. Appending only the page `loadMore()` RETURNED onto
+        // whatever `mutableFeed` currently holds is what keeps a removal permanent across further
+        // paging.
         private val mutableFeed = MutableStateFlow<List<Recommendation>>(emptyList())
         override val feed: StateFlow<List<Recommendation>> = mutableFeed.asStateFlow()
 
@@ -73,24 +65,22 @@ class RecommendationRepositoryImpl
         }
 
         /**
-         * Appends [lastFetchedPage] onto [mutableFeed] — never re-publishes the whole of
-         * `paginator.items.value` — see [mutableFeed]'s KDoc for why. `paginator.loadMore()`
-         * throwing leaves [lastFetchedPage] (still the PREVIOUS page) and therefore [mutableFeed]
-         * exactly as they were, for the same fetch-before-mutate reason [refresh] relies on: the
-         * assignment below is never reached when the fetch fails.
+         * Appends the page `loadMore()` actually fetched onto [mutableFeed] — never re-publishes
+         * the whole of `paginator.items.value`, see [mutableFeed]'s KDoc for why. A throwing fetch
+         * never reaches the assignment below, so [mutableFeed] is left exactly as it was, the same
+         * fetch-before-mutate property [refresh] relies on.
          *
-         * The `paginator.hasMore.value` guard below is NOT redundant with `CursorPaginator`'s own
-         * `started && cursor == null` no-op check: that guard makes `paginator.loadMore()` a
-         * harmless no-op for a caller reading `paginator.items` directly, but [lastFetchedPage]
-         * here is a field that OUTLIVES a single call — without this check, an exhausted
-         * `paginator.loadMore()` fetches nothing and this function would still append the STALE
-         * [lastFetchedPage] from the last call that actually fetched, duplicating the final page
-         * onto the feed every time a `LazyColumn` sitting at the bottom fires `loadMore()` again.
+         * **Whole-branch fix round, BLOCKING 4** — `LibraryRepositoryImpl.loadMoreFavorites`'s
+         * identical shape, fixed together because it is one defect in two places. This used to read
+         * `paginator.hasMore.value` BEFORE `loadMore()` suspended on the paginator's mutex, then
+         * append a `lastFetchedPage` field read AFTER it returned; a concurrent [refresh] coming
+         * back exhausted in between left this appending the refresh's own page a second time, for
+         * duplicate ids in a `LazyColumn` keyed by `media.id`. `loadMore()` now decides inside the
+         * lock and answers `null` when it fetched nothing.
          */
         override suspend fun loadMore() {
-            if (!paginator.hasMore.value) return
-            paginator.loadMore()
-            mutableFeed.value = mutableFeed.value + lastFetchedPage
+            val page = paginator.loadMore() ?: return
+            mutableFeed.value = mutableFeed.value + page
         }
 
         override fun remove(mediaId: String) {

@@ -44,17 +44,35 @@ class CursorPaginator<T>(
      * The mutex, not an `isLoading` boolean: a scroll listener firing twice before the first
      * response lands would otherwise send both requests with the same cursor and append the same
      * page twice. Checking a flag is not atomic across a suspension point; taking a lock is.
+     *
+     * **Returns the page it fetched, or `null` if it fetched nothing** (whole-branch fix round,
+     * BLOCKING 4) — [restart]'s own "return the page rather than making the caller re-read
+     * [items]" reasoning, applied to the other half of this class, and for a sharper reason.
+     *
+     * A caller that appends only what a `loadMore()` accumulates cannot use [items] (it would
+     * resurrect rows the caller has since removed from its own published list — see
+     * `RecommendationRepositoryImpl.mutableFeed`), so both such callers used to keep a
+     * `lastFetchedPage` field written inside their own `fetch` lambda, i.e. under this lock, and
+     * read AFTER `loadMore()` returned, i.e. outside it. To stop an exhausted call re-appending the
+     * previous page they then guarded on `hasMore.value` — read BEFORE the suspension, which is
+     * precisely what the paragraph above says does not work. A concurrent [restart] coming back
+     * exhausted while a `loadMore()` was queued on this mutex made the queued call fetch nothing
+     * and append the restart's own page a second time: every id twice, and a `LazyColumn` keyed by
+     * id throws `IllegalArgumentException: Key "…" was already used`.
+     *
+     * Handing the page back removes the shared field and the flag read together: the decision "did
+     * this call fetch?" is now made inside the lock and travels out with its own answer.
      */
-    suspend fun loadMore() {
+    suspend fun loadMore(): List<T>? =
         mutex.withLock {
-            if (started && cursor == null) return // exhausted; NOT a reason to restart
+            if (started && cursor == null) return null // exhausted; NOT a reason to restart
             val page = fetch(cursor)
             started = true
             cursor = page.nextCursor
             _hasMore.value = page.nextCursor != null
             _items.value = _items.value + page.items
+            page.items
         }
-    }
 
     /**
      * Reload from the first page and return the page that was loaded. Two properties, both of
