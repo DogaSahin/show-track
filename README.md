@@ -33,9 +33,9 @@ a search action in the library screen's header), **`:feature:discover`** (conten
 recommendations with an optimistic add — a row disappears the moment you tap Add and only reappears
 if the request actually fails), **`:feature:favorites`** (every favourited title, kept in sync with
 Detail and Library), **`:feature:profile`** (push registration from Phase 8.9, a sign-out action from
-9a, and library statistics and the AniList import screen from 9b), and — **new this phase** —
-**`:feature:groups`** (list, create, join by code, group detail with members and owner-only
-management, and the shared watchlist) and **`:feature:feed`** (the fifth tab: a paginated activity
+9a, library statistics and the AniList import screen from 9b, and the door to group management),
+and — **new this phase** — **`:feature:groups`** (list, create, join by code, group detail with
+members and owner-only management, and the shared watchlist, reached from Profile) and **`:feature:feed`** (the fifth tab: a paginated activity
 feed for the active group). A **group switcher** appears on Feed and Groups whenever an account is in
 two or more groups, and the active selection survives a cold start — see [Groups](#groups) below for
 the twelve group-scoped endpoints `:feature:groups`, `:feature:feed` and `:feature:detail`'s group
@@ -109,7 +109,8 @@ probe rather than client contract.
 `search`, `groups`, `feed`). Two of the core modules — `:core:model` and `:core:navigation` — are
 **pure Kotlin/JVM**, with no AGP and no Android dependency at all; the other four are Android
 libraries. **All nine feature modules now carry a real screen**: `:feature:profile` (push
-registration from Phase 8.9, plus library statistics and the AniList import screen from Phase 9b),
+registration from Phase 8.9, plus library statistics, the AniList import screen and the Groups door
+from Phase 9b/9c),
 `:feature:auth`, `:feature:library`, `:feature:detail` and `:feature:search` from Phase 9a,
 `:feature:discover` and `:feature:favorites` from Phase 9b, and — new this phase (9c) —
 `:feature:groups` (list, create, join, group detail with owner-only member management, and the
@@ -139,7 +140,8 @@ routes on a `sealed interface AppRoute` — type-safe destinations, so `DetailRo
 by the compiler where a `"detail/{mediaId}"` string route is checked by the user's crash report. Each
 `:feature:*` module contributes at least one `NavGraphBuilder.xEntry()` extension that registers its
 own destination and names, at most, another feature's *route* — `:feature:profile` contributes two
-(`profileEntry` and `importEntry`, from Phase 9b) and, new this phase, `:feature:groups` also
+(`profileEntry` — which names `AuthRoute`, `ImportRoute` and `GroupsRoute` — and `importEntry`, from
+Phase 9b) and, new this phase, `:feature:groups` also
 contributes two (`groupsEntry` for the list/create/join screen and `groupDetailEntry` for
 `GroupDetailRoute`, since a group's own detail screen — members, watchlist — is a second destination
 in the same module rather than a tenth feature module for one screen); `:app` is the only module that
@@ -1168,7 +1170,7 @@ minor or deliberately scoped out, not a regression:
   design doc). None entered a fix loop during 9a; the final whole-branch review still owns triaging
   them.
 - **The walkthrough backlog itself.** [Device walkthroughs](#device-walkthroughs) below now numbers
-  40, covering Phases 8 through 9c, and **none of them has ever been run** — see that section's own
+  41, covering Phases 8 through 9c, and **none of them has ever been run** — see that section's own
   opening note.
 
 ## Device walkthroughs
@@ -1629,17 +1631,27 @@ are two different accounts on the same server, not two logins of the same accoun
    a **Remove** button on B's row (never on A's own row — that one instead reads **Leave group**, the
    deliberately different, differently-worded, differently-confirmed action per §1.1).
 
-### 24. Switching groups re-scopes the feed and the watchlist with no restart
+### 24. Switching groups re-scopes the feed with no restart
 
 1. On account A, create a second group (`Profile → Groups → Create`). **Expect:** a **group
-   switcher** now appears as a header row on the **Feed** tab and on **Groups** — it did not exist
-   with only one group (see walkthrough 27).
+   switcher** appears as a header row on **Groups** without leaving the screen, and on the **Feed**
+   tab — it did not exist with only one group (see walkthrough 27). *A switcher that only appears
+   after navigating away from Groups and back means the create did not report the membership change
+   to `:app` (`onGroupsChanged`).*
 2. On the **Feed** tab, tap the switcher and select the first group. **Expect:** the feed shows that
    group's activity (or its empty state, if nothing has happened in it yet).
 3. Tap the switcher again and select the second group. **Expect:** the feed reloads to that group's
-   own activity, with no app restart and no stale rows from the first group left on screen. Repeat on
-   the shared watchlist. *If the previous group's rows are still visible after the switch, `FeedViewModel`'s
-   `generation` guard did not fire — see walkthrough 36, which is precisely this race caught mid-load.*
+   own activity, with no app restart and no stale rows from the first group left on screen. *If the
+   previous group's rows are still visible after the switch, `FeedViewModel`'s `generation` guard did
+   not fire — see walkthrough 36, which is precisely this race caught mid-load.*
+4. **The shared watchlist is not part of this step, by design** — it lives on a group's own detail
+   screen, which you reach by tapping one specific group, so it is scoped by that navigation rather
+   than by the switcher. The switcher appears only on the surfaces the ACTIVE group scopes (decision
+   E-B): Feed and Groups. Acceptance row 3 was amended to say so — see the design doc §3.5.
+5. Still on the **Groups** screen, tap the switcher there too. **Expect:** the same two tabs, the
+   same selection, moving together with Feed's. *A switcher that reverts your tap within a frame
+   means the tabs and the validation are reading two different group lists — the defect the
+   whole-branch fix round closed by rendering both from `ActiveGroupState.Success.groups`.*
 
 ### 25. The active group selection survives a cold start
 
@@ -1700,8 +1712,11 @@ are two different accounts on the same server, not two logins of the same accoun
 
 ### 31. A title tracked by three members shows three progress rows
 
-1. Have accounts A and B both add and progress on the same title, in a group both are in. Open that
-   title's **Detail** screen while the group with both members is active. **Expect:** the **Group**
+1. Have accounts A and B both add and progress on the same title, in a group both are in. **Cold
+   start the app** and reach that title's **Detail** screen straight from the library — do not open
+   Feed or Groups first. That is the ordinary path, and until the whole-branch fix round it was the
+   one path on which the active group never loaded at all, so the whole section rendered nothing and
+   looked exactly like an account in no groups. **Expect:** the **Group**
    section shows one row per member who tracks it — "`<username>`: `<status>`, episode `<N>`" — so
    two rows here. *(A third account tracking the same title would show a third row; two already
    proves the mechanism — `GET /{id}/media/{media_id}/progress` returns one row per tracking member,
@@ -1742,7 +1757,9 @@ are two different accounts on the same server, not two logins of the same accoun
 
 1. On account B, open the group from walkthrough 22, tap **Leave group**, confirm. **Expect:** B
    returns to the groups list, and the group is gone from it.
-2. On account A, reopen that group's **Members** screen (pull to refresh, or re-enter the screen).
+2. On account A, re-enter that group's **Members** screen — back out to **Groups** and tap the group
+   again. *(There is deliberately no pull-to-refresh anywhere in this module; a fresh entry builds a
+   fresh `GroupDetailViewModel`, whose `init` is what re-reads the member list.)*
    **Expect:** B no longer appears. *A's list still showing B means the member list is cached
    somewhere it should not be — `GET /v1/groups/{id}/members` is not cached at all by design, so this
    would point at a stale in-memory ViewModel state that a fresh screen entry should have replaced.*
@@ -1811,6 +1828,23 @@ where a tap could race that resume fetch.
    stores (`cachedUserId` in `AuthRepositoryImpl`), and `ActiveGroupViewModel.reset()`, wired to the
    sign-out navigation action, is what clears both the in-memory state and `ActiveGroupStore`'s
    persisted selection for exactly this case.*
+
+### 41. Group management stays reachable after you are in a group
+
+The regression this exists for: `GroupsRoute`'s only door used to be the Feed tab's zero-groups
+empty state, so creating or joining a single group closed it permanently — the member list, invite
+rotation, leaving, and joining a second group all became unreachable for the rest of that account's
+life on the device.
+
+1. On an account that belongs to **no** groups, open **Feed**. **Expect:** the create-or-join empty
+   state (walkthrough 26). Tap it, create a group.
+2. Open **Feed** again. **Expect:** the group's activity — the empty-state button is correctly gone.
+3. Force-stop the app and relaunch, so nothing is restored from a saved back stack. Open
+   **Profile**. **Expect:** a **Groups** section with a **Manage groups** button, beside the AniList
+   import entry.
+4. Tap it. **Expect:** the groups list, with the group from step 1 on it. *No Groups entry on
+   Profile is decision E-A missing again; `ProfileEntryHiltTest` is what pins the binding, and
+   walkthroughs 22 through 25 and 35 all start from this door.*
 
 ## Contributing
 
