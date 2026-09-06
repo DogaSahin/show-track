@@ -11,11 +11,11 @@ import com.anarky.showtrack.core.model.MediaSource
  * not copy, and it is also unlocalizable — a hardcoded `it.name` was exactly the bug this function
  * replaces (`SearchScreen`'s degraded-provider banner, "ANILIST isn't responding right now").
  *
- * Public, unlike `UserMediaStatus.label()` in `StatusPresentation.kt`: that mapping is only ever
- * consumed from inside this module (`StatusTab`, `MediaCard`), while this one is consumed from
- * `:feature:search` today and, per decision C-T, will be from a second screen later — a feature
- * module re-implementing this mapping itself would be exactly the shared-presentation duplication
- * C-T exists to prevent.
+ * Public for the same reason `UserMediaStatus.label()` in `StatusPresentation.kt` now is too (task
+ * 9b.5 made that one public as well): both are consumed from outside this module —
+ * `:feature:search` for this one, `:feature:profile` for that one — and a feature module
+ * re-implementing either mapping itself would be exactly the shared-presentation duplication
+ * decision C-T exists to prevent.
  */
 @Composable
 fun MediaSource.displayName(): String =

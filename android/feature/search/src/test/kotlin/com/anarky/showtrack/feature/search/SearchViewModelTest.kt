@@ -484,6 +484,16 @@ class SearchViewModelTest {
         ): LibraryEntry = error("not exercised by SearchViewModel")
 
         override suspend fun entryForMedia(mediaId: String): LibraryEntry? = error("not exercised by SearchViewModel")
+
+        override val favoriteEntries: StateFlow<List<LibraryEntry>> = MutableStateFlow(emptyList())
+
+        override suspend fun refreshFavorites(): Unit = error("not exercised by SearchViewModel")
+
+        override suspend fun loadMoreFavorites(): Unit = error("not exercised by SearchViewModel")
+
+        override suspend fun libraryStats() = error("not exercised by SearchViewModel")
+
+        override suspend fun importAniList(username: String) = error("not exercised by SearchViewModel")
     }
 
     private companion object {

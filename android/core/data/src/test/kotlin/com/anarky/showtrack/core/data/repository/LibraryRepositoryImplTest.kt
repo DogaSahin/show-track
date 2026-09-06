@@ -9,6 +9,7 @@ import com.anarky.showtrack.core.data.mapper.toEntity
 import com.anarky.showtrack.core.database.LibraryDao
 import com.anarky.showtrack.core.database.LibraryEntryEntity
 import com.anarky.showtrack.core.database.ShowTrackDatabase
+import com.anarky.showtrack.core.model.ImportFailure
 import com.anarky.showtrack.core.model.LibraryFilter
 import com.anarky.showtrack.core.model.LibraryPatch
 import com.anarky.showtrack.core.model.LibrarySort
@@ -17,19 +18,40 @@ import com.anarky.showtrack.core.model.ScoreChange
 import com.anarky.showtrack.core.model.UserMediaStatus
 import com.anarky.showtrack.core.network.api.ShowTrackApi
 import com.anarky.showtrack.core.network.dto.AddLibraryEntryRequest
+import com.anarky.showtrack.core.network.dto.CreateGroupRequestDto
+import com.anarky.showtrack.core.network.dto.CreateReviewRequestDto
+import com.anarky.showtrack.core.network.dto.FeedPageDto
+import com.anarky.showtrack.core.network.dto.GroupDto
+import com.anarky.showtrack.core.network.dto.GroupWithInviteDto
+import com.anarky.showtrack.core.network.dto.ImportAniListRequest
+import com.anarky.showtrack.core.network.dto.ImportSummaryDto
+import com.anarky.showtrack.core.network.dto.JoinGroupRequestDto
 import com.anarky.showtrack.core.network.dto.LibraryEntryDto
 import com.anarky.showtrack.core.network.dto.LibraryPageDto
+import com.anarky.showtrack.core.network.dto.LibraryStatsDto
 import com.anarky.showtrack.core.network.dto.MediaDto
 import com.anarky.showtrack.core.network.dto.MediaSearchResponseDto
+import com.anarky.showtrack.core.network.dto.MemberDto
+import com.anarky.showtrack.core.network.dto.ProgressEntryDto
+import com.anarky.showtrack.core.network.dto.ProposeTitleRequestDto
 import com.anarky.showtrack.core.network.dto.PushTargetDto
+import com.anarky.showtrack.core.network.dto.RecommendationPageDto
 import com.anarky.showtrack.core.network.dto.RegisterTargetRequest
+import com.anarky.showtrack.core.network.dto.ReviewDto
+import com.anarky.showtrack.core.network.dto.UserDto
+import com.anarky.showtrack.core.network.dto.WatchlistItemDto
+import com.anarky.showtrack.core.network.dto.WatchlistPageDto
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonPrimitive
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -39,10 +61,18 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import retrofit2.HttpException
+import retrofit2.Response
 import java.io.IOException
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.Instant
+
+/**
+ * Builds an `HttpException` the way Retrofit itself does, for a non-2xx response —
+ * `AuthRepositoryTest`'s own helper.
+ */
+private fun httpError(code: Int): HttpException = HttpException(Response.error<Any>(code, "".toResponseBody(null)))
 
 /**
  * A REAL in-memory Room database, not a hand-written fake DAO — which is a test-design decision
@@ -322,6 +352,114 @@ class LibraryRepositoryImplTest {
             assertEquals("media-1", api.requestedMediaIds.last())
         }
 
+    /**
+     * Task 9b.4's own view (decision D-F/D-H). `favorite = true` is the whole point of this
+     * fetch — status/sort/mediaId stay unset because Favorites has no tabs or sort control.
+     */
+    @Test
+    fun `refreshFavorites requests favorite = true and publishes the page`() =
+        runTest {
+            api.enqueueLibraryPage(pageOf("Favourite title"))
+
+            repository.refreshFavorites()
+
+            assertEquals(true, api.requestedFavorites.last())
+            assertNull(api.requestedStatuses.last())
+            assertNull(api.requestedSorts.last())
+            assertEquals(listOf("Favourite title"), repository.favoriteEntries.value.map { it.media.title })
+        }
+
+    /**
+     * Decision D-H, made real: Library and Favorites are both `TopLevelDestination`s with saved
+     * state and can be open at once, so [LibraryRepositoryImpl] gives the favourites view its OWN
+     * `CursorPaginator` rather than reusing the one behind [LibraryRepository.observeLibrary].
+     * Confirmed both directions — driving the main view's paginator through two pages first, then
+     * loading favourites, must not disturb what `observeLibrary()` still emits; and paging
+     * favourites forward must accumulate on `favoriteEntries` alone.
+     */
+    @Test
+    fun `the favourites view has its own paginator, independent of the main library view`() =
+        runTest {
+            repository.refresh()
+            repository.loadMore()
+            assertEquals(listOf("1", "2"), repository.observeLibrary().first().map { it.id })
+
+            api.enqueueLibraryPage(pageOf("Favourite title", nextCursor = "fav-c2"))
+            repository.refreshFavorites()
+
+            assertEquals(listOf("Favourite title"), repository.favoriteEntries.value.map { it.media.title })
+            // The main view's own accumulated pages are untouched by the favourites fetch — a
+            // shared paginator would have reset this back to page one.
+            assertEquals(listOf("1", "2"), repository.observeLibrary().first().map { it.id })
+
+            api.enqueueLibraryPage(pageOf("Second favourite"))
+            repository.loadMoreFavorites()
+
+            assertEquals(
+                listOf("Favourite title", "Second favourite"),
+                repository.favoriteEntries.value.map { it.media.title },
+            )
+        }
+
+    /**
+     * The SEQUENTIAL exhaustion case (review finding, round 2). `CursorPaginator.loadMore()` now
+     * answers `null` when it fetched nothing, so `loadMoreFavorites` appends nothing — this pins
+     * that a scrolled-to-the-bottom list firing `loadMoreFavorites()` again never duplicates the
+     * final page. The CONCURRENT case, which this test cannot reach and which is what the round-2
+     * `hasMore` guard actually got wrong, is the next test down.
+     */
+    @Test
+    fun `loadMoreFavorites after the last page does not re-append it`() =
+        runTest {
+            api.enqueueLibraryPage(pageOf("Favourite title", nextCursor = null))
+            repository.refreshFavorites()
+            assertEquals(listOf("Favourite title"), repository.favoriteEntries.value.map { it.media.title })
+
+            repository.loadMoreFavorites()
+
+            assertEquals(listOf("Favourite title"), repository.favoriteEntries.value.map { it.media.title })
+        }
+
+    /**
+     * BLOCKING 4 (whole-branch fix round). The round-2 guard this replaces read
+     * `favoritesPaginator.hasMore.value` BEFORE `loadMore()` suspended on the paginator's mutex,
+     * and appended a `lastFetchedFavoritesPage` field read AFTER it returned. Both reads sat
+     * outside the lock the fetch itself takes, which `CursorPaginator`'s own KDoc says does not
+     * work: "checking a flag is not atomic across a suspension point; taking a lock is."
+     *
+     * The interleaving this constructs is the ordinary resume frame: the screen resumes with the
+     * list scrolled to the bottom, so `refresh()` and `EndOfListTrigger` both fire, and the
+     * favourites list has since shrunk to a single page (the user unfavourited rows elsewhere), so
+     * the restart comes back EXHAUSTED while the `loadMore` is queued behind it on the mutex.
+     *
+     * Before the fix: `hasMore` was still `true` when `loadMoreFavorites` read it, the queued
+     * `loadMore()` then short-circuited on `started && cursor == null` and fetched nothing, and the
+     * append ran anyway against the restart's own page — two rows, the same id twice, and
+     * `FavoritesList`'s `LazyColumn` keyed by `LibraryEntry::id` throws
+     * `IllegalArgumentException: Key "…" was already used`.
+     */
+    @Test
+    fun `a loadMoreFavorites queued behind an exhausting refresh does not re-append its page`() =
+        runTest {
+            api.enqueueLibraryPage(pageOf("Favourite title", nextCursor = null))
+            val gate = CompletableDeferred<Unit>()
+            api.libraryGate = gate
+
+            val refresh = launch { repository.refreshFavorites() }
+            // The refresh now holds the paginator's mutex and is suspended inside its fetch.
+            runCurrent()
+            val loadMore = launch { repository.loadMoreFavorites() }
+            // ...and the loadMore is queued on that same mutex, having already passed whatever
+            // pre-fetch checks it makes.
+            runCurrent()
+
+            gate.complete(Unit)
+            refresh.join()
+            loadMore.join()
+
+            assertEquals(listOf("Favourite title"), repository.favoriteEntries.value.map { it.media.title })
+        }
+
     @Test
     fun `a non-default filter is NOT written to the cache`() =
         runTest {
@@ -392,6 +530,48 @@ class LibraryRepositoryImplTest {
             // before the fetch ran. Second call: refresh() went out under the RESTORED (default)
             // filter, not "planned" — proving the rollback happened.
             assertEquals(listOf("planned", null), api.requestedStatuses)
+        }
+
+    /**
+     * SF4 (whole-branch fix round). The rollback above is correct for a sequential caller and was
+     * wrong for a concurrent one: it restored a captured `previous` unconditionally, with no check
+     * that the value it was overwriting was still the one THIS call had set.
+     * `LibraryViewModel.applyCurrentFilter` carries no re-entrancy guard, so two chip taps inside
+     * one round trip are two concurrent `applyFilter` calls.
+     *
+     * The sequence: tap WATCHING (call 1 takes the paginator's mutex and its request hangs), tap
+     * PLANNED inside that window (call 2 sets the filter and queues on the mutex), call 1's request
+     * fails. Before the fix, call 1's rollback wrote the DEFAULT filter over call 2's PLANNED, and
+     * call 2 then fetched with `status = null` and succeeded — chips showing PLANNED, list showing
+     * the unfiltered library, no error anywhere. `:feature:library` has no resume refetch, so
+     * nothing corrects it until the user taps another chip.
+     *
+     * The assertion is on what the SECOND request actually asked the server for, not on the
+     * repository's internal field: that is the thing the user sees rows from.
+     */
+    @Test
+    fun `a failed applyFilter does not roll back over a newer concurrent one`() =
+        runTest {
+            val gate = CompletableDeferred<Unit>()
+            api.libraryGate = gate
+
+            val watching = LibraryFilter(status = UserMediaStatus.WATCHING)
+            val planned = LibraryFilter(status = UserMediaStatus.PLANNED)
+            val first = launch { runCatching { repository.applyFilter(watching) } }
+            // The WATCHING fetch now holds the paginator's mutex and is suspended inside it.
+            runCurrent()
+            val second = launch { runCatching { repository.applyFilter(planned) } }
+            // The PLANNED call has already set the filter and is queued on that same mutex.
+            runCurrent()
+
+            // shouldFail is read AFTER the gate in the fake, so this fails the request already in
+            // flight rather than the one queued behind it.
+            api.failNext()
+            gate.complete(Unit)
+            first.join()
+            second.join()
+
+            assertEquals(listOf("watching", "planned"), api.requestedStatuses)
         }
 
     @Test
@@ -465,6 +645,88 @@ class LibraryRepositoryImplTest {
             assertEquals(AddLibraryEntryRequest(source = "anilist", externalId = "154587"), api.addRequests.single())
         }
 
+    /**
+     * The field-by-field mapping (unknown status dropped, `BigDecimal` not `Double`, absent
+     * statuses staying absent) is [com.anarky.showtrack.core.data.mapper.MapperTest]'s job — this
+     * pins only that [LibraryRepositoryImpl.libraryStats] actually reaches
+     * [ShowTrackApi.libraryStats] and returns what it maps to, rather than, say, a hardcoded value
+     * or a call routed through the general `library()` surface.
+     */
+    @Test
+    fun `libraryStats reads through to the wire endpoint`() =
+        runTest {
+            api.statsResponse =
+                LibraryStatsDto(total = 5, byStatus = mapOf("watching" to 5), averageScore = "8.4", ratedCount = 3)
+
+            val stats = repository.libraryStats()
+
+            assertEquals(5, stats.total)
+            assertEquals(BigDecimal("8.4"), stats.averageScore)
+        }
+
+    /** The pass-through half of task 9b.6: a successful import maps every field, `truncated` included. */
+    @Test
+    fun `importAniList reads through the three counts and the truncated flag`() =
+        runTest {
+            api.importResponse = ImportSummaryDto(imported = 40, skipped = 5, failed = 2, truncated = true)
+
+            val summary = repository.importAniList("someone")
+
+            assertEquals(40, summary.imported)
+            assertEquals(5, summary.skipped)
+            assertEquals(2, summary.failed)
+            assertTrue(summary.truncated)
+            assertEquals("someone", api.lastImportUsername)
+        }
+
+    /**
+     * Decision C-R made concrete for import: a 404 must arrive at the caller as
+     * [ImportFailure.ListNotPublic], never as a raw `HttpException` a `:feature:profile` ViewModel
+     * has no way to see (architecture rule 2).
+     */
+    @Test
+    fun `a 404 from the import endpoint surfaces as ListNotPublic`() =
+        runTest {
+            api.importFailure = httpError(404)
+
+            val failure = runCatching { repository.importAniList("someone") }.exceptionOrNull()
+
+            assertTrue(failure is ImportFailure.ListNotPublic)
+        }
+
+    @Test
+    fun `a 422 from the import endpoint surfaces as InvalidUsername`() =
+        runTest {
+            api.importFailure = httpError(422)
+
+            val failure = runCatching { repository.importAniList("") }.exceptionOrNull()
+
+            assertTrue(failure is ImportFailure.InvalidUsername)
+        }
+
+    /** 429/502/504 all mean "the upstream AniList API itself failed" — collapsed into one case. */
+    @Test
+    fun `a 429, 502 or 504 from the import endpoint surfaces as UpstreamUnavailable`() =
+        runTest {
+            for (code in listOf(429, 502, 504)) {
+                api.importFailure = httpError(code)
+
+                val failure = runCatching { repository.importAniList("someone") }.exceptionOrNull()
+
+                assertTrue("expected UpstreamUnavailable for $code", failure is ImportFailure.UpstreamUnavailable)
+            }
+        }
+
+    @Test
+    fun `being offline during import surfaces as Offline`() =
+        runTest {
+            api.importFailure = IOException("offline")
+
+            val failure = runCatching { repository.importAniList("someone") }.exceptionOrNull()
+
+            assertTrue(failure is ImportFailure.Offline)
+        }
+
     private fun dto(
         id: String,
         score: String? = null,
@@ -521,8 +783,19 @@ private class FakeShowTrackApi(
     val requestedStatuses = mutableListOf<String?>()
     val requestedSorts = mutableListOf<String?>()
     val requestedMediaIds = mutableListOf<String?>()
+    val requestedFavorites = mutableListOf<Boolean?>()
     val addRequests = mutableListOf<AddLibraryEntryRequest>()
     val updateRequests = mutableListOf<Pair<String, JsonObject>>()
+    var statsResponse = LibraryStatsDto(total = 0, byStatus = emptyMap(), averageScore = null, ratedCount = 0)
+    var importResponse = ImportSummaryDto(imported = 0, skipped = 0, failed = 0, truncated = false)
+    var importFailure: Throwable? = null
+
+    // Suspends [library] until completed, so a test can observe the repository WHILE a fetch is in
+    // flight — `FakeGroupRepository`'s own gate technique in the feature modules, needed here for
+    // the same reason: an always-synchronous fake cannot construct an interleaving.
+    var libraryGate: CompletableDeferred<Unit>? = null
+    var lastImportUsername: String? = null
+        private set
     private var shouldFail = false
 
     // One-shot responses, consumed in FIFO order and taking priority over [pages] — the
@@ -550,12 +823,15 @@ private class FakeShowTrackApi(
         status: String?,
         sort: String?,
         mediaId: String?,
+        favorite: Boolean?,
     ): LibraryPageDto {
         requestedCursors += cursor
         requestedLimits += limit
         requestedStatuses += status
         requestedSorts += sort
         requestedMediaIds += mediaId
+        requestedFavorites += favorite
+        libraryGate?.await()
         if (shouldFail) {
             shouldFail = false
             throw IOException("simulated network failure")
@@ -568,6 +844,14 @@ private class FakeShowTrackApi(
     // reached these would be doing something it has no business doing, and should say so loudly.
     // PushRepositoryImplTest has its own fake for the push half; the search/detail methods stay
     // outside this repository's business.
+    override suspend fun libraryStats(): LibraryStatsDto = statsResponse
+
+    override suspend fun importAniList(request: ImportAniListRequest): ImportSummaryDto {
+        lastImportUsername = request.username
+        importFailure?.let { throw it }
+        return importResponse
+    }
+
     override suspend fun addLibraryEntry(request: AddLibraryEntryRequest): LibraryEntryDto {
         addRequests += request
         return queuedEntries.removeFirst()
@@ -589,9 +873,75 @@ private class FakeShowTrackApi(
     override suspend fun mediaDetail(id: String): MediaDto =
         error("this fake only serves observeLibrary/refresh/loadMore")
 
+    override suspend fun me(): UserDto = error("this fake only serves observeLibrary/refresh/loadMore")
+
     override suspend fun registerPushTarget(request: RegisterTargetRequest): PushTargetDto =
         error("the library repository must not touch push registration")
 
     override suspend fun deletePushTarget(id: String): Unit =
         error("the library repository must not touch push registration")
+
+    override suspend fun recommendations(
+        cursor: String?,
+        limit: Int,
+    ): RecommendationPageDto = error("the library repository must not touch recommendations")
+
+    override suspend fun createGroup(request: CreateGroupRequestDto): GroupWithInviteDto =
+        error("the library repository must not touch groups")
+
+    override suspend fun groups(): List<GroupDto> = error("the library repository must not touch groups")
+
+    override suspend fun joinGroup(request: JoinGroupRequestDto): GroupWithInviteDto =
+        error("the library repository must not touch groups")
+
+    override suspend fun groupMembers(groupId: String): List<MemberDto> =
+        error("the library repository must not touch groups")
+
+    override suspend fun rotateGroupInvite(groupId: String): GroupWithInviteDto =
+        error("the library repository must not touch groups")
+
+    override suspend fun removeGroupMember(
+        groupId: String,
+        userId: String,
+    ): Unit = error("the library repository must not touch groups")
+
+    override suspend fun groupFeed(
+        groupId: String,
+        cursor: String?,
+        limit: Int,
+    ): FeedPageDto = error("the library repository must not touch groups")
+
+    override suspend fun groupReviews(
+        groupId: String,
+        mediaId: String,
+    ): List<ReviewDto> = error("the library repository must not touch groups")
+
+    override suspend fun groupWatchlist(
+        groupId: String,
+        cursor: String?,
+        limit: Int,
+    ): WatchlistPageDto = error("the library repository must not touch groups")
+
+    override suspend fun proposeToWatchlist(
+        groupId: String,
+        request: ProposeTitleRequestDto,
+    ): WatchlistItemDto = error("the library repository must not touch groups")
+
+    override suspend fun removeFromWatchlist(
+        groupId: String,
+        entryId: String,
+    ): Unit = error("the library repository must not touch groups")
+
+    override suspend fun groupProgress(
+        groupId: String,
+        mediaId: String,
+    ): List<ProgressEntryDto> = error("the library repository must not touch groups")
+
+    override suspend fun createReview(request: CreateReviewRequestDto): ReviewDto =
+        error("the library repository must not touch groups")
+
+    override suspend fun updateReview(
+        id: String,
+        patch: JsonObject,
+    ): ReviewDto = error("the library repository must not touch groups")
 }

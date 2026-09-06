@@ -1,0 +1,18 @@
+<!--
+    Feed's tab icon: three horizontal bars of decreasing width, standing in for a stream of
+    activity rows, built from straight rectangles only, computed directly (ic_explore.xml's own
+    justification for why: every other icon in this set copies AOSP glyph data from a known-good
+    source, but this one does not risk transcribing a "feed"/"dynamic_feed" glyph from memory —
+    a straight-line shape is trivially verifiable instead). 960 viewport, matching
+    ic_home.xml/ic_explore.xml/ic_favorite.xml/ic_account_box.xml's convention for a top-level tab
+    icon.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="960"
+    android:viewportHeight="960">
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M180,200L780,200L780,300L180,300Z M180,430L780,430L780,530L180,530Z M180,660L680,660L680,760L180,760Z" />
+</vector>

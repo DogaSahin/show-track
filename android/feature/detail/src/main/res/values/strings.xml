@@ -20,4 +20,59 @@
     <string name="detail_progress_decrease">−</string>
     <string name="detail_progress_increase">+</string>
     <string name="detail_favorite_label">Favorite</string>
+
+    <!-- The group section (task 9c.6, E-J, design doc §3.5) -->
+    <string name="detail_group_section_title">Group</string>
+    <!-- §9.12's acceptance criterion: a title nobody else tracks is an empty state, not a broken
+         section. -->
+    <string name="detail_group_section_empty">No one else in the group is tracking this title yet.</string>
+    <string name="detail_group_stale_notice">Showing saved group data. Tap Retry to check for updates.</string>
+    <!-- %1$s member username, %2$s status label, %3$d episode/chapter progress. -->
+    <string name="detail_group_progress_row">%1$s: %2$s, episode %3$d</string>
+
+    <string name="detail_group_propose_button">Propose to a group</string>
+    <string name="detail_group_propose_picker_title">Choose a group</string>
+    <string name="detail_group_propose_picker_cancel">Cancel</string>
+    <!-- Fix round 1: the ONLY feedback a single-group propose gets (no picker, no dialog to
+         close) — ProposeToGroupControl in GroupSection.kt. -->
+    <string name="detail_group_propose_success">Proposed to %1$s.</string>
+    <string name="detail_group_propose_success_generic">Proposed.</string>
+
+    <!-- GroupFailure.messageRes() in GroupSection.kt. -->
+    <string name="detail_group_error_network">Couldn\'t reach the server. Check your connection and try again.</string>
+    <string name="detail_group_error_not_a_member">You\'re no longer a member of this group.</string>
+    <string name="detail_group_propose_error_no_such_title">Couldn\'t propose this title. Try again.</string>
+    <string name="detail_group_error_unknown">Something went wrong. Try again.</string>
+
+    <!-- Writing and editing a review (task 9c.7, E-G, design doc §3.6) -->
+    <string name="detail_review_write_button">Write a review</string>
+    <string name="detail_review_write_heading">Write a review</string>
+    <string name="detail_review_edit_heading">Edit your review</string>
+    <string name="detail_review_body_label">Your review</string>
+    <string name="detail_review_spoiler_label">Contains spoilers</string>
+    <string name="detail_review_save_button">Save</string>
+    <string name="detail_review_cancel_button">Cancel</string>
+
+    <!-- Fix round 1, BLOCKING B1's should-fix companion: ReviewEditorState.Open.confirmOverwrite,
+         shown for exactly one Save tap when a 409 resolved to an existing review the reader has
+         never been shown the text of. -->
+    <string name="detail_review_confirm_overwrite">You already have a review for this title. Saving will replace it.</string>
+
+    <!-- ReviewSaveError.messageRes() in ReviewEditor.kt. Checked client-side, before any request
+         is sent — §3.6's own 1-4000 character, whitespace-stripped bound. -->
+    <string name="detail_review_error_body_required">Write something before saving.</string>
+    <string name="detail_review_error_body_too_long">Keep your review under 4000 characters.</string>
+
+    <!-- GroupFailure.reviewSaveFailureMessageRes() in ReviewEditor.kt. -->
+    <string name="detail_review_error_network">Couldn\'t reach the server. Check your connection and try again.</string>
+    <string name="detail_review_error_no_such_title">Couldn\'t save this review. Try again.</string>
+    <string name="detail_review_error_no_such_entry">This review no longer exists.</string>
+    <!-- Fix round 1, BLOCKING B2: only reached when DetailViewModel.findOwnReview cannot resolve
+         the existing review AT ALL (no active group, no loaded section, AND nothing cached in
+         lastOwnReview for this session — findOwnReview's own KDoc). The earlier copy told the
+         reader to "open the group section below," which for a no-groups account is not on screen
+         at all (GroupSection.kt's own early return renders nothing there) — this wording makes no
+         claim about where the review can be found. -->
+    <string name="detail_review_error_already_reviewed_unresolved">You\'ve already reviewed this title, but this screen can\'t find that review to edit right now.</string>
+    <string name="detail_review_error_unknown">Something went wrong. Try again.</string>
 </resources>

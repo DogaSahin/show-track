@@ -7,7 +7,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
-import org.robolectric.annotation.Config
 
 /**
  * Robolectric because a real `Intent` parses its data through `android.net.Uri`, which is not a
@@ -21,7 +20,6 @@ import org.robolectric.annotation.Config
  * untestable: Robolectric loads `:app`'s MERGED manifest, so a real PackageManager can be asked.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [35])
 class PushNotifierTest {
     private val context = ApplicationProvider.getApplicationContext<Context>()
 

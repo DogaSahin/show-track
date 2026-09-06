@@ -32,18 +32,22 @@ private const val MIN_PASSWORD_LENGTH = 8
  *
  * `onAuthenticated` fires exactly once per successful login/register, keyed on [AuthUiState] so
  * the effect does not re-fire on an unrelated recomposition (e.g. a config change) while already
- * `Authenticated`. `AuthNavigation` turns it into `onNavigate(LibraryRoute)`, which
- * `ShowTrackNavHost` resolves to a `popUpTo<AuthRoute>` navigation so Back cannot return here.
+ * `Authenticated`. It now takes [AuthUiState.Authenticated.isNewAccount] (task 9b.6): `AuthNavigation`
+ * uses it to route a fresh registration to the AniList import screen instead of straight to the
+ * library, which `LaunchedEffect` reads off `state` here rather than this composable choosing a
+ * route itself — that choice belongs to `:app` (architecture rule 1). `ShowTrackNavHost` resolves
+ * either destination to a navigation that clears `AuthRoute` off the stack, so Back cannot return
+ * here from either.
  */
 @Composable
 fun AuthScreen(
-    onAuthenticated: () -> Unit,
+    onAuthenticated: (isNewAccount: Boolean) -> Unit,
     modifier: Modifier = Modifier,
     viewModel: AuthViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     LaunchedEffect(state) {
-        if (state is AuthUiState.Authenticated) onAuthenticated()
+        (state as? AuthUiState.Authenticated)?.let { onAuthenticated(it.isNewAccount) }
     }
     // Authenticated is a transient state on this screen: the LaunchedEffect above starts
     // navigating away on the same composition it appears in. Falling back to a submitting form

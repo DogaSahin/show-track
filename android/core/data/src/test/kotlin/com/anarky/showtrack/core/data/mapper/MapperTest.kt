@@ -6,7 +6,11 @@ import com.anarky.showtrack.core.model.MediaStatus
 import com.anarky.showtrack.core.model.MediaType
 import com.anarky.showtrack.core.model.UserMediaStatus
 import com.anarky.showtrack.core.network.dto.LibraryEntryDto
+import com.anarky.showtrack.core.network.dto.LibraryStatsDto
 import com.anarky.showtrack.core.network.dto.MediaDto
+import com.anarky.showtrack.core.network.dto.PersistedMediaDto
+import com.anarky.showtrack.core.network.dto.RecommendationDto
+import com.anarky.showtrack.core.network.dto.RecommendationReasonDto
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -124,6 +128,112 @@ class MapperTest {
         assertEquals("https://example.com/cached.jpg", entity.coverUrl)
         assertEquals(5, entity.daysUntilNextEpisode)
     }
+
+    /**
+     * `PersistedMediaDto` carries no status and no next-episode block at all, unlike `MediaDto` —
+     * this pins the mapper's own documented DEFAULT for those fields (NOT_YET_AIRED / all-null),
+     * literally, rather than merely asserting the fields the DTO does carry. A mapper that started
+     * defaulting `status` to `AIRING` instead would pass every other test in this file and would
+     * have a recommendation row rendering an airing badge it has no data to back.
+     */
+    @Test
+    fun `a persisted media dto maps into a media with unpopulated airing fields`() {
+        val media = persistedMediaDto().toDomain()
+
+        assertEquals("media-1", media.id)
+        assertEquals(MediaSource.ANILIST, media.source)
+        assertEquals(MediaType.ANIME, media.type)
+        assertEquals("21", media.externalId)
+        assertEquals("One Piece", media.title)
+        assertEquals(1999, media.year)
+        assertEquals(listOf("action", "adventure"), media.genres)
+        assertEquals("https://example.com/1.jpg", media.coverImageUrl)
+        assertEquals(MediaStatus.NOT_YET_AIRED, media.status)
+        assertNull(media.nextEpisodeSeason)
+        assertNull(media.nextEpisodeNumber)
+        assertNull(media.nextEpisodeDate)
+        assertNull(media.daysUntilNextEpisode)
+    }
+
+    /** The reason maps through untouched — no default-substitution risk here, unlike the media half. */
+    @Test
+    fun `a recommendation dto maps its media and its one seed reason`() {
+        val recommendation =
+            RecommendationDto(
+                media = persistedMediaDto(),
+                reason =
+                    RecommendationReasonDto(
+                        seedMediaId = "seed-1",
+                        seedTitle = "Made in Abyss",
+                        matchedGenres = listOf("fantasy", "adventure"),
+                    ),
+            ).toDomain()
+
+        assertEquals("media-1", recommendation.media.id)
+        assertEquals("seed-1", recommendation.reason.seedMediaId)
+        assertEquals("Made in Abyss", recommendation.reason.seedTitle)
+        assertEquals(listOf("fantasy", "adventure"), recommendation.reason.matchedGenres)
+    }
+
+    /** Task 9b.5. Literal expectations, not `dto.toDomain()` against itself — this file's own rule. */
+    @Test
+    fun `a library stats dto maps every field into the domain`() {
+        val stats =
+            LibraryStatsDto(
+                total = 7,
+                byStatus = mapOf("watching" to 5, "completed" to 2),
+                averageScore = "8.4",
+                ratedCount = 3,
+            ).toDomain()
+
+        assertEquals(7, stats.total)
+        assertEquals(mapOf(UserMediaStatus.WATCHING to 5, UserMediaStatus.COMPLETED to 2), stats.byStatus)
+        // BigDecimal(String), never a trip through Double — see LibraryEntryDto.toDomain's own
+        // KDoc for why that specific conversion is scale-safe as well as value-safe. "8.4" is not
+        // exactly representable as an IEEE 754 double, so a `BigDecimal(score.toDouble())` mutant
+        // fails this on the value alone, without needing 8.1's dyadic-rational argument.
+        assertEquals(BigDecimal("8.4"), stats.averageScore)
+        assertEquals(3, stats.ratedCount)
+    }
+
+    @Test
+    fun `an unrated library maps to a null average rather than zero`() {
+        val stats = LibraryStatsDto(total = 3, byStatus = emptyMap(), averageScore = null, ratedCount = 0).toDomain()
+
+        assertNull(stats.averageScore)
+    }
+
+    /**
+     * `by_status` keys the client does not recognise are DROPPED, matching `SearchMapper`'s
+     * treatment of an unknown `MediaSource` — the client must not crash when the server reports a
+     * status it has never heard of. `total` is left untouched (it is the server's own sum, not
+     * recomputed from the surviving keys), so a dropped key does not silently corrupt the total.
+     */
+    @Test
+    fun `an unrecognised status key is dropped from the map rather than thrown on`() {
+        val stats =
+            LibraryStatsDto(
+                total = 6,
+                byStatus = mapOf("watching" to 4, "on_hold_legacy" to 2),
+                averageScore = null,
+                ratedCount = 0,
+            ).toDomain()
+
+        assertEquals(mapOf(UserMediaStatus.WATCHING to 4), stats.byStatus)
+        assertEquals(6, stats.total)
+    }
+
+    private fun persistedMediaDto() =
+        PersistedMediaDto(
+            id = "media-1",
+            source = "anilist",
+            externalId = "21",
+            type = "anime",
+            title = "One Piece",
+            year = 1999,
+            genres = listOf("action", "adventure"),
+            coverImageUrl = "https://example.com/1.jpg",
+        )
 
     private fun libraryEntryDto() =
         LibraryEntryDto(

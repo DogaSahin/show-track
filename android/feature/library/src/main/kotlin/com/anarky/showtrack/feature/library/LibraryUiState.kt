@@ -33,6 +33,17 @@ sealed interface LibraryUiState {
         val entries: List<LibraryEntry>,
         val loadingMore: Boolean,
         val pageError: Throwable? = null,
+        /**
+         * True when the network has not answered SUCCESSFULLY yet, this session, on the default
+         * filter, and there was something to show anyway — NOT a guarantee [entries] actually
+         * came from the Room cache, even though that is the common case. `LibraryViewModel.state`
+         * infers this from "has the repository's guard ever completed one call without throwing",
+         * which is honest about freshness but blind to WHICH branch `observeLibrary()` took to
+         * produce these particular [entries] — see `LibraryViewModel.mutableLoadState`'s KDoc for
+         * the one known gap this leaves (a same-repository success from another screen). Drives
+         * the banner - stale rows must never present as unconditionally live ones.
+         */
+        val isStale: Boolean = false,
     ) : LibraryUiState
 
     data class Error(

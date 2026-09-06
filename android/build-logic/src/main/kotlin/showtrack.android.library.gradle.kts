@@ -37,6 +37,27 @@ android {
         sourceCompatibility = JavaVersion.VERSION_21
         targetCompatibility = JavaVersion.VERSION_21
     }
+
+    lint {
+        // Decision C-E has been violated twice and caught by human review both times; nothing in
+        // ktlint/detekt/test/assemble sees a hardcoded UI string. contentDescription is included
+        // deliberately — screen-reader text is user-facing text.
+        //
+        // MEASURED GAP, worth knowing before trusting this: both ids are the classic Android Lint
+        // checks for XML `android:text="literal"` / `android:contentDescription="literal"`
+        // attributes. Neither understands Compose's `Text(text = "literal")` or
+        // `contentDescription = "literal"` PARAMETERS — this project has no XML layouts at all, so
+        // as configured this catches nothing here. Confirmed empirically, not assumed: three known
+        // literal `Text("Discover"|"Favorites"|"Groups")` calls (feature/discover, /favorites,
+        // /groups) went unflagged with this exact config, in the same lintDebug run where
+        // `ModifierParameter` — a genuine Compose-aware check bundled with androidx.compose.ui —
+        // fired correctly elsewhere, proving Compose analysis was active and simply has no rule
+        // watching these two ids' failure mode. Left as specified anyway (task 9b.0's brief, verbatim)
+        // rather than swapped for something else unreviewed; a Compose-aware replacement (a custom
+        // detekt rule, or a third-party ruleset) is a follow-up decision, not a silent substitution.
+        error += listOf("HardcodedText", "ContentDescription")
+        abortOnError = true
+    }
 }
 
 kotlin {

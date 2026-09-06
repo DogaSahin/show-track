@@ -1,0 +1,16 @@
+<!--
+    Discover's tab icon: a four-point compass/star, standing in for "explore" without risking a
+    hand-derived arc-based glyph (every other icon in this set uses AOSP glyph data copied from a
+    known-good source; this one is built from straight lines only, computed directly, so its
+    validity does not depend on transcribing anything from memory). 960 viewport, matching
+    ic_home.xml/ic_favorite.xml/ic_account_box.xml's convention for a top-level tab icon.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="960"
+    android:viewportHeight="960">
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M480,80L564.85,395.15L880,480L564.85,564.85L480,880L395.15,564.85L80,480L395.15,395.15Z" />
+</vector>

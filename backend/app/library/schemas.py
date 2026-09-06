@@ -60,6 +60,20 @@ class LibraryPage(BaseModel):
     next_cursor: str | None
 
 
+class LibraryStats(BaseModel):
+    """Aggregates computed in SQL, not by paging the library client-side: the client holds one page
+    (decision C-B), and re-downloading everything to show four numbers gets worse as the library
+    grows.
+    """
+
+    total: int
+    by_status: dict[UserMediaStatus, int]
+    # A STRING for the same reason LibraryEntry.score is one (decision 4-N): a JSON number is an
+    # IEEE 754 double, and this is a NUMERIC average. Null when nothing is rated.
+    average_score: Decimal | None
+    rated_count: int
+
+
 class AddLibraryEntryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

@@ -2,6 +2,17 @@ plugins {
     id("showtrack.android.feature")
 }
 
+android {
+    testOptions {
+        // AuthEntryHiltTest (task 9c.0) drives AuthScreen()'s stringResource() calls through a
+        // real Compose test rule on the JVM, which needs this module's own res/values/strings.xml
+        // to resolve — same requirement as :feature:library's LibraryScreenTest.
+        unitTests {
+            isIncludeAndroidResources = true
+        }
+    }
+}
+
 dependencies {
     // ErrorState and LoadingState — the AuthError copy renders through ErrorState's retry
     // affordance rather than a bare Text, matching every other screen's failure presentation.
@@ -15,4 +26,21 @@ dependencies {
     // inside :core:data, so it never appears on this module's compile classpath — architecture
     // rule 2, enforced by ModuleRules.apiLeakOf and VerifyArchitectureClasspath, not by review.
     implementation(project(":core:data"))
+
+    // AuthEntryHiltTest drives the stateful authEntry() through a real Compose test rule on the
+    // JVM. Robolectric supplies the Android runtime; sdk=35 is pinned in
+    // src/test/resources/robolectric.properties — the same setup :feature:library uses.
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.androidx.compose.ui.test.junit4)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
+
+    // TestNavHostController, so AuthEntryHiltTest can drive authEntry() inside a real graph rather
+    // than the stateless AuthScreen() overload alone.
+    testImplementation(libs.androidx.navigation.testing)
+
+    // Hilt's test harness — composing a hiltViewModel()-backed screen in a JVM test needs it, the
+    // same three lines :feature:library's build file carries.
+    testImplementation(libs.hilt.android.testing)
+    kspTest(libs.hilt.compiler)
 }

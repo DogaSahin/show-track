@@ -11,14 +11,17 @@ import com.anarky.showtrack.core.model.MediaSource
 import com.anarky.showtrack.core.model.MediaStatus
 import com.anarky.showtrack.core.model.MediaType
 import com.anarky.showtrack.core.model.UserMediaStatus
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
@@ -292,9 +295,288 @@ class LibraryViewModelTest {
             assertEquals(LibraryUiState.Error(failure), viewModel.state.value)
         }
 
+    @Test
+    fun `an offline cold start on the default filter shows cached entries, not a full-screen error`() =
+        runTest(dispatcher) {
+            // hasLoaded == false (nothing has ever succeeded yet), filter == default, refresh
+            // throws -> Success(entries = cached, isStale = true), NOT Error. `repository.entries`
+            // stands in for the Room cache LibraryRepositoryImpl.observeLibrary() would already be
+            // emitting from a previous session, seeded before the ViewModel (and its `init { refresh() }`)
+            // ever runs.
+            val failure = IOException("offline")
+            val repository = FakeLibraryRepository(applyFilterFailure = failure)
+            repository.entries.value = listOf(ENTRY)
+            val viewModel = LibraryViewModel(repository)
+
+            viewModel.state.test {
+                assertEquals(LibraryUiState.Loading, awaitItem())
+                advanceUntilIdle()
+                assertEquals(
+                    LibraryUiState.Success(entries = listOf(ENTRY), loadingMore = false, isStale = true),
+                    awaitItem(),
+                )
+                cancelAndIgnoreRemainingEvents()
+            }
+        }
+
+    @Test
+    fun `a failed reload AFTER a successful load shows the error, not stale rows`() =
+        runTest(dispatcher) {
+            // hasLoaded == true -> Error wins. This is the "don't lie about freshness" half: once
+            // a load has genuinely succeeded, a later failure must not silently keep showing the
+            // (now possibly outdated) rows as if nothing had gone wrong.
+            val failure = IOException("offline")
+            val repository = FakeLibraryRepository()
+            repository.entries.value = listOf(ENTRY)
+            val viewModel = LibraryViewModel(repository)
+            backgroundScope.launch { viewModel.state.collect {} }
+            advanceUntilIdle() // init's load succeeds -> hasLoaded flips true
+
+            repository.applyFilterFailure = failure
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            assertEquals(LibraryUiState.Error(failure), viewModel.state.value)
+        }
+
+    @Test
+    fun `a failed filter switch never renders the previous filter's rows`() =
+        runTest(dispatcher) {
+            // Default filter loads successfully, then applyFilter(PLANNED) throws. The fake's
+            // `entries` (standing in for what LibraryRepositoryImpl.observeLibrary() would still
+            // be emitting - CursorPaginator.restart() mutates nothing on a throw) still holds the
+            // default filter's rows here. `hasLoaded` (session-scoped: true from the earlier
+            // success and never reset per-selection) is what blocks this now, on its own — see
+            // `a failed switch away from the default filter before any load has ever succeeded...`
+            // below for the sequence where `isDefault` is the ONLY guard left standing.
+            val failure = IOException("offline")
+            val repository = FakeLibraryRepository()
+            repository.entries.value = listOf(ENTRY)
+            val viewModel = LibraryViewModel(repository)
+            backgroundScope.launch { viewModel.state.collect {} }
+            advanceUntilIdle() // default filter loads successfully
+
+            repository.applyFilterFailure = failure
+            viewModel.selectStatus(UserMediaStatus.PLANNED)
+            advanceUntilIdle()
+
+            assertEquals(LibraryUiState.Error(failure), viewModel.state.value)
+        }
+
+    @Test
+    fun `a failed switch away from the default filter before any load succeeds shows the error, not the cache`() =
+        runTest(dispatcher) {
+            // hasLoaded is false throughout this whole test - nothing has EVER succeeded this
+            // session - so it cannot block the cache fallback here on its own; `isDefault` is the
+            // ONLY guard standing between this and rendering the cache (still holding the DEFAULT
+            // filter's rows, from the cold-start failure below) under the PLANNED tab. This is
+            // what makes `isDefault` load-bearing by itself, not merely redundant with
+            // `hasLoaded` - see the mutation check that deletes it.
+            val failure = IOException("offline")
+            val repository = FakeLibraryRepository(applyFilterFailure = failure)
+            repository.entries.value = listOf(ENTRY) // a pre-existing Room cache
+            val viewModel = LibraryViewModel(repository)
+            backgroundScope.launch { viewModel.state.collect {} }
+            advanceUntilIdle() // cold start fails -> Success(isStale = true) from the cache; hasLoaded stays false
+
+            viewModel.selectStatus(UserMediaStatus.PLANNED)
+            advanceUntilIdle()
+
+            assertEquals(LibraryUiState.Error(failure), viewModel.state.value)
+        }
+
+    @Test
+    fun `a failed switch back to default after a successful non-default switch does not resurrect those rows`() =
+        runTest(dispatcher) {
+            // Finding 2's regression (review round 1): a `hasLoaded` reset on EVERY selection
+            // change - "a freshly picked filter hasn't loaded anything yet" - looked reasonable
+            // but is wrong. LibraryRepositoryImpl.applyFilter reverts its OWN internal filter on a
+            // throw, so when this last step's fetch fails, the repository's filter reverts to
+            // PLANNED (the last filter that actually succeeded) while THIS ViewModel's `filter`
+            // stays at the default tab the user just tapped. `entries` here stands in for what
+            // observeLibrary() would then still be emitting: PLANNED's LIVE rows, not the cache -
+            // a per-selection reset would clear `hasLoaded` for this switch and let those rows
+            // render as `Success(isStale = true)`, mislabelled "saved", under the default tab.
+            // Session-scoped `hasLoaded` (never reset after the first success) is what keeps this
+            // blocked, entirely independent of `isDefault`.
+            val failure = IOException("offline")
+            val repository = FakeLibraryRepository()
+            repository.entries.value = listOf(ENTRY)
+            val viewModel = LibraryViewModel(repository)
+            backgroundScope.launch { viewModel.state.collect {} }
+            advanceUntilIdle() // default filter loads successfully -> hasLoaded = true
+
+            viewModel.selectStatus(UserMediaStatus.PLANNED)
+            advanceUntilIdle() // PLANNED also loads successfully
+
+            repository.applyFilterFailure = failure
+            viewModel.selectStatus(null) // switch back to the default tab; this fetch fails
+            advanceUntilIdle()
+
+            assertEquals(LibraryUiState.Error(failure), viewModel.state.value)
+        }
+
+    @Test
+    fun `a successful loadMore after a stale render clears the lie about freshness`() =
+        runTest(dispatcher) {
+            // Finding 3, path 1 (review round 2): `loadMore()` calls `guard` with `trackLoading`
+            // defaulted false, so a successful loadMore used to write CursorPaginator's `_items`
+            // (LibraryRepository.loadMore -> CursorPaginator.loadMore, which mutates `_items` on
+            // success just like `restart()` does) WITHOUT ever flipping `hasLoaded`. A stale
+            // render's `LibraryList` auto-fires `loadMore()` the moment the last cached row is
+            // visible (`LaunchedEffect(shouldLoadMore)`), so a transient offline failure followed
+            // by the network coming back for that ONE call kept the cache-fallback condition true
+            // forever, mislabelling live rows as "saved". `guard` now flips `hasLoaded` on ANY
+            // successful repository call, not just a `trackLoading` one, closing this path.
+            val failure = IOException("offline")
+            val repository = FakeLibraryRepository(applyFilterFailure = failure)
+            repository.entries.value = listOf(ENTRY)
+            val viewModel = LibraryViewModel(repository)
+            backgroundScope.launch { viewModel.state.collect {} }
+            advanceUntilIdle() // cold start fails -> Success(isStale = true) from the cache
+            assertEquals(
+                LibraryUiState.Success(entries = listOf(ENTRY), loadingMore = false, isStale = true),
+                viewModel.state.value,
+            )
+
+            viewModel.loadMore() // the network answers THIS call, even though the reload never retried
+            advanceUntilIdle()
+
+            // The ORIGINAL reload's failure is still on record in `mutableError` (loadMore's
+            // success only clears `mutableLoadMoreError`) and now wins outright instead of being
+            // mislabelled as fresh - a failure after any success shows Error elsewhere in this
+            // suite for the same reason (see "a failed reload AFTER a successful load...").
+            assertEquals(LibraryUiState.Error(failure), viewModel.state.value)
+        }
+
+    @Test
+    fun `a failed loadMore while stale surfaces pageError instead of being silently swallowed`() =
+        runTest(dispatcher) {
+            // Finding 4 (review round 2, folded in beside path 1): the showCacheInstead branch
+            // built `Success` without carrying `pageError` through, so a loadMore failure fired
+            // automatically by the stale list's `LaunchedEffect(shouldLoadMore)` vanished
+            // entirely - no footer, no retry affordance, no signal anything went wrong.
+            val failure = IOException("offline")
+            val repository = FakeLibraryRepository(applyFilterFailure = failure, loadMoreFailure = failure)
+            repository.entries.value = listOf(ENTRY)
+            val viewModel = LibraryViewModel(repository)
+            backgroundScope.launch { viewModel.state.collect {} }
+            advanceUntilIdle() // cold start fails -> Success(isStale = true)
+
+            viewModel.loadMore() // also fails - the network is still down
+            advanceUntilIdle()
+
+            assertEquals(
+                LibraryUiState.Success(
+                    entries = listOf(ENTRY),
+                    loadingMore = false,
+                    pageError = failure,
+                    isStale = true,
+                ),
+                viewModel.state.value,
+            )
+        }
+
+    @Test
+    fun `a retry from stale cached rows keeps them on screen while the retry is in flight`() =
+        runTest(dispatcher) {
+            // The whole-branch review's B3 fix: `refresh()` no longer blanks unconditionally.
+            // `ErrorState`'s and `StaleDataBanner`'s Retry buttons both call `refresh()`
+            // undifferentiated, so this is airplane-mode-cold-start-then-Retry (README walkthrough
+            // 11 step 4) exercised end to end: the cached rows and the stale banner must survive
+            // the WHOLE round trip, not just its eventual, settled result.
+            //
+            // A never-completing `applyFilterGate` stands in for a hung connection under airplane
+            // mode, and `runCurrent()` (not `advanceUntilIdle()`) is what makes this test actually
+            // catch a regression: `advanceUntilIdle()` would run the retry all the way to its
+            // catch block too, and a REGRESSED, unconditionally-blanking `applyCurrentFilter`
+            // settles back into this exact SAME stale render once the round trip completes either
+            // way (`error != null && isDefault && !hasLoaded && entries.isNotEmpty()` is true
+            // again the moment the retry's own failure lands) - the bug is only visible in the
+            // MIDDLE of the round trip, where a regression shows `Loading` and the fix does not.
+            // `runCurrent()` stops exactly there: everything currently scheduled runs (including
+            // the coroutine `refresh()` launches, up to where it suspends awaiting the gate), and
+            // nothing beyond it.
+            val firstFailure = IOException("offline")
+            val repository = FakeLibraryRepository(applyFilterFailure = firstFailure)
+            repository.entries.value = listOf(ENTRY)
+            val viewModel = LibraryViewModel(repository)
+            backgroundScope.launch { viewModel.state.collect {} }
+            advanceUntilIdle() // cold start fails -> Success(isStale = true) from the cache
+
+            val stale = LibraryUiState.Success(entries = listOf(ENTRY), loadingMore = false, isStale = true)
+            assertEquals(stale, viewModel.state.value)
+
+            val gate = CompletableDeferred<Unit>()
+            repository.applyFilterGate = gate
+            viewModel.refresh()
+            runCurrent()
+            // Mid-flight: the retry's coroutine is suspended awaiting the gate, exactly the window
+            // a hung connection spends in flight. The rows and the banner must still be showing.
+            assertEquals(stale, viewModel.state.value)
+
+            gate.complete(Unit) // let the retry proceed - it still fails, offline throughout
+            advanceUntilIdle()
+            // The retry failed again: back to the SAME stale render, not a bare error left behind
+            // by whatever the mid-flight window showed.
+            assertEquals(stale, viewModel.state.value)
+        }
+
+    @Test
+    fun `a retry from stale cached rows resolves normally once the network answers`() =
+        runTest(dispatcher) {
+            val failure = IOException("offline")
+            val repository = FakeLibraryRepository(applyFilterFailure = failure)
+            repository.entries.value = listOf(ENTRY)
+            val viewModel = LibraryViewModel(repository)
+            backgroundScope.launch { viewModel.state.collect {} }
+            advanceUntilIdle() // cold start fails -> Success(isStale = true) from the cache
+
+            repository.applyFilterFailure = null
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            assertEquals(
+                LibraryUiState.Success(entries = listOf(ENTRY), loadingMore = false, isStale = false),
+                viewModel.state.value,
+            )
+        }
+
+    @Test
+    fun `a filter switch away from a stale cache still blanks, unlike a retry`() =
+        runTest(dispatcher) {
+            // The other half of the B3 fix's contract: `blank` is decided per call site, not
+            // inferred from `state` for EVERY caller - `selectStatus`/`selectSort` must keep
+            // blanking even from the exact same stale-cache starting state the test above proves
+            // a retry now preserves, or the walkthrough 12 bug (the old tab's rows surviving under
+            // the new tab's header) comes back for this one caller while looking fixed for
+            // `refresh()`. `state.value` alone cannot tell these apart - only the call site can.
+            val failure = IOException("offline")
+            val repository = FakeLibraryRepository(applyFilterFailure = failure)
+            repository.entries.value = listOf(ENTRY) // a pre-existing Room cache
+            val viewModel = LibraryViewModel(repository)
+            backgroundScope.launch { viewModel.state.collect {} }
+            advanceUntilIdle() // cold start fails -> Success(isStale = true) from the cache
+
+            viewModel.selectStatus(UserMediaStatus.PLANNED)
+            advanceUntilIdle()
+
+            // isDefault flips false the instant the tab changes, so this is really just
+            // `a failed switch away from the default filter before any load succeeds...`'s
+            // assertion again - restated here starting from the SAME precondition as the two
+            // tests above, so the contrast between the two callers is in one place to read.
+            assertEquals(LibraryUiState.Error(failure), viewModel.state.value)
+        }
+
     private class FakeLibraryRepository(
         var applyFilterFailure: Throwable? = null,
         var loadMoreFailure: Throwable? = null,
+        // Stands in for a hung connection (airplane mode: the request never completes, rather
+        // than failing fast) — awaited BEFORE the failure/success check below, so a test can
+        // suspend `applyFilter` mid-flight and inspect `LibraryViewModel.state` for exactly the
+        // window a real round trip spends in flight, not just its eventual, settled result.
+        // `null` (the default) behaves exactly as before this field existed: no suspension at all.
+        var applyFilterGate: CompletableDeferred<Unit>? = null,
     ) : LibraryRepository {
         val entries = MutableStateFlow(emptyList<LibraryEntry>())
 
@@ -319,6 +601,7 @@ class LibraryViewModelTest {
         }
 
         override suspend fun applyFilter(filter: LibraryFilter) {
+            applyFilterGate?.await()
             applyFilterFailure?.let { throw it }
             appliedFilter = filter
         }
@@ -337,6 +620,16 @@ class LibraryViewModelTest {
         ): LibraryEntry = error("not exercised by LibraryViewModel")
 
         override suspend fun entryForMedia(mediaId: String): LibraryEntry? = error("not exercised by LibraryViewModel")
+
+        override val favoriteEntries: StateFlow<List<LibraryEntry>> = MutableStateFlow(emptyList())
+
+        override suspend fun refreshFavorites(): Unit = error("not exercised by LibraryViewModel")
+
+        override suspend fun loadMoreFavorites(): Unit = error("not exercised by LibraryViewModel")
+
+        override suspend fun libraryStats() = error("not exercised by LibraryViewModel")
+
+        override suspend fun importAniList(username: String) = error("not exercised by LibraryViewModel")
     }
 
     private companion object {

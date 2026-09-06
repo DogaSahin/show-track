@@ -22,11 +22,22 @@ import org.gradle.api.tasks.TaskAction
  * diagnostic from anywhere. One character — `implementation` to `api` — on a library coordinate,
  * and a feature module could `import retrofit2.*`.
  *
- * Extending the declaration rule to a list of forbidden GROUPS would have closed that one hole.
- * This closes the shape of hole: the resolved graph is the ground truth, so a third-party POM that
- * drags OkHttp in, a new networking library nobody remembered to add to a denylist, and a
- * `testFixturesApi` nobody predicted are all the same question — is it on the compile classpath? —
- * asked once.
+ * What this closes, precisely (corrected in the whole-branch fix round — the paragraph here used to
+ * claim more than the code does). The question it asks is the resolved graph's, not the build
+ * file's: EVERY route by which one of the forbidden GROUPS can reach a feature's compile classpath
+ * is caught, however it got there — a direct `api(...)`, a transitive edge through a third-party
+ * POM that drags OkHttp in, or a `testFixturesApi` nobody predicted. A declaration check sees none
+ * of those.
+ *
+ * What it does NOT close, and cannot: the group list itself. [ModuleRules.forbiddenOnFeatureClasspath]
+ * is a lookup in a hand-maintained denylist of four groups, so a networking or persistence library
+ * outside them — Ktor, Fuel, an `androidx.sqlite` edge that never mentions `androidx.room` — reaches
+ * every feature's compile classpath with no diagnostic from anywhere. **Add the group when you add
+ * the library.** An allowlist over the resolved graph is the version that would need no maintenance;
+ * it is recorded as a follow-up in the README rather than done here, because swapping an enforcement
+ * mechanism is a bigger change than the check it would replace and the denylist does real work as it
+ * stands (it caught the `api(libs.retrofit.core)` hole above, and `DependencyRuleTestKitTest` drives
+ * a real build into exactly that case).
  *
  * It also answers the question the configuration-name heuristic was GUESSING at. `testApi` and
  * `androidTestApi` end in "Api" but do not export to a library consumer, so `apiLeakOf` would

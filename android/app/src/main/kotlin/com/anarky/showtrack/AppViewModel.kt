@@ -4,10 +4,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.anarky.showtrack.core.data.repository.AuthRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 /**
@@ -16,16 +16,111 @@ import javax.inject.Inject
  * with, so it emits nothing, and without this the app opens on an empty Library and stays there.
  * Both halves are needed: this one cannot see an expiry mid-session, and that one cannot see a
  * cold start.
+ *
+ * [start] is a plain [MutableStateFlow], not `.stateIn(SharingStarted.Eagerly, ...)` over a
+ * one-shot flow — decision C-U ("a plain MutableStateFlow where a ViewModel holds no Room-backed
+ * upstream; never Eagerly") applies here as much as anywhere else, and the one-shot-emission shape
+ * this replaced is also what made [start] unable to represent anything past the FIRST session
+ * check: a review round (task 9b.0, finding 1) caught that mutating the already-built `NavGraph`'s
+ * `startDestinationId` after a login — the fix that shape forced — does not survive an Activity
+ * recreation, since `NavGraph` state lives in the composition, not in this ViewModel, and gets
+ * rebuilt from whatever `start` says on the next composition. [markSignedIn] is what [start] needs
+ * to be mutable FOR: the graph's *declared* `startDestination` (`ShowTrackNavHost.startDestinationFor`)
+ * is what has to change, not a graph already built.
+ *
+ * Round 1 (task 9b.6 fix round): [AppStart.Onboarding] is what makes the SAME mechanism serve the
+ * AniList import screen. A version of this fix that navigated to `ImportRoute` and then called
+ * [markSignedIn] discovered the mechanism works AGAINST a caller who fights it: `markSignedIn`
+ * promoting `Auth` to `Library` in the same frame as an explicit navigate to `ImportRoute` still
+ * re-supplies a graph whose declared start is `LibraryRoute`, and `NavController.setGraph`'s
+ * inequality branch resets the back stack to THAT — wiping the navigation that had just happened,
+ * regardless of which of the two calls ran first (both land in the same recomposition). The fix
+ * is not to fight the reset but to make `start` agree with where the navigate is actually going:
+ * [Onboarding] is a THIRD decided value precisely so the graph's declared start destination and
+ * the imperative navigate converge on `ImportRoute` together, the same way `Auth` promoting to
+ * `Library` already converges with `navigateToLibraryClearingAuth()` — see `ShowTrackNavHost`'s
+ * KDoc for the mechanism this reuses rather than reinvents.
  */
 @HiltViewModel
 class AppViewModel
     @Inject
     constructor(
-        auth: AuthRepository,
+        private val auth: AuthRepository,
     ) : ViewModel() {
-        val start: StateFlow<AppStart> =
-            flow { emit(if (auth.hasSession()) AppStart.Library else AppStart.Auth) }
-                .stateIn(viewModelScope, SharingStarted.Eagerly, AppStart.Undecided)
+        private val mutableStart = MutableStateFlow<AppStart>(AppStart.Undecided)
+        val start: StateFlow<AppStart> = mutableStart.asStateFlow()
+
+        init {
+            viewModelScope.launch {
+                mutableStart.value = if (auth.hasSession()) AppStart.Library else AppStart.Auth
+            }
+        }
+
+        /**
+         * Promotes an `Auth`-started session once authentication succeeds — called from
+         * `ShowTrackNavHost`'s routing table at the exact choke point `navigateToLibraryClearingAuth`/
+         * `navigateToImportClearingAuth` already is.
+         *
+         * [isNewAccount] decides WHICH decided value: [AppStart.Onboarding] for a fresh
+         * registration (offering the AniList import screen), [AppStart.Library] for everything
+         * else — an ordinary login, AND finishing onboarding itself. That second case is why this
+         * is one function taking a parameter rather than two named ones: `routeShowTrackNavigation`'s
+         * `LibraryRoute` branch calls this with `isNewAccount = false` both when a login completes
+         * (`start` was `Auth`) and when the import screen's skip/Done action finishes onboarding
+         * (`start` was `Onboarding`) — in both cases the destination this call promotes TOWARD is
+         * `Library`, and the caller does not need a second name for "not new, and also not
+         * currently mid-onboarding" to say so.
+         *
+         * One-way in exactly ONE direction, deliberately: [start] never reverts to [AppStart.Auth]
+         * — a runtime logout is handled entirely by navigation (`navigateToAuthClearingStack`),
+         * never by moving this value backward. It is NOT one-way in every direction, and an earlier
+         * version of this KDoc (round 1) claimed [start] also never moves from [AppStart.Library]
+         * back to [AppStart.Onboarding] — that claim was false by round 2: [start] DOES move from
+         * [AppStart.Library] back to [AppStart.Onboarding], deliberately, for a second registration
+         * reached after a sign-out (`` `markSignedIn promotes to Onboarding from Library — a second
+         * registration after a sign-out` ``, this class's own test). See the correction below for
+         * why that is required rather than a bug, and why a guard making "never `Library` back to
+         * `Onboarding`" literally true turned out to be unsound. Onboarding is still offered exactly
+         * once PER REGISTRATION — never re-offered to the SAME already-promoted session by anything
+         * short of signing out and registering again (Profile's own door to `ImportRoute` calls this
+         * function ZERO times; see `ShowTrackNavHost`'s `ImportRoute` branch). See
+         * [ShowTrackNavHost]'s KDoc for why the graph's *declared* start destination is meant to
+         * describe "how far THIS session has been promoted", not "is the user currently signed in
+         * this instant". Calling this with a value [start] already holds (a second login after a
+         * mid-session logout, or a second call reaching `Library` from `Library`) is a same-value
+         * `StateFlow` write — no-op, no recomposition.
+         *
+         * Round 2 (task 9b.6 fix round) considered, and REJECTED, guarding this function itself
+         * against `isNewAccount = true` once `start` has moved past `Auth` — a suggestion aimed at
+         * making the "never moves from `Library` back to `Onboarding`" sentence above structural
+         * rather than resting on `routeShowTrackNavigation`'s own `ImportRoute`-branch guard.
+         * Measured, not assumed, to be unsound: a REAL, required scenario calls this with
+         * `isNewAccount = true` while `start` already reads `Library` — a SECOND registration,
+         * after a sign-out. A runtime sign-out is navigation-only and never moves `start` backward
+         * (that is the whole point of the paragraph above), so `start` is genuinely `Library`,
+         * left over from the FIRST account, at the exact moment the second account's registration
+         * legitimately needs to reach `Onboarding`. A guard reading `isNewAccount && start != Auth
+         * → refuse` cannot tell that call apart from the demotion bug it is trying to prevent —
+         * both present as "`markSignedIn(true)` called while `start == Library`" — because `start`
+         * alone does not carry the information that distinguishes them, which is exactly the same
+         * defect that made `start` the wrong signal for `routeShowTrackNavigation`'s own routing
+         * decision (see that function's KDoc). Confirmed empirically: adding the guard broke
+         * `` `registering a second account after a sign-out is still promoted to Onboarding` ``
+         * (`ShowTrackGraphRebuildTest`) with `expected:<Onboarding> but was:<Library>` — the guard
+         * silently ate a legitimate registration.
+         *
+         * The actual safeguard against the demotion bug lives one layer up, where the information
+         * needed to tell the two apart actually is: `routeShowTrackNavigation`'s `ImportRoute`
+         * branch only ever calls this with `isNewAccount = true` when `currentDestination ==
+         * AuthRoute` — Profile's own door to `ImportRoute` never reaches that branch's `true` case
+         * at all (`` `routing to ImportRoute from Profile does not call onSignedIn` ``,
+         * `ShowTrackGraphRoutingTest`), regardless of what `start` currently holds. This function
+         * stays a plain, unconditional promotion — the caller is where "is this navigation actually
+         * arriving from sign-in" is a decidable question, and this function is not.
+         */
+        fun markSignedIn(isNewAccount: Boolean) {
+            mutableStart.value = if (isNewAccount) AppStart.Onboarding else AppStart.Library
+        }
     }
 
 sealed interface AppStart {
@@ -34,4 +129,12 @@ sealed interface AppStart {
     data object Auth : AppStart
 
     data object Library : AppStart
+
+    /**
+     * A fresh registration, signed in but not yet past the AniList import offer (task 9b.6).
+     * [ShowTrackNavHost.startDestinationFor] maps this to `ImportRoute` — see [AppViewModel.markSignedIn]'s
+     * KDoc for why this needed to be a THIRD decided value rather than a flag riding along with
+     * [Library].
+     */
+    data object Onboarding : AppStart
 }

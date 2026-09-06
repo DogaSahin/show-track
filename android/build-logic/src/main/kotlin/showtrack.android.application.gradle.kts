@@ -29,6 +29,18 @@ android {
         sourceCompatibility = JavaVersion.VERSION_21
         targetCompatibility = JavaVersion.VERSION_21
     }
+
+    lint {
+        // Lint config is per-module, not inherited from showtrack.android.library — :app applies
+        // this plugin, not that one, so without this block :app's own hardcoded strings (e.g.
+        // MainActivity.kt, AppDestination.kt) would sit outside the net entirely. Same rule, same
+        // reasoning as the library plugin's copy of this block — see that copy's comment for the
+        // measured gap: both ids are XML-only checks that do not see a Compose `Text("literal")`
+        // or `contentDescription = "literal"` parameter, confirmed by three known literal Text()
+        // calls elsewhere in this project going unflagged under this exact config.
+        error += listOf("HardcodedText", "ContentDescription")
+        abortOnError = true
+    }
 }
 
 kotlin {

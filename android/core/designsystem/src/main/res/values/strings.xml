@@ -22,6 +22,12 @@
 
     <string name="action_retry">Retry</string>
 
+    <!-- StaleDataBanner: sits above a list rendered from a local cache while the network fetch it
+         would normally replace it with has not answered yet (decision C-B). Says the rows are
+         saved rather than live, distinct from `library_error_message` which means "nothing to
+         show at all". -->
+    <string name="stale_data_notice">Showing saved titles. Tap Retry to check for updates.</string>
+
     <!-- MediaSource display names (decision C-E): a raw enum constant (e.g. "ANILIST") must never
          reach the user — the search screen's degraded-provider banner is the current caller. -->
     <string name="media_source_anilist">AniList</string>
@@ -30,4 +36,12 @@
     <!-- ScoreChip's fallback when the user has not scored a title — an em dash, never a raw
          null or empty string. -->
     <string name="score_unset">—</string>
+
+    <!-- SpoilerReview's own reveal control (decision E-J) — tapping it is the only way the body
+         ever enters composition. -->
+    <string name="spoiler_review_reveal">Show spoiler</string>
+    <!-- Fix round 2: the reveal button's own contentDescription — %1$s is the review author's
+         username — so a screen reader can tell N otherwise-identical "Show spoiler" buttons
+         apart. Decision C-E: every contentDescription comes from R.string. -->
+    <string name="spoiler_review_reveal_by">Show spoiler review by %1$s</string>
 </resources>

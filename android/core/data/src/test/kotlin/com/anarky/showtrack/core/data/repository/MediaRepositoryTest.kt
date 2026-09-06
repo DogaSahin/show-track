@@ -3,13 +3,30 @@ package com.anarky.showtrack.core.data.repository
 import com.anarky.showtrack.core.model.MediaSource
 import com.anarky.showtrack.core.network.api.ShowTrackApi
 import com.anarky.showtrack.core.network.dto.AddLibraryEntryRequest
+import com.anarky.showtrack.core.network.dto.CreateGroupRequestDto
+import com.anarky.showtrack.core.network.dto.CreateReviewRequestDto
+import com.anarky.showtrack.core.network.dto.FeedPageDto
+import com.anarky.showtrack.core.network.dto.GroupDto
+import com.anarky.showtrack.core.network.dto.GroupWithInviteDto
+import com.anarky.showtrack.core.network.dto.ImportAniListRequest
+import com.anarky.showtrack.core.network.dto.ImportSummaryDto
+import com.anarky.showtrack.core.network.dto.JoinGroupRequestDto
 import com.anarky.showtrack.core.network.dto.LibraryEntryDto
 import com.anarky.showtrack.core.network.dto.LibraryPageDto
+import com.anarky.showtrack.core.network.dto.LibraryStatsDto
 import com.anarky.showtrack.core.network.dto.MediaDto
 import com.anarky.showtrack.core.network.dto.MediaSearchResponseDto
 import com.anarky.showtrack.core.network.dto.MediaSummaryDto
+import com.anarky.showtrack.core.network.dto.MemberDto
+import com.anarky.showtrack.core.network.dto.ProgressEntryDto
+import com.anarky.showtrack.core.network.dto.ProposeTitleRequestDto
 import com.anarky.showtrack.core.network.dto.PushTargetDto
+import com.anarky.showtrack.core.network.dto.RecommendationPageDto
 import com.anarky.showtrack.core.network.dto.RegisterTargetRequest
+import com.anarky.showtrack.core.network.dto.ReviewDto
+import com.anarky.showtrack.core.network.dto.UserDto
+import com.anarky.showtrack.core.network.dto.WatchlistItemDto
+import com.anarky.showtrack.core.network.dto.WatchlistPageDto
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
 import org.junit.Assert.assertEquals
@@ -170,9 +187,14 @@ class MediaRepositoryTest {
             status: String?,
             sort: String?,
             mediaId: String?,
+            favorite: Boolean?,
         ): LibraryPageDto = TODO("not used")
 
         override suspend fun addLibraryEntry(request: AddLibraryEntryRequest): LibraryEntryDto = TODO("not used")
+
+        override suspend fun libraryStats(): LibraryStatsDto = TODO("not used")
+
+        override suspend fun importAniList(request: ImportAniListRequest): ImportSummaryDto = TODO("not used")
 
         override suspend fun updateLibraryEntry(
             id: String,
@@ -191,8 +213,69 @@ class MediaRepositoryTest {
 
         override suspend fun mediaDetail(id: String): MediaDto = TODO("not used")
 
+        override suspend fun me(): UserDto = TODO("not used")
+
         override suspend fun registerPushTarget(request: RegisterTargetRequest): PushTargetDto = TODO("not used")
 
         override suspend fun deletePushTarget(id: String): Unit = TODO("not used")
+
+        override suspend fun recommendations(
+            cursor: String?,
+            limit: Int,
+        ): RecommendationPageDto = TODO("not used")
+
+        override suspend fun createGroup(request: CreateGroupRequestDto): GroupWithInviteDto = TODO("not used")
+
+        override suspend fun groups(): List<GroupDto> = TODO("not used")
+
+        override suspend fun joinGroup(request: JoinGroupRequestDto): GroupWithInviteDto = TODO("not used")
+
+        override suspend fun groupMembers(groupId: String): List<MemberDto> = TODO("not used")
+
+        override suspend fun rotateGroupInvite(groupId: String): GroupWithInviteDto = TODO("not used")
+
+        override suspend fun removeGroupMember(
+            groupId: String,
+            userId: String,
+        ): Unit = TODO("not used")
+
+        override suspend fun groupFeed(
+            groupId: String,
+            cursor: String?,
+            limit: Int,
+        ): FeedPageDto = TODO("not used")
+
+        override suspend fun groupReviews(
+            groupId: String,
+            mediaId: String,
+        ): List<ReviewDto> = TODO("not used")
+
+        override suspend fun groupWatchlist(
+            groupId: String,
+            cursor: String?,
+            limit: Int,
+        ): WatchlistPageDto = TODO("not used")
+
+        override suspend fun proposeToWatchlist(
+            groupId: String,
+            request: ProposeTitleRequestDto,
+        ): WatchlistItemDto = TODO("not used")
+
+        override suspend fun removeFromWatchlist(
+            groupId: String,
+            entryId: String,
+        ): Unit = TODO("not used")
+
+        override suspend fun groupProgress(
+            groupId: String,
+            mediaId: String,
+        ): List<ProgressEntryDto> = TODO("not used")
+
+        override suspend fun createReview(request: CreateReviewRequestDto): ReviewDto = TODO("not used")
+
+        override suspend fun updateReview(
+            id: String,
+            patch: JsonObject,
+        ): ReviewDto = TODO("not used")
     }
 }

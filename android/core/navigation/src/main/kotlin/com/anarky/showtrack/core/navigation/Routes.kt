@@ -44,8 +44,35 @@ data object SearchRoute : AppRoute
 @Serializable
 data object GroupsRoute : AppRoute
 
+/**
+ * One group's detail screen (task 9c.1 adds the route; task 9c.2 builds the real screen behind
+ * it — feed, watchlist, members). [groupId] rather than a whole [com.anarky.showtrack.core.model.Group]:
+ * the same reasoning [DetailRoute] carries a bare `mediaId`, not a `Media` — a route argument is a
+ * navigation key, not a data payload, and the destination re-fetches its own state from the id.
+ *
+ * Reached from [GroupsRoute]'s list (`GroupsNavigation.kt`'s `groupsEntry`), never constructed with
+ * an invented id — `:feature:groups`' own screen is the only place a [com.anarky.showtrack.core.model.Group.id]
+ * from a loaded list or a fresh create/join response is in scope.
+ */
+@Serializable
+data class GroupDetailRoute(
+    val groupId: String,
+) : AppRoute
+
 @Serializable
 data object FeedRoute : AppRoute
+
+/**
+ * The AniList import screen (task 9b.6). Lives in `:feature:profile` — the module already owns
+ * account-level actions (push opt-in, sign-out) — but the route sits here in `:core:navigation`
+ * rather than as a `:feature:profile`-only concept, because `:app` reaches it from TWO places that
+ * must not depend on each other: `:feature:profile` itself (an ordinary settings action) and
+ * `:feature:auth`'s post-register success (onboarding, offered as the alternative to an empty
+ * library). Routing `:feature:auth` straight to a `:feature:profile` screen would violate
+ * architecture rule 1; routing it through this shared route contract does not.
+ */
+@Serializable
+data object ImportRoute : AppRoute
 
 /**
  * The app's private deep-link scheme, and the one route reachable through it.

@@ -39,5 +39,14 @@ sealed interface AuthUiState {
         val error: AuthError? = null,
     ) : AuthUiState
 
-    data object Authenticated : AuthUiState
+    /**
+     * [isNewAccount] (task 9b.6) is what lets `:app` route a fresh registration to the AniList
+     * import screen instead of straight to the library, without `:feature:auth` naming
+     * `:feature:profile` or `ImportRoute` itself — a `data class` rather than the `data object`
+     * this used to be, precisely because login and register both used to produce the SAME value
+     * here, which is what made them indistinguishable to `onAuthenticated`'s caller.
+     */
+    data class Authenticated(
+        val isNewAccount: Boolean,
+    ) : AuthUiState
 }

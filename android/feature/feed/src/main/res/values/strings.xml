@@ -1,0 +1,55 @@
+<resources>
+    <string name="feed_title">Activity</string>
+
+    <!-- Ruling 1 (9c.4/9c.5 circularity, progress.md): FeedScreen renders this when
+         activeGroupId is null — no group is active yet, because task 9c.5 (the group switcher)
+         has not shipped. Distinct copy from feed_empty_activity below: "you have no groups" and
+         "this group has no activity yet" are different facts and must not share a string. -->
+    <string name="feed_no_group_message">Join or create a group to see its activity here.</string>
+    <!-- BLOCKING B2 (task 9c.5 fix round 1): the CTA on feed_no_group_message's EmptyState — a
+         real door to Groups (reached from Profile, design §3.2), not just a sentence with nowhere
+         to go from it. -->
+    <string name="feed_no_group_action">Create or join a group</string>
+
+    <!-- BLOCKING B3 (task 9c.5 fix round 1): ActiveGroupState.Loading/Error, distinct from
+         Success(groups = emptyList()) — "we don\'t know yet" / "the fetch failed" must never read
+         as "you are in no groups", the create-or-join invitation above. -->
+    <string name="feed_groups_error_retry">Couldn\'t load your groups. Tap to retry.</string>
+
+    <!-- The active group is known, the fetch succeeded, and it came back with zero rows. -->
+    <string name="feed_empty_activity">Nothing has happened in this group yet.</string>
+
+    <string name="feed_stale_notice">Showing the last known activity…</string>
+    <string name="feed_page_error">Couldn\'t load more activity. Tap to retry.</string>
+
+    <!-- GroupFailure -> copy, this module's own mapping (GroupsDialogs.kt's messageRes() is
+         `internal` to :feature:groups and architecture rule 2/1 keep this module from reaching
+         into another feature for it either way). -->
+    <string name="feed_error_network">Couldn\'t reach the server. Check your connection.</string>
+    <string name="feed_error_not_a_member">You\'re no longer a member of this group.</string>
+    <string name="feed_error_unknown">Something went wrong. Please try again.</string>
+
+    <!-- One string per ActivityKind (E-A/E-H), %1$s = actor username, %2$s = title. -->
+    <string name="feed_entry_added">%1$s added %2$s</string>
+    <string name="feed_entry_progressed">%1$s updated their progress on %2$s</string>
+    <string name="feed_entry_rated">%1$s rated %2$s</string>
+    <string name="feed_entry_completed">%1$s finished %2$s</string>
+    <string name="feed_entry_dropped">%1$s dropped %2$s</string>
+
+    <!-- ActivityKind.IMPORTED carries media = null (backend decision S-A) — no %2$s title, a
+         count instead. %2$s is FeedEntry.payload["count"], read as a plain string (payload is
+         Map<String, String> end to end — GroupMapper's own stringify()), or
+         feed_import_count_unknown when the backend ever omits it. -->
+    <string name="feed_entry_imported">%1$s imported %2$s titles from AniList</string>
+    <string name="feed_import_count_unknown">several</string>
+
+    <!-- Fallback when FeedEntry.media is unexpectedly null for a kind other than IMPORTED (the
+         type system does not rule this out — see FeedEntry.feedText()'s own KDoc) — renders
+         instead of crashing on a null title. -->
+    <string name="feed_unknown_title">a title</string>
+
+    <!-- ActivityKind.UNKNOWN — a seventh kind a future backend adds must render a generic line,
+         not crash a client built today (GroupMapper's own kindOf() fallback). No title, no
+         payload: this client has no idea what either would mean for a kind it doesn't recognise. -->
+    <string name="feed_entry_unknown">%1$s did something in this group</string>
+</resources>

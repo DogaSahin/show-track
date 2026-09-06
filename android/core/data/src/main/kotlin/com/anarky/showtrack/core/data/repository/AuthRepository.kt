@@ -10,6 +10,31 @@ import com.anarky.showtrack.core.model.AuthFailure
 interface AuthRepository {
     suspend fun hasSession(): Boolean
 
+    /**
+     * `GET /v1/users/me`, answering the signed-in user's own id (task 9c.2 round 1 — moved here
+     * from `GroupRepository` on review; see this file's own note below for why). Resolved
+     * INDEPENDENTLY of any screen-scoped load: identity is a session-lifetime fact, cached in
+     * memory here for the life of the session and cleared on [logout] — a caller that asks twice
+     * pays for one network round trip, not two. Throws [com.anarky.showtrack.core.model.AuthFailure]
+     * on failure; unlike [login]/[register] there is no "wrong credentials" case, so only
+     * [com.anarky.showtrack.core.model.AuthFailure.Offline]/[com.anarky.showtrack.core.model.AuthFailure.Unexpected]
+     * are ever produced.
+     *
+     * **Why this lives on `AuthRepository`, not `GroupRepository`** (round 1 review finding,
+     * BLOCKING 2/3 and the ruling that resolved it): the original placement fetched this identity
+     * INSIDE THE SAME `try` as the group's member list, which meant a failed member-list load left
+     * no id in existence at all — every action needing it (leaving the group) died silently with
+     * the load, even though leaving has nothing to do with whether the member list loaded. C-S says
+     * one error channel PER OPERATION, not one failure TYPE per screen; collapsing "which type do I
+     * catch" into "which screen am I on" is what produced the bug. Identity is a session-lifetime
+     * fact; the member list is a per-screen, per-refresh fact — fusing them made the session fact
+     * unavailable exactly when the screen fact failed. It is also the fact the NEXT things this
+     * phase builds (a "you" badge on feed actors, "your review" on a shared title, your own column
+     * in progress comparison) will all need, and none of them has any reason to import
+     * `GroupRepository` to ask a non-group question.
+     */
+    suspend fun currentUserId(): String
+
     /** Throws [AuthFailure] — `:feature:auth` catches its cases to tell a wrong password from being offline. */
     suspend fun login(
         email: String,

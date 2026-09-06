@@ -17,6 +17,7 @@ from app.library.schemas import (
     LibraryEntry,
     LibraryPage,
     LibrarySort,
+    LibraryStats,
     ReviewRead,
     UpdateLibraryEntryRequest,
     UpdateReviewRequest,
@@ -99,6 +100,10 @@ async def list_library(
     # rather than adding GET /library/by-media/{id}: same response envelope, same cursor, same
     # sort, and no new 404 semantics — a title you do not track is an empty page, not an error.
     media_id: uuid.UUID | None = None,
+    # Favourites are a filter on the library, not a separate collection — same envelope, same
+    # cursor, same sorts. `bool | None`, so absent means "no filter" and `false` means
+    # "non-favourites", which a plain `bool = False` default would collapse.
+    favorite: bool | None = None,
     sort: LibrarySort = LibrarySort.TITLE,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     # Capped: decode_cursor contains RecursionError, but not paying for a megabyte of nesting in
@@ -125,6 +130,7 @@ async def list_library(
         cursor=decoded,
         now=datetime.now(tz=UTC),
         media_id=media_id,
+        favorite=favorite,
     )
     return LibraryPage(items=items, next_cursor=next_cursor)
 
@@ -157,6 +163,16 @@ async def import_from_anilist(
     )
     await session.commit()
     return summary
+
+
+@router.get("/stats", response_model=LibraryStats)
+async def get_library_stats(session: SessionDep, current_user: CurrentUserDep) -> LibraryStats:
+    """Declared before the `/{entry_id}` routes below for consistency with app/media/routes.py,
+    which documents the same ordering for a case where it is load-bearing. This module has no
+    `GET /{entry_id}` — only PATCH and DELETE — so a `GET /stats` cannot collide with a path
+    parameter whatever the declaration order here.
+    """
+    return await service.get_stats(session, user_id=current_user.id)
 
 
 _ENTRY_NOT_FOUND = "library entry not found"

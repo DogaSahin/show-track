@@ -50,6 +50,16 @@ jobs:
       - name: Lint build-logic
         run: ./gradlew -p build-logic ktlintCheck detekt
 
+      # Enforces decision C-E (every user-facing string, contentDescription included, comes from
+      # R.string) — showtrack.android.library/.application set HardcodedText and
+      # ContentDescription to error with abortOnError = true. This step is what makes that a gate
+      # rather than a config that only ever ran on whichever machine last had the memory to finish
+      # it locally: task 9b.0 measured lintDebug OOMing under this project's documented local
+      # bound, which is precisely why running it here, not just documenting it in README, is the
+      # part that actually matters — "a gate that does not run the check is not a gate."
+      - name: Lint (Android)
+        run: ./gradlew lintDebug
+
       # Also runs the build-logic convention-plugin tests, including the ones that prove the
       # module-dependency rules fail a real build. See android/build.gradle.kts.
       - name: Unit tests

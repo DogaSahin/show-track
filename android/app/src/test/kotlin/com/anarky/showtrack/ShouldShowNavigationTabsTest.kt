@@ -7,9 +7,12 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.ComposeNavigator
 import androidx.navigation.createGraph
 import androidx.test.core.app.ApplicationProvider
+import com.anarky.showtrack.core.model.ActiveGroupState
 import com.anarky.showtrack.core.navigation.AuthRoute
 import com.anarky.showtrack.core.navigation.FavoritesRoute
+import com.anarky.showtrack.core.navigation.ImportRoute
 import com.anarky.showtrack.core.navigation.LibraryRoute
+import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -21,8 +24,13 @@ import org.robolectric.annotation.Config
  * Regression guard for the bug where the bottom nav bar stayed hidden for an entire process after
  * a logged-out cold start: `shouldShowNavigationTabs` used to compare `start == AppStart.Library`,
  * which is true only for a `Library`-started session and stays false forever once a session starts
- * on `AuthRoute` and then logs in — `start` is a one-shot emission (`AppViewModel`'s KDoc) and is
- * never re-evaluated. This pins the fixed condition directly, without composing `ShowTrackApp`
+ * on `AuthRoute` and then logs in — `start` was a one-shot emission at the time and never
+ * re-evaluated. That shape is gone now (task 9b.0, review round 1: `AppViewModel.markSignedIn()`
+ * promotes `start` from `Auth` to `Library` on login, for an unrelated bug), but the fix below did
+ * not change with it: `start`'s promotion is deliberately ONE-WAY, so it still cannot serve as
+ * THIS condition's signal in the Library→Auth direction — see `MainActivity.kt`'s own comment
+ * above `shouldShowNavigationTabs`'s call site for why `currentBackStackEntry` remains the one
+ * this reads. This pins the fixed condition directly, without composing `ShowTrackApp`
  * (which needs a Hilt harness this module does not have) — same Robolectric-NavController setup
  * `ShowTrackGraphRoutingTest`/`AuthNavigationTest` already use, so a real `NavDestination` (which
  * needs a `Context` to parse its route) is available to pass in.
@@ -60,7 +68,7 @@ class ShouldShowNavigationTabsTest {
     /**
      * `(Undecided, null)` is the MOST-executed cell of the nine: it's the real first composition
      * pass of every single launch, cold or warm — `start` reads `Undecided` before `AppViewModel`'s
-     * one-shot flow has emitted, and no graph exists yet for `currentBackStackEntryAsState()` to
+     * session check has resolved, and no graph exists yet for `currentBackStackEntryAsState()` to
      * read a destination from, so it's still at its `collectAsState(null)` seed. Every other cell
      * in this file is driven off a real, already-built `NavHostController`; this one — despite being
      * the one everything else starts from — had no test at all before this was added. `(Undecided,
@@ -80,6 +88,40 @@ class ShouldShowNavigationTabsTest {
 
         assertFalse(shouldShowNavigationTabs(AppStart.Auth, destination))
         assertFalse(shouldShowNavigationTabs(AppStart.Library, destination))
+    }
+
+    /**
+     * Round 2, task 9b.6 fix round — a blind review measured this live, and it had NO coverage at
+     * all before this test: `AppStart.Onboarding` maps to `ImportRoute` as the graph's declared
+     * start destination, and `findStartDestination()` (the tab bar's own `popUpTo` target) trusts
+     * that to be a real tab. Showing tabs here pins `ImportRoute` underneath every tab's own back
+     * stack (Back from any tab returns to onboarding instead of exiting), and a tab tap never
+     * promotes `start`, so a configuration change resets the graph back to a bare `ImportRoute`
+     * stack, discarding whatever tab the user was on. Hidden here even though the current
+     * destination genuinely is `ImportRoute`, not `AuthRoute` — this is the ONE case
+     * `shouldShowNavigationTabs` reads `start` for anything beyond the `Undecided` boundary.
+     */
+    @Test
+    fun `hidden on Onboarding even though the current destination is not AuthRoute`() {
+        val destination = controllerWith { onboardingOnlyGraph() }.currentDestination
+
+        assertFalse(shouldShowNavigationTabs(AppStart.Onboarding, destination))
+    }
+
+    /**
+     * The mirror of `shown as soon as navigation leaves AuthRoute, regardless of which route
+     * follows` below: unlike `Auth`, moving `start` itself is not enough to reveal the tab bar
+     * while still `Onboarding` — the exclusion is keyed on `start`, not on which destination is
+     * current, precisely because `ImportRoute` is a real, valid destination to be sitting on and
+     * tabs must stay hidden there regardless.
+     */
+    @Test
+    fun `still hidden on Onboarding even navigated away from ImportRoute`() {
+        val controller = controllerWith { onboardingOnlyGraph() }
+
+        controller.navigate(FavoritesRoute)
+
+        assertFalse(shouldShowNavigationTabs(AppStart.Onboarding, controller.currentDestination))
     }
 
     /**
@@ -108,8 +150,11 @@ class ShouldShowNavigationTabsTest {
         val controller = controllerWith { authOnlyGraph() }
         controller.routeShowTrackNavigation(LibraryRoute)
 
-        // `start` never flips off `Auth` for the rest of the process (it is one-shot), yet the
-        // tabs must now be visible: the current destination is what changed.
+        // This call passes no onSignedIn (the default no-op), so `start` genuinely stays
+        // AppStart.Auth right here — but even in production, where ShowTrackGraph DOES wire
+        // onSignedIn, shouldShowNavigationTabs still would not read the promotion: it never
+        // looks past Undecided vs. decided, in either direction (see MainActivity.kt). The
+        // current destination is what changed, and that is what this function reads.
         assertTrue(shouldShowNavigationTabs(AppStart.Auth, controller.currentDestination))
     }
 
@@ -134,8 +179,22 @@ class ShouldShowNavigationTabsTest {
             }
 
     private fun NavHostController.defaultGraph() =
-        createGraph(startDestination = LibraryRoute) { showTrackDestinations(onNavigate = { }) }
+        createGraph(startDestination = LibraryRoute) { testShowTrackDestinations(onNavigate = { }) }
 
     private fun NavHostController.authOnlyGraph() =
-        createGraph(startDestination = AuthRoute) { showTrackDestinations(onNavigate = { }) }
+        createGraph(startDestination = AuthRoute) { testShowTrackDestinations(onNavigate = { }) }
+
+    private fun NavHostController.onboardingOnlyGraph() =
+        createGraph(startDestination = ImportRoute) { testShowTrackDestinations(onNavigate = { }) }
+
+    private fun androidx.navigation.NavGraphBuilder.testShowTrackDestinations(
+        onNavigate: (com.anarky.showtrack.core.navigation.AppRoute) -> Unit,
+    ) {
+        showTrackDestinations(
+            onNavigate = onNavigate,
+            activeGroup = MutableStateFlow(ActiveGroupState.Loading),
+            onSwitchGroup = {},
+            onRetryGroups = {},
+        )
+    }
 }

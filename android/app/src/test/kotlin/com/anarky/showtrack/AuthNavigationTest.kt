@@ -7,10 +7,12 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.ComposeNavigator
 import androidx.navigation.createGraph
 import androidx.test.core.app.ApplicationProvider
+import com.anarky.showtrack.core.model.ActiveGroupState
 import com.anarky.showtrack.core.navigation.AuthRoute
 import com.anarky.showtrack.core.navigation.DetailRoute
 import com.anarky.showtrack.core.navigation.FavoritesRoute
 import com.anarky.showtrack.core.navigation.LibraryRoute
+import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Test
@@ -79,7 +81,7 @@ class AuthNavigationTest {
             }
 
     private fun NavHostController.defaultGraph() =
-        createGraph(startDestination = LibraryRoute) { showTrackDestinations(onNavigate = { }) }
+        createGraph(startDestination = LibraryRoute) { testShowTrackDestinations(onNavigate = { }) }
 
     // The String overload, because the typed one pairs `startDestination: Any` with
     // `route: KClass<*>`, and giving the graph a KClass route would need a @Serializable marker
@@ -89,7 +91,18 @@ class AuthNavigationTest {
         createGraph(
             startDestination = requireNotNull(LibraryRoute::class.qualifiedName),
             route = ROOT_GRAPH_ROUTE,
-        ) { showTrackDestinations(onNavigate = { }) }
+        ) { testShowTrackDestinations(onNavigate = { }) }
+
+    private fun androidx.navigation.NavGraphBuilder.testShowTrackDestinations(
+        onNavigate: (com.anarky.showtrack.core.navigation.AppRoute) -> Unit,
+    ) {
+        showTrackDestinations(
+            onNavigate = onNavigate,
+            activeGroup = MutableStateFlow(ActiveGroupState.Loading),
+            onSwitchGroup = {},
+            onRetryGroups = {},
+        )
+    }
 
     // The root NavGraph is itself the first back-stack entry, so the expected lists below start
     // with it: null when the graph has no route, the route string when it has one.

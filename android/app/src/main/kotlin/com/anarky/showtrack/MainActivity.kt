@@ -15,6 +15,7 @@ import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffo
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffoldDefaults
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteType
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
@@ -23,7 +24,6 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavDestination
 import androidx.navigation.NavDestination.Companion.hasRoute
-import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.anarky.showtrack.core.data.auth.AuthEventSource
@@ -31,7 +31,10 @@ import com.anarky.showtrack.core.designsystem.theme.ShowTrackTheme
 import com.anarky.showtrack.core.model.AuthEvent
 import com.anarky.showtrack.core.navigation.AppRoute
 import com.anarky.showtrack.core.navigation.AuthRoute
+import com.anarky.showtrack.core.navigation.DiscoverRoute
 import com.anarky.showtrack.core.navigation.FavoritesRoute
+import com.anarky.showtrack.core.navigation.FeedRoute
+import com.anarky.showtrack.core.navigation.GroupsRoute
 import com.anarky.showtrack.core.navigation.LibraryRoute
 import com.anarky.showtrack.core.navigation.ProfileRoute
 import dagger.hilt.android.AndroidEntryPoint
@@ -90,21 +93,59 @@ fun ShowTrackApp(authEvents: Flow<AuthEvent>) {
     // NavBackStackEntry scope, so hiltViewModel() answers from the Activity's ViewModelStore
     // either way — this is a second read of the existing StateFlow, not a second decision.
     //
-    // `start` is a ONE-SHOT emission (AppViewModel's KDoc): it fires once at launch and the flow
-    // then completes, so it is never re-evaluated and cannot be trusted as a CURRENT signal in
-    // either direction. It used to be compared with `== AppStart.Library`, which reasoned about
-    // only the Library→Auth direction (a runtime logout leaves it stuck on `Library`) and missed
-    // the opposite one entirely: an `Auth`-started session that then logs in never flips `start`
-    // to `Library`, so the tabs stayed hidden for the rest of the process — Favorites, Profile,
-    // and therefore Sign out, were unreachable after the primary registration/login path. The
-    // only thing `start` IS a reliable signal for is `Undecided` — the brief instant before the
-    // session check resolves, which is what the empty-strip guard below still needs it for.
-    // `currentBackStackEntry` is the actually-current signal: it changes the moment navigation
-    // lands on or leaves `AuthRoute`, whether that's the cold-start gate, a runtime logout via
-    // AuthGate, or a fresh login — so it alone decides the Auth/non-Auth half of this condition.
+    // `start` is NOT a one-shot emission any more (task 9b.0, review round 1): `markSignedIn()`
+    // moves it from `Auth` to `Library` once login succeeds, which is what fixed the popUpTo bug
+    // — see `ShowTrackNavHost`'s KDoc. But that move is deliberately ONE-WAY, and that is what
+    // still matters here.
+    //
+    // The OLD condition here was `start == AppStart.Library && currentDestination?.hasRoute(
+    // AuthRoute::class) != true` — two conjuncts, wrong in exactly ONE direction, not both:
+    //   - Auth→Library (login from an Auth-started session): `start` stuck on `Auth` makes the
+    //     LEFT conjunct false forever, so tabs stayed hidden after login — Favorites, Profile,
+    //     and therefore Sign out, unreachable. THIS is the direction that was actually broken.
+    //   - Library→Auth (a runtime logout): `start` stuck on `Library` makes the left conjunct
+    //     true, but the destination genuinely IS `AuthRoute`, so the RIGHT conjunct is false —
+    //     tabs stayed correctly hidden. This direction was never broken, because the destination
+    //     clause already owned it regardless of what `start` did.
+    // `start`'s new one-way promotion does not change that division of labour: it still cannot
+    // serve as a CURRENT signal in the Library→Auth direction (a signed-out user mid-session would
+    // still read `start == AppStart.Library` forever), but the destination clause has ALWAYS been
+    // what covers that direction, promotion or not. The ONLY thing `start` is a reliable signal
+    // for, in EITHER direction, is `Undecided` — the brief instant before the session check
+    // resolves, which is what the empty-strip guard below still needs it for. `currentBackStackEntry`
+    // is the actually-current signal: it changes the moment navigation lands on or leaves
+    // `AuthRoute`, whether that's the cold-start gate, a runtime logout via AuthGate, or a fresh
+    // login — so it alone decides the Auth/non-Auth half of this condition, `start`'s new
+    // promotion notwithstanding.
     val appViewModel: AppViewModel = hiltViewModel()
     val start by appViewModel.start.collectAsStateWithLifecycle()
     val showNavigationTabs = shouldShowNavigationTabs(start, currentBackStackEntry?.destination)
+
+    // The same Activity-scoped instance ShowTrackNavHost resolves for its own destination table
+    // (that composable's own comment on the identical AppViewModel pattern applies here too) — a
+    // second read of the existing StateFlow, not a second decision. Driven here, rather than from
+    // inside :feature:feed/:feature:groups, because ActiveGroupViewModel has no NavBackStackEntry
+    // of its own to hang a LifecycleResumeEffect off (ActiveGroupViewModel's own KDoc): this
+    // LaunchedEffect is the resume-shaped trigger instead, firing whenever the current destination
+    // CHANGES.
+    //
+    // reset() on AuthRoute (fix round 1, BLOCKING B4): AuthRoute is the one destination BOTH a
+    // session-expiry logout (AuthGate's reactive collector) and a user-initiated sign-out
+    // (ProfileNavigation's door) land on, via the SAME navigateToAuthClearingStack() call
+    // (ShowTrackNavHost.kt) — so this is the one place that sees "the session just ended" for
+    // either cause, without ActiveGroupViewModel needing an AuthEvent dependency of its own. A
+    // signed-out cold start also lands here and calls reset() harmlessly (nothing loaded yet).
+    // Without this, ActiveGroupViewModel — Activity-scoped, and a logout is a navigate, not an
+    // Activity recreation — would carry the PREVIOUS account's groups and active selection
+    // straight into the next one signing in inside the same process.
+    //
+    // refresh() on Feed or Groups: a group created or left on one tab is reflected in the switcher
+    // the next time either tab is visited, without either feature module knowing this ViewModel
+    // exists. Plus a load-once on any OTHER authenticated destination — see activeGroupActionFor's
+    // own KDoc for why Detail (and the push deep link into it) otherwise never loaded at all.
+    val activeGroupViewModel: ActiveGroupViewModel = hiltViewModel()
+    val currentDestination = currentBackStackEntry?.destination
+    ActiveGroupDestinationEffect(destination = currentDestination, viewModel = activeGroupViewModel)
 
     NavigationSuiteScaffold(
         // An empty navigationSuiteItems block does not remove the bar: NavigationSuiteScaffold
@@ -143,18 +184,11 @@ fun ShowTrackApp(authEvents: Flow<AuthEvent>) {
                     label = { Text(stringResource(destination.label)) },
                     selected =
                         currentBackStackEntry?.destination?.hasRoute(destination.route::class) == true,
-                    onClick = {
-                        navController.navigate(destination.route) {
-                            // The standard top-level-destination options. saveState/restoreState
-                            // keep each tab's scroll position and back stack; launchSingleTop
-                            // stops re-tapping a tab stacking duplicates of the same screen.
-                            popUpTo(navController.graph.findStartDestination().id) {
-                                saveState = true
-                            }
-                            launchSingleTop = true
-                            restoreState = true
-                        }
-                    },
+                    // Pulled out to ShowTrackNavHost.navigateToTopLevelDestination — see its KDoc
+                    // for why findStartDestination() can be trusted here (navigateToLibraryClearingAuth
+                    // is what keeps it in agreement with reality for an Auth-started session) and for
+                    // the bug this used to have when it couldn't be.
+                    onClick = { navController.navigateToTopLevelDestination(destination.route) },
                 )
             }
         },
@@ -167,6 +201,86 @@ fun ShowTrackApp(authEvents: Flow<AuthEvent>) {
             )
         }
     }
+}
+
+/**
+ * [ShowTrackApp]'s destination-keyed driver for [ActiveGroupViewModel], extracted from that
+ * composable's body so a plain Robolectric Compose test can compose IT — with a real
+ * [ActiveGroupViewModel] built over test fakes — and observe that the decision below actually
+ * reaches the ViewModel (`ActiveGroupDestinationEffectTest`, whole-branch fix round, SF1).
+ *
+ * Before the extraction this was an anonymous `LaunchedEffect` inside [ShowTrackApp], and a reviewer
+ * measured what that cost: **deleting the whole block left all 713 tests green** while the Feed tab
+ * spun forever on every launch and sign-out stopped clearing the previous account's groups.
+ * [activeGroupActionFor] was pinned, [ActiveGroupViewModel.refresh]/[ActiveGroupViewModel.reset]
+ * were pinned, and nothing joined the two. `:app` has no Hilt test harness, so composing
+ * [ShowTrackApp] itself is not available; this is the largest piece of that seam a test can reach.
+ *
+ * What is still NOT pinned, said plainly: that [ShowTrackApp] calls this function at all. The
+ * parameter is typed [ActiveGroupViewModel] and the app holds exactly one, so the same-type swap
+ * that has bitten this project five times is not constructible here — deleting the call is.
+ */
+@Composable
+internal fun ActiveGroupDestinationEffect(
+    destination: NavDestination?,
+    viewModel: ActiveGroupViewModel,
+) {
+    LaunchedEffect(destination) {
+        when (activeGroupActionFor(destination, viewModel.hasRequestedGroups)) {
+            ActiveGroupAction.Reset -> viewModel.reset()
+            ActiveGroupAction.Refresh -> viewModel.refresh()
+            ActiveGroupAction.None -> Unit
+        }
+    }
+}
+
+/**
+ * What [ActiveGroupViewModel] should do when the current destination changes — a pure function,
+ * `shouldShowNavigationTabs`/`startDestinationFor`'s own precedent (`ShowTrackNavHost.kt`): `:app`
+ * has no Hilt test harness, so a decision like this has to be extracted to something a plain JUnit
+ * test CAN drive, or it goes untested for the same reason those two did before they were pulled out.
+ *
+ * **Fix round 2, BLOCKING F3.** Before this, the `when` lived inline in [ShowTrackApp]'s
+ * `LaunchedEffect`, and a reviewer measured the cost directly: deleting the `AuthRoute ->
+ * activeGroupViewModel.reset()` branch entirely, or swapping it for `.refresh()`, left the whole
+ * suite green — [ActiveGroupViewModel.reset] itself is well tested (`ActiveGroupViewModelTest`),
+ * but nothing pinned that it is actually CALLED at the right destination. This function is that pin.
+ *
+ * **[hasRequestedGroups] (whole-branch fix round, BLOCKING 2).** Feed and Groups stay the two
+ * explicit refresh points — arriving at either always re-reads the list, which is what makes a
+ * group created or left on one tab visible on the other. Everything else that is not [AuthRoute]
+ * gets a LOAD-ONCE: the first authenticated destination of the session issues the fetch, and every
+ * later one answers `None`. Without it, the ordinary path into Detail — Library, tap a title, or a
+ * `showtrack://detail/<id>` push deep link — never issued a groups fetch at all, and Detail's group
+ * section rendered nothing for the life of the Activity. With a naive `DetailRoute -> Refresh`
+ * branch instead, every single Detail open would cost a `GET /v1/groups`, since
+ * [ActiveGroupViewModel.refresh] fetches unconditionally.
+ *
+ * [hasRequestedGroups] is read rather than [ActiveGroupState] itself because the flag flips
+ * SYNCHRONOUSLY, at the moment the fetch is requested — a state-based test (`state is Loading`)
+ * cannot tell "no fetch has been asked for" from "a fetch is in flight", so every destination
+ * change inside the first round trip would fire another one.
+ */
+internal fun activeGroupActionFor(
+    destination: NavDestination?,
+    hasRequestedGroups: Boolean,
+): ActiveGroupAction =
+    when {
+        destination == null -> ActiveGroupAction.None
+        destination.hasRoute(AuthRoute::class) -> ActiveGroupAction.Reset
+        destination.hasRoute(FeedRoute::class) -> ActiveGroupAction.Refresh
+        destination.hasRoute(GroupsRoute::class) -> ActiveGroupAction.Refresh
+        !hasRequestedGroups -> ActiveGroupAction.Refresh
+        else -> ActiveGroupAction.None
+    }
+
+/** [activeGroupActionFor]'s own result type — one of three, exhaustively `when`ed at its call site. */
+internal sealed interface ActiveGroupAction {
+    data object Reset : ActiveGroupAction
+
+    data object Refresh : ActiveGroupAction
+
+    data object None : ActiveGroupAction
 }
 
 /**
@@ -199,22 +313,84 @@ fun ShowTrackApp(authEvents: Flow<AuthEvent>) {
  * `Auth`-started session, which is the case that regressed before this function existed (`start`
  * alone stayed `Auth` for the rest of the process, so tabs never appeared post-login).
  *
- * **NOT pinned here, and not fixed by this change:** in an `Auth`-started session the NavHost's
- * `startDestination` is still `AuthRoute` after login, so a tab's `onClick`
- * `popUpTo(findStartDestination().id)` targets a destination no longer on the back stack and pops
- * nothing — tabs stack rather than swap. That's a real difference from a `Library`-started
- * session and needs a device check; this function only decides bar VISIBILITY, not back-stack
- * behaviour.
+ * **Still not pinned here, though it IS fixed elsewhere:** this function only decides bar
+ * VISIBILITY, never back-stack shape, so it cannot be the regression guard for that on its own —
+ * see [com.anarky.showtrack.TopLevelNavigationTest] and `ShowTrackGraphRebuildTest` for the pin.
+ * The bug used to read, in this KDoc: "in an `Auth`-started session the NavHost's `startDestination`
+ * is still `AuthRoute` after login, so a tab's `onClick` `popUpTo(findStartDestination().id)`
+ * targets a destination no longer on the back stack and pops nothing." That is no longer true, but
+ * NOT because anything below changed: `AppViewModel.markSignedIn()` (called from
+ * `ShowTrackNavHost`'s routing table, right after `navigateToLibraryClearingAuth`) moves `start`
+ * from `Auth` to `Library`, which makes `ShowTrackNavHost.startDestinationFor` answer
+ * `LibraryRoute` on the next recomposition — a DECLARED start destination, not a mutated one (a
+ * first version of this fix mutated the already-built graph directly and did not survive an
+ * Activity recreation; see `ShowTrackNavHost`'s KDoc for why that regressed).
+ *
+ * That move from `Auth` to `Library` is exactly why this function's own truth table needed a
+ * second look, and it mostly survives it: [start]'s decided values other than [AppStart.Onboarding]
+ * — [AppStart.Auth] and [AppStart.Library] — are both `!= Undecided` and read identically here,
+ * before and after any promotion between them, because THAT distinction really is "how the session
+ * started" rather than "where the user currently is", which this function has no business reading.
+ *
+ * [AppStart.Onboarding] (task 9b.6) is the one exception, added in round 2 of that task's fix
+ * round, and it is a genuine exception rather than a fourth value this function ignores the same
+ * way: the condition below excludes it explicitly. Unlike `Auth`→`Library`, `Onboarding` is not
+ * "how the session started" — it is "the user is currently on a specific, modal screen"
+ * (`ImportRoute`, which `AppStart.Onboarding` maps to as the graph's declared start destination),
+ * and the tab bar's own `findStartDestination()` mechanism (`navigateToTopLevelDestination`) trusts
+ * that declared start destination to be a REAL tab. Showing tabs over `ImportRoute` — or worse,
+ * leaving it pinned under every tab's own back stack — was a measured regression (see this
+ * function's own KDoc, and `ShouldShowNavigationTabsTest`'s `Onboarding` cases), not a theoretical
+ * one, which is why this is the one place `start` genuinely is read past the `Undecided` boundary.
+ * `shouldShowNavigationTabs` never touched `startDestinationId` before this change and still
+ * doesn't — the fix lives entirely in [AppViewModel] and the navigation layer this function only
+ * reads a destination from.
  */
 internal fun shouldShowNavigationTabs(
     start: AppStart,
     currentDestination: NavDestination?,
-): Boolean = start != AppStart.Undecided && currentDestination?.hasRoute(AuthRoute::class) == false
+): Boolean =
+    start != AppStart.Undecided &&
+        start != AppStart.Onboarding &&
+        // Round 2 (task 9b.6 fix round, a blind review's own measurement): Onboarding is a modal
+        // step, not a tab-bar-visible one — `ImportRoute` is the graph's declared start
+        // destination while AppStart.Onboarding holds, so `findStartDestination()` (the tab bar's
+        // own `popUpTo` target — see navigateToTopLevelDestination's KDoc) resolves to `ImportRoute`
+        // for as long as this excludes it, and every tab tap then leaves ImportRoute PINNED
+        // underneath every tab's own back stack: Back from any tab lands on the import screen
+        // instead of exiting, and — worse — a tab tap never promotes `start`, so a configuration
+        // change (rotation, dark-mode toggle, multi-window resize) rebuilds the graph declaring
+        // ImportRoute as its start all over again and resets the stack to just `[null, ImportRoute]`,
+        // discarding whatever tab the user was on. Excluding Onboarding here makes the import
+        // screen's only exits Skip and Done (`ImportScreen`'s own two actions), which is also what
+        // makes `findStartDestination()`'s assumption — "the declared start destination is a real
+        // tab, not a modal step" — true again for the tab bar specifically.
+        currentDestination?.hasRoute(AuthRoute::class) == false
 
 /**
- * The three top-level destinations the navigation suite offers. A subset of the nine routes on
- * purpose: Detail and Auth are pushed onto the stack rather than tabbed to, and Discover, Search,
- * Groups and Feed have no chrome yet — Phase 9 decides where they surface.
+ * The five top-level destinations the navigation suite offers. A subset of the routes on purpose:
+ * Detail and Auth are pushed onto the stack rather than tabbed to, and Search and Groups are
+ * reached from another screen's chrome rather than a tab — Search from Library's header icon,
+ * Groups from Profile (decision E-A).
+ *
+ * **Discover joined this set in task 9b.3**, not earlier: `:feature:discover` shipped in Phase 9a
+ * as a registered-but-unreachable placeholder (the exact Gap 1/Gap 2 shape `LibraryNavigation.kt`
+ * documents at length — a route wired into the graph with no door in, which is invisible to a
+ * diff-scoped review because no individual diff is wrong). Once the feed had real rows and a real
+ * one-tap add, it needed an actual door; unlike Search (reached from Library's header icon) or
+ * Groups (reached from Profile, decision E-A), Discover has no natural secondary entry point, so
+ * it became a fourth tab rather than staying an icon bolted onto some other screen's chrome.
+ *
+ * **Feed joined this set in task 9c.4**, the identical Gap 1/Gap 2 shape one more time:
+ * `:feature:feed` has shipped a registered `FeedRoute` destination since Phase 9's very first
+ * pass, with no door in until now. Unlike Groups — which decision E-A places behind Profile, and
+ * which the whole-branch fix round finally built there (`ProfileNavigation.kt`'s `groupsNavigation`)
+ * after three tasks in which the screen shipped and the door did not — the group activity feed has
+ * no natural secondary entry point, so it becomes a tab rather than an icon bolted onto
+ * `GroupsScreen`'s or `GroupDetailScreen`'s chrome.
+ * Placed between Discover and Favorites (this task's own brief, verbatim) rather than appended at
+ * the end: browsing (Discover) and social (Feed) sit together, ahead of the two account-scoped
+ * tabs (Favorites, Profile).
  *
  * Renamed from `AppDestinations`: with [AppDestination] now naming a row in the nav graph's
  * registration table, two types one plural apart meant two different things in the same package.
@@ -227,6 +403,8 @@ enum class TopLevelDestination(
     val route: AppRoute,
 ) {
     HOME(R.string.destination_home, R.drawable.ic_home, LibraryRoute),
+    DISCOVER(R.string.destination_discover, R.drawable.ic_explore, DiscoverRoute),
+    FEED(R.string.destination_feed, R.drawable.ic_feed, FeedRoute),
     FAVORITES(R.string.destination_favorites, R.drawable.ic_favorite, FavoritesRoute),
     PROFILE(R.string.destination_profile, R.drawable.ic_account_box, ProfileRoute),
 }

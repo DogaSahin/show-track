@@ -2,6 +2,17 @@ plugins {
     id("showtrack.android.feature")
 }
 
+android {
+    testOptions {
+        // DetailScreenTest (task 9c.6) drives DetailScreen()'s stringResource() calls through a
+        // real Compose test rule on the JVM, which needs this module's own res/values/strings.xml
+        // to resolve — the same requirement :feature:feed's/:feature:groups' own screen tests have.
+        unitTests {
+            isIncludeAndroidResources = true
+        }
+    }
+}
+
 dependencies {
     implementation(project(":core:designsystem"))
 
@@ -23,4 +34,9 @@ dependencies {
     // for, rather than a reason to fall back to an untyped string-keyed lookup.
     testImplementation(libs.robolectric)
     testImplementation(libs.androidx.test.core)
+
+    // DetailScreenTest (task 9c.6) drives the stateless DetailScreen() overload through a real
+    // Compose test rule on the JVM — `FeedScreenTest`'s identical setup.
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.androidx.compose.ui.test.junit4)
 }
