@@ -49,8 +49,8 @@ class RecommendationRepositoryImpl
         override val feed: StateFlow<List<Recommendation>> = mutableFeed.asStateFlow()
 
         /**
-         * `paginator.restart()`'s RETURNED page, not a re-read of [lastFetchedPage] or
-         * `paginator.items.value` — though either would agree here. `CursorPaginator.restart`
+         * `paginator.restart()`'s RETURNED page, not a re-read of `paginator.items.value` — though
+         * the two would agree here. `CursorPaginator.restart`
          * fetches before it mutates anything, so if the fetch throws this line never runs and
          * [mutableFeed] is left exactly as it was: a failed refresh leaves the feed the user is
          * looking at standing, rather than blanking it (the same "fetch before mutate" shape

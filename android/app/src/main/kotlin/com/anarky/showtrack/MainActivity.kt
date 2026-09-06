@@ -378,8 +378,8 @@ internal fun shouldShowNavigationTabs(
  * documents at length — a route wired into the graph with no door in, which is invisible to a
  * diff-scoped review because no individual diff is wrong). Once the feed had real rows and a real
  * one-tap add, it needed an actual door; unlike Search (reached from Library's header icon) or
- * Groups (still undecided), Discover has no natural secondary entry point, so it became a fourth
- * tab rather than staying an icon bolted onto some other screen's chrome.
+ * Groups (reached from Profile, decision E-A), Discover has no natural secondary entry point, so
+ * it became a fourth tab rather than staying an icon bolted onto some other screen's chrome.
  *
  * **Feed joined this set in task 9c.4**, the identical Gap 1/Gap 2 shape one more time:
  * `:feature:feed` has shipped a registered `FeedRoute` destination since Phase 9's very first

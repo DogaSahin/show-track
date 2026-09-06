@@ -1169,6 +1169,11 @@ minor or deliberately scoped out, not a regression:
   `.sdd/2026-09-01-showtrack-phase-9a-plan/deferred-minors.md` (outside this repository, alongside the
   design doc). None entered a fix loop during 9a; the final whole-branch review still owns triaging
   them.
+- **The field-by-field state-rebuild sweep covered `Success`-shaped states only.** `Form`-shaped
+  states (`AuthUiState.Form`, `ImportUiState.Form`) were not audited. Neither is a live defect
+  today — every field at every write to one of those states is deliberately decided — but a fourth
+  field added to `AuthUiState.Form` later could reset silently, the same way the swept `Success`
+  sites used to.
 - **The walkthrough backlog itself.** [Device walkthroughs](#device-walkthroughs) below now numbers
   41, covering Phases 8 through 9c, and **none of them has ever been run** — see that section's own
   opening note.
@@ -1637,7 +1642,7 @@ are two different accounts on the same server, not two logins of the same accoun
    switcher** appears as a header row on **Groups** without leaving the screen, and on the **Feed**
    tab — it did not exist with only one group (see walkthrough 27). *A switcher that only appears
    after navigating away from Groups and back means the create did not report the membership change
-   to `:app` (`onGroupsChanged`).*
+   to `:app` (`onRetryGroups`).*
 2. On the **Feed** tab, tap the switcher and select the first group. **Expect:** the feed shows that
    group's activity (or its empty state, if nothing has happened in it yet).
 3. Tap the switcher again and select the second group. **Expect:** the feed reloads to that group's

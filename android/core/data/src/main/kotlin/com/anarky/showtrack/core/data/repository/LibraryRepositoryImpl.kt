@@ -277,7 +277,8 @@ class LibraryRepositoryImpl
          * as it was (this line is never reached when the fetch throws), and a caller that instead
          * re-read the paginator's own list after the fact would be exposed to whatever a
          * concurrently-racing [loadMoreFavorites] had appended in the meantime — see
-         * [lastFetchedFavoritesPage]'s KDoc.
+         * [loadMoreFavorites]'s KDoc, where `loadMore()` returns the page it fetched rather than
+         * leaving it in a field that outlives the call.
          */
         override suspend fun refreshFavorites() {
             val firstPage = favoritesPaginator.restart()
