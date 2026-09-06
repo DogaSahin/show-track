@@ -454,8 +454,12 @@ class GroupDetailViewModel
          * reads as a successful one from the dialog's own point of view: it closes as though the
          * delete landed, even though it did not. Strictly better than the wedged modal a stuck flag
          * would leave (this function's own `finally` KDoc above), and cancellation here has no live
-         * source today (this class's own KDoc, "no `withTimeout`/`async` anywhere in this module")
-         * — but worth naming rather than leaving implicit if that ever changes.
+         * source today — there is no `withTimeout`/`async`/`coroutineScope`/`supervisorScope`
+         * anywhere in `:feature:groups`'s production code (checked directly; this is a claim about
+         * THIS module, not a codebase-wide one — `:feature:detail`'s `DetailViewModel` DOES use
+         * `coroutineScope { async { ... } }`, whose sibling-cancellation makes a live
+         * `CancellationException` source there, task 9c.8 round 3 review finding) — but worth
+         * naming rather than leaving implicit if that ever changes.
          */
         fun removeFromWatchlist(entryId: String) {
             if (mutableActionState.value.removingEntryId != null) return

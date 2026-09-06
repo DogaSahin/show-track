@@ -409,16 +409,74 @@ class DiscoverViewModelTest {
         }
 
     /**
-     * Review finding, round 2 (BLOCKING): [DiscoverViewModel.refresh] and [DiscoverViewModel.add]
-     * are the pair that actually duplicates a `media.id` — round 1's [loadMore]/`refreshInFlight`
-     * guard defended the wrong pair (see [loadMore]'s own KDoc, corrected round 2). Tap Add, POST
-     * in flight, a resume fires [DiscoverViewModel.refresh] before the server commits the add — the
-     * repository fake's `refreshResult` still names the row, so without this guard the refresh
-     * would republish it and a subsequent failed `restore()` would insert a SECOND copy. Asserts
-     * the repository call COUNT: a count on a fake cannot pass when the call never happens.
+     * Review finding, round 3 (minor item 1): an earlier version of `pendingLoadMoreAfterRefresh`
+     * cleared unconditionally in [DiscoverViewModel.refresh]'s own `finally`, BEFORE calling
+     * [DiscoverViewModel.loadMore] — so if the re-issued call itself bailed out (here, because a
+     * DIFFERENT `loadMore()` was still genuinely in flight), the signal was already gone and
+     * nothing remembered to retry once that other fetch finished. This drives exactly that
+     * interleaving and proves the signal survives: a SECOND, unrelated resume later on is what
+     * actually fires the deferred page fetch, which the OLD behaviour could never do.
      */
     @Test
-    fun `add is dropped while a refresh is genuinely in flight`() =
+    fun `a pending loadMore signal survives a re-issued call that itself bails out`() =
+        runTest(dispatcher) {
+            val recommendations =
+                FakeRecommendationRepository(refreshResult = listOf(FRIEREN), loadMoreAppends = listOf(BEBOP))
+            val viewModel = DiscoverViewModel(recommendations, FakeLibraryRepository())
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            // Call A: a genuine page fetch, held open — loadingMore stays true for the whole test
+            // until this gate is completed near the end.
+            recommendations.loadMoreGate = CompletableDeferred()
+            viewModel.loadMore()
+            advanceUntilIdle()
+            assertTrue((viewModel.state.value as DiscoverUiState.Success).loadingMore)
+
+            // Call B: dropped because a resume's refresh is now also in flight — sets the pending
+            // signal.
+            recommendations.refreshGate = CompletableDeferred()
+            viewModel.refresh()
+            viewModel.loadMore()
+            advanceUntilIdle()
+
+            // The refresh lands; its own finally re-issues the dropped call (attempt C) — but call
+            // A is STILL genuinely in flight, so attempt C bails on `loadingMore` and must NOT
+            // consume the pending signal.
+            recommendations.refreshGate?.complete(Unit)
+            advanceUntilIdle()
+            assertEquals(1, recommendations.loadMoreCalls) // only call A's own fetch so far
+
+            // Call A finally resolves normally.
+            recommendations.loadMoreGate?.complete(Unit)
+            advanceUntilIdle()
+            assertEquals(
+                DiscoverUiState.Success(items = listOf(FRIEREN, BEBOP), loadingMore = false, pageError = null),
+                viewModel.state.value,
+            )
+
+            // A LATER, unrelated resume is what actually proves the signal survived: with the OLD
+            // (broken) behaviour the flag was already cleared the moment attempt C bailed, so this
+            // second refresh's own finally would see nothing pending and loadMoreCalls would stay
+            // at 1 — no viewModel.loadMore() call appears anywhere below.
+            recommendations.loadMoreAppends = listOf(DANDADAN)
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            assertEquals(2, recommendations.loadMoreCalls)
+        }
+
+    /**
+     * Review finding, round 3 (BLOCKING — round 2's version of this test asserted the OPPOSITE,
+     * since round 2's [DiscoverViewModel.add] dropped a tap outright while a refresh was in
+     * flight; round 3 reverted that guard because it silently swallowed a direct user action for
+     * the whole of every resume refresh). A tap must proceed normally here: [remove] fires
+     * immediately, the row leaves [DiscoverUiState.Success.items], and `libraryRepository.add` is
+     * genuinely called — none of that waits for the concurrent [DiscoverViewModel.refresh] to
+     * finish.
+     */
+    @Test
+    fun `add proceeds normally while a refresh is genuinely in flight`() =
         runTest(dispatcher) {
             val recommendations = FakeRecommendationRepository(refreshResult = listOf(FRIEREN, BEBOP))
             val library = FakeLibraryRepository()
@@ -428,26 +486,95 @@ class DiscoverViewModelTest {
 
             recommendations.refreshGate = CompletableDeferred()
             viewModel.refresh() // a resume's refresh, held open
-            viewModel.add(FRIEREN) // must be dropped — a refresh is known to be in flight
+            viewModel.add(FRIEREN) // must NOT be dropped — a direct tap, not a scroll side effect
             advanceUntilIdle()
 
-            assertEquals(0, library.addCalls.size)
-            assertEquals(listOf(FRIEREN, BEBOP), (viewModel.state.value as DiscoverUiState.Success).items)
+            assertEquals(1, library.addCalls.size)
+            assertEquals(listOf(BEBOP), (viewModel.state.value as DiscoverUiState.Success).items)
 
             recommendations.refreshGate?.complete(Unit)
             advanceUntilIdle()
-
-            // Once the refresh has actually landed, add() is reachable again.
-            viewModel.add(FRIEREN)
-            advanceUntilIdle()
-            assertEquals(1, library.addCalls.size)
         }
 
     /**
-     * The reverse half of the same guard: a resume's [DiscoverViewModel.refresh] must not land
-     * WHILE an optimistic [DiscoverViewModel.add] is still in flight either — the failure path
-     * (`restore()` re-inserting a row a same-tick refresh already republished) is the crash the
-     * review's probe actually reproduced against round 1's code.
+     * Review finding, round 3 (BLOCKING): the "reverse ordering" — [DiscoverViewModel.refresh]
+     * already fetching when [DiscoverViewModel.add] starts — is what actually reproduced the
+     * review's probe. `recommendations.refreshResult` still names [FRIEREN] (the backend has not
+     * committed the add yet), so without [refresh]'s own re-applied [RecommendationRepository.remove]
+     * the successful fetch would republish the row this optimistic add just removed.
+     */
+    @Test
+    fun `a resume's refresh does not republish a row an in-flight add already removed`() =
+        runTest(dispatcher) {
+            val recommendations = FakeRecommendationRepository(refreshResult = listOf(FRIEREN, BEBOP))
+            val addGate = CompletableDeferred<Unit>()
+            val library = FakeLibraryRepository(addGate = addGate)
+            val viewModel = DiscoverViewModel(recommendations, library)
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            recommendations.refreshGate = CompletableDeferred()
+            viewModel.refresh() // the resume's refresh, still fetching
+            viewModel.add(FRIEREN) // starts WHILE the refresh above is still in flight
+            advanceUntilIdle()
+            assertEquals(listOf(BEBOP), (viewModel.state.value as DiscoverUiState.Success).items)
+
+            // The refresh's own fetch resolves with the SAME stale page — without the fix this
+            // would silently undo the optimistic removal above.
+            recommendations.refreshGate?.complete(Unit)
+            advanceUntilIdle()
+
+            assertEquals(
+                "a concurrent refresh must not undo an in-flight add's optimistic removal",
+                listOf(BEBOP),
+                (viewModel.state.value as DiscoverUiState.Success).items,
+            )
+
+            addGate.complete(Unit)
+            advanceUntilIdle()
+            assertEquals(listOf(BEBOP), (viewModel.state.value as DiscoverUiState.Success).items)
+        }
+
+    /**
+     * The crash the review's own probe reproduced, closed: `PROBE-ADD final ids =
+     * [media-frieren, media-frieren, media-bebop]` was round 1's shipped bug — a concurrent refresh
+     * republishing the row, followed by a failed add's own `restore()` inserting a SECOND copy.
+     * This test drives the identical sequence and asserts exactly ONE `media-frieren` survives.
+     */
+    @Test
+    fun `a failed add after a concurrent refresh restores without duplicating the row`() =
+        runTest(dispatcher) {
+            val recommendations = FakeRecommendationRepository(refreshResult = listOf(FRIEREN, BEBOP))
+            val failure = IOException("offline")
+            val addGate = CompletableDeferred<Unit>()
+            val library = FakeLibraryRepository(addFailure = failure, addGate = addGate)
+            val viewModel = DiscoverViewModel(recommendations, library)
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            recommendations.refreshGate = CompletableDeferred()
+            viewModel.refresh()
+            viewModel.add(FRIEREN)
+            advanceUntilIdle()
+
+            recommendations.refreshGate?.complete(Unit)
+            advanceUntilIdle()
+            assertEquals(listOf(BEBOP), (viewModel.state.value as DiscoverUiState.Success).items)
+
+            addGate.complete(Unit)
+            advanceUntilIdle()
+
+            val success = viewModel.state.value as DiscoverUiState.Success
+            assertEquals(1, success.items.count { it.media.id == FRIEREN.media.id })
+            assertEquals(AddFailure(FRIEREN.media.id, failure), success.addError)
+        }
+
+    /**
+     * The reverse half of [refresh]'s OWN re-entrancy guard — unaffected by any of the above:
+     * [refresh] still drops itself outright while an add is already in flight (the add-first
+     * ordering), which costs nothing to drop since [refresh] has no tap or retry affordance of its
+     * own the way [add] does — see [refresh]'s own KDoc for why the two orderings are closed
+     * differently.
      */
     @Test
     fun `refresh is dropped while an add is genuinely in flight`() =
