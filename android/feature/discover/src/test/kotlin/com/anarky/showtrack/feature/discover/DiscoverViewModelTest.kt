@@ -7,6 +7,7 @@ import com.anarky.showtrack.core.model.MediaStatus
 import com.anarky.showtrack.core.model.MediaType
 import com.anarky.showtrack.core.model.Recommendation
 import com.anarky.showtrack.core.model.RecommendationReason
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -17,6 +18,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -339,14 +341,17 @@ class DiscoverViewModelTest {
         }
 
     /**
-     * Review finding B3, round 1: before this task, [DiscoverViewModel.loadMore] and
-     * [DiscoverViewModel.refresh] were disjoint by construction, so they could never run
-     * concurrently against [RecommendationRepository]. A resume can now call [DiscoverViewModel.refresh]
-     * at any moment, including while a page fetch is in flight, which — per
-     * `RecommendationRepositoryImpl`'s own KDoc — can duplicate a `media.id` in the published feed
-     * and crash `DiscoverScreen`'s keyed `LazyColumn`. [DiscoverViewModel.loadMore] now drops a
-     * call outright while a refresh is known in flight. Asserts the repository call COUNT: a count
-     * on a fake cannot pass when the call never happens, which is what makes it discriminate.
+     * Review finding B3, round 1 (KDoc corrected round 2 — see [DiscoverViewModel.loadMore]'s own
+     * KDoc for why the ORIGINAL duplicate-`media.id` justification for this guard was false):
+     * before this task, [DiscoverViewModel.loadMore] and [DiscoverViewModel.refresh] were disjoint
+     * by construction, so they could never run concurrently against [RecommendationRepository]. A
+     * resume can now call [DiscoverViewModel.refresh] at any moment, including while a page fetch
+     * is in flight — [DiscoverViewModel.loadMore] drops that call outright rather than let
+     * [refresh]'s own page-1 truncation immediately discard the page it would have fetched.
+     * Asserts the repository call COUNT: a count on a fake cannot pass when the call never
+     * happens, which is what makes it discriminate. The follow-up — does the dropped call ever
+     * actually run? — is the next test below, which pins the automatic re-fire rather than a
+     * manual second call.
      */
     @Test
     fun `loadMore is dropped while a refresh is genuinely in flight`() =
@@ -365,11 +370,137 @@ class DiscoverViewModelTest {
 
             recommendations.refreshGate?.complete(Unit)
             advanceUntilIdle()
+        }
 
-            // Once the refresh has actually landed, loadMore() is reachable again.
+    /**
+     * Review finding, round 2 ("B3 guard can stall paging"): `EndOfListTrigger` only emits on the
+     * FALSE -> TRUE edge of its own `shouldTrigger` (that composable's own KDoc) — a `loadMore()`
+     * dropped by [DiscoverViewModel.loadMore]'s `refreshInFlight` guard changes neither `itemCount`
+     * nor scroll position, so nothing re-fires it on its own once the refresh lands. This test pins
+     * [pendingLoadMoreAfterRefresh]'s repair: the dropped call is re-issued automatically by
+     * [DiscoverViewModel.refresh]'s own `finally`, with NO second [DiscoverViewModel.loadMore] call
+     * from this test at all — the previous test above still drives a manual second call too, to
+     * pin that manual paging still works afterward, but this one isolates the automatic re-fire.
+     */
+    @Test
+    fun `a loadMore dropped by an in-flight refresh is re-issued automatically once the refresh lands`() =
+        runTest(dispatcher) {
+            val recommendations =
+                FakeRecommendationRepository(refreshResult = listOf(FRIEREN), loadMoreAppends = listOf(BEBOP))
+            val viewModel = DiscoverViewModel(recommendations, FakeLibraryRepository())
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            recommendations.refreshGate = CompletableDeferred()
+            viewModel.refresh() // a resume's refresh, held open
+            viewModel.loadMore() // dropped — sets pendingLoadMoreAfterRefresh
+            advanceUntilIdle()
+            assertEquals(0, recommendations.loadMoreCalls)
+
+            recommendations.refreshGate?.complete(Unit)
+            advanceUntilIdle()
+
+            // No second viewModel.loadMore() call here — refresh()'s own finally is what fired it.
+            assertEquals(1, recommendations.loadMoreCalls)
+            assertEquals(
+                DiscoverUiState.Success(items = listOf(FRIEREN, BEBOP), loadingMore = false, pageError = null),
+                viewModel.state.value,
+            )
+        }
+
+    /**
+     * Review finding, round 2 (BLOCKING): [DiscoverViewModel.refresh] and [DiscoverViewModel.add]
+     * are the pair that actually duplicates a `media.id` — round 1's [loadMore]/`refreshInFlight`
+     * guard defended the wrong pair (see [loadMore]'s own KDoc, corrected round 2). Tap Add, POST
+     * in flight, a resume fires [DiscoverViewModel.refresh] before the server commits the add — the
+     * repository fake's `refreshResult` still names the row, so without this guard the refresh
+     * would republish it and a subsequent failed `restore()` would insert a SECOND copy. Asserts
+     * the repository call COUNT: a count on a fake cannot pass when the call never happens.
+     */
+    @Test
+    fun `add is dropped while a refresh is genuinely in flight`() =
+        runTest(dispatcher) {
+            val recommendations = FakeRecommendationRepository(refreshResult = listOf(FRIEREN, BEBOP))
+            val library = FakeLibraryRepository()
+            val viewModel = DiscoverViewModel(recommendations, library)
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            recommendations.refreshGate = CompletableDeferred()
+            viewModel.refresh() // a resume's refresh, held open
+            viewModel.add(FRIEREN) // must be dropped — a refresh is known to be in flight
+            advanceUntilIdle()
+
+            assertEquals(0, library.addCalls.size)
+            assertEquals(listOf(FRIEREN, BEBOP), (viewModel.state.value as DiscoverUiState.Success).items)
+
+            recommendations.refreshGate?.complete(Unit)
+            advanceUntilIdle()
+
+            // Once the refresh has actually landed, add() is reachable again.
+            viewModel.add(FRIEREN)
+            advanceUntilIdle()
+            assertEquals(1, library.addCalls.size)
+        }
+
+    /**
+     * The reverse half of the same guard: a resume's [DiscoverViewModel.refresh] must not land
+     * WHILE an optimistic [DiscoverViewModel.add] is still in flight either — the failure path
+     * (`restore()` re-inserting a row a same-tick refresh already republished) is the crash the
+     * review's probe actually reproduced against round 1's code.
+     */
+    @Test
+    fun `refresh is dropped while an add is genuinely in flight`() =
+        runTest(dispatcher) {
+            val recommendations = FakeRecommendationRepository(refreshResult = listOf(FRIEREN, BEBOP))
+            val addGate = CompletableDeferred<Unit>()
+            val library = FakeLibraryRepository(addGate = addGate)
+            val viewModel = DiscoverViewModel(recommendations, library)
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            viewModel.add(FRIEREN) // held open on addGate
+            advanceUntilIdle()
+            assertEquals(listOf(BEBOP), (viewModel.state.value as DiscoverUiState.Success).items)
+
+            viewModel.refresh() // must be dropped — an add is known to be in flight
+            advanceUntilIdle()
+
+            assertEquals(1, recommendations.refreshCalls) // only the very first call above
+            assertEquals(listOf(BEBOP), (viewModel.state.value as DiscoverUiState.Success).items)
+
+            addGate.complete(Unit)
+            advanceUntilIdle()
+
+            // Once the add has actually landed, refresh() is reachable again.
+            viewModel.refresh()
+            advanceUntilIdle()
+            assertEquals(2, recommendations.refreshCalls)
+        }
+
+    /**
+     * Task 9c.8 round 2 (review finding): [DiscoverViewModel.loadMore]'s `finally` reset, proven
+     * with a genuine [CancellationException] as the vehicle — this class's own `catch` never
+     * absorbs that type, so a plain [IOException] could never discriminate a missing `finally`
+     * here (the generic `catch (failure: Exception)` already resets `loadingMore` for every OTHER
+     * failure). Round 1's [DiscoverViewModel.refresh] fix (B2) removed the ACCIDENTAL recovery this
+     * relied on before: the old field-by-field rebuild used to silently reset a stuck `loadingMore`
+     * on the next successful refresh; the new `copy()` faithfully preserves it forever instead.
+     */
+    @Test
+    fun `loadMore resets loadingMore even when the fetch is cancelled, not merely failed`() =
+        runTest(dispatcher) {
+            val recommendations = FakeRecommendationRepository(refreshResult = listOf(FRIEREN))
+            val viewModel = DiscoverViewModel(recommendations, FakeLibraryRepository())
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            recommendations.loadMoreFailure = CancellationException("simulated cancellation mid-fetch")
             viewModel.loadMore()
             advanceUntilIdle()
-            assertEquals(1, recommendations.loadMoreCalls)
+
+            val success = viewModel.state.value as DiscoverUiState.Success
+            assertFalse("loadingMore must not stay stuck true", success.loadingMore)
         }
 
     @Test

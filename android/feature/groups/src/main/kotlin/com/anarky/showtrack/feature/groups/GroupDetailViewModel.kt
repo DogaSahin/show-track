@@ -446,6 +446,16 @@ class GroupDetailViewModel
          * disabled. Checked against [entryId] specifically, not merely non-null, the same
          * defensive-idempotence shape `GroupDetailViewModel.loadMoreWatchlist`'s own `finally` uses:
          * a no-op on the two paths above that already cleared it.
+         *
+         * **Worth knowing, not worth guarding against (round 2 review note):** `GroupDetailScreen`'s
+         * `DialogCloseEffects` closes this confirmation dialog exactly when `removingEntryId == null
+         * && removeEntryError == null` — which is precisely the shape this `finally` now produces
+         * for a CANCELLED delete too, with the row still present. A cancelled attempt therefore
+         * reads as a successful one from the dialog's own point of view: it closes as though the
+         * delete landed, even though it did not. Strictly better than the wedged modal a stuck flag
+         * would leave (this function's own `finally` KDoc above), and cancellation here has no live
+         * source today (this class's own KDoc, "no `withTimeout`/`async` anywhere in this module")
+         * — but worth naming rather than leaving implicit if that ever changes.
          */
         fun removeFromWatchlist(entryId: String) {
             if (mutableActionState.value.removingEntryId != null) return
@@ -537,6 +547,20 @@ class GroupDetailViewModel
          * [GroupOperationException] — both failure shapes render identically here
          * ([GroupFailure.Unknown]'s generic copy), since this screen has no more specific story for
          * "couldn't confirm who you are" than for any other unmapped failure.
+         *
+         * **`finally` added, task 9c.8 round 2 (review finding).** This is the SIXTH instance of
+         * round 1's finding, not a new one: `catch (cancellation: CancellationException) { throw
+         * cancellation }` rethrows without resetting [GroupDetailActionState.leaving], the exact
+         * gap `removeFromWatchlist`/`rotateInvite`/`removeMember` (this class) and
+         * `createGroup`/`joinGroup` (`GroupsViewModel`) were fixed for — catching (and rethrowing)
+         * [CancellationException] explicitly is not the same as RESETTING the flag for it, and round
+         * 1 missed this by reading the review's own criterion ("catch names only
+         * `GroupOperationException`") literally rather than by shape: this function's ADDITIONAL
+         * generic `catch (failure: Exception)` already covers every other escaping type, but
+         * [CancellationException] is caught *first*, above it, and still only rethrows. Left
+         * unreset, `GroupDetailDialogs.kt`'s `submitting = leaving` disables both confirm AND
+         * dismiss, so a stuck flag here is a modal with no exit but the back gesture — the exact
+         * outcome the other five were fixed to prevent.
          */
         @Suppress("TooGenericExceptionCaught")
         fun leaveGroup() {
@@ -556,6 +580,10 @@ class GroupDetailViewModel
                 } catch (failure: Exception) {
                     mutableActionState.value =
                         mutableActionState.value.copy(leaving = false, leaveError = GroupFailure.Unknown(failure))
+                } finally {
+                    if (mutableActionState.value.leaving) {
+                        mutableActionState.value = mutableActionState.value.copy(leaving = false)
+                    }
                 }
             }
         }
@@ -592,6 +620,12 @@ class GroupDetailViewModel
          * fix that left this action's remove control permanently disabled with no retry affordance.
          * Checked against [userId] specifically, `removeFromWatchlist`'s own defensive-idempotence
          * shape: a no-op on the two paths above that already cleared it.
+         *
+         * **Worth knowing, not worth guarding against (round 2 review note)** — `removeFromWatchlist`'s
+         * own identical note applies here verbatim: `DialogCloseEffects` closes this confirmation
+         * dialog on `removingUserId == null && removeError == null`, which a CANCELLED delete now
+         * satisfies too, with the member still present — the dialog closes as though the removal
+         * landed. Strictly better than a wedged modal; worth naming, not worth a code change.
          */
         fun removeMember(userId: String) {
             if (mutableActionState.value.removingUserId != null) return

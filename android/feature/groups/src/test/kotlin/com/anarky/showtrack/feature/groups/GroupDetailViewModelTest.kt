@@ -439,6 +439,30 @@ class GroupDetailViewModelTest {
         }
 
     /**
+     * Task 9c.8 round 2 (review finding, "the sixth instance of the five"):
+     * [GroupDetailViewModel.leaveGroup]'s `finally` reset, proven with a genuine
+     * [CancellationException] as the vehicle — `catch (cancellation: CancellationException) {
+     * throw cancellation }` rethrows without resetting [GroupDetailActionState.leaving], and this
+     * class's own generic `catch (failure: Exception)` sits BELOW that rethrow, so it never runs
+     * for this specific type either. `rotateInvite`'s own mutation test explains why a
+     * [GroupOperationException] could never discriminate this.
+     */
+    @Test
+    fun `leaveGroup resets leaving even when the fetch is cancelled, not merely failed`() =
+        runTest(dispatcher) {
+            val groupRepository = FakeGroupRepository(membersResult = listOf(OWNER))
+            val authRepository = FakeAuthRepository(currentUserIdResult = OWNER.userId)
+            val viewModel = viewModel(groupRepository, authRepository)
+            advanceUntilIdle()
+
+            groupRepository.removeMemberThrows = CancellationException("simulated cancellation mid-fetch")
+            viewModel.leaveGroup()
+            advanceUntilIdle()
+
+            assertFalse("leaving must not stay stuck true", viewModel.actionState.value.leaving)
+        }
+
+    /**
      * Mutation-critical negative control: a `removeMember` that always targeted the CALLER's own
      * id (or the first member in the list) rather than the argument it was given would pass every
      * OTHER test in this file, since [MEMBER] is not [OWNER]. Two members in the fixture, removing

@@ -296,6 +296,38 @@ class GroupsViewModelTest {
             assertEquals(GroupsUiState.Success(groups = listOf(ALPHA, BETA)), viewModel.state.value)
         }
 
+    /**
+     * Task 9c.8 round 2 (review finding, item 3): `GroupsScreen` wires the SAME
+     * [GroupsViewModel.refresh] to both `LifecycleResumeEffect` and `onRetry`, so a manual retry
+     * can land while a resume-triggered fetch is still in flight — the exact double-caller race
+     * Step 2 fixed for `FavoritesViewModel.refresh`/`ProfileViewModel.refreshStats`. Asserts the
+     * repository call COUNT, not the resulting state — a count on a fake cannot pass when the
+     * call never happens, which is what makes it discriminate.
+     */
+    @Test
+    fun `a retry landing inside an in-flight resume fetch does not double-fetch`() =
+        runTest(dispatcher) {
+            val repository = FakeGroupRepository(groupsResult = listOf(ALPHA))
+            val viewModel = GroupsViewModel(repository)
+            viewModel.refresh()
+            advanceUntilIdle()
+            assertEquals(1, repository.groupsCalls)
+
+            repository.groupsGate = CompletableDeferred()
+            viewModel.refresh() // the resume-triggered fetch
+            viewModel.refresh() // a manual retry landing while it is still in flight
+            advanceUntilIdle()
+
+            // Only the resume's own call — the retry that landed inside it must be dropped, not
+            // queued behind it.
+            assertEquals(2, repository.groupsCalls)
+
+            repository.groupsGate?.complete(Unit)
+            advanceUntilIdle()
+
+            assertEquals(2, repository.groupsCalls)
+        }
+
     @Test
     fun `a failed resume over an already-loaded screen marks it stale instead of replacing it`() =
         runTest(dispatcher) {

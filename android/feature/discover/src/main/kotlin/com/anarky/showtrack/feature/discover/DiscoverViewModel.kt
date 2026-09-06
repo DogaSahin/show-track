@@ -114,7 +114,35 @@ class DiscoverViewModel
         // racing a state-changing event elsewhere (an add landing between this resume's request
         // and its response, say) can render the OLDER response with no automatic follow-up retry —
         // the next resume is what corrects it, not this call.
+        //
+        // **Also checked by [add] (task 9c.8 round 2, review finding BLOCKING) — see [add]'s own
+        // KDoc for the actual hazard this cross-check closes**: a duplicate `media.id` crash, not
+        // the duplicate-`media.id`-via-`loadMore` story [loadMore]'s own KDoc used to tell (round
+        // 1 of this task) and round 2 corrected as false.
         private var refreshInFlight = false
+
+        // A single ViewModel-wide guard, not one per row — same shape and same reasoning as
+        // `SearchViewModel.addInFlight`: a field the guard can always read regardless of `state`'s
+        // shape, rather than a value scoped inside `DiscoverUiState.Success` that a concurrent
+        // state replacement could reset out from under it.
+        //
+        // **Also checked by [refresh] (task 9c.8 round 2, review finding BLOCKING)** — see [add]'s
+        // own KDoc for the full reasoning: `POST /v1/library` in flight, a resume's [refresh]
+        // landing before the server commits it, and the failed add's own `restore()` afterward is
+        // what actually duplicates a `media.id` on this screen — a different pair from the
+        // [loadMore]/[refresh] one round 1 wrongly suspected.
+        private var addInFlight: String? = null
+
+        // Set by [loadMore] when it drops itself because [refreshInFlight] (task 9c.8 round 2,
+        // review finding "B3 guard can stall paging"). `EndOfListTrigger` only emits
+        // [DiscoverScreen]'s `onTriggered` on the false -> true edge of its own `shouldTrigger`
+        // (that composable's own KDoc); a `loadMore()` dropped here changes neither `itemCount`
+        // nor scroll position, so `shouldTrigger` never toggles and the trigger never re-fires on
+        // its own — without this flag, Discover would stop paging silently until the user
+        // scrolled up past the threshold and back down. [refresh]'s own `finally` checks this once
+        // [refreshInFlight] is clear and re-issues the dropped [loadMore] itself, restoring paging
+        // without any Compose-layer involvement.
+        private var pendingLoadMoreAfterRefresh = false
 
         /**
          * The initial load (via `DiscoverScreen`'s `LifecycleResumeEffect` — see this class's own
@@ -149,10 +177,26 @@ class DiscoverViewModel
          * [DiscoverUiState.Error] wholesale — a failed BACKGROUND resume must not destroy a feed the
          * user is already reading. [DiscoverUiState.Error] stays reachable for the case it always
          * covered: nothing usable is on screen yet.
+         *
+         * **Also drops while [addInFlight] is set (task 9c.8 round 2, review finding BLOCKING).**
+         * `POST /v1/library` in flight, a resume firing this function before the server has
+         * committed the add: page 1 still names the row (the backend has not excluded it yet), so
+         * the success branch above would republish it — undoing [add]'s own optimistic removal —
+         * and if the POST then fails, [add]'s `restore()` inserts a SECOND copy of the same row,
+         * which crashes `DiscoverScreen`'s `LazyColumn` (keyed by `media.id`). Dropped here rather
+         * than deferred, [refresh]'s own established discipline (review finding M2): the next
+         * resume corrects a dropped one, and [add] is a single, short-lived POST, not a standing
+         * subscription this screen would otherwise miss forever.
+         *
+         * **Re-issues a [loadMore] dropped by [refreshInFlight] once this call actually finishes**
+         * (task 9c.8 round 2, review finding "B3 guard can stall paging") — see
+         * [pendingLoadMoreAfterRefresh]'s own KDoc for why `EndOfListTrigger` cannot be trusted to
+         * do this on its own.
          */
         @Suppress("TooGenericExceptionCaught")
         fun refresh() {
             if (refreshInFlight) return
+            if (addInFlight != null) return
             refreshInFlight = true
             if (mutableState.value !is DiscoverUiState.Success) {
                 mutableState.value = DiscoverUiState.Loading
@@ -175,6 +219,10 @@ class DiscoverViewModel
                     mutableState.value = stillShowing?.copy(isStale = true) ?: DiscoverUiState.Error(failure)
                 } finally {
                     refreshInFlight = false
+                    if (pendingLoadMoreAfterRefresh) {
+                        pendingLoadMoreAfterRefresh = false
+                        loadMore()
+                    }
                 }
             }
         }
@@ -185,30 +233,55 @@ class DiscoverViewModel
          * frame near the bottom, and without this a scroll near the bottom would queue up a fetch
          * per frame.
          *
-         * **Also dropped up front while [refreshInFlight] (review finding B3, round 1).** Before
-         * this task, [loadMore] and [refresh] were disjoint by construction — [loadMore] required
-         * [DiscoverUiState.Success], and [refresh] was reachable only from [DiscoverUiState.Error]
-         * — so the two could never run concurrently against [recommendationRepository]. A resume
-         * can now call [refresh] at any moment, including while a page fetch is genuinely in
-         * flight. `RecommendationRepositoryImpl` sequences a REPLACE ([RecommendationRepository.refresh])
-         * against an APPEND ([loadMore]) through a single shared `lastFetchedPage` field that is
-         * written INSIDE `CursorPaginator`'s mutex but read back OUTSIDE it — see that class's own
-         * KDoc — so an overlapping [refresh] and [loadMore] can, on an unlucky interleaving, leave
-         * [DiscoverUiState.Success.items] holding a duplicate `media.id`, which crashes
-         * `DiscoverScreen`'s `LazyColumn` (keyed by `media.id`) outright. This guard is the cheapest
-         * containment: it stops [loadMore] from ever starting while a [refresh] is already known to
-         * be in flight. It does NOT close the reverse ordering — a [loadMore] already in flight when
-         * a resume calls [refresh] is not deferred — accepted here rather than closed, since
-         * deferring [refresh] itself would silently drop the one signal this whole task exists to
-         * deliver (the resume's own refetch) for an in-flight page fetch that, on a real device, is
-         * usually much shorter-lived than the gap between resumes.
+         * **Also dropped up front while [refreshInFlight] (review finding B3, round 1;
+         * KDoc corrected round 2 — the original text here claimed a duplicate-`media.id` race
+         * between [refresh] and [loadMore] that does not exist.** `RecommendationRepositoryImpl.loadMore`'s
+         * append and `CursorPaginator.loadMore`'s `mutex.withLock { ... }` are inline:
+         * `withLock` does not suspend on an uncontended lock, and `unlock()` does not suspend
+         * either, so there is NO suspension point between `paginator.loadMore()` returning and the
+         * append that follows it — nothing else, [refresh] included, can run in that window.
+         * Verified empirically: all three interleavings driven on both `StandardTestDispatcher` and
+         * `UnconfinedTestDispatcher` produced no duplicate in any of them.
+         *
+         * What this guard actually buys, corrected: [refresh] truncates [DiscoverUiState.Success.items]
+         * back to page 1 unconditionally (`RecommendationRepositoryImpl.refresh`'s own shape — see
+         * this class's own KDoc), which discards anything a concurrent [loadMore] would have
+         * appended. Without this guard, a [loadMore] landing while a [refresh] is in flight is
+         * simply WASTED work — a real network round trip whose result [refresh] is about to
+         * overwrite the instant it lands. This guard is cheap containment for that waste, not a
+         * correctness fix — [add]'s own KDoc has the actual duplicate-`media.id` crash this screen
+         * has, a DIFFERENT pair ([add] and [refresh], not [loadMore] and [refresh]).
+         *
+         * The reverse ordering does not need closing: a [loadMore] already in flight when a resume
+         * calls [refresh] produces the SAME page-1 truncation [refresh] always produces on its own
+         * — never a duplicate — so there is nothing here for [refresh] to defer to.
+         *
+         * A call dropped here sets [pendingLoadMoreAfterRefresh] so [refresh] can re-issue it once
+         * it actually finishes — see that field's own KDoc for why `EndOfListTrigger` on its own
+         * would otherwise leave Discover silently stuck.
          *
          * Routed through [DiscoverUiState.Success.pageError], never [DiscoverUiState.Error]: the
          * rows a failed page-2 fetch left behind are still valid and still on screen.
+         *
+         * **`finally` added, task 9c.8 round 2 (review finding).** [DiscoverViewModel.refresh]'s own
+         * `copy()` fix (round 1, B2) removed an ACCIDENTAL recovery path this function used to lean
+         * on without anyone noticing: the OLD field-by-field `Success(items = ...)` rebuild silently
+         * reset a stuck [DiscoverUiState.Success.loadingMore] back to `false` on the very next
+         * successful [refresh] — so a [CancellationException] escaping [recommendationRepository]'s
+         * fetch here (the one type the `catch` below deliberately never absorbs) used to self-heal
+         * on the next resume. `copy()` now faithfully PRESERVES `loadingMore`, which means it also
+         * faithfully preserves a stuck one, forever, once nothing resets it. The `finally` below is
+         * that reset — `GroupDetailViewModel.loadMoreWatchlist`'s identical shape: no
+         * `return@launch` (would swallow an in-flight exception instead of letting it propagate),
+         * and only writes when [DiscoverUiState.Success.loadingMore] is still `true` (a no-op on
+         * the two paths above that already cleared it).
          */
         @Suppress("TooGenericExceptionCaught")
         fun loadMore() {
-            if (refreshInFlight) return
+            if (refreshInFlight) {
+                pendingLoadMoreAfterRefresh = true
+                return
+            }
             val current = mutableState.value as? DiscoverUiState.Success ?: return
             if (current.loadingMore) return
             mutableState.value = current.copy(loadingMore = true, pageError = null)
@@ -222,15 +295,14 @@ class DiscoverViewModel
                     throw cancellation
                 } catch (failure: Exception) {
                     replaceSuccess { it.copy(loadingMore = false, pageError = failure) }
+                } finally {
+                    val stillLoading = mutableState.value as? DiscoverUiState.Success
+                    if (stillLoading?.loadingMore == true) {
+                        mutableState.value = stillLoading.copy(loadingMore = false)
+                    }
                 }
             }
         }
-
-        // A single ViewModel-wide guard, not one per row — same shape and same reasoning as
-        // `SearchViewModel.addInFlight`: a field the guard can always read regardless of `state`'s
-        // shape, rather than a value scoped inside `DiscoverUiState.Success` that a concurrent
-        // state replacement could reset out from under it.
-        private var addInFlight: String? = null
 
         /**
          * The optimistic add (decision D-I). [recommendation]'s row is removed from
@@ -260,10 +332,39 @@ class DiscoverViewModel
          * Never refetches the feed on either outcome — see [DiscoverUiState]'s and this class's own
          * KDoc: a refetch re-ranks the whole feed and would move rows out from under a user who is
          * still reading them, exactly what decision D-I exists to avoid.
+         *
+         * **Also drops while [refreshInFlight] (task 9c.8 round 2, review finding BLOCKING) — the
+         * real duplicate-`media.id` crash on this screen, which round 1's [loadMore]-vs-[refresh]
+         * guard did not touch because that pair was never the hazard (see [loadMore]'s own KDoc,
+         * corrected round 2).** Concretely: tap Add, `POST /v1/library` is in flight, the user goes
+         * to Detail and Back (or the app backgrounds and resumes) — `DiscoverScreen`'s
+         * `LifecycleResumeEffect` fires [refresh] while the backend has not yet committed the add,
+         * so page 1 STILL recommends [recommendation]'s row. Two consequences, both closed by this
+         * guard rather than by either function alone:
+         * - **Crash path:** [refresh] republishes the row [remove] just took off screen (undoing
+         *   the optimistic removal above), the POST then fails, and [restore] inserts a SECOND copy
+         *   of the same `media.id` — `DiscoverScreen.kt`'s `LazyColumn` (keyed by `media.id`)
+         *   throws.
+         * - **Success path, non-crashing:** the same republish survives even a SUCCESSFUL add,
+         *   since nothing on the success branch below re-removes it — the row stays visibly listed
+         *   as a recommendation for a title the user just added, until the NEXT [refresh] catches
+         *   up with the backend.
+         *
+         * A ViewModel-level mutual guard (this check, and [refresh]'s matching
+         * `if (addInFlight != null) return`) was chosen over making [RecommendationRepository.restore]
+         * idempotent (filtering the id before inserting) in `RecommendationRepositoryImpl` — the
+         * alternative the review offered. The repository-level fix closes only the CRASH path (a
+         * literal duplicate entry); it does nothing for the success-path republish above, since
+         * `restore()` is never called on that path at all. The guard here closes both by construction:
+         * neither operation ever runs while the other is in flight, so [recommendationRepository]'s
+         * feed is never overwritten mid-optimistic-operation in the first place. It is also
+         * symmetric with, and reuses the same shape as, round 1's [loadMore]/[refreshInFlight]
+         * guard (review finding B3) rather than introducing a second mechanism.
          */
         @Suppress("TooGenericExceptionCaught")
         fun add(recommendation: Recommendation) {
             if (addInFlight != null) return
+            if (refreshInFlight) return
             val current = mutableState.value as? DiscoverUiState.Success ?: return
             val originalIndex = current.items.indexOfFirst { it.media.id == recommendation.media.id }
             if (originalIndex < 0) return

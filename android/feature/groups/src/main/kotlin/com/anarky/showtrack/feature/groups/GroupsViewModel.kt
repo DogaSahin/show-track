@@ -50,6 +50,17 @@ class GroupsViewModel
         private val mutableActionState = MutableStateFlow(GroupsActionState())
         val actionState: StateFlow<GroupsActionState> = mutableActionState.asStateFlow()
 
+        // Guards [refresh] against re-entrancy (task 9c.8 round 2, review finding — the REACHABLE
+        // gap this class had, as opposed to the unreachable "flagless" one documented on [refresh]
+        // itself): `GroupsScreen` wires the SAME function to both `LifecycleResumeEffect` and
+        // `onRetry`, the exact double-caller shape Step 2 fixed for `FavoritesViewModel.refresh`/
+        // `ProfileViewModel.refreshStats` — a manual retry can land while a resume-triggered fetch
+        // is still in flight. A private, state-shape-independent field, `FavoritesViewModel.refreshInFlight`'s
+        // identical reasoning: [refresh] can be called while [state] is [GroupsUiState.Loading] or
+        // [GroupsUiState.Error] too. A DROPPED re-entrant call, not a coalesced one (decision M2,
+        // task 9c.8) — the next resume corrects a dropped one.
+        private var refreshInFlight = false
+
         /**
          * Called from the initial resume (there is no `init` — see this class's own KDoc) and from
          * [GroupsUiState.Error]'s retry action.
@@ -101,6 +112,8 @@ class GroupsViewModel
          * actually fixes.
          */
         fun refresh() {
+            if (refreshInFlight) return
+            refreshInFlight = true
             if (mutableState.value !is GroupsUiState.Success) {
                 mutableState.value = GroupsUiState.Loading
             }
@@ -111,6 +124,8 @@ class GroupsViewModel
                 } catch (failure: GroupOperationException) {
                     val stillShowing = mutableState.value as? GroupsUiState.Success
                     mutableState.value = stillShowing?.copy(isStale = true) ?: GroupsUiState.Error(failure.failure)
+                } finally {
+                    refreshInFlight = false
                 }
             }
         }
