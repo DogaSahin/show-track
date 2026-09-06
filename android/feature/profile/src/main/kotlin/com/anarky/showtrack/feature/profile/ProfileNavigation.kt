@@ -4,6 +4,7 @@ import androidx.navigation.NavGraphBuilder
 import androidx.navigation.compose.composable
 import com.anarky.showtrack.core.navigation.AppRoute
 import com.anarky.showtrack.core.navigation.AuthRoute
+import com.anarky.showtrack.core.navigation.GroupsRoute
 import com.anarky.showtrack.core.navigation.ImportRoute
 import com.anarky.showtrack.core.navigation.ProfileRoute
 
@@ -23,11 +24,19 @@ import com.anarky.showtrack.core.navigation.ProfileRoute
  * [onImportClick] (task 9b.6) is Profile's own door to [ImportRoute] — the other one is
  * `:feature:auth`'s post-register onboarding, wired in `AuthNavigation.kt`. Both go through this
  * shared route contract rather than one feature depending on the other (architecture rule 1).
+ *
+ * [onGroupsClick] is decision E-A's door to [GroupsRoute], built in the whole-branch fix round.
+ * Naming [GroupsRoute] here is not a dependency on `:feature:groups`: the route type lives in
+ * `:core:navigation`, and `:app` is what maps it to that module's registered destination — the
+ * identical shape [ImportRoute] already has. Before it existed, `FeedScreen`'s zero-groups empty
+ * state was the only production door to [GroupsRoute], so an account that reached one group could
+ * never reach the groups screen again — see [GroupsSection]'s own KDoc in `ProfileScreen.kt`.
  */
 fun NavGraphBuilder.profileEntry(onNavigate: (AppRoute) -> Unit) {
     composable<ProfileRoute> {
         ProfileScreen(
             onSignedOut = signOutNavigation(onNavigate),
+            onGroupsClick = groupsNavigation(onNavigate),
             onImportClick = importNavigation(onNavigate),
         )
     }
@@ -92,3 +101,14 @@ internal fun signOutNavigation(onNavigate: (AppRoute) -> Unit): () -> Unit = { o
  * see [signOutNavigation]'s own KDoc, gap 3, for the identical history on the sign-out binding.
  */
 internal fun importNavigation(onNavigate: (AppRoute) -> Unit): () -> Unit = { onNavigate(ImportRoute) }
+
+/**
+ * The mapping [ProfileScreen]'s groups action drives (decision E-A) — [importNavigation]'s own
+ * reasoning applies identically, including why the BINDING needs a separate test: `ProfileNavigationTest`
+ * pins this function, and `ProfileEntryHiltTest`'s `` `tapping manage groups navigates to GroupsRoute` ``
+ * pins `profileEntry`'s `onGroupsClick = groupsNavigation(onNavigate)` line by composing the real
+ * [profileEntry] and tapping the real button. Mutating that binding to `{}` fails only the latter —
+ * which is gap 3 above, one more time, and the reason this door was built with the harness test
+ * rather than without it.
+ */
+internal fun groupsNavigation(onNavigate: (AppRoute) -> Unit): () -> Unit = { onNavigate(GroupsRoute) }

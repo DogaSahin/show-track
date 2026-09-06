@@ -14,6 +14,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.testing.TestNavHostController
 import androidx.test.core.app.ApplicationProvider
 import com.anarky.showtrack.core.navigation.AuthRoute
+import com.anarky.showtrack.core.navigation.GroupsRoute
 import com.anarky.showtrack.core.navigation.ImportRoute
 import com.anarky.showtrack.core.navigation.ProfileRoute
 import dagger.hilt.android.testing.HiltAndroidRule
@@ -74,6 +75,44 @@ class ProfileEntryHiltTest {
             .performClick()
 
         assertTrue(navController.currentDestination?.hasRoute(ImportRoute::class) == true)
+    }
+
+    /**
+     * Decision E-A's Profile -> Groups door (whole-branch fix round). Composes the REAL
+     * [profileEntry], so the only thing that can make this pass is the binding
+     * `onGroupsClick = groupsNavigation(onNavigate)` actually being there — mutating it to
+     * `onGroupsClick = {}` leaves `ProfileNavigationTest`'s mapping test and every other test in
+     * this module green while the door goes back to not existing, which is precisely the failure
+     * mode `ProfileNavigation.kt`'s gap 3 documents and the reason this test was written with the
+     * feature rather than after it.
+     */
+    @Test
+    fun `tapping manage groups navigates to GroupsRoute`() {
+        lateinit var navController: TestNavHostController
+
+        composeRule.setContent {
+            navController =
+                remember {
+                    TestNavHostController(ApplicationProvider.getApplicationContext<Context>()).apply {
+                        navigatorProvider.addNavigator(ComposeNavigator())
+                    }
+                }
+            NavHost(navController = navController, startDestination = ProfileRoute) {
+                profileEntry(onNavigate = navController::navigate)
+                composable<GroupsRoute> { }
+            }
+        }
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        // `performScrollTo()` first, for the reason the other two tests in this class document:
+        // Robolectric's default root does not auto-size to this screen's content, and a click on a
+        // node scrolled out of view succeeds at the semantics-tree level while doing nothing.
+        composeRule
+            .onNodeWithText(context.getString(R.string.profile_groups_action))
+            .performScrollTo()
+            .performClick()
+
+        assertTrue(navController.currentDestination?.hasRoute(GroupsRoute::class) == true)
     }
 
     @Test

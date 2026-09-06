@@ -47,6 +47,13 @@
     <string name="profile_stats_no_ratings">No ratings yet</string>
     <string name="profile_stats_error">Couldn\'t load your library stats.</string>
 
+    <!-- Profile's own door to the groups screen (decision E-A, GroupsRoute). Group management is
+         occasional (create once, join once, check members rarely), so it lives here beside the
+         import entry rather than taking a tab of its own. -->
+    <string name="profile_groups_title">Groups</string>
+    <string name="profile_groups_body">Create or join a group, see who is in it, and share a watchlist.</string>
+    <string name="profile_groups_action">Manage groups</string>
+
     <!-- Profile's own door to the AniList import screen (task 9b.6, ImportRoute). The two
          limitations live on the import screen itself, not repeated here. -->
     <string name="profile_import_title">Import from AniList</string>

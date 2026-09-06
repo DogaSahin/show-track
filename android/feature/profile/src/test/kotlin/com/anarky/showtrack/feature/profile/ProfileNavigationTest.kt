@@ -2,6 +2,7 @@ package com.anarky.showtrack.feature.profile
 
 import com.anarky.showtrack.core.navigation.AppRoute
 import com.anarky.showtrack.core.navigation.AuthRoute
+import com.anarky.showtrack.core.navigation.GroupsRoute
 import com.anarky.showtrack.core.navigation.ImportRoute
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -32,14 +33,11 @@ import org.junit.Test
  * harness (`:feature:library`'s `LibraryEntryHiltTest` is the pattern; see [signOutNavigation]'s
  * own KDoc for why this module has not adopted it).
  *
- * What no test pins yet, and there are three such gaps here where `:feature:library` has one:
- *   1. `ProfileScreen`'s `AlertDialog` confirm button's `onClick` → `viewModel.signOut()`.
- *   2. `ProfileScreen`'s `LaunchedEffect(signedOut) { if (signedOut) onSignedOut() }` →
- *      `onSignedOut()`. Delete that effect and sign-out silently stops navigating anywhere while
- *      this suite, including `ProfileViewModelTest`, stays green.
- *   3. The BINDING at `ProfileNavigation.kt`'s `onSignedOut = signOutNavigation(onNavigate)` —
- *      change it to `onSignedOut = {}` and this test still passes while sign-out goes unreachable
- *      again.
+ * The three gaps this KDoc used to list as open are all CLOSED (task 9c.0) by
+ * `ProfileEntryHiltTest`, which composes the real `profileEntry` — see `ProfileNavigation.kt`'s
+ * [signOutNavigation] KDoc for the per-gap account and the mutations each was verified against.
+ * [groupsNavigation] (whole-branch fix round, decision E-A) is the third mapping in this file and
+ * carries the identical split: the mapping is pinned here, the binding by `ProfileEntryHiltTest`.
  */
 class ProfileNavigationTest {
     @Test
@@ -59,5 +57,19 @@ class ProfileNavigationTest {
         importNavigation(onNavigate = navigated::add).invoke()
 
         assertEquals(listOf(ImportRoute), navigated)
+    }
+
+    /**
+     * Decision E-A's door, built in the whole-branch fix round. This pins the MAPPING only; the
+     * binding into `profileEntry` is `ProfileEntryHiltTest`'s job, and it is the half that has
+     * failed five times on this project.
+     */
+    @Test
+    fun `the groups action navigates to GroupsRoute`() {
+        val navigated = mutableListOf<AppRoute>()
+
+        groupsNavigation(onNavigate = navigated::add).invoke()
+
+        assertEquals(listOf(GroupsRoute), navigated)
     }
 }

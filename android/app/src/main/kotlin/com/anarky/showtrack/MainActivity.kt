@@ -322,9 +322,10 @@ internal fun shouldShowNavigationTabs(
         currentDestination?.hasRoute(AuthRoute::class) == false
 
 /**
- * The five top-level destinations the navigation suite offers. A subset of the nine routes on
- * purpose: Detail and Auth are pushed onto the stack rather than tabbed to, and Search and Groups
- * still have no chrome — Phase 9 decides where the rest surface.
+ * The five top-level destinations the navigation suite offers. A subset of the routes on purpose:
+ * Detail and Auth are pushed onto the stack rather than tabbed to, and Search and Groups are
+ * reached from another screen's chrome rather than a tab — Search from Library's header icon,
+ * Groups from Profile (decision E-A).
  *
  * **Discover joined this set in task 9b.3**, not earlier: `:feature:discover` shipped in Phase 9a
  * as a registered-but-unreachable placeholder (the exact Gap 1/Gap 2 shape `LibraryNavigation.kt`
@@ -336,9 +337,11 @@ internal fun shouldShowNavigationTabs(
  *
  * **Feed joined this set in task 9c.4**, the identical Gap 1/Gap 2 shape one more time:
  * `:feature:feed` has shipped a registered `FeedRoute` destination since Phase 9's very first
- * pass, with no door in until now. Unlike Groups (still undecided — reached only from wherever a
- * future task puts it), the group activity feed has no natural secondary entry point either, so it
- * becomes a tab rather than an icon bolted onto `GroupsScreen`'s or `GroupDetailScreen`'s chrome.
+ * pass, with no door in until now. Unlike Groups — which decision E-A places behind Profile, and
+ * which the whole-branch fix round finally built there (`ProfileNavigation.kt`'s `groupsNavigation`)
+ * after three tasks in which the screen shipped and the door did not — the group activity feed has
+ * no natural secondary entry point, so it becomes a tab rather than an icon bolted onto
+ * `GroupsScreen`'s or `GroupDetailScreen`'s chrome.
  * Placed between Discover and Favorites (this task's own brief, verbatim) rather than appended at
  * the end: browsing (Discover) and social (Feed) sit together, ahead of the two account-scoped
  * tabs (Favorites, Profile).

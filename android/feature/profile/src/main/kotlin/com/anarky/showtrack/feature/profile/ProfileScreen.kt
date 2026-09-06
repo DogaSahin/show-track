@@ -51,6 +51,7 @@ import com.anarky.showtrack.core.model.UserMediaStatus
 @Composable
 fun ProfileScreen(
     onSignedOut: () -> Unit,
+    onGroupsClick: () -> Unit,
     onImportClick: () -> Unit,
     modifier: Modifier = Modifier,
     viewModel: ProfileViewModel = hiltViewModel(),
@@ -93,6 +94,7 @@ fun ProfileScreen(
         onDisablePush = viewModel::disablePush,
         onStatsRetry = viewModel::refreshStats,
         onSignOut = viewModel::signOut,
+        onGroupsClick = onGroupsClick,
         onImportClick = onImportClick,
         modifier = modifier,
     )
@@ -109,7 +111,7 @@ fun ProfileScreen(
  * caller above: it is pure Compose UI state with no ViewModel counterpart, the same way
  * `LibraryScreen`'s stateless overload owns whatever purely-visual state it needs.
  *
- * Eight parameters trips detekt's `LongParameterList` (threshold 6); suppressed rather than
+ * Nine parameters trips detekt's `LongParameterList` (threshold 6); suppressed rather than
  * bundling the callbacks into an `Actions` holder class, matching `LibraryScreen`/`DiscoverScreen`'s
  * own identical suppression for the identical reason — a holder that exists for this one call site
  * only is indirection without fewer moving parts.
@@ -124,6 +126,7 @@ internal fun ProfileScreen(
     onDisablePush: () -> Unit,
     onStatsRetry: () -> Unit,
     onSignOut: () -> Unit,
+    onGroupsClick: () -> Unit,
     onImportClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -152,6 +155,7 @@ internal fun ProfileScreen(
             state = statsState,
             onRetry = onStatsRetry,
         )
+        GroupsSection(onGroupsClick = onGroupsClick)
         ImportSection(onImportClick = onImportClick)
         SignOutSection(
             error = signOutError,
@@ -170,6 +174,29 @@ internal fun ProfileScreen(
                 onSignOut()
             },
         )
+    }
+}
+
+/**
+ * Profile's own door to `GroupsRoute` — decision E-A's "group management is reached from Profile,
+ * beside the AniList import entry that already lives there", built here rather than in 9c.1 where
+ * it was specified. [ImportSection]'s shape exactly, and for the same reason: there is no state to
+ * render, so a plain action row rather than a card.
+ *
+ * **Why this exists at all.** Until it did, the ONLY production door to `GroupsRoute` was
+ * `FeedScreen`'s zero-groups empty state — rendered only while the account belongs to no group —
+ * so creating or joining a single group made the whole of `:feature:groups` permanently
+ * unreachable: no member list, no invite rotation, no leaving, no second group, and therefore no
+ * switcher either (it needs two groups, and the second could only be created from behind the door
+ * that had just closed). That is the project's recurring "a registered route is not a reachable
+ * one" defect, for the fifth time.
+ */
+@Composable
+private fun GroupsSection(onGroupsClick: () -> Unit) {
+    Text(text = stringResource(R.string.profile_groups_title), style = MaterialTheme.typography.titleMedium)
+    Text(text = stringResource(R.string.profile_groups_body), style = MaterialTheme.typography.bodyMedium)
+    Button(onClick = onGroupsClick) {
+        Text(text = stringResource(R.string.profile_groups_action))
     }
 }
 

@@ -66,6 +66,7 @@ class ProfileScreenTest {
                 onDisablePush = {},
                 onStatsRetry = {},
                 onSignOut = {},
+                onGroupsClick = {},
                 onImportClick = {},
             )
         }
@@ -95,6 +96,7 @@ class ProfileScreenTest {
                 onDisablePush = {},
                 onStatsRetry = {},
                 onSignOut = {},
+                onGroupsClick = {},
                 onImportClick = {},
             )
         }
@@ -123,6 +125,7 @@ class ProfileScreenTest {
                 onDisablePush = {},
                 onStatsRetry = {},
                 onSignOut = {},
+                onGroupsClick = {},
                 onImportClick = {},
             )
         }
@@ -171,6 +174,7 @@ class ProfileScreenTest {
                 onDisablePush = {},
                 onStatsRetry = {},
                 onSignOut = {},
+                onGroupsClick = {},
                 onImportClick = { clicked = true },
             )
         }
@@ -210,6 +214,7 @@ class ProfileScreenTest {
                 onDisablePush = {},
                 onStatsRetry = {},
                 onSignOut = {},
+                onGroupsClick = {},
                 onImportClick = {},
                 modifier = Modifier.heightIn(max = 40.dp),
             )
