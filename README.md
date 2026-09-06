@@ -1140,6 +1140,29 @@ minor or deliberately scoped out, not a regression:
   ever clears an entry from that set. Add a title, remove it from your library somewhere else, and
   Discover keeps hiding it as a recommendation for the rest of the session. Fixing it needs either the
   backend to report which ids it has already applied, or Discover to read library membership directly.
+- **`VerifyArchitectureClasspath` enforces a denylist, not an allowlist.** The task walks the fully
+  resolved compile classpath — which is what makes a transitive edge or a `testFixturesApi` as
+  visible as a direct `api(...)` — but the question it asks of every node it finds is a lookup in a
+  hand-maintained list of four forbidden groups. A networking or persistence library outside that
+  list (Ktor, Fuel, an `androidx.sqlite` edge that never names `androidx.room`) would reach a feature
+  module's compile classpath with no diagnostic. Adding the group when you add the library is the
+  discipline today; inverting the check to an allowlist for `:feature:*` is the version that needs no
+  discipline, and is deliberately not done at PR time.
+- **`:app` has no Hilt test harness, so its composition root is only partly pinned.** Every
+  destination `ShowTrackNavHost` registers resolves a `@HiltViewModel`, so no `:app` test can compose
+  `ShowTrackApp` or `ShowTrackNavHost` and see a real screen. `ActiveGroupDestinationEffectTest`
+  reaches the largest piece of that seam a plain Compose test can — the destination-keyed effect,
+  composed for real against a live `ActiveGroupViewModel` — but the lines that hand
+  `ActiveGroupViewModel.state`/`::selectGroup`/`::refresh` into `appDestinations` are inside
+  `ShowTrackNavHost`'s own composable body, and mutating them stays invisible to the suite. The
+  feature side of that seam IS pinned (`FeedEntryHiltTest`, `GroupsEntryHiltTest`, `ProfileEntryHiltTest`).
+- **`LibraryRepositoryImpl.applyFilter`'s rollback tracks the caller's previous filter, not the
+  paginator's.** A failed call now only rolls back a filter it still owns, which closes the case
+  where an earlier failure silently overwrote a later caller's selection. The remaining case: when
+  the LATER of two concurrent calls is the one that fails, it restores its own captured previous
+  value, which may itself name a filter no successful fetch ever ran under. That path surfaces an
+  error on screen rather than silently wrong rows; closing it properly means tracking the filter the
+  paginator's current contents actually came from.
 - **Phase 9a's 51 triaged minors remain open**, catalogued in
   `.sdd/2026-09-01-showtrack-phase-9a-plan/deferred-minors.md` (outside this repository, alongside the
   design doc). None entered a fix loop during 9a; the final whole-branch review still owns triaging
