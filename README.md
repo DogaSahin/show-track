@@ -23,17 +23,24 @@ check your library's statistics and import an existing AniList list, either righ
 or later from Profile. A design system, the HTTP stack with encrypted token storage and refresh, a
 Room cache (which now also renders the library **offline**, with a staleness banner rather than an
 error — decision C-B), the repository layer, type-safe navigation, Hilt across the whole graph, and
-push over UnifiedPush sit under seven working screens: **`:feature:auth`** (login, four-field
+push over UnifiedPush sit under **all nine working screens**: **`:feature:auth`** (login, four-field
 registration, a startup session check), **`:feature:library`** (status tabs, sorting, cursor paging,
-offline-first rendering), **`:feature:detail`** (score, progress, status and favourite editing, plus
-Add when a title is not yet tracked), **`:feature:search`** (debounced search that adds a result
-straight into your library, reachable from a search action in the library screen's header),
-**`:feature:discover`** (content-based recommendations with an optimistic add — a row disappears the
-moment you tap Add and only reappears if the request actually fails), **`:feature:favorites`** (every
-favourited title, kept in sync with Detail and Library) and **`:feature:profile`** (push registration
-from Phase 8.9, a sign-out action from 9a, and — new this phase — library statistics and the AniList
-import screen). Two of the nine feature modules — `:feature:groups` and `:feature:feed` — are still
-one-line placeholders. **Registering needs an invite code** (either your server's `REGISTRATION_CODE` or a
+offline-first rendering), **`:feature:detail`** (score, progress, status and favourite editing, Add
+when a title is not yet tracked, and — new this phase — the group section, showing every member's
+progress and reviews on the active group, plus writing and editing your own review),
+**`:feature:search`** (debounced search that adds a result straight into your library, reachable from
+a search action in the library screen's header), **`:feature:discover`** (content-based
+recommendations with an optimistic add — a row disappears the moment you tap Add and only reappears
+if the request actually fails), **`:feature:favorites`** (every favourited title, kept in sync with
+Detail and Library), **`:feature:profile`** (push registration from Phase 8.9, a sign-out action from
+9a, and library statistics and the AniList import screen from 9b), and — **new this phase** —
+**`:feature:groups`** (list, create, join by code, group detail with members and owner-only
+management, and the shared watchlist) and **`:feature:feed`** (the fifth tab: a paginated activity
+feed for the active group). A **group switcher** appears on Feed and Groups whenever an account is in
+two or more groups, and the active selection survives a cold start — see [Groups](#groups) below for
+the twelve group-scoped endpoints `:feature:groups`, `:feature:feed` and `:feature:detail`'s group
+section call between them, through the single `GroupRepository` in `:core:data`. **Registering needs
+an invite code** (either your server's `REGISTRATION_CODE` or a
 group's invite code — see the **Settings** list under [Backend](#backend) below), and **receiving push needs a UnifiedPush
 distributor app** installed separately — see [Push needs a second app
 installed](#push-needs-a-second-app-installed--read-this-before-concluding-push-is-broken).
@@ -101,12 +108,17 @@ probe rather than client contract.
 `:feature:*`, one per screen (`auth`, `library`, `detail`, `discover`, `favorites`, `profile`,
 `search`, `groups`, `feed`). Two of the core modules — `:core:model` and `:core:navigation` — are
 **pure Kotlin/JVM**, with no AGP and no Android dependency at all; the other four are Android
-libraries. Seven of the nine feature modules carry a real screen: `:feature:profile` (push
+libraries. **All nine feature modules now carry a real screen**: `:feature:profile` (push
 registration from Phase 8.9, plus library statistics and the AniList import screen from Phase 9b),
-`:feature:auth`, `:feature:library`, `:feature:detail` and `:feature:search` from Phase 9a, and —
-new this phase — `:feature:discover` and `:feature:favorites`. The remaining two (`groups`, `feed`)
-still render a single `Text` and exist so the navigation graph, the dependency rules and the DI
-wiring are exercised against the shape the finished app will have.
+`:feature:auth`, `:feature:library`, `:feature:detail` and `:feature:search` from Phase 9a,
+`:feature:discover` and `:feature:favorites` from Phase 9b, and — new this phase (9c) —
+`:feature:groups` (list, create, join, group detail with owner-only member management, and the
+shared watchlist) and `:feature:feed` (the activity feed, the fifth tab). `:feature:detail` also
+gained a group section this phase — everyone's progress on a title and its reviews, plus writing
+and editing your own review — and `:feature:groups`/`:feature:feed` are the first two feature
+modules to receive a value from outside their own graph (the active group) as a plain
+`StateFlow` parameter rather than a route argument or a singleton — see the navigation paragraphs
+below for why.
 Feature modules never depend on each other, and never on `:core:network` or `:core:database` — all
 data access goes through `:core:data`, which is the only module that knows Retrofit and Room exist.
 That is what keeps "Room is a cache, never the source of truth" structural rather than a convention
@@ -122,18 +134,20 @@ together, which is what makes "features never depend on each other" possible at 
 allowed to depend on `:core:network` — the rule that forbids that constrains `:feature:*` modules
 only.
 
-Navigation is that stitching made concrete. `:core:navigation` declares ten `@Serializable` routes
-on a `sealed interface AppRoute` — type-safe destinations, so `DetailRoute("abc")` is checked by the
-compiler where a `"detail/{mediaId}"` string route is checked by the user's crash report. Each
+Navigation is that stitching made concrete. `:core:navigation` declares **eleven** `@Serializable`
+routes on a `sealed interface AppRoute` — type-safe destinations, so `DetailRoute("abc")` is checked
+by the compiler where a `"detail/{mediaId}"` string route is checked by the user's crash report. Each
 `:feature:*` module contributes at least one `NavGraphBuilder.xEntry()` extension that registers its
 own destination and names, at most, another feature's *route* — `:feature:profile` contributes two
-(`profileEntry` and, new this phase, `importEntry`), which is exactly what let the AniList import
-screen ship inside the existing profile module rather than forcing a tenth feature module into
-existence for one screen; `:app` is the only module that calls all ten. A feature that needs to reach
-another screen is handed an `onNavigate: (AppRoute) -> Unit` — not `(Any) -> Unit`, which would
-accept the string route back one module up from where it was removed.
+(`profileEntry` and `importEntry`, from Phase 9b) and, new this phase, `:feature:groups` also
+contributes two (`groupsEntry` for the list/create/join screen and `groupDetailEntry` for
+`GroupDetailRoute`, since a group's own detail screen — members, watchlist — is a second destination
+in the same module rather than a tenth feature module for one screen); `:app` is the only module that
+calls all eleven. A feature that needs to reach another screen is handed an
+`onNavigate: (AppRoute) -> Unit` — not `(Any) -> Unit`, which would accept the string route back one
+module up from where it was removed.
 
-`:app` keeps that wiring as a list rather than as ten calls inline in the `NavHost`, because a list
+`:app` keeps that wiring as a list rather than as eleven calls inline in the `NavHost`, because a list
 is inspectable: a JVM test enumerates `AppRoute::class.sealedSubclasses` by reflection and asserts
 every declared route has exactly one destination, and that the graph the entry functions actually
 build has one node per registration call. (`sealedSubclasses` throws
@@ -144,6 +158,25 @@ route set is enumerated to *check* the graph, never to build it, and the depende
 crash on a screen nobody opened during development. (`NavGraph.addDestination` silently *replaces* a
 same-id destination rather than failing, so counting nodes alone would not notice a route registered
 twice — hence the comparison against the number of registration calls.)
+
+**The active group is a `StateFlow` parameter, not a route argument.** `:app`'s `ActiveGroupViewModel`
+(Activity-scoped, resolved above the `NavHost`) owns `StateFlow<ActiveGroupState>` and hands it
+straight into `feedEntry`, `groupsEntry` and `detailEntry` as an ordinary constructor parameter — the
+identical shape `authEvents: Flow<AuthEvent>` already uses to cross the same `:app`/`:feature:*`
+boundary. The phase 9c design doc originally specified the opposite — the active group reaching
+features "as a route argument," so that switching groups would be a navigation event by construction.
+That was reviewed during task 9c.5 and deliberately abandoned: `saveState`/`restoreState` (which the
+bottom tab bar uses on every tab swap) key on **destination id**, not on a route's arguments, so a
+per-group `FeedRoute` would still register one `composable<FeedRoute>` destination and reuse the same
+`FeedViewModel` across groups regardless — the "re-scopes by construction" argument was never quite
+true for a tab, only for the one leaf destination (`DetailRoute`) the original decision was written
+against. Widening every tab's route to carry a group id would also break `TopLevelDestination.route`,
+which is a `val` on an enum constant and cannot vary per group. The `StateFlow` form pays for that
+with a real, demonstrated cost — it fails *silently* when miswired (a defaulted parameter compiles
+and quietly falls back to nothing, where a route argument would be a compile error or a visibly wrong
+back stack) — which is why `detailEntry`'s `activeGroup: StateFlow<ActiveGroupState>` and its
+counterparts on `feedEntry`/`groupsEntry` carry no default, and why an entry-level Hilt test exists
+for each. See `2026-09-02-showtrack-phase-9c-design.md` decision E-C for the corrected record.
 
 One route is reachable from outside the app entirely. `:core:navigation` also owns a deep-link
 contract — `showtrack://detail/<mediaId>` — which `:feature:detail` registers as a
@@ -918,10 +951,12 @@ know why it is there:
   `lintDebug` run where
   `ModifierParameter` — a genuine Compose-aware check bundled with `androidx.compose.ui` — fires
   correctly elsewhere, so Compose analysis is active and simply has no built-in rule watching this
-  failure mode. `:feature:discover` and `:feature:favorites` gained real screens in Phase 9b and no
-  longer carry that literal; `:feature:groups` and `:feature:feed` (`Text("Groups")`,
-  `Text("Feed")`) still do, and are still unflagged for the identical reason. Left as specified
-  rather than swapped for something else unreviewed; a
+  failure mode. `:feature:discover` and `:feature:favorites` gained real screens in Phase 9b, and
+  `:feature:groups` and `:feature:feed` gained theirs in Phase 9c — none of the nine feature modules
+  carries that literal `Text(...)` any more, and every string in all nine goes through `R.string`
+  (decision C-E). The blind spot itself is unchanged and still real: `lintDebug` would not have
+  caught any of those four literals while they existed, and would not catch a fifth one added
+  tomorrow. Left as specified rather than swapped for something else unreviewed; a
   Compose-aware replacement (a custom detekt rule, or a third-party ruleset) is an open follow-up,
   not a silent substitution. **What it DOES still enforce:** decision C-E for any XML this project
   ever gains, and for the rare literal that happens to reach a lint-visible surface —
@@ -1000,10 +1035,14 @@ environment it was built in. That is a real boundary rather than an oversight, a
 exists so nobody reads "done" in the table below as "seen working". Three tiers:
 
 **Executed.** The backend suite — **741 tests**, against a real PostgreSQL schema built by the
-migrations rather than by `create_all`. The Android JVM suite — **386 tests**: **357** under
-`./gradlew testDebugUnitTest` across the app and feature/core modules (up from 220 before Phase 9b's
-Hilt/lint foundations, offline-first library rendering, discover, favorites, profile statistics and
-AniList import screen), plus **29** in `build-logic`,
+migrations rather than by `create_all`. The Android JVM suite — **713 tests**: **681** under
+`./gradlew testDebugUnitTest` across the app and feature/core modules (up from 357 before Phase 9c's
+groups, feed, the group switcher, the group section on Detail, review writing and the two carried
+debts from Phase 9b), plus **3** in `:core:model` under plain `./gradlew test` (a pure Kotlin/JVM
+module, so `testDebugUnitTest` does not apply to it — new this phase, pinning `FeedEntry`'s
+`media`/`mediaId` invariant: both null or both non-null, never one without the other, which is what
+keeps a future fixture or preview from handing an `imported` row (E-H, `media == null`) a `mediaId`
+that would make it look tappable), plus **29** in `build-logic`,
 including the Gradle TestKit runs that drive a real build into each architecture-rule violation and
 one **positive control** that must succeed, so a rule passing can be told apart from a build that
 never configured. The UnifiedPush transport was also driven against a real ntfy in `docker compose`
@@ -1076,10 +1115,43 @@ task rather than expanding this one:
   `LibraryViewModel.loadMore()` and `DiscoverViewModel.add()`, both of which already guard against
   this — those are the settled shape for it, not an unsolved problem.)
 
+**Known follow-ups from Phase 9c, recorded rather than fixed.** Same standard as above — known,
+minor or deliberately scoped out, not a regression:
+
+- **The resume-refetch policy is deliberately deferred.** Two things are still missing: a staleness
+  TTL so a resume stops refetching on *every* Detail → Back (today it always does, matching
+  `FavoritesViewModel`/`ProfileViewModel`'s settled shape rather than adding a new one), and a
+  paginator refresh that reloads the pages currently held instead of truncating back to page 1. The
+  visible cost of the second one: page 60 rows deep into the feed or the shared watchlist, leave the
+  screen, come back — the list collapses to the first 20 rows, the restored scroll position clamps to
+  the bottom of a list that is no longer there, and the following `loadMore` calls cascade to rebuild
+  what was already loaded. Both are scope decisions for a later task, not defects in what shipped.
+- **The cross-session review gap.** A successful edit whose post-write refresh failed, followed by
+  navigating away from Detail and back, lands on the pre-write copy — `DetailViewModel`'s
+  `lastOwnReview` cache is in-memory and per-instance, and nothing re-derives it from the server on a
+  fresh screen. Closing it needs a server lookup this account's own client never had a reason to call
+  before — `GET /v1/reviews?media_id=`, or returning the review id in the existing 409 body — which is
+  a **choice, not a constraint**: this repository is a monorepo precisely so an endpoint and the
+  client that calls it can land in the same PR, whenever that's picked up.
+- **`DELETE /v1/reviews/{id}` exists on the backend with no client surface.** Nothing in
+  `:feature:detail` calls it; deleting your own review is not reachable from the app today.
+- **Discover's optimistic-add suppression is unbounded in time.** `DiscoverViewModel` remembers every
+  id it has successfully added so a resume refresh cannot resurrect the row (task 9c.8) — but nothing
+  ever clears an entry from that set. Add a title, remove it from your library somewhere else, and
+  Discover keeps hiding it as a recommendation for the rest of the session. Fixing it needs either the
+  backend to report which ids it has already applied, or Discover to read library membership directly.
+- **Phase 9a's 51 triaged minors remain open**, catalogued in
+  `.sdd/2026-09-01-showtrack-phase-9a-plan/deferred-minors.md` (outside this repository, alongside the
+  design doc). None entered a fix loop during 9a; the final whole-branch review still owns triaging
+  them.
+- **The walkthrough backlog itself.** [Device walkthroughs](#device-walkthroughs) below now numbers
+  40, covering Phases 8 through 9c, and **none of them has ever been run** — see that section's own
+  opening note.
+
 ## Device walkthroughs
 
-Every walkthrough below was decided by an agent that could not see a screen — Phase 8, 9a or 9b, none
-of which had a phone or emulator in the environment they were written in. Each step names what to
+Every walkthrough below was decided by an agent that could not see a screen — Phase 8, 9a, 9b or 9c,
+none of which had a phone or emulator in the environment they were written in. Each step names what to
 tap, what should appear, and what it means if it does not: that last clause is what makes this a test
 rather than a tour. **None of these have been run — this section is unverified instructions, not a
 report of what happened.**
@@ -1095,6 +1167,16 @@ report of what happened.**
    resolves inside the emulator.
 3. Keep the app's data cleared between walkthroughs that call for a "cold start with an empty
    cache" — Android Studio's "Clear data" on the app, or uninstall/reinstall.
+4. **Walkthroughs 22 onward cover groups, feed and reviews, and most of them need two accounts on
+   the same server** — install the app twice (a second emulator, or a second device), or run two
+   accounts on one device with Profile → Sign out between them (walkthrough 40 exercises exactly that
+   switch). Each walkthrough below says explicitly which account, "A" or "B", does what; a few (26,
+   27, 30) hold with a single account, but do not assume that of any walkthrough that isn't explicit
+   about it. Walkthrough 31 asks for three members tracking one title — two accounts already
+   demonstrate the mechanism (two progress rows); a third is what confirms it generalises past two,
+   not a hard requirement. A group's invite code (from walkthrough 22) is how account B gets in —
+   see [Groups](#groups) above for what the code is and why the server never shows it to a
+   non-member.
 
 ### 1. Registering and signing in (`:feature:auth`)
 
@@ -1496,6 +1578,216 @@ short device or a large system font scale, that pushes Sign out below the fold.
    space the statistics and import sections take above it. *If Sign out cannot be reached no matter
    how far you scroll, the screen is not actually scrolling — check that `ProfileScreen`'s content
    column still carries `.verticalScroll(...)` and was not lost in a later edit to this file.*
+
+### 22. Create a group on A, join it on B by code (`:feature:groups`)
+
+Everything below this point needs the second account set up per the setup note above. "A" and "B"
+are two different accounts on the same server, not two logins of the same account.
+
+1. On account A, open **Profile → Groups**, tap **Create**, name it, submit. **Expect:** a card
+   reading "You're in `<name>`" with an invite code and a **Copy code** button — this is the one and
+   only moment the code is ever shown to A without rotating it (decision E-I; `GET /v1/groups` never
+   returns one). Copy it.
+2. On account B, open **Profile → Groups**, tap **Join by code**, paste A's code, submit. **Expect:**
+   the same "You're in" card, this account's own copy of the code.
+3. On both accounts, open the group and look at **Members**. **Expect:** each account's screen lists
+   both usernames, one marked **Owner** (A) and one marked **Member** (B). *If B is missing from A's
+   list or vice versa, `GET /v1/groups/{id}/members` is not being re-fetched after the join — check
+   that the join screen navigates into the real `GroupDetailRoute` rather than back to a stale list.*
+
+### 23. A non-owner sees no rotate and no remove controls
+
+1. On account B (the member from walkthrough 22) open the group's **Members** screen. **Expect:**
+   no **Rotate invite code** button and no per-row **Remove** button next to any member — only
+   **Leave group**. *Seeing either is decision E-F failing: the server would 403 the request anyway,
+   but the point of hiding rather than disabling is that B should never be offered a control that
+   leads nowhere.*
+2. On account A (the owner), open the same screen. **Expect:** **Rotate invite code** at the top and
+   a **Remove** button on B's row (never on A's own row — that one instead reads **Leave group**, the
+   deliberately different, differently-worded, differently-confirmed action per §1.1).
+
+### 24. Switching groups re-scopes the feed and the watchlist with no restart
+
+1. On account A, create a second group (`Profile → Groups → Create`). **Expect:** a **group
+   switcher** now appears as a header row on the **Feed** tab and on **Groups** — it did not exist
+   with only one group (see walkthrough 27).
+2. On the **Feed** tab, tap the switcher and select the first group. **Expect:** the feed shows that
+   group's activity (or its empty state, if nothing has happened in it yet).
+3. Tap the switcher again and select the second group. **Expect:** the feed reloads to that group's
+   own activity, with no app restart and no stale rows from the first group left on screen. Repeat on
+   the shared watchlist. *If the previous group's rows are still visible after the switch, `FeedViewModel`'s
+   `generation` guard did not fire — see walkthrough 36, which is precisely this race caught mid-load.*
+
+### 25. The active group selection survives a cold start
+
+1. With two groups from walkthrough 24, switch to the second one, then force-stop the app.
+2. Relaunch and open the **Feed** tab. **Expect:** the second group is still the active one — the
+   switcher shows it selected and the feed shows its activity, without you having to switch again.
+   *A reset back to the first group means `ActiveGroupStore` (DataStore-backed, decision E-D) did not
+   persist the write, or `ActiveGroupViewModel` is not reading it back on start.*
+
+### 26. A user in no groups reaches create-or-join, not an empty feed
+
+1. Register a brand-new third account with no invite-code group membership (a bare
+   `REGISTRATION_CODE` join adds no group), or use any account that has left every group it was in.
+2. Open the **Feed** tab. **Expect:** "Join or create a group to see its activity here." with a
+   **Create or join a group** button that opens **Groups** — not an empty list, not a spinner that
+   never resolves. *An empty list here is `ActiveGroupState.Success(emptyList(), null)` being
+   confused with `Loading`/`Error` — see `ActiveGroupState`'s own KDoc for why the three are kept
+   distinct on purpose (fix round 1, BLOCKING B3).*
+
+### 27. A user in exactly one group sees no switcher chrome
+
+1. Using an account in exactly one group (A, before walkthrough 24's second group — or any fresh
+   account after joining exactly one), open **Feed** and **Groups**. **Expect:** no switcher header
+   row on either screen — just the content, scoped to the one group implicitly (decision E-B/E-K).
+   *A visible switcher with only one entry is noise the design doc calls out explicitly (§9.11) as
+   the case E-K exists to avoid.*
+
+### 28. Scrolling the feed past the first page loads more with no duplicates and no gaps
+
+1. Generate enough activity in one group to exceed one feed page — have both accounts add, rate,
+   progress and complete several titles each; `GET /v1/groups/{id}/feed` pages by cursor
+   (architecture rule 4).
+2. Scroll the feed to the bottom repeatedly. **Expect:** `EndOfListTrigger` fires more pages in
+   smoothly, every row appears exactly once in a consistent newest-first order, and the list settles
+   once the real end is reached — no row repeated, none skipped. *A duplicate or a gap means the
+   cursor `loadMore` is not re-entrancy-guarded the way `LibraryViewModel.loadMore()` already is —
+   the same shape every other paginated screen in this app settled on.*
+
+### 29. Tapping a feed entry lands on the correct detail screen
+
+1. From the feed, tap any row whose kind names a title (`added`, `progressed`, `rated`, `completed`,
+   `dropped` — anything but `imported`, see walkthrough 30). **Expect:** `:feature:detail`'s screen
+   opens for **that exact title**, reached through the `:core:navigation` route contract
+   (`:feature:feed` never depends on `:feature:detail` directly — architecture rule 1). *Landing on
+   the wrong title, or nothing happening, means the row's `mediaId` is not making it into the
+   `onNavigate(DetailRoute(...))` call `FeedScreen` wires up.*
+
+### 30. An `imported` feed row renders without a title and does not navigate
+
+1. From Profile, run an AniList import on either account with a public profile that has titles
+   ShowTrack does not already know about (see walkthrough 17). Return to that account's group's
+   **Feed**.
+2. **Expect:** one row reading "`<username>` imported `N` titles from AniList" — no cover art, no
+   title text, and it is **not tappable**: tapping it does nothing, not even a flash of pressed state.
+   *A crash here means a `null` `FeedEntry.media` reached code that assumed it non-null (decision
+   E-H, the one place the design doc's own acceptance criterion undersold the schema); a navigation
+   on tap means the row was not excluded from the tap handler the way every other kind is.*
+
+### 31. A title tracked by three members shows three progress rows
+
+1. Have accounts A and B both add and progress on the same title, in a group both are in. Open that
+   title's **Detail** screen while the group with both members is active. **Expect:** the **Group**
+   section shows one row per member who tracks it — "`<username>`: `<status>`, episode `<N>`" — so
+   two rows here. *(A third account tracking the same title would show a third row; two already
+   proves the mechanism — `GET /{id}/media/{media_id}/progress` returns one row per tracking member,
+   ordered by progress descending with a username tiebreak, and the section renders the list as
+   given.)*
+2. Confirm the two rows show each account's own actual progress, not a copy of one row duplicated.
+
+### 32. A review flagged `contains_spoilers` is unreadable until tapped
+
+1. On account B, open a title's **Detail** screen and tap **Write a review**. Enter text, check
+   **Contains spoilers**, **Save**.
+2. On account A, open the same title's Detail screen (same active group). **Expect:** B's review
+   card shows B's username and a **Show spoiler** button — no review text visible anywhere in the
+   card, not faded, not behind a blur, genuinely absent from what's on screen (decision E-J:
+   `SpoilerReview`'s collapsed branch renders no `Text(review.body)` composable at all).
+3. Tap **Show spoiler**. **Expect:** the body appears, and it stays visible — there is deliberately
+   no "hide it again" control (reveal is one-way for the life of the screen).
+
+### 33. A title nobody else tracks shows an empty group section, not a broken one
+
+1. On account A, open Detail for a title that no other member of the active group tracks (or
+   propose one to the shared watchlist and add it yourself, alone). **Expect:** the **Group** section
+   renders "No one else in the group is tracking this title yet." — not a spinner stuck forever, not
+   a crash, not the section missing entirely (it is present with an empty state; it is *absent
+   entirely* only when there is no active group at all — a different case, see the design doc §3.5).
+
+### 34. Writing a review on a title you have already reviewed edits the existing one
+
+1. On account A, having already written a review for a title (from walkthrough 32's pattern, or any
+   title), tap **Write a review** on that same title again from a fresh Detail screen load.
+2. **Expect:** the editor opens pre-filled with your existing review's text and spoiler flag, headed
+   "Edit your review" rather than "Write a review" — no error surfaces first. *This is `POST
+   /v1/reviews`'s 409 being converted into an edit rather than shown as a failure (decision E-G): the
+   client resolves the 409 to the existing review and reopens the same editor pointed at its id,
+   `PATCH`ing on the next Save instead of `POST`ing again.*
+
+### 35. Leaving a group from account B removes B from A's member list
+
+1. On account B, open the group from walkthrough 22, tap **Leave group**, confirm. **Expect:** B
+   returns to the groups list, and the group is gone from it.
+2. On account A, reopen that group's **Members** screen (pull to refresh, or re-enter the screen).
+   **Expect:** B no longer appears. *A's list still showing B means the member list is cached
+   somewhere it should not be — `GET /v1/groups/{id}/members` is not cached at all by design, so this
+   would point at a stale in-memory ViewModel state that a fresh screen entry should have replaced.*
+
+### 36. Switch groups while a feed page is loading
+
+Drawn from a real defect this phase shipped and fixed — invisible to the test suite until a
+dedicated generation-guard test existed for it.
+
+1. In a group with enough activity to page (walkthrough 28's setup), scroll the feed to trigger a
+   `loadMore`, and **while that page is still in flight** (a slow connection, or a throttled network
+   profile, makes the window easier to hit), switch to a different group in the switcher.
+2. **Expect:** once loading settles, the screen shows **only the new group's rows** — nothing from
+   the group you switched away from. *If the old group's page appears on top of the new group's feed,
+   a stale continuation has outlived its subject: `FeedViewModel.generation` is what the production
+   fix checks before applying an in-flight fetch's result, and this is the exact race that check
+   exists to close (it also has to be bumped, first, inside `selectGroup` itself — ordering, not just
+   presence, is load-bearing here).*
+
+### 37. Tap Add on Discover the moment you return to the tab
+
+Also a real fixed defect, unrelated to groups — Discover refetches on every resume (task 9c.8,
+matching `FavoritesViewModel`/`ProfileViewModel`'s settled refresh shape), which opened a window
+where a tap could race that resume fetch.
+
+1. Open **Discover**, navigate away (e.g. to Detail and back, or switch tabs and back) so a resume
+   refresh fires, and **the instant the tab is visible again**, tap **Add** on a recommendation row.
+2. **Expect:** the row disappears immediately and **stays gone** — including after the resume
+   refresh's response lands. *If the tap does nothing, a background refresh is swallowing the direct
+   tap for the whole resume window — the fixed behaviour keeps a direct tap authoritative over a
+   background fetch. If the row reappears a moment later, the optimistic removal is being
+   republished by the refresh instead of the refresh honouring the add-suppression set.*
+
+### 38. Edit a review with the network flaky
+
+1. On account A, write a review, then edit it — change the text, **Save**. Immediately drop the
+   network (airplane mode) for a few seconds, right as the post-save refresh would be firing, then
+   restore it.
+2. Reopen the review editor for the same title. **Expect:** your **edited** text appears, not the
+   version from before this edit. *If you see the pre-edit version, `DetailViewModel`'s
+   `lastOwnReview` cache still holds the stale copy because the refresh failed silently — and saving
+   again from that stale seed would overwrite your own edit with itself, silently reverting it. This
+   is also the shape of the cross-session review gap recorded above: today it is closed only within
+   the same screen instance, not across a navigate-away-and-back.*
+
+### 39. A long list of reviews never leaks a spoiler you never tapped
+
+1. Get several members (as many accounts as convenient — two is enough to see the mechanism, more
+   makes the scroll more convincing) to each write a spoiler-flagged review on the same title, so the
+   **Group** section's reviews list is long enough to scroll.
+2. Scroll the list down and back up repeatedly, without tapping **Show spoiler** on any of them.
+   **Expect:** every review stays collapsed the whole time — none reveal themselves just from being
+   scrolled past. *This is `LazyColumn` composition-slot reuse: a naive `remember` keyed only on
+   position would let a scrolled-away "revealed" row's state leak onto whatever review scrolls into
+   that same slot next. `SpoilerReview`'s `revealed` state is `rememberSaveable(review.id)` —
+   keyed on the review's own id, not the slot — specifically so this cannot happen; this walkthrough
+   is what a regression back to position-keyed state would look like.*
+
+### 40. Sign out and back in as a different account, then open a group screen
+
+1. On the device you used for account A, with A's groups showing normally, go to **Profile → Sign
+   out**, confirm, then log in as account B.
+2. Open **Feed** and **Groups**. **Expect:** B's own groups — not A's, not a mix, not a stale
+   selection pointing at a group B isn't even in. *Anything from account A surviving into B's session
+   means a cached identity outlived the sign-out — this app has hit that shape twice before in other
+   stores (`cachedUserId` in `AuthRepositoryImpl`), and `ActiveGroupViewModel.reset()`, wired to the
+   sign-out navigation action, is what clears both the in-memory state and `ActiveGroupStore`'s
+   persisted selection for exactly this case.*
 
 ## Contributing
 
@@ -2017,16 +2309,17 @@ and both get worse the longer they wait.
 | 8.9 | Push over UnifiedPush — backend transport, Android receiver, deep-linked taps | in progress |
 | 9a | Feature modules, first pass — auth, library, detail and search screens; `media_id` filter on `GET /v1/library` | in progress |
 | 9b | Feature modules, second pass — offline-first library rendering, discover, favorites, profile statistics, AniList import screen (reachable from Profile and from post-registration onboarding); `favorite` filter and `GET /v1/library/stats` | in progress |
-| 9 | Feature modules — seven of nine screens now work end to end; groups and feed remain placeholders | in progress |
+| 9c | Feature modules, third pass — groups (list, create, join, detail, owner-only management, shared watchlist), the activity feed as a fifth tab, the group switcher and its two empty states, the group section on Detail (progress + reviews), writing and editing reviews | in progress |
+| 9 | Feature modules — **nine of nine** screens now work end to end | in progress |
 | 10 | Polish and deployment | |
 
-**8.9, 9a and 9b are all `in progress` on the code, not verified on the device**, and the distinction
-is the point. 8.9's acceptance criterion is "a test push notification is received and tapping it
-opens the correct title" — that has never been executed, because there is no device here. 9a's and
-9b's own acceptance criterion — "follow your own instructions from a clean directory and reach a
-working state" — is likewise unmet by this repository's own tooling; [Device
+**8.9, 9a, 9b and 9c are all `in progress` on the code, not verified on the device**, and the
+distinction is the point. 8.9's acceptance criterion is "a test push notification is received and
+tapping it opens the correct title" — that has never been executed, because there is no device here.
+9a's, 9b's and 9c's own acceptance criterion — "follow your own instructions from a clean directory
+and reach a working state" — is likewise unmet by this repository's own tooling; [Device
 walkthroughs](#device-walkthroughs) is the instructions, not a report that they were followed. The
-code and its tests are complete and the gate is green in all three cases; the device-level criterion
+code and its tests are complete and the gate is green in all four cases; the device-level criterion
 is what remains open. See [What is proven, and what is not](#what-is-proven-and-what-is-not).
 
 Architecture documentation lives outside this repository, alongside the working copy: a design doc, a
