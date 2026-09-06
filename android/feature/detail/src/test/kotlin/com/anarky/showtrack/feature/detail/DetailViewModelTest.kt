@@ -1239,8 +1239,8 @@ class DetailViewModelTest {
      * trustworthy an ALREADY-WRITTEN result still is. A save whose OWN post-save reload then FAILS
      * leaves the section exactly where the settled refresh shape says it should — holding the
      * PRE-write data, marked stale — until the next SUCCESSFUL refresh. Without
-     * [DetailViewModel]'s own freshness stamp (`groupSectionAppliedGeneration` vs
-     * `lastOwnReviewGeneration`), [DetailViewModel.findOwnReview] would trust that stale "no match"
+     * [DetailViewModel]'s own freshness stamp (`groupSectionAppliedGeneration` vs the cached
+     * review's own generation), [DetailViewModel.findOwnReview] would trust that stale "no match"
      * for the whole of that window, over a `lastOwnReview` that is actually correct — the identical
      * dead end BLOCKING B2 fixed, reachable a THIRD way. (Round 3's own version of this KDoc, and
      * the two in `DetailViewModel` it echoed, claimed the window was PERMANENT, "nothing else ever
@@ -1455,6 +1455,57 @@ class DetailViewModelTest {
                 "a successful post-save reload is strictly fresher than the save it followed",
                 reopened.reviewId,
             )
+        }
+
+    /**
+     * Fix round 5: the case with NO cached review at all — the account wrote its review in a
+     * PREVIOUS session, so `lastOwnReview` is null and the group section is the only thing that can
+     * answer. The section having gone stale (a failed refresh) is NOT by itself a reason to
+     * distrust it: staleness is not the criterion, generation ORDERING is, and with nothing cached
+     * there is no write for the section to predate. Tapping Edit must therefore seed the existing
+     * text out of the stale rows rather than opening a blank draft — a blank draft would `POST`,
+     * 409, resolve to nothing, and surface `AlreadyReviewed` with no way forward.
+     *
+     * Refreshed through [DetailViewModel.retryGroupSection] specifically — the section's own Retry
+     * button, the affordance fix round 4 corrected three KDocs to acknowledge — so the test drives
+     * the same path a reader staring at a `StaleDataBanner` actually has.
+     */
+    @Test
+    fun `a stale section still answers for an account with no cached review of its own`() =
+        runTest(dispatcher) {
+            val key = GROUP_ID to "media-1"
+            val groups = FakeGroupRepository(reviewsResults = mutableMapOf(key to listOf(MY_REVIEW)))
+            val viewModel =
+                DetailViewModel(
+                    savedState("media-1"),
+                    FakeMedia(),
+                    FakeLibrary(entry = ENTRY),
+                    groups,
+                    FakeAuthRepository(),
+                )
+            advanceUntilIdle()
+            viewModel.setActiveGroup(GROUP_ID)
+            advanceUntilIdle()
+            // Nothing was written through THIS ViewModel instance, so there is no cached review —
+            // exactly the state a fresh screen for a title reviewed in an earlier session is in.
+
+            groups.reviewsFailures[key] = GroupFailure.Network
+            viewModel.retryGroupSection()
+            advanceUntilIdle()
+
+            val section = (viewModel.state.value as DetailUiState.Success).groupSection as GroupSectionState.Loaded
+            assertTrue("the failed refresh must leave the rows on screen, marked stale", section.isStale)
+
+            viewModel.openReviewEditor()
+            advanceUntilIdle()
+
+            val editor = (viewModel.state.value as DetailUiState.Success).reviewEditor as ReviewEditorState.Open
+            assertEquals(
+                "with nothing cached to prefer, the stale section is still the best answer available",
+                MY_REVIEW.id,
+                editor.reviewId,
+            )
+            assertEquals(MY_REVIEW.body, editor.seedBody)
         }
 
     /**

@@ -428,11 +428,20 @@ class DetailResumeTest {
      * diagnosis. Adding it made the score-dropdown tap fail with
      * `Assert failed: The component with (Text + InputText + EditableText contains '9.0')[0] is not
      * displayed!` (`DetailResumeTest.kt`, this helper) on a node the SAME query had just asserted
-     * into existence. `assertIsDisplayed` is a bounds test — the node's rectangle against its
-     * window's — so the popup's contents having no usable position relative to the main window IS
-     * the reason a coordinate-based `performClick()` never lands on them. One cause, two symptoms;
-     * the assertion cannot be kept, but the failure it produced is the evidence for the workaround
-     * it was meant to guard.
+     * into existence. Measured on that node (fix round 5, printed from this helper): `size` is a
+     * healthy `112 x 48` and `positionInWindow` is populated (`Offset(0.0, 776.0)`), but
+     * `boundsInWindow` is DEGENERATE — `Rect.fromLTRB(0.0, 0.0, 0.0, 0.0)` — inside the popup's own
+     * second `AndroidComposeView`. That single rectangle is what `assertIsDisplayed`'s emptiness
+     * check and `performClick`'s coordinate derivation BOTH consume, so it is one cause with two
+     * symptoms: the assertion cannot be kept, and the gesture cannot land.
+     *
+     * Two consequences worth knowing before touching this:
+     * - The non-zero-size guard below is the only guard available, but `size` is precisely the
+     *   property that stays healthy while the bounds go degenerate, so it structurally CANNOT fire
+     *   for a popup node in this environment. It is defence for the non-popup case, not this one.
+     * - **`performClick()` on popup contents fails SILENTLY** — no throw, no effect. A future test
+     *   can therefore "tap" a menu item, pass, and have exercised nothing at all. That is the trap
+     *   this helper exists to keep the next author out of.
      */
     private fun SemanticsNodeInteraction.performSemanticsClick() {
         assertIsEnabled()

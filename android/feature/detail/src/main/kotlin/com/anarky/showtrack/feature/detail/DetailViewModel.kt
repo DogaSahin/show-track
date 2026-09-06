@@ -143,8 +143,9 @@ class DetailViewModel
         // THIS title (task 9c.7, fix round 1, BLOCKING B2) — written ONLY through [cacheOwnReview],
         // from whatever the server actually returned, and read only by findOwnReview as its
         // fallback when the group section cannot answer or is not fresh enough to be trusted. See
-        // findOwnReview's own KDoc for why this exists and what it does not fix (a cold start).
-        private var lastOwnReview: Review? = null
+        // findOwnReview's own KDoc for why this exists and what it does not fix (a cold start),
+        // and [OwnReviewCache] for why the review and its generation are ONE field (fix round 5).
+        private var lastOwnReview: OwnReviewCache? = null
 
         // Fix round 3, BLOCKING: the [groupSectionGeneration] a successfully-applied [GroupSectionState.Loaded]
         // was actually FETCHED under — distinct from [groupSectionGeneration] itself, which also
@@ -156,13 +157,29 @@ class DetailViewModel
         // "the section still predates it" — see that function's own KDoc.
         private var groupSectionAppliedGeneration = -1
 
-        // Fix round 3, BLOCKING: the [groupSectionGeneration] that was current at the MOMENT
-        // [lastOwnReview] was last written — captured by [cacheOwnReview], called from
-        // [onReviewSaved] BEFORE that function's own bump, so a [groupSectionAppliedGeneration]
-        // EQUAL to this belongs to a fetch that was already in flight (or already applied) at save
-        // time, not one requested because of it. Back to -1 whenever the cache is cleared: the pair
-        // is written as a pair, never one without the other (fix round 4, small item 4).
-        private var lastOwnReviewGeneration = -1
+        /**
+         * [lastOwnReview]'s value: this account's own review AND the [groupSectionGeneration] it
+         * was cached at, as ONE object rather than two parallel fields (fix round 5).
+         *
+         * Round 4 held these as a pair — `lastOwnReview` plus `lastOwnReviewGeneration` — kept
+         * coherent by a single writer and a `-1` sentinel meaning "nothing cached". That worked,
+         * and it made [findOwnReview]'s own null-guard permanently DEAD: with the sentinel in
+         * place, "there is no cached review" and "the cache predates the section" became mutually
+         * exclusive states, so the guard could be deleted without reddening a single test, and no
+         * test could be written that would. Measured both ways — a runtime assertion that the
+         * guard never decides held across the whole suite, and removing the sentinel reset made the
+         * pair drift within six ordinary calls. The two spellings guarded the same thing, and
+         * keeping both is what made one of them unpinnable.
+         *
+         * One field ends that: a generation cannot exist without the review it belongs to, the
+         * drift state is unrepresentable rather than merely unreachable, and [findOwnReview]'s
+         * guard is a null check the COMPILER requires in order to read [generation] — it cannot be
+         * deleted, so it does not need a test to notice if it were.
+         */
+        private data class OwnReviewCache(
+            val review: Review,
+            val generation: Int,
+        )
 
         init {
             load()
@@ -446,7 +463,7 @@ class DetailViewModel
                 // any current UI action can trigger. Scoped to the id that actually failed —
                 // [editor.reviewId] — so a 404 on some OTHER resolved id never clears a still-good
                 // cache entry for a different review.
-                if (failure.failure is GroupFailure.NoSuchEntry && lastOwnReview?.id == editor.reviewId) {
+                if (failure.failure is GroupFailure.NoSuchEntry && lastOwnReview?.review?.id == editor.reviewId) {
                     cacheOwnReview(null)
                 }
                 replaceOpenReviewEditor { it.copy(saving = false, error = ReviewSaveError.Remote(failure.failure)) }
@@ -469,9 +486,9 @@ class DetailViewModel
          * an optimistic insert of [saved] into it. A no-op reload when there is no active group —
          * nothing in [groupSection] needs refreshing if it was never scoped to one.
          *
-         * [cacheOwnReview] stamps [lastOwnReviewGeneration] BEFORE the bump below (fix round 3,
+         * [cacheOwnReview] stamps [OwnReviewCache.generation] BEFORE the bump below (fix round 3,
          * BLOCKING) — see [findOwnReview]'s own KDoc for what that ordering buys: a
-         * [groupSectionAppliedGeneration] EQUAL to this value means the currently-shown section was
+         * [groupSectionAppliedGeneration] EQUAL to that value means the currently-shown section was
          * fetched no later than THIS save, so it must never be trusted over [lastOwnReview] —
          * covers a post-save reload that FAILS (the section then keeps its pre-write data, marked
          * stale, until the next SUCCESSFUL refresh, which only [retryGroupSection] or a resume can
@@ -493,11 +510,11 @@ class DetailViewModel
                 // a switch. Without the bump, [reloadGroupSection]'s re-entrancy guard
                 // (`loadingGroupSectionGeneration == groupSectionGeneration`) silently DROPS this
                 // call whenever a resume-triggered fetch is still in flight — the older fetch then
-                // lands, and (WITHOUT [lastOwnReviewGeneration]'s own freshness check above) would
+                // lands, and (WITHOUT [OwnReviewCache.generation]'s own freshness check above) would
                 // get trusted outright over a genuinely fresher [lastOwnReview]. Bumping first forces
                 // the guard open for a fresh fetch, and makes the OLDER fetch's own landing a no-op
                 // via the SAME check — the two fixes are complementary, not redundant: this bump
-                // decides which fetch's result gets APPLIED; [lastOwnReviewGeneration] decides
+                // decides which fetch's result gets APPLIED; [OwnReviewCache.generation] decides
                 // whether an ALREADY-APPLIED result is still trustworthy once this save has happened.
                 groupSectionGeneration++
                 reloadGroupSection()
@@ -505,18 +522,15 @@ class DetailViewModel
         }
 
         /**
-         * The ONE write path for [lastOwnReview] and [lastOwnReviewGeneration] (fix round 4, small
-         * item 4). The two are a pair — a cached review and the [groupSectionGeneration] it was
-         * written under — and the only way to keep them coherent is to give them no separate write
-         * sites to drift between: round 3's [handleSaveFailure] cleared the review and left the
-         * generation at its stale-high value, which happened to be harmless (a null cache falls
-         * through to the section's own answer either way, [findOwnReview]) but was one edit away
-         * from not being. Clearing resets the generation to the same `-1` the field starts at, so
-         * "no cached review" and "never wrote one" are the same state, not two.
+         * The ONE write path for [lastOwnReview] (fix round 4, small item 4; simplified in round
+         * 5). The review and the [groupSectionGeneration] it was written under must be captured
+         * together — [OwnReviewCache] is now what makes that structural rather than a rule this
+         * function has to remember. The capture itself is still load-bearing and still belongs
+         * here: [onReviewSaved] reads [groupSectionGeneration] through this call BEFORE its own
+         * bump, which is the whole ordering [findOwnReview] depends on.
          */
         private fun cacheOwnReview(review: Review?) {
-            lastOwnReview = review
-            lastOwnReviewGeneration = if (review == null) -1 else groupSectionGeneration
+            lastOwnReview = review?.let { OwnReviewCache(it, groupSectionGeneration) }
         }
 
         /**
@@ -546,7 +560,7 @@ class DetailViewModel
          *
          * **When the section IS [GroupSectionState.Loaded] and [currentUserId] IS known, its answer
          * — WHATEVER that answer is — is trusted only if [groupSectionAppliedGeneration] is STRICTLY
-         * GREATER than [lastOwnReviewGeneration]** (fix round 3, BLOCKING; extended to the MATCH
+         * GREATER than [OwnReviewCache.generation]** (fix round 3, BLOCKING; extended to the MATCH
          * branch in fix round 4, BLOCKING). The two generations answer exactly one question — did
          * the data CURRENTLY on screen come from a fetch that started no earlier than this save —
          * and that question does not care whether the stale list happens to contain a row for this
@@ -567,6 +581,14 @@ class DetailViewModel
          * still unbounded from the reader's side, and an edit silently reverted inside that window
          * is not recoverable by refreshing afterward.
          *
+         * The `cache != null` half of that test is NOT a redundant belt-and-braces check that a
+         * future reader may tidy away: it is what the compiler requires in order to read
+         * [OwnReviewCache.generation] at all. Round 4 spelled it `&& lastOwnReview != null` against
+         * a parallel generation field, where it was provably dead (see [OwnReviewCache]'s own KDoc
+         * for the measurements) — deletable with the whole suite still green, and unpinnable by any
+         * test. Collapsing the pair into one nullable field is what turned an untestable line into
+         * an undeletable one.
+         *
          * The invariant that makes the comparison meaningful: whenever [groupSection] is
          * [GroupSectionState.Loaded], [groupSectionAppliedGeneration] names the generation of the
          * fetch that produced its rows. [setActiveGroup] blanks unconditionally on a switch, so a
@@ -575,10 +597,10 @@ class DetailViewModel
          * deliberately does not).
          */
         private fun findOwnReview(): Review? {
-            val loaded = groupSection as? GroupSectionState.Loaded ?: return lastOwnReview
-            val userId = currentUserId ?: return lastOwnReview
-            val sectionReflectsLastWrite = groupSectionAppliedGeneration > lastOwnReviewGeneration
-            if (!sectionReflectsLastWrite && lastOwnReview != null) return lastOwnReview
+            val loaded = groupSection as? GroupSectionState.Loaded ?: return lastOwnReview?.review
+            val userId = currentUserId ?: return lastOwnReview?.review
+            val cache = lastOwnReview
+            if (cache != null && groupSectionAppliedGeneration <= cache.generation) return cache.review
             return loaded.reviews.firstOrNull { review -> review.author.id == userId }
         }
 
