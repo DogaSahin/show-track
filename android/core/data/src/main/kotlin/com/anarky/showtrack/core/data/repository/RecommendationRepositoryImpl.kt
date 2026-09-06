@@ -98,11 +98,19 @@ class RecommendationRepositoryImpl
         }
 
         /**
-         * `coerceIn(0, size)`, not a blind insert at [index]: a `loadMore()` that completed while
-         * the row was out (D-I's optimistic add is in flight) can only have grown [mutableFeed] by
-         * appending past the removal point — `loadMore` never inserts before it — so [index] is
-         * always still a valid position; the clamp is defensive against a future change to that
-         * assumption, not load-bearing for the race as it exists today.
+         * `coerceIn(0, size)`, not a blind insert at [index]. This clamp is **load-bearing**, not
+         * defensive — corrected in task 9c.8 round 5, having been described as the opposite since
+         * it was written.
+         *
+         * The original reasoning covered one race and concluded the clamp was precautionary: a
+         * `loadMore()` completing while the optimistic add was in flight can only have GROWN
+         * [mutableFeed], by appending past the removal point, so [index] stayed valid. That is
+         * still true of `loadMore()`. It is no longer the only thing that can run during an add:
+         * since task 9c.8 round 3, `DiscoverViewModel.add` is deliberately not blocked by an
+         * in-flight `refresh()`, and [refresh] TRUNCATES the feed to page 1. So a row added from
+         * page 3 at index 45, whose add then fails, can reach this function with a 20-element
+         * [mutableFeed] — and `MutableList.add(45, e)` throws [IndexOutOfBoundsException]. The
+         * clamp is the only thing standing between that sequence and a crash.
          */
         override fun restore(
             index: Int,

@@ -660,41 +660,81 @@ class DiscoverViewModelTest {
         }
 
     /**
-     * The other half of round 4's fix, and what keeps the suppression from being permanent: once a
-     * refresh's fresh page stops naming the row, the backend has applied the add and there is
-     * nothing left to suppress. Without the prune, a title the user later REMOVES from their
-     * library — so the backend legitimately recommends it again — would stay hidden here for the
-     * rest of the process's life.
+     * Review finding, round 5, probe A — and the state space every other test in this class misses:
+     * **the added row arrived via [DiscoverViewModel.loadMore], not from page 1.** Round 4 pruned
+     * [optimisticallyRemovedIds] against the page a successful refresh had just fetched, inferring
+     * "page 1 no longer names it, so the backend applied the add". A row added from page 2 is
+     * absent from page 1 for the ordinary reason that it was never on it — so the prune dropped a
+     * live suppression, and the very next page fetch brought the added row back.
+     *
+     * The last `loadMore` needs no extra user action in production: the refresh truncates 40 rows
+     * to 20 under a user scrolled near row 25, so `EndOfListTrigger` fires it by itself.
      */
     @Test
-    fun `a suppressed row is forgotten once a refresh's page stops naming it`() =
+    fun `a row added from a later page is not resurrected by the next page fetch`() =
         runTest(dispatcher) {
-            val recommendations = FakeRecommendationRepository(refreshResult = listOf(FRIEREN, BEBOP))
+            val recommendations =
+                FakeRecommendationRepository(refreshResult = listOf(BEBOP), loadMoreAppends = listOf(FRIEREN))
             val viewModel = DiscoverViewModel(recommendations, FakeLibraryRepository())
             viewModel.refresh()
             advanceUntilIdle()
+            viewModel.loadMore()
+            advanceUntilIdle()
+            assertEquals(listOf(BEBOP, FRIEREN), (viewModel.state.value as DiscoverUiState.Success).items)
 
-            viewModel.add(FRIEREN)
+            viewModel.add(FRIEREN) // the added row came from page 2, and is on no page 1
             advanceUntilIdle()
             assertEquals(listOf(BEBOP), (viewModel.state.value as DiscoverUiState.Success).items)
 
-            // The backend has now applied the add: page 1 no longer names the row.
-            recommendations.refreshResult = listOf(BEBOP)
-            viewModel.refresh()
+            viewModel.refresh() // a resume, whose page 1 never named FRIEREN
             advanceUntilIdle()
-            assertEquals(listOf(BEBOP), (viewModel.state.value as DiscoverUiState.Success).items)
-
-            // The user removes the title from their library elsewhere; the backend recommends it
-            // again, and this screen must be willing to show it again.
-            recommendations.refreshResult = listOf(FRIEREN, BEBOP)
-            viewModel.refresh()
+            viewModel.loadMore() // page 2 still names it — the backend has not applied the add
             advanceUntilIdle()
 
             assertEquals(
-                "a suppression the backend has caught up with must not outlive it",
-                listOf(FRIEREN, BEBOP),
+                "an added row must not come back on the next page",
+                listOf(BEBOP),
                 (viewModel.state.value as DiscoverUiState.Success).items,
             )
+        }
+
+    /**
+     * Review finding, round 5, probe B — the same sequence as the test above, with the add FAILING
+     * at the end so `restore()` runs. A resurrected row plus a restored one is two rows with the
+     * same `media.id`, and `DiscoverScreen`'s `LazyColumn` is keyed by exactly that: the
+     * duplicate-key crash this whole task exists to prevent, reached through the one gap round 4
+     * left. Asserted as a COUNT of the id, the same shape as the round-2 probe test above.
+     */
+    @Test
+    fun `a failed add of a later-page row leaves exactly one copy after the next page fetch`() =
+        runTest(dispatcher) {
+            val recommendations =
+                FakeRecommendationRepository(refreshResult = listOf(BEBOP), loadMoreAppends = listOf(FRIEREN))
+            val addGate = CompletableDeferred<Unit>()
+            val library = FakeLibraryRepository(addFailure = IOException("offline"), addGate = addGate)
+            val viewModel = DiscoverViewModel(recommendations, library)
+            viewModel.refresh()
+            advanceUntilIdle()
+            viewModel.loadMore()
+            advanceUntilIdle()
+
+            viewModel.add(FRIEREN) // held open on addGate
+            advanceUntilIdle()
+            viewModel.refresh()
+            advanceUntilIdle()
+            viewModel.loadMore()
+            advanceUntilIdle()
+
+            addGate.complete(Unit) // the add fails, and restore() puts the row back
+            advanceUntilIdle()
+
+            val items = (viewModel.state.value as DiscoverUiState.Success).items
+            assertEquals(
+                "no media id may appear twice — DiscoverScreen's LazyColumn is keyed by it",
+                items.size,
+                items.distinctBy { it.media.id }.size,
+            )
+            assertEquals(1, items.count { it.media.id == FRIEREN.media.id })
         }
 
     /**

@@ -171,15 +171,29 @@ class DiscoverViewModel
         // The ids this screen has optimistically taken off [DiscoverUiState.Success.items] and has
         // NOT been told to put back — the memory that survives the `POST` (round 4, review finding
         // BLOCKING 1). An id enters here in [add], next to the [RecommendationRepository.remove]
-        // that hides the row, and leaves on exactly two events:
+        // that hides the row, and leaves on EXACTLY ONE event: the add FAILED and the row is being
+        // restored ([add]'s `catch`) — the row is the user's to see again, and its retry affordance
+        // renders from it. A successful add's id is never removed from this set; it is suppressed
+        // for as long as this ViewModel lives.
         //
-        //  1. the add FAILED and the row is being restored ([add]'s `catch`) — the row is the
-        //     user's to see again, and its retry affordance renders from it;
-        //  2. a successful [refresh]'s fresh page no longer names it — the server has now applied
-        //     the add itself, so there is nothing left to suppress. This prune is what keeps the
-        //     set from growing for the process's lifetime, and what stops a title the user later
-        //     removes from their library from being hidden here forever: once the backend is
-        //     willing to recommend it again, this screen is willing to show it again.
+        // **Round 4 also pruned here, against the page a successful [refresh] had just fetched, and
+        // round 5 DELETED that prune because its precondition is false.** `retainAll(freshIds)`
+        // inferred "page 1 no longer names this id, so the backend has applied the add" — which
+        // needs page 1 to be the whole recommendation set. It is not: `PAGE_SIZE` is 20 and
+        // [loadMore] appends pages 2..n, so a row the user added FROM A LATER PAGE is absent from
+        // page 1 for the ordinary reason that it was never on it. The prune then dropped a live
+        // suppression, and the next [loadMore] re-fetched the page that still named the row: the
+        // add came back, and if the row was still present from before, `media.id` appeared twice
+        // and `DiscoverScreen`'s keyed `LazyColumn` crashed. `refresh` truncating the CLIENT's list
+        // to page 1 is a different proposition from page 1 being the whole feed, and round 4
+        // conflated them.
+        //
+        // The cost of having no prune, stated rather than discovered later: this set only grows
+        // (bounded by Add taps in one ViewModel's lifetime — a handful of short strings, not a
+        // memory concern), and a title the user adds here and then REMOVES from their library
+        // elsewhere in the same session stays hidden on this screen until the ViewModel dies, even
+        // though the backend is willing to recommend it again. That is one stale absence, against a
+        // resurrected add plus a duplicate-key crash — see round 5 in the task report.
         //
         // While an id is in here, EVERY server-sourced republish re-applies its removal — both
         // [refresh]'s wholesale page-1 replacement and [loadMore]'s append. Doing it per-publish
@@ -189,11 +203,17 @@ class DiscoverViewModel
         //
         // Kept HERE rather than pushed into `RecommendationRepositoryImpl` (the alternative the
         // review offered): that would make the invariant unmissable for any future consumer of the
-        // repository, which is genuinely better in the abstract, but the repository has no way to
-        // learn that an add FAILED — the event that ends a suppression — so it would have to guess
-        // it from page contents alone, and it would give a process-lifetime `@Singleton` hidden
-        // state on behalf of one screen's optimistic UI. This ViewModel already owns the add's
-        // lifecycle; this field is just that knowledge outliving one `POST`.
+        // repository, which is genuinely better in the abstract. **Round 5 correction to this
+        // write-up's own premise:** round 4 argued the repository "cannot learn that an add
+        // failed". That is wrong — [RecommendationRepository.restore] is called on exactly and only
+        // the failure path, so it IS the failure signal, and a repository-level `remove`/`restore`
+        // pair could set and clear a suppression with no inference from page contents at all. The
+        // decision stands on the two arguments that survive: it would give a process-lifetime
+        // `@Singleton` hidden state on behalf of one screen's optimistic UI, and it would move the
+        // discriminating tests out of this module (`:feature:discover` cannot see
+        // `RecommendationRepositoryImpl`, so these tests would degrade into assertions about a
+        // fake). This write-up exists so a future round can REVERSE the decision deliberately, so
+        // the premises in it have to be true.
         private val optimisticallyRemovedIds = mutableSetOf<String>()
 
         // Set by [loadMore] when it drops itself because [refreshInFlight] (task 9c.8 round 2,
@@ -265,8 +285,9 @@ class DiscoverViewModel
          * unreachable this way, since no rows means no Add button means [addInFlight] can never be
          * set — but the reasoning behind it was load-bearing for the whole round-3 asymmetry.)
          *
-         * **Re-applies [optimisticallyRemovedIds] AFTER a successful fetch, and prunes it against
-         * the page it just read (round 4, review finding BLOCKING 1).** Round 3 re-applied
+         * **Re-applies [optimisticallyRemovedIds] AFTER a successful fetch (round 4, review
+         * finding BLOCKING 1; the prune that stood beside it was deleted in round 5 — see that
+         * field's own KDoc for the false precondition it rested on).** Round 3 re-applied
          * `addInFlight?.let { recommendationRepository.remove(it) }` here instead, which closed only
          * the sub-window in which the `POST` was still running: a `POST` that resolved BEFORE this
          * call's `GET` landed had already cleared [addInFlight] in [add]'s `finally`, so nothing was
@@ -274,13 +295,14 @@ class DiscoverViewModel
          * not an edge case, and precisely the wrong-recommendation defect this task exists to fix.
          * (Tapping Add on the resurrected row then sends a duplicate `POST` and can surface an
          * [DiscoverUiState.Success.addError] on a title that was in fact added.) The set is what
-         * outlives the `POST`; the prune, `retainAll` against the ids the fresh page still names, is
-         * what ends a suppression once the backend has caught up — see that field's own KDoc.
+         * outlives the `POST`; a failed add is the only thing that ends a suppression.
          *
          * [add]'s own `restore()` on failure still uses its captured `originalIndex` against
-         * whatever list is current by then; `RecommendationRepository.restore`'s existing clamp
-         * (`coerceIn(0, size)`) is what its own KDoc already argues is defensive for exactly this
-         * kind of reshuffle, so no change is needed there.
+         * whatever list is current by then, and this function is what can invalidate it: a refresh
+         * truncates the feed to page 1, so a row added from page 3 at index 45 can find a
+         * 20-element list waiting for it. `RecommendationRepository.restore`'s `coerceIn(0, size)`
+         * clamp is what absorbs that, and it is LOAD-BEARING for this race, not the defensive
+         * measure its own KDoc used to call it — corrected on both sides in round 5.
          *
          * **Re-issues a [loadMore] dropped by [refreshInFlight] once this call actually finishes**
          * (task 9c.8 round 2, review finding "B3 guard can stall paging") — see
@@ -297,11 +319,9 @@ class DiscoverViewModel
             viewModelScope.launch {
                 try {
                     recommendationRepository.refresh()
-                    // Round 4, BLOCKING 1: prune first — an id the fresh page no longer names has
-                    // been applied by the backend, so the suppression is over — then re-hide
-                    // whatever it still names. See [optimisticallyRemovedIds]'s own KDoc.
-                    val freshIds = recommendationRepository.feed.value.mapTo(mutableSetOf()) { it.media.id }
-                    optimisticallyRemovedIds.retainAll(freshIds)
+                    // Round 4, BLOCKING 1: re-hide every id this screen has optimistically
+                    // removed, against the page just fetched. NOT pruned against that page —
+                    // round 5 deleted the prune that was here; see [optimisticallyRemovedIds].
                     optimisticallyRemovedIds.forEach { recommendationRepository.remove(it) }
                     val previous = mutableState.value as? DiscoverUiState.Success
                     val base = previous ?: DiscoverUiState.Success(items = recommendationRepository.feed.value)
@@ -407,9 +427,10 @@ class DiscoverViewModel
                 try {
                     recommendationRepository.loadMore()
                     // Round 4: an appended page can still name a row this screen optimistically
-                    // hid — see this function's own KDoc. NOT pruned here: a row's absence from
-                    // page N proves nothing about the backend having applied the add, unlike
-                    // [refresh]'s fresh page 1, which IS the whole feed at that instant.
+                    // hid — see this function's own KDoc. Nothing is pruned here, and as of round 5
+                    // nothing is pruned in [refresh] either: NO page tells this screen that the
+                    // backend has applied an add, page 1 included. A row's absence from a page is
+                    // equally explained by its being on some other page.
                     optimisticallyRemovedIds.forEach { recommendationRepository.remove(it) }
                     replaceSuccess {
                         it.copy(items = recommendationRepository.feed.value, loadingMore = false, pageError = null)
@@ -448,9 +469,12 @@ class DiscoverViewModel
          * [originalIndex] is captured before the removal: restoring anywhere else would visibly
          * reshuffle the list the user is still looking at over an error that has nothing to do with
          * ordering. [RecommendationRepository.restore] clamps it against the CURRENT feed size, not
-         * blindly reusing it — see that function's KDoc for why the clamp is defensive rather than
-         * load-bearing for the one race that can move it (a `loadMore()` completing while this add
-         * is in flight).
+         * blindly reusing it — and since round 3 let this function run during a [refresh], that
+         * clamp is LOAD-BEARING rather than defensive: a refresh truncates the feed to page 1, so a
+         * failed add of a row from page 3 arrives at `restore` with an index past the end of a
+         * 20-element list, which is an [IndexOutOfBoundsException] without the clamp. Round 5
+         * corrected this citation and `RecommendationRepositoryImpl.restore`'s own KDoc together;
+         * both had gone on describing the clamp as precautionary after round 3 made it necessary.
          *
          * Never refetches the feed on either outcome — see [DiscoverUiState]'s and this class's own
          * KDoc: a refetch re-ranks the whole feed and would move rows out from under a user who is
