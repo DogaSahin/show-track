@@ -209,6 +209,23 @@ class ActiveGroupViewModel
          * falls back to [lastGroups]'s own first entry exactly as it would for a group that was
          * left. The resolved id can never observably take a value [lastGroups] does not contain —
          * that guarantee lives HERE, in the fallback, not in a check on [selectGroup]'s input.
+         *
+         * **What that guarantee is worth depends on [lastGroups] being the list the user was
+         * OFFERED, and until the whole-branch fix round it was not (BLOCKING 3).** `GroupsScreen`
+         * rendered its switcher tabs from `GroupsViewModel`'s independently-refreshed list, which a
+         * create or join appends to immediately without navigating — and nothing re-fires [refresh]
+         * for a screen the user never left. So a genuinely-joined group appeared as a tappable tab,
+         * [selectGroup] wrote it, and the `else` branch below then discarded it as "a group you are
+         * no longer in": the tab snapped back within a frame and the write-back above overwrote the
+         * user's choice in [activeGroupStore] with the old id. The code did exactly what this
+         * comment said; the comment never asked whether [lastGroups] was the right list.
+         *
+         * It is now, by construction: every switcher on the app renders from
+         * [ActiveGroupState.Success.groups] — the value this function publishes from [lastGroups] —
+         * and `GroupsScreen` additionally reports a create/join back here (`onGroupsChanged` ->
+         * [refresh]) so this list learns about a membership change made on a screen that does not
+         * navigate. The fallback therefore now only ever fires for what it was written for: nothing
+         * stored, or a stored id naming a group the account has genuinely left.
          */
         private fun recompute() {
             val resolved =

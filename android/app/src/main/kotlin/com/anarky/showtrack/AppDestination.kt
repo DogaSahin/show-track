@@ -107,7 +107,17 @@ internal fun appDestinations(
         AppDestination(ProfileRoute::class) { onNavigate -> profileEntry(onNavigate) },
         AppDestination(SearchRoute::class) { onNavigate -> searchEntry(onNavigate) },
         AppDestination(GroupsRoute::class) { onNavigate ->
-            groupsEntry(activeGroup = activeGroup, onSwitchGroup = onSwitchGroup, onNavigate = onNavigate)
+            // onGroupsChanged = onRetryGroups is not a slip: both are ActiveGroupViewModel::refresh.
+            // The two parameters are named for what each screen means by the call — Feed retries a
+            // FAILED groups fetch, Groups reports that a create/join CHANGED the set — and this is
+            // the one place that knows they resolve to the same function (whole-branch fix round,
+            // BLOCKING 3).
+            groupsEntry(
+                activeGroup = activeGroup,
+                onSwitchGroup = onSwitchGroup,
+                onGroupsChanged = onRetryGroups,
+                onNavigate = onNavigate,
+            )
         },
         AppDestination(GroupDetailRoute::class) { onNavigate -> groupDetailEntry(onNavigate) },
         AppDestination(FeedRoute::class) { onNavigate ->

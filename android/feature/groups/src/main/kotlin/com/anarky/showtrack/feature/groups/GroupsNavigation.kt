@@ -30,20 +30,31 @@ import kotlinx.coroutines.flow.StateFlow
  * [activeGroup] arrives as a `StateFlow<ActiveGroupState>` (task 9c.5), collected by
  * [GroupsScreen]'s stateful overload — `feedEntry`'s identical reasoning (`FeedNavigation.kt`'s own
  * KDoc): this registration runs far less often than the active group can change, so a plain
- * captured value would go stale. The [ActiveGroupState.Success.groups] list this carries is not
- * separately consumed here — [GroupsScreen] already loads its own full list for
- * [GroupsUiState.Success.groups], and `GroupSwitcher` reads THAT one directly rather than a second,
- * redundant copy through `:app`.
+ * captured value would go stale.
+ *
+ * **The [ActiveGroupState.Success.groups] list it carries IS consumed here now (whole-branch fix
+ * round, BLOCKING 3)** — an earlier version of this KDoc said the opposite, and that was the bug:
+ * `GroupSwitcher` read [GroupsViewModel]'s separate list while `ActiveGroupViewModel` validated the
+ * selection against its own, so a group created or joined on this screen was offered as a tab and
+ * then rejected on tap. See [GroupsScreen]'s stateful overload for the full account.
+ *
+ * [onGroupsChanged] fires when a create/join succeeds. `:app` binds it to
+ * `ActiveGroupViewModel::refresh`, which is also what `feedEntry`'s `onRetryGroups` is bound to —
+ * one function, two parameters named for what each CALLER means by it rather than for the binding
+ * they happen to share. Without it the single owner of "which groups exist" would not learn about a
+ * group created on this very screen until the user navigated away and back.
  */
 fun NavGraphBuilder.groupsEntry(
     activeGroup: StateFlow<ActiveGroupState>,
     onSwitchGroup: (String) -> Unit,
+    onGroupsChanged: () -> Unit,
     onNavigate: (AppRoute) -> Unit,
 ) {
     composable<GroupsRoute> {
         GroupsScreen(
             activeGroup = activeGroup,
             onSwitchGroup = onSwitchGroup,
+            onGroupsChanged = onGroupsChanged,
             onGroupClick = { group: Group -> onNavigate(GroupDetailRoute(groupId = group.id)) },
         )
     }

@@ -65,9 +65,29 @@ import kotlinx.coroutines.launch
  *
  * [activeGroup] arrives as a `StateFlow<ActiveGroupState>` (task 9c.5) and is collected here,
  * inside this composable's own body — `FeedScreen`'s identical reasoning (`FeedNavigation.kt`'s own
- * KDoc): `groupsEntry`'s registration runs far less often than the active group can change. Only
- * [ActiveGroupState.Success.activeGroupId] is used here — [ActiveGroupState.Loading]/[ActiveGroupState.Error]
- * both resolve to `null`, so no switcher renders.
+ * KDoc): `groupsEntry`'s registration runs far less often than the active group can change.
+ * [ActiveGroupState.Loading]/[ActiveGroupState.Error] both resolve to a `null` active id, so no
+ * switcher renders.
+ *
+ * **BOTH halves of the switcher come from [activeGroup] (whole-branch fix round, BLOCKING 3): the
+ * selected id AND the tabs.** They used to come from two different lists — the tabs from
+ * [GroupsViewModel]'s own [GroupsUiState.Success.groups], the selection validated inside
+ * `ActiveGroupViewModel.recompute` against ITS list — and this is the one screen where the two can
+ * diverge, because it is the one screen where groups are created and joined. Creating or joining a
+ * group appended it to [GroupsViewModel]'s list immediately (`applyGroupChange`) without
+ * navigating, so `ActiveGroupViewModel` never re-fetched: the new group appeared as a tappable tab
+ * whose id `recompute`'s fallback then rejected, silently reverting the selection to the old group
+ * AND overwriting the user's choice in `ActiveGroupStore` — a tap that visibly snapped back with no
+ * error and did not survive to the next launch. `FeedScreen` and `DetailScreen` never had this
+ * because they already render from [activeGroup]'s own list; this screen now agrees with them, so
+ * there is ONE owner of "which groups exist" for switching purposes rather than two lists to keep
+ * in step.
+ *
+ * [onGroupsChanged] is what stops that single owner going stale here: a successful create/join
+ * fires it, `:app` binds it to `ActiveGroupViewModel::refresh`, and the new group reaches the
+ * switcher without the user having to navigate away and back. [GroupsViewModel] keeps its own list
+ * for the screen's CONTENT — the rows, the invite banner, the stale banner — which is a different
+ * concern with its own failure channel, not a second copy of the switcher's list.
  *
  * **What that actually looks like for the person on this screen (fix round 2 — an earlier version
  * of this paragraph described the CODE, not what is on screen).** [GroupsViewModel.state] is
@@ -87,20 +107,33 @@ import kotlinx.coroutines.launch
 fun GroupsScreen(
     activeGroup: StateFlow<ActiveGroupState>,
     onSwitchGroup: (String) -> Unit,
+    onGroupsChanged: () -> Unit,
     onGroupClick: (Group) -> Unit,
     modifier: Modifier = Modifier,
     viewModel: GroupsViewModel = hiltViewModel(),
 ) {
     val currentActiveGroup by activeGroup.collectAsStateWithLifecycle()
-    val currentActiveGroupId = (currentActiveGroup as? ActiveGroupState.Success)?.activeGroupId
+    val resolvedActiveGroup = currentActiveGroup as? ActiveGroupState.Success
     LifecycleResumeEffect(viewModel) {
         viewModel.refresh()
         onPauseOrDispose { }
     }
     val state by viewModel.state.collectAsStateWithLifecycle()
     val actionState by viewModel.actionState.collectAsStateWithLifecycle()
+
+    // Tells `:app` that this account's group MEMBERSHIP just changed, so the active-group list the
+    // switcher renders from is re-read (whole-branch fix round, BLOCKING 3). Keyed exactly the way
+    // the stateless overload's own dialog-closing effect is — see its KDoc for why
+    // `actionState.creating`/`joining` are keys alongside `justCreated`: a repeat join returns an
+    // `equals`-identical `GroupWithInvite`, which `MutableStateFlow` conflates away.
+    val justCreated = (state as? GroupsUiState.Success)?.justCreated
+    LaunchedEffect(justCreated, actionState.creating, actionState.joining) {
+        if (justCreated != null) onGroupsChanged()
+    }
+
     GroupsScreen(
-        activeGroupId = currentActiveGroupId,
+        activeGroupId = resolvedActiveGroup?.activeGroupId,
+        switcherGroups = resolvedActiveGroup?.groups.orEmpty(),
         onSwitchGroup = onSwitchGroup,
         state = state,
         actionState = actionState,
@@ -174,11 +207,13 @@ fun GroupsScreen(
  * call above still compiled, and the switcher's tap silently did nothing). Every test call site in
  * `GroupsScreenTest` now passes both explicitly, most with `activeGroupId = null` — with that,
  * [GroupSwitcher] is never reached, same rendering outcome the old default produced, but no longer
- * because a missing argument is invisible. The row reads its group list from [state]'s own
- * [GroupsUiState.Success.groups] rather than a separate parameter: this screen already loads the
- * full list for its own content, and [GroupSwitcher]'s own `groups.size < 2` gate (E-K) means an
- * empty/loading/error [state] (no [GroupsUiState.Success] to read from) simply renders nothing
- * here, same as a genuinely single-group account would.
+ * because a missing argument is invisible.
+ *
+ * **[switcherGroups] is a parameter, not read off [state] (whole-branch fix round, BLOCKING 3).**
+ * It used to be `(state as? GroupsUiState.Success)?.groups`, which put the switcher's TABS and the
+ * switcher's VALIDATION on two independently-refreshed lists — see the stateful overload's own
+ * KDoc for the reverted-selection bug that produced. [GroupSwitcher]'s `groups.size < 2` gate
+ * (E-K) still means an empty list simply renders nothing here.
  */
 @Suppress("LongParameterList")
 @Composable
@@ -193,6 +228,7 @@ internal fun GroupsScreen(
     onJoinDialogOpened: () -> Unit,
     onGroupClick: (Group) -> Unit,
     activeGroupId: String?,
+    switcherGroups: List<Group>,
     onSwitchGroup: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -219,7 +255,6 @@ internal fun GroupsScreen(
             },
         )
         if (activeGroupId != null) {
-            val switcherGroups = (state as? GroupsUiState.Success)?.groups ?: emptyList()
             GroupSwitcher(groups = switcherGroups, activeGroupId = activeGroupId, onGroupSelected = onSwitchGroup)
         }
         GroupsContent(

@@ -72,6 +72,7 @@ class GroupsScreenTest {
                 onJoinDialogOpened = {},
                 onGroupClick = {},
                 activeGroupId = null,
+                switcherGroups = emptyList(),
                 onSwitchGroup = {},
             )
         }
@@ -102,6 +103,7 @@ class GroupsScreenTest {
                 onJoinDialogOpened = {},
                 onGroupClick = { clicked = it },
                 activeGroupId = null,
+                switcherGroups = emptyList(),
                 onSwitchGroup = {},
             )
         }
@@ -132,6 +134,7 @@ class GroupsScreenTest {
                 onJoinDialogOpened = {},
                 onGroupClick = {},
                 activeGroupId = null,
+                switcherGroups = emptyList(),
                 onSwitchGroup = {},
             )
         }
@@ -162,6 +165,7 @@ class GroupsScreenTest {
                 onJoinDialogOpened = {},
                 onGroupClick = {},
                 activeGroupId = null,
+                switcherGroups = emptyList(),
                 onSwitchGroup = {},
             )
         }
@@ -200,6 +204,7 @@ class GroupsScreenTest {
                 onJoinDialogOpened = {},
                 onGroupClick = {},
                 activeGroupId = null,
+                switcherGroups = emptyList(),
                 onSwitchGroup = {},
             )
         }
@@ -231,6 +236,7 @@ class GroupsScreenTest {
                 onJoinDialogOpened = {},
                 onGroupClick = {},
                 activeGroupId = null,
+                switcherGroups = emptyList(),
                 onSwitchGroup = {},
             )
         }
@@ -263,6 +269,7 @@ class GroupsScreenTest {
                 onJoinDialogOpened = {},
                 onGroupClick = {},
                 activeGroupId = null,
+                switcherGroups = emptyList(),
                 onSwitchGroup = {},
             )
         }
@@ -297,6 +304,7 @@ class GroupsScreenTest {
                 onJoinDialogOpened = {},
                 onGroupClick = {},
                 activeGroupId = null,
+                switcherGroups = emptyList(),
                 onSwitchGroup = {},
             )
         }
@@ -333,6 +341,7 @@ class GroupsScreenTest {
                 onJoinDialogOpened = {},
                 onGroupClick = {},
                 activeGroupId = null,
+                switcherGroups = emptyList(),
                 onSwitchGroup = {},
             )
         }
@@ -371,6 +380,7 @@ class GroupsScreenTest {
                 onJoinDialogOpened = {},
                 onGroupClick = {},
                 activeGroupId = null,
+                switcherGroups = emptyList(),
                 onSwitchGroup = {},
             )
         }
@@ -405,6 +415,7 @@ class GroupsScreenTest {
                 onJoinDialogOpened = {},
                 onGroupClick = {},
                 activeGroupId = null,
+                switcherGroups = emptyList(),
                 onSwitchGroup = {},
             )
         }
@@ -435,6 +446,7 @@ class GroupsScreenTest {
                 onJoinDialogOpened = {},
                 onGroupClick = {},
                 activeGroupId = null,
+                switcherGroups = emptyList(),
                 onSwitchGroup = {},
             )
         }
@@ -470,6 +482,7 @@ class GroupsScreenTest {
                 onJoinDialogOpened = {},
                 onGroupClick = {},
                 activeGroupId = null,
+                switcherGroups = emptyList(),
                 onSwitchGroup = {},
             )
         }
@@ -511,6 +524,7 @@ class GroupsScreenTest {
                 onJoinDialogOpened = {},
                 onGroupClick = {},
                 activeGroupId = null,
+                switcherGroups = emptyList(),
                 onSwitchGroup = {},
             )
         }
@@ -546,6 +560,7 @@ class GroupsScreenTest {
                 onJoinDialogOpened = {},
                 onGroupClick = {},
                 activeGroupId = null,
+                switcherGroups = emptyList(),
                 onSwitchGroup = {},
             )
         }
@@ -581,6 +596,7 @@ class GroupsScreenTest {
                 onJoinDialogOpened = {},
                 onGroupClick = {},
                 activeGroupId = null,
+                switcherGroups = emptyList(),
                 onSwitchGroup = {},
             )
         }
@@ -607,6 +623,7 @@ class GroupsScreenTest {
                 onJoinDialogOpened = { opened = true },
                 onGroupClick = {},
                 activeGroupId = null,
+                switcherGroups = emptyList(),
                 onSwitchGroup = {},
             )
         }
@@ -642,6 +659,7 @@ class GroupsScreenTest {
                 onJoinDialogOpened = {},
                 onGroupClick = {},
                 activeGroupId = null,
+                switcherGroups = emptyList(),
                 onSwitchGroup = {},
             )
         }
@@ -667,11 +685,12 @@ class GroupsScreenTest {
      * `GroupSwitcher` into its own `activeGroupId`/`onSwitchGroup` parameters and reads its group
      * list from [GroupsUiState.Success.groups], rather than, say, dropping the callback.
      *
-     * With two groups, [GroupsList] ALSO renders a row for `BETA.name` — [GroupSwitcher] and the
-     * list share the same source (`state.groups`), so `BETA.name` is genuinely ambiguous on this
-     * screen. `.onFirst()` is the switcher's own tab: [GroupSwitcher] renders unconditionally ABOVE
-     * `GroupsContent` in this screen's `Column` — production ordering this test relies on, not an
-     * assumption about traversal order in general.
+     * `state.groups` and `switcherGroups` are given the SAME two groups here — the ordinary case,
+     * where the account's list and the active-group list agree — so [GroupsList] also renders a row
+     * for `BETA.name` and the name is genuinely ambiguous on this screen. `.onFirst()` is the
+     * switcher's own tab: [GroupSwitcher] renders unconditionally ABOVE `GroupsContent` in this
+     * screen's `Column` — production ordering this test relies on, not an assumption about traversal
+     * order in general. The case where the two lists DISAGREE is the next test down.
      */
     @Test
     fun `tapping a group in the switcher invokes onSwitchGroup with that group's id`() {
@@ -688,6 +707,7 @@ class GroupsScreenTest {
                 onJoinDialogOpened = {},
                 onGroupClick = {},
                 activeGroupId = ALPHA.id,
+                switcherGroups = listOf(ALPHA, BETA),
                 onSwitchGroup = { selected = it },
             )
         }
@@ -698,7 +718,46 @@ class GroupsScreenTest {
     }
 
     /**
-     * The negative control: a single active group renders no switcher at all (E-K). `ALPHA.name`
+     * BLOCKING 3's own pin (whole-branch fix round). The switcher's tabs must come from
+     * [switcherGroups] — `ActiveGroupState.Success.groups`, the same list
+     * `ActiveGroupViewModel.recompute` validates a selection against — and NOT from
+     * [GroupsUiState.Success.groups], which this screen refreshes independently and appends to
+     * in place the moment a create or join succeeds.
+     *
+     * The fixture makes the two disagree deliberately: the account's own list holds ALPHA alone
+     * (one row, so [GroupSwitcher]'s `groups.size < 2` gate would suppress it), while the
+     * active-group list holds ALPHA and BETA. `BETA.name` can therefore only have come from a
+     * switcher tab. Restoring the old `(state as? GroupsUiState.Success)?.groups` read makes the
+     * switcher see one group, render nothing, and this assertion fail — which is exactly the state
+     * a user reached by joining a second group from this screen, where the new tab was offered and
+     * then rejected on tap.
+     */
+    @Test
+    fun `the switcher renders the active-group list, not this screen's own list`() {
+        composeRule.setContent {
+            GroupsScreen(
+                state = GroupsUiState.Success(groups = listOf(ALPHA)),
+                actionState = GroupsActionState(),
+                onRetry = {},
+                onCreateGroup = {},
+                onJoinGroup = {},
+                onDismissInvite = {},
+                onCreateDialogOpened = {},
+                onJoinDialogOpened = {},
+                onGroupClick = {},
+                activeGroupId = ALPHA.id,
+                switcherGroups = listOf(ALPHA, BETA),
+                onSwitchGroup = {},
+            )
+        }
+
+        composeRule.onAllNodesWithText(BETA.name).assertCountEquals(1)
+        composeRule.onAllNodesWithText(ALPHA.name).assertCountEquals(2)
+    }
+
+    /**
+     * The negative control: a single group in the ACTIVE-GROUP list renders no switcher at all
+     * (E-K). `ALPHA.name`
      * still renders once, as the ordinary list row — [onAllNodesWithText]'s count is what actually
      * discriminates "the switcher also rendered a tab with the same name" from "only the list row
      * exists": a plain `onNodeWithText` would merely throw on an ambiguous match either way, which
@@ -718,6 +777,7 @@ class GroupsScreenTest {
                 onJoinDialogOpened = {},
                 onGroupClick = {},
                 activeGroupId = ALPHA.id,
+                switcherGroups = listOf(ALPHA),
                 onSwitchGroup = {},
             )
         }
