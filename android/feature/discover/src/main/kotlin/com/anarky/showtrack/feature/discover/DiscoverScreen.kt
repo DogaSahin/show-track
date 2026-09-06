@@ -26,12 +26,14 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.anarky.showtrack.core.designsystem.component.EmptyState
 import com.anarky.showtrack.core.designsystem.component.EndOfListTrigger
 import com.anarky.showtrack.core.designsystem.component.ErrorState
 import com.anarky.showtrack.core.designsystem.component.LoadingState
 import com.anarky.showtrack.core.designsystem.component.MediaCover
+import com.anarky.showtrack.core.designsystem.component.StaleDataBanner
 import com.anarky.showtrack.core.model.Recommendation
 
 private val PosterWidth = 64.dp
@@ -43,6 +45,14 @@ private val PosterWidth = 64.dp
  * [onNavigateToDetail] takes the bare media id straight off [Recommendation.media]: unlike a search
  * result, a recommendation's `media` IS a `PersistedMedia` and already carries one (no add-first
  * workaround — see this module's `DiscoverNavigation.kt`).
+ *
+ * [LifecycleResumeEffect] is what makes [DiscoverViewModel]'s decision to refetch on resume (task
+ * 9c.8, E-M — see that class's own KDoc for the full reasoning) actually real: it is the ONLY
+ * production caller of [DiscoverViewModel.refresh] for the initial load AND for a resume, the
+ * identical mechanism `FavoritesScreen`/`ProfileScreen` use for the identical reason — a
+ * `NavBackStackEntry`-scoped ViewModel survives a trip to Detail or Search and back with no code
+ * path of its own that re-fetches, so without this effect a title added elsewhere would stay
+ * listed here indefinitely, which is exactly the acceptance criterion this task exists for.
  */
 @Composable
 fun DiscoverScreen(
@@ -50,6 +60,10 @@ fun DiscoverScreen(
     modifier: Modifier = Modifier,
     viewModel: DiscoverViewModel = hiltViewModel(),
 ) {
+    LifecycleResumeEffect(viewModel) {
+        viewModel.refresh()
+        onPauseOrDispose { }
+    }
     val state by viewModel.state.collectAsStateWithLifecycle()
     DiscoverScreen(
         state = state,
@@ -95,13 +109,29 @@ internal fun DiscoverScreen(
                         modifier = Modifier.fillMaxSize(),
                     )
                 is DiscoverUiState.Success ->
-                    if (state.items.isEmpty()) {
-                        EmptyState(
-                            message = stringResource(R.string.discover_empty_message),
-                            modifier = Modifier.fillMaxSize(),
-                        )
-                    } else {
-                        DiscoverList(success = state, onLoadMore = onLoadMore, onAdd = onAdd, onRowClick = onRowClick)
+                    // isStale (task 9c.8, E-M): the banner sits ABOVE the content rather than
+                    // replacing it — a resume's failed background refetch leaves rows that are
+                    // still worth showing, just not guaranteed current — mirroring
+                    // `FavoritesScreen`/`ProfileScreen`'s identical StaleDataBanner placement.
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        if (state.isStale) {
+                            StaleDataBanner(onRetry = onRetry)
+                        }
+                        Box(modifier = Modifier.weight(weight = 1f).fillMaxWidth()) {
+                            if (state.items.isEmpty()) {
+                                EmptyState(
+                                    message = stringResource(R.string.discover_empty_message),
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            } else {
+                                DiscoverList(
+                                    success = state,
+                                    onLoadMore = onLoadMore,
+                                    onAdd = onAdd,
+                                    onRowClick = onRowClick,
+                                )
+                            }
+                        }
                     }
             }
         }

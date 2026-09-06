@@ -234,6 +234,37 @@ class FavoritesViewModelTest {
             )
         }
 
+    /**
+     * The re-entrancy guard task 9c.8 (E-M) adds: `FavoritesScreen` wires the SAME [FavoritesViewModel.refresh]
+     * to both `LifecycleResumeEffect` and `StaleDataBanner`/[FavoritesUiState.Error]'s retry
+     * action, so a manual retry can land while a resume-triggered fetch is still in flight. Asserts
+     * the repository call COUNT, not the resulting state — a count on a fake cannot pass when the
+     * call never happens, which is what makes it discriminate.
+     */
+    @Test
+    fun `a retry landing inside an in-flight resume fetch does not double-fetch`() =
+        runTest(dispatcher) {
+            val repository = FakeLibraryRepository(refreshResult = listOf(FRIEREN))
+            val viewModel = FavoritesViewModel(repository)
+            viewModel.refresh() // stands in for LifecycleResumeEffect's first call — see class KDoc
+            advanceUntilIdle()
+            assertEquals(1, repository.refreshCalls)
+
+            repository.refreshGate = CompletableDeferred()
+            viewModel.refresh() // the resume-triggered fetch
+            viewModel.refresh() // a manual retry landing while it is still in flight
+            advanceUntilIdle()
+
+            // Only the resume's own call — the retry that landed inside it must be dropped, not
+            // queued behind it.
+            assertEquals(2, repository.refreshCalls)
+
+            repository.refreshGate?.complete(Unit)
+            advanceUntilIdle()
+
+            assertEquals(2, repository.refreshCalls)
+        }
+
     @Test
     fun `retrying after a failed load shows loading immediately, not the stale error`() =
         runTest(dispatcher) {

@@ -366,6 +366,20 @@ class GroupDetailViewModel
          * `LibraryRepository.loadMore`'s identical "leaves items untouched on a throw" guarantee.
          * Deliberately NEVER [GroupDetailUiState.Success.watchlistIsStale] — see that field's own
          * KDoc for why the two failures need two channels.
+         *
+         * **`finally` added, task 9c.8 (E-M).** The `catch` above only names [GroupOperationException]
+         * — deliberately, per this class's own KDoc: every call INTO [groupRepository] is guaranteed
+         * to throw only that (or [CancellationException], never caught here). But
+         * [watchlistPaginator]'s own `loadMore()` is not purely a call into [groupRepository] — a
+         * programming error inside it (a bug in [CursorPaginator]'s own bookkeeping, say) is NOT a
+         * [GroupOperationException], and before this fix would propagate straight out of this
+         * `launch` with [GroupDetailUiState.Success.watchlistLoadingMore] left `true` forever: no
+         * catch clause resets it, so the footer's own retry affordance never fires again and the
+         * pager is wedged with no recovery. The `finally` below is a safety net, not a second
+         * success/failure branch — it does not use `return@launch` (which would SWALLOW an
+         * in-flight exception rather than let it propagate — the JVM `try`/`finally` gotcha) and it
+         * only writes when [GroupDetailUiState.Success.watchlistLoadingMore] is still `true`, so it
+         * is a genuine no-op on the two paths above that already cleared it.
          */
         fun loadMoreWatchlist() {
             val current = mutableState.value as? GroupDetailUiState.Success ?: return
@@ -392,6 +406,11 @@ class GroupDetailViewModel
                     val latest = mutableState.value as? GroupDetailUiState.Success ?: return@launch
                     mutableState.value =
                         latest.copy(watchlistLoadingMore = false, watchlistPageError = failure.failure)
+                } finally {
+                    val stillLoading = mutableState.value as? GroupDetailUiState.Success
+                    if (stillLoading?.watchlistLoadingMore == true) {
+                        mutableState.value = stillLoading.copy(watchlistLoadingMore = false)
+                    }
                 }
             }
         }

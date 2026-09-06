@@ -36,6 +36,17 @@ import javax.inject.Inject
  * No `add` here, unlike `DiscoverViewModel` — favouriting happens on Detail or Library, and this
  * screen only ever reflects it, on the next [refresh].
  *
+ * **[refresh] is guarded against re-entrancy (task 9c.8, E-M)**: `FavoritesScreen` wires the SAME
+ * function to both `LifecycleResumeEffect` and `StaleDataBanner`/[FavoritesUiState.Error]'s retry
+ * action, so a manual retry can land WHILE a resume-triggered fetch is still in flight. Before this
+ * task neither call was guarded, so the two raced last-write-wins — a retry's response landing
+ * before the resume's (or vice versa) could mark freshly-loaded data [FavoritesUiState.Success.isStale]
+ * on top of a result that had already superseded it. [refreshInFlight] is a private, `state`-shape-
+ * independent field, not a value scoped inside [FavoritesUiState.Success] — [DiscoverViewModel]'s
+ * `addInFlight` field carries the identical reasoning: [refresh] can be called while [state] is
+ * [FavoritesUiState.Loading] or [FavoritesUiState.Error] too, where there is no [FavoritesUiState.Success]
+ * to scope a flag inside.
+ *
  * **No `init { refresh() }`** (review finding, round 2 — an earlier version of this class had
  * one). `FavoritesScreen`'s `LifecycleResumeEffect` already fires on the very first composition,
  * not only a later resume: `Lifecycle` replays `ON_CREATE`/`ON_START`/`ON_RESUME` to a
@@ -56,6 +67,10 @@ class FavoritesViewModel
     ) : ViewModel() {
         private val mutableState = MutableStateFlow<FavoritesUiState>(FavoritesUiState.Loading)
         val state: StateFlow<FavoritesUiState> = mutableState.asStateFlow()
+
+        // See this class's own KDoc for why this exists and why it lives here rather than inside
+        // FavoritesUiState.Success.
+        private var refreshInFlight = false
 
         /**
          * Called from the initial resume (there is no `init` — see this class's own KDoc) and from
@@ -111,6 +126,8 @@ class FavoritesViewModel
          */
         @Suppress("TooGenericExceptionCaught")
         fun refresh() {
+            if (refreshInFlight) return
+            refreshInFlight = true
             if (mutableState.value !is FavoritesUiState.Success) {
                 mutableState.value = FavoritesUiState.Loading
             }
@@ -123,6 +140,8 @@ class FavoritesViewModel
                 } catch (failure: Exception) {
                     val stillShowing = mutableState.value as? FavoritesUiState.Success
                     mutableState.value = stillShowing?.copy(isStale = true) ?: FavoritesUiState.Error(failure)
+                } finally {
+                    refreshInFlight = false
                 }
             }
         }

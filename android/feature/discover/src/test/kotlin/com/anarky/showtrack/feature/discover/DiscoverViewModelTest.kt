@@ -1,25 +1,15 @@
 package com.anarky.showtrack.feature.discover
 
 import app.cash.turbine.test
-import com.anarky.showtrack.core.data.repository.LibraryRepository
-import com.anarky.showtrack.core.data.repository.RecommendationRepository
-import com.anarky.showtrack.core.model.LibraryEntry
-import com.anarky.showtrack.core.model.LibraryFilter
-import com.anarky.showtrack.core.model.LibraryPatch
 import com.anarky.showtrack.core.model.Media
 import com.anarky.showtrack.core.model.MediaSource
 import com.anarky.showtrack.core.model.MediaStatus
 import com.anarky.showtrack.core.model.MediaType
 import com.anarky.showtrack.core.model.Recommendation
 import com.anarky.showtrack.core.model.RecommendationReason
-import com.anarky.showtrack.core.model.UserMediaStatus
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -32,7 +22,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.io.IOException
-import java.time.Instant
 
 /**
  * The ViewModel is exercised against FAKE `RecommendationRepository`/`LibraryRepository` — nothing
@@ -50,10 +39,11 @@ class DiscoverViewModelTest {
     fun tearDown() = Dispatchers.resetMain()
 
     @Test
-    fun `the feed loads on construction`() =
+    fun `the feed loads once refresh is called`() =
         runTest(dispatcher) {
             val recommendations = FakeRecommendationRepository(refreshResult = listOf(FRIEREN, BEBOP))
             val viewModel = DiscoverViewModel(recommendations, FakeLibraryRepository())
+            viewModel.refresh() // stands in for LifecycleResumeEffect's first call — see class KDoc
             advanceUntilIdle()
 
             assertEquals(
@@ -62,12 +52,33 @@ class DiscoverViewModelTest {
             )
         }
 
+    /**
+     * The negative half of the above (round 1 of this task — construction no longer loads
+     * anything): removing `init { refresh() }` (see [DiscoverViewModel]'s own KDoc) means
+     * construction alone must NOT call [RecommendationRepository.refresh] — `DiscoverScreen`'s
+     * `LifecycleResumeEffect` is the only production caller, mirroring `FavoritesViewModel`'s
+     * identical discipline (that class's own KDoc). A `Loading` state with zero repository calls is
+     * what distinguishes "nobody has asked yet" from "a fetch is in flight" — a state-only
+     * assertion could not tell those apart if `refresh()` were still called from `init`.
+     */
+    @Test
+    fun `construction alone does not fetch the feed`() =
+        runTest(dispatcher) {
+            val recommendations = FakeRecommendationRepository(refreshResult = listOf(FRIEREN, BEBOP))
+            val viewModel = DiscoverViewModel(recommendations, FakeLibraryRepository())
+            advanceUntilIdle()
+
+            assertEquals(DiscoverUiState.Loading, viewModel.state.value)
+            assertEquals(0, recommendations.refreshCalls)
+        }
+
     @Test
     fun `a failing initial load is captured instead of escaping the coroutine`() =
         runTest(dispatcher) {
             val failure = IOException("offline")
             val recommendations = FakeRecommendationRepository(refreshFailure = failure)
             val viewModel = DiscoverViewModel(recommendations, FakeLibraryRepository())
+            viewModel.refresh() // stands in for LifecycleResumeEffect's first call — see class KDoc
             advanceUntilIdle()
 
             assertEquals(DiscoverUiState.Error(failure), viewModel.state.value)
@@ -79,6 +90,7 @@ class DiscoverViewModelTest {
             val failure = IOException("offline")
             val recommendations = FakeRecommendationRepository(refreshFailure = failure)
             val viewModel = DiscoverViewModel(recommendations, FakeLibraryRepository())
+            viewModel.refresh() // stands in for LifecycleResumeEffect's first call — see class KDoc
             advanceUntilIdle()
             assertEquals(DiscoverUiState.Error(failure), viewModel.state.value)
 
@@ -94,11 +106,137 @@ class DiscoverViewModelTest {
             }
         }
 
+    /**
+     * Decision, this task (E-M): a resume's refresh must not blank an already-populated feed to a
+     * spinner — `FavoritesViewModel.refresh`/`ProfileViewModel.refreshStats`'s identical shape,
+     * "the settled refresh shape" the Global Constraints name. `recommendations.refreshGate` is
+     * what makes the mid-flight state actually observable — a fake that resolves synchronously
+     * would never show a wrongly-blanked `Loading` even if the production code regressed.
+     */
+    @Test
+    fun `a resume over an already-populated feed keeps the stale rows, not a spinner, mid-fetch`() =
+        runTest(dispatcher) {
+            val recommendations = FakeRecommendationRepository(refreshResult = listOf(FRIEREN))
+            val viewModel = DiscoverViewModel(recommendations, FakeLibraryRepository())
+            viewModel.refresh() // stands in for LifecycleResumeEffect's first call — see class KDoc
+            advanceUntilIdle()
+            assertEquals(DiscoverUiState.Success(items = listOf(FRIEREN)), viewModel.state.value)
+
+            recommendations.refreshResult = listOf(FRIEREN, BEBOP)
+            recommendations.refreshGate = CompletableDeferred()
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            // Still the OLD items, and still Success — never DiscoverUiState.Loading — while the
+            // network round trip this resume triggered is genuinely still in flight.
+            assertEquals(DiscoverUiState.Success(items = listOf(FRIEREN)), viewModel.state.value)
+
+            recommendations.refreshGate?.complete(Unit)
+            advanceUntilIdle()
+
+            assertEquals(DiscoverUiState.Success(items = listOf(FRIEREN, BEBOP)), viewModel.state.value)
+        }
+
+    /**
+     * The failure half: a resume's background refetch failing must not destroy a feed the user is
+     * already reading — `FavoritesViewModel.refresh`'s round-2 fix, applied here. `isStale = true`
+     * is the marker; a bare [DiscoverUiState.Error] stays reachable only for the case nothing is
+     * on screen yet.
+     */
+    @Test
+    fun `a failed resume over an already-populated feed marks it stale instead of replacing it`() =
+        runTest(dispatcher) {
+            val recommendations = FakeRecommendationRepository(refreshResult = listOf(FRIEREN))
+            val viewModel = DiscoverViewModel(recommendations, FakeLibraryRepository())
+            viewModel.refresh() // stands in for LifecycleResumeEffect's first call — see class KDoc
+            advanceUntilIdle()
+            assertEquals(DiscoverUiState.Success(items = listOf(FRIEREN)), viewModel.state.value)
+
+            val failure = IOException("offline")
+            recommendations.refreshGate = CompletableDeferred()
+            recommendations.refreshFailure = failure
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            assertEquals(DiscoverUiState.Success(items = listOf(FRIEREN)), viewModel.state.value)
+
+            recommendations.refreshGate?.complete(Unit)
+            advanceUntilIdle()
+
+            assertEquals(
+                DiscoverUiState.Success(items = listOf(FRIEREN), isStale = true),
+                viewModel.state.value,
+            )
+        }
+
+    @Test
+    fun `a successful resume clears a previous stale mark`() =
+        runTest(dispatcher) {
+            val recommendations = FakeRecommendationRepository(refreshResult = listOf(FRIEREN))
+            val viewModel = DiscoverViewModel(recommendations, FakeLibraryRepository())
+            viewModel.refresh() // stands in for LifecycleResumeEffect's first call — see class KDoc
+            advanceUntilIdle()
+
+            recommendations.refreshFailure = IOException("offline")
+            viewModel.refresh()
+            advanceUntilIdle()
+            assertEquals(
+                DiscoverUiState.Success(items = listOf(FRIEREN), isStale = true),
+                viewModel.state.value,
+            )
+
+            recommendations.refreshFailure = null
+            recommendations.refreshResult = listOf(FRIEREN, BEBOP)
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            assertEquals(
+                DiscoverUiState.Success(items = listOf(FRIEREN, BEBOP), isStale = false),
+                viewModel.state.value,
+            )
+        }
+
+    /**
+     * The re-entrancy guard this task's brief calls out by name (step 2, extended here as the
+     * "sibling" the brief's own lesson warns about: adding a resume trigger to [DiscoverViewModel.refresh]
+     * reproduces the identical "manual retry races a resume fetch" shape `FavoritesViewModel.refresh`/
+     * `ProfileViewModel.refreshStats` were fixed for — [DiscoverUiState.Success.isStale] now makes
+     * `StaleDataBanner`'s retry reachable here exactly the way it is on those two screens. Asserts
+     * the repository call COUNT, not the resulting state (Global Constraints): a count on a fake
+     * cannot pass when the call never happens, which is what makes it discriminate a guard that is
+     * silently missing from one that is present but happens not to matter for this particular
+     * assertion.
+     */
+    @Test
+    fun `a retry landing inside an in-flight resume fetch does not double-fetch`() =
+        runTest(dispatcher) {
+            val recommendations = FakeRecommendationRepository(refreshResult = listOf(FRIEREN))
+            val viewModel = DiscoverViewModel(recommendations, FakeLibraryRepository())
+            viewModel.refresh() // stands in for LifecycleResumeEffect's first call — see class KDoc
+            advanceUntilIdle()
+            assertEquals(1, recommendations.refreshCalls)
+
+            recommendations.refreshGate = CompletableDeferred()
+            viewModel.refresh() // the resume-triggered fetch
+            viewModel.refresh() // a manual retry landing while it is still in flight
+            advanceUntilIdle()
+
+            // Only the resume's own call — the retry that landed inside it must be dropped, not
+            // queued behind it.
+            assertEquals(2, recommendations.refreshCalls)
+
+            recommendations.refreshGate?.complete(Unit)
+            advanceUntilIdle()
+
+            assertEquals(2, recommendations.refreshCalls)
+        }
+
     @Test
     fun `loadMore is not fired again while one is in flight`() =
         runTest(dispatcher) {
             val recommendations = FakeRecommendationRepository(refreshResult = listOf(FRIEREN))
             val viewModel = DiscoverViewModel(recommendations, FakeLibraryRepository())
+            viewModel.refresh() // stands in for LifecycleResumeEffect's first call — see class KDoc
             advanceUntilIdle()
 
             viewModel.loadMore()
@@ -116,6 +254,7 @@ class DiscoverViewModelTest {
             val recommendations =
                 FakeRecommendationRepository(refreshResult = listOf(FRIEREN), loadMoreFailure = failure)
             val viewModel = DiscoverViewModel(recommendations, FakeLibraryRepository())
+            viewModel.refresh() // stands in for LifecycleResumeEffect's first call — see class KDoc
             advanceUntilIdle()
 
             viewModel.loadMore()
@@ -138,6 +277,7 @@ class DiscoverViewModelTest {
                     loadMoreAppends = listOf(BEBOP),
                 )
             val viewModel = DiscoverViewModel(recommendations, FakeLibraryRepository())
+            viewModel.refresh() // stands in for LifecycleResumeEffect's first call — see class KDoc
             advanceUntilIdle()
             viewModel.loadMore()
             advanceUntilIdle()
@@ -160,6 +300,7 @@ class DiscoverViewModelTest {
             val addGate = CompletableDeferred<Unit>()
             val library = FakeLibraryRepository(addGate = addGate)
             val viewModel = DiscoverViewModel(recommendations, library)
+            viewModel.refresh() // stands in for LifecycleResumeEffect's first call — see class KDoc
             advanceUntilIdle()
 
             viewModel.add(FRIEREN)
@@ -185,6 +326,7 @@ class DiscoverViewModelTest {
         runTest(dispatcher) {
             val recommendations = FakeRecommendationRepository(refreshResult = listOf(FRIEREN, BEBOP))
             val viewModel = DiscoverViewModel(recommendations, FakeLibraryRepository())
+            viewModel.refresh() // stands in for LifecycleResumeEffect's first call — see class KDoc
             advanceUntilIdle()
 
             viewModel.add(FRIEREN)
@@ -213,6 +355,7 @@ class DiscoverViewModelTest {
             val failure = IOException("offline")
             val library = FakeLibraryRepository(addFailure = failure)
             val viewModel = DiscoverViewModel(recommendations, library)
+            viewModel.refresh() // stands in for LifecycleResumeEffect's first call — see class KDoc
             advanceUntilIdle()
 
             viewModel.add(BEBOP)
@@ -250,6 +393,7 @@ class DiscoverViewModelTest {
             val failure = IOException("offline")
             val library = FakeLibraryRepository(addFailure = failure)
             val viewModel = DiscoverViewModel(recommendations, library)
+            viewModel.refresh() // stands in for LifecycleResumeEffect's first call — see class KDoc
             advanceUntilIdle()
 
             viewModel.add(BEBOP)
@@ -273,6 +417,7 @@ class DiscoverViewModelTest {
             val addGate = CompletableDeferred<Unit>()
             val library = FakeLibraryRepository(addGate = addGate)
             val viewModel = DiscoverViewModel(recommendations, library)
+            viewModel.refresh() // stands in for LifecycleResumeEffect's first call — see class KDoc
             advanceUntilIdle()
 
             viewModel.add(FRIEREN)
@@ -293,6 +438,7 @@ class DiscoverViewModelTest {
             val recommendations =
                 FakeRecommendationRepository(refreshResult = listOf(FRIEREN, BEBOP), loadMoreFailure = failure)
             val viewModel = DiscoverViewModel(recommendations, FakeLibraryRepository())
+            viewModel.refresh() // stands in for LifecycleResumeEffect's first call — see class KDoc
             advanceUntilIdle()
             viewModel.loadMore()
             advanceUntilIdle()
@@ -313,6 +459,7 @@ class DiscoverViewModelTest {
                 FakeRecommendationRepository(refreshResult = listOf(FRIEREN, BEBOP), loadMoreFailure = loadMoreFailure)
             val library = FakeLibraryRepository(addFailure = addFailure)
             val viewModel = DiscoverViewModel(recommendations, library)
+            viewModel.refresh() // stands in for LifecycleResumeEffect's first call — see class KDoc
             advanceUntilIdle()
             viewModel.loadMore()
             advanceUntilIdle()
@@ -330,6 +477,7 @@ class DiscoverViewModelTest {
         runTest(dispatcher) {
             val recommendations = FakeRecommendationRepository(refreshResult = listOf(FRIEREN))
             val viewModel = DiscoverViewModel(recommendations, FakeLibraryRepository())
+            viewModel.refresh() // stands in for LifecycleResumeEffect's first call — see class KDoc
             advanceUntilIdle()
 
             viewModel.refresh()
@@ -339,118 +487,11 @@ class DiscoverViewModelTest {
             assertNull((viewModel.state.value as DiscoverUiState.Success).addError)
         }
 
-    private class FakeRecommendationRepository(
-        var refreshResult: List<Recommendation> = emptyList(),
-        var refreshFailure: Throwable? = null,
-        var loadMoreAppends: List<Recommendation> = emptyList(),
-        var loadMoreFailure: Throwable? = null,
-    ) : RecommendationRepository {
-        private val mutableFeed = MutableStateFlow<List<Recommendation>>(emptyList())
-        override val feed: StateFlow<List<Recommendation>> = mutableFeed.asStateFlow()
-
-        var loadMoreCalls = 0
-            private set
-        val removedIds = mutableListOf<String>()
-
-        override suspend fun refresh() {
-            refreshFailure?.let { throw it }
-            mutableFeed.value = refreshResult
-        }
-
-        override suspend fun loadMore() {
-            loadMoreCalls++
-            loadMoreFailure?.let { throw it }
-            mutableFeed.value = mutableFeed.value + loadMoreAppends
-        }
-
-        override fun remove(mediaId: String) {
-            removedIds += mediaId
-            mutableFeed.value = mutableFeed.value.filterNot { it.media.id == mediaId }
-        }
-
-        override fun restore(
-            index: Int,
-            recommendation: Recommendation,
-        ) {
-            mutableFeed.value =
-                mutableFeed.value.toMutableList().apply {
-                    add(index.coerceIn(0, size), recommendation)
-                }
-        }
-    }
-
-    private class FakeLibraryRepository(
-        var addFailure: Throwable? = null,
-        // Lets a test hold add() in flight while it drives other ViewModel actions — mirrors
-        // SearchViewModelTest's FakeLibraryRepository. Null (the default) behaves exactly as
-        // before: add() completes synchronously with no suspension point of its own.
-        private val addGate: CompletableDeferred<Unit>? = null,
-    ) : LibraryRepository {
-        val addCalls = mutableListOf<Pair<MediaSource, String>>()
-
-        override fun observeLibrary(): Flow<List<LibraryEntry>> = error("not exercised by DiscoverViewModel")
-
-        override suspend fun refresh(): Unit = error("not exercised by DiscoverViewModel")
-
-        override suspend fun loadMore(): Unit = error("not exercised by DiscoverViewModel")
-
-        override suspend fun applyFilter(filter: LibraryFilter): Unit = error("not exercised by DiscoverViewModel")
-
-        override suspend fun add(
-            source: MediaSource,
-            externalId: String,
-        ): LibraryEntry {
-            addCalls += source to externalId
-            addGate?.await()
-            addFailure?.let { throw it }
-            return DUMMY_ENTRY
-        }
-
-        override suspend fun update(
-            entryId: String,
-            patch: LibraryPatch,
-        ): LibraryEntry = error("not exercised by DiscoverViewModel")
-
-        override suspend fun entryForMedia(mediaId: String): LibraryEntry? = error("not exercised by DiscoverViewModel")
-
-        override val favoriteEntries: StateFlow<List<LibraryEntry>> = MutableStateFlow(emptyList())
-
-        override suspend fun refreshFavorites(): Unit = error("not exercised by DiscoverViewModel")
-
-        override suspend fun loadMoreFavorites(): Unit = error("not exercised by DiscoverViewModel")
-
-        override suspend fun libraryStats() = error("not exercised by DiscoverViewModel")
-
-        override suspend fun importAniList(username: String) = error("not exercised by DiscoverViewModel")
-    }
+    // FakeRecommendationRepository/FakeLibraryRepository moved to their own files (task 9c.8,
+    // E-M) — see FakeRecommendationRepository's own KDoc for why: DiscoverResumeTest needs the
+    // exact same fakes, and a nested `private class` is invisible outside this class.
 
     private companion object {
-        val DUMMY_ENTRY =
-            LibraryEntry(
-                id = "entry-1",
-                status = UserMediaStatus.PLANNED,
-                score = null,
-                progress = 0,
-                favorite = false,
-                updatedAt = Instant.parse("2026-08-28T10:15:30Z"),
-                media =
-                    Media(
-                        id = "m-1",
-                        source = MediaSource.ANILIST,
-                        externalId = "21",
-                        type = MediaType.ANIME,
-                        title = "One Piece",
-                        year = 1999,
-                        genres = listOf("Action"),
-                        coverImageUrl = null,
-                        status = MediaStatus.AIRING,
-                        nextEpisodeSeason = null,
-                        nextEpisodeNumber = 1100,
-                        nextEpisodeDate = Instant.parse("2026-09-01T00:00:00Z"),
-                        daysUntilNextEpisode = 4,
-                    ),
-            )
-
         fun media(
             id: String,
             title: String,

@@ -125,6 +125,14 @@ class ProfileViewModel
         private val mutableStatsState = MutableStateFlow<LibraryStatsUiState>(LibraryStatsUiState.Loading)
         val statsState: StateFlow<LibraryStatsUiState> = mutableStatsState.asStateFlow()
 
+        // Guards [refreshStats] against re-entrancy (task 9c.8, E-M) — `FavoritesViewModel.refreshInFlight`'s
+        // identical reasoning: `ProfileScreen` wires the SAME function to both `LifecycleResumeEffect`
+        // and the stats section's retry action, so a manual retry can land while a resume-triggered
+        // fetch is still in flight. A private, state-shape-independent field rather than one scoped
+        // inside `LibraryStatsUiState.Success`: [refreshStats] can be called while [statsState] is
+        // [LibraryStatsUiState.Loading] or [LibraryStatsUiState.Error] too.
+        private var statsRefreshInFlight = false
+
         init {
             refresh()
         }
@@ -170,9 +178,17 @@ class ProfileViewModel
          * scoped to its own `mutableStatsState` (decision C-S) — so a broken `/v1/library/stats`
          * leaves push opt-in and sign-out fully usable, which is exactly what
          * `a failed stats load leaves the rest of the profile usable` pins.
+         *
+         * Guarded against re-entrancy by [statsRefreshInFlight] (task 9c.8, E-M) — see that field's
+         * own KDoc: `ProfileScreen`'s stats retry action and its `LifecycleResumeEffect` both call
+         * this function, and without the guard a manual retry landing while a resume fetch is still
+         * in flight is last-write-wins, which can mark freshly-loaded numbers stale on top of a
+         * result that had already superseded it.
          */
         @Suppress("TooGenericExceptionCaught")
         fun refreshStats() {
+            if (statsRefreshInFlight) return
+            statsRefreshInFlight = true
             if (mutableStatsState.value !is LibraryStatsUiState.Success) {
                 mutableStatsState.value = LibraryStatsUiState.Loading
             }
@@ -186,6 +202,8 @@ class ProfileViewModel
                     val stillShowing = mutableStatsState.value as? LibraryStatsUiState.Success
                     mutableStatsState.value =
                         stillShowing?.copy(isStale = true) ?: LibraryStatsUiState.Error(failure)
+                } finally {
+                    statsRefreshInFlight = false
                 }
             }
         }

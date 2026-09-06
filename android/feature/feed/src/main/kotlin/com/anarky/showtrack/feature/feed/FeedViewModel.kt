@@ -234,6 +234,21 @@ class FeedViewModel
          * the [FeedUiState.Success.copy] calls below) still belongs to whichever generation was
          * active at call time; the generation check is what stops it from being written back after
          * the subject moved on, not a change to what [current] itself holds.
+         *
+         * **`finally` added, task 9c.8 (E-M).** The `catch` above only names [GroupOperationException]
+         * — `GroupDetailViewModel`'s own KDoc explains why that is the ONLY type a call into
+         * [groupRepository] is guaranteed to throw. But [paginator]'s own `loadMore()` is not purely
+         * that call — a programming error inside its own bookkeeping is not a [GroupOperationException],
+         * and before this fix would propagate straight out of this `launch` with
+         * [FeedUiState.Success.loadingMore] left `true` forever, wedging the pager with no recovery
+         * — [refresh]'s own `finally` above already gets this right for [loadingGeneration]; this
+         * function did not. The `finally` below only writes when [generation] still matches
+         * [myGeneration] (a stale generation's own `finally` must not clobber a newer generation's
+         * already-rendered state — [reload]'s identical guard) and when
+         * [FeedUiState.Success.loadingMore] is still `true` (a genuine no-op on the two paths above
+         * that already cleared it), and — like [reload]'s and [GroupDetailViewModel.loadMoreWatchlist]'s
+         * — never uses `return@launch`, which would swallow an in-flight exception instead of
+         * letting it propagate.
          */
         fun loadMore() {
             val paginator = paginator ?: return
@@ -257,6 +272,13 @@ class FeedViewModel
                     if (generation != myGeneration) return@launch
                     val latest = mutableState.value as? FeedUiState.Success ?: return@launch
                     mutableState.value = latest.copy(loadingMore = false, pageError = failure.failure)
+                } finally {
+                    if (generation == myGeneration) {
+                        val stillLoading = mutableState.value as? FeedUiState.Success
+                        if (stillLoading?.loadingMore == true) {
+                            mutableState.value = stillLoading.copy(loadingMore = false)
+                        }
+                    }
                 }
             }
         }

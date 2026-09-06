@@ -373,6 +373,44 @@ class ProfileViewModelTest {
         }
 
     /**
+     * The re-entrancy guard task 9c.8 (E-M) adds: `ProfileScreen` wires the SAME
+     * [ProfileViewModel.refreshStats] to both `LifecycleResumeEffect` and the stats section's
+     * retry action, so a manual retry can land while a resume-triggered fetch is still in flight.
+     * Asserts the repository call COUNT, not the resulting state — a count on a fake cannot pass
+     * when the call never happens, which is what makes it discriminate.
+     */
+    @Test
+    fun `a retry landing inside an in-flight resume fetch does not double-fetch`() =
+        runTest(dispatcher) {
+            val initial =
+                LibraryStats(
+                    total = 5,
+                    byStatus = mapOf(UserMediaStatus.WATCHING to 5),
+                    averageScore = null,
+                    ratedCount = 0,
+                )
+            val repository = FakeLibraryRepository(initial)
+            val viewModel = ProfileViewModel(FakeDistributors(), FakeAuthRepository(), repository)
+            viewModel.refreshStats() // stands in for LifecycleResumeEffect's first call (round 1)
+            advanceUntilIdle()
+            assertEquals(1, repository.statsCalls)
+
+            repository.statsGate = CompletableDeferred()
+            viewModel.refreshStats() // the resume-triggered fetch
+            viewModel.refreshStats() // a manual retry landing while it is still in flight
+            advanceUntilIdle()
+
+            // Only the resume's own call — the retry that landed inside it must be dropped, not
+            // queued behind it.
+            assertEquals(2, repository.statsCalls)
+
+            repository.statsGate?.complete(Unit)
+            advanceUntilIdle()
+
+            assertEquals(2, repository.statsCalls)
+        }
+
+    /**
      * Round 1's own regression guard (blocking 2): `init` must stay a push-only, synchronous read
      * — several tests above (e.g. `no installed distributor is reported as NoDistributor`) read
      * `pushState.value` straight after construction with no `advanceUntilIdle()`, which only works

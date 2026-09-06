@@ -31,6 +31,43 @@ import javax.inject.Inject
  *
  * **Three operations, three failure channels** — see [DiscoverUiState]'s KDoc for the full
  * reasoning (carried forward from task 9a.8's shipped bug, which is exactly this screen's shape).
+ *
+ * **Decision, task 9c.8 (E-M): Discover refetches on resume, matching [FavoritesViewModel]/
+ * `ProfileViewModel`.** Before this task, this screen was the one data screen with neither a
+ * resume refresh nor an `isStale` — it loaded once, in `init`, and the tab's `ViewModelStore`
+ * survives a tab switch (`ShowTrackNavHost` uses `saveState`/`restoreState`), so adding a title
+ * from Detail or Search and returning to Discover left it still listed as a recommendation, even
+ * though the backend's contract is that anything already in the library is excluded from this
+ * feed. Decision D-I reasoned carefully about `add`'s own failure path — restoring the row at its
+ * original index, never refetching, because a refetch mid-read re-ranks the whole feed under a
+ * user still looking at it — but said nothing about the absence of a trigger to refetch at all on
+ * the ordinary "left and came back" path, which is a DIFFERENT event with a different cost/benefit:
+ * nobody is mid-read of a screen they just resumed. Weighed against that: a recommendation for a
+ * title the user already tracks is not a merely-stale row the way an unrated library entry's stats
+ * are — it is actively WRONG, an assertion the backend's own contract has already retracted. That
+ * asymmetry (silently wrong beats a one-frame reflow the user has not started reading yet) is what
+ * settles it in favour of refetching, matching [FavoritesViewModel]/`ProfileViewModel.refreshStats`
+ * rather than leaving Discover the odd one out. `DiscoverScreen`'s `LifecycleResumeEffect` is the
+ * trigger, and [refresh] itself is what changed to carry it safely: [DiscoverUiState.Success.isStale]
+ * (the "settled refresh shape" the Global Constraints name) means a resume's fetch no longer blanks
+ * a populated feed to a spinner, and a resume's FAILURE marks the feed stale instead of replacing it
+ * — see [refresh]'s own KDoc.
+ *
+ * **What this decision deliberately does NOT do** (holding two follow-ups, not building them here):
+ * it refetches on EVERY resume, with no staleness TTL gating a Detail -> Back round trip (where a
+ * refetch buys nothing — no add happened) against a Search -> add -> Back one (where it buys
+ * everything) — a TTL constant is a product judgement outside this task's scope, so a future
+ * caller of [refresh] from a resume effect is the intended place to add one, not this function.
+ * It also still truncates to page 1 on every refresh (`RecommendationRepositoryImpl.refresh`'s own
+ * shape) rather than reloading every page the user had scrolled into — `CursorPaginator` has no
+ * `refreshLoadedPages` equivalent for this repository, and adding one is `:core:data` API surface
+ * this task does not touch. Both are real, known gaps, not oversights.
+ *
+ * **No `init { refresh() }` any more (round 1 of this task).** An `init` alongside the new resume
+ * effect would be the identical redundant-fetch bug `FavoritesViewModel`'s own KDoc documents for
+ * the identical reason: `LifecycleResumeEffect` already fires on the very first composition, not
+ * only a later resume, so an `init` here would not cover a gap the resume effect misses — it would
+ * be a second, wasted `GET` on every cold start.
  */
 @HiltViewModel
 class DiscoverViewModel
@@ -42,21 +79,43 @@ class DiscoverViewModel
         private val mutableState = MutableStateFlow<DiscoverUiState>(DiscoverUiState.Loading)
         val state: StateFlow<DiscoverUiState> = mutableState.asStateFlow()
 
-        init {
-            refresh()
-        }
+        // A ViewModel-wide guard, independent of [state]'s shape — [addInFlight] below's identical
+        // reasoning, applied to [refresh] instead of [add] (task 9c.8, E-M): once a resume effect
+        // can call [refresh] over an already-[DiscoverUiState.Success] screen, a manual retry from
+        // `StaleDataBanner`/[DiscoverUiState.Error] can land WHILE that resume fetch is still in
+        // flight — the exact "a manual retry races a resume-triggered fetch" shape
+        // `FavoritesViewModel.refresh`/`ProfileViewModel.refreshStats` were fixed for in this same
+        // task, reproduced here the moment this screen gained a second caller of [refresh]. Without
+        // it, last-write-wins between the two calls can mark freshly-loaded data stale, or clobber
+        // it with an older response landing second.
+        private var refreshInFlight = false
 
         /**
-         * The initial load, and the only operation allowed to replace [state] with
-         * [DiscoverUiState.Error] wholesale — see [DiscoverUiState]'s KDoc for why that is safe
-         * here. [DiscoverUiState.Loading] is written SYNCHRONOUSLY before the coroutine is even
-         * launched (decision C-S: clear the error before launching a retry, not only on success),
-         * so a retry from [DiscoverUiState.Error] does not leave the OLD error on screen for the
-         * round trip's whole duration — `SearchViewModel.runSearch`'s same discipline.
+         * The initial load (via `DiscoverScreen`'s `LifecycleResumeEffect` — see this class's own
+         * KDoc for why there is no `init` any more), a retry from [DiscoverUiState.Error], and a
+         * resume over [DiscoverUiState.Success] (task 9c.8, E-M) — the settled refresh shape
+         * `FavoritesViewModel.refresh`/`ProfileViewModel.refreshStats` establish, applied here.
+         *
+         * [DiscoverUiState.Loading] is written wholesale ONLY when [state] is not already
+         * [DiscoverUiState.Success] — writing it unconditionally is exactly right for the first
+         * load and for a retry from [DiscoverUiState.Error] (decision C-S: clear the error before
+         * launching a retry, not only on success), but would blank an already-populated feed to a
+         * full-screen spinner on every resume otherwise, resetting scroll position for a round trip
+         * the user never asked for.
+         *
+         * On failure: if [state] is still [DiscoverUiState.Success] when the failure lands, this
+         * marks [DiscoverUiState.Success.isStale] instead of replacing it with
+         * [DiscoverUiState.Error] wholesale — a failed BACKGROUND resume must not destroy a feed the
+         * user is already reading. [DiscoverUiState.Error] stays reachable for the case it always
+         * covered: nothing usable is on screen yet.
          */
         @Suppress("TooGenericExceptionCaught")
         fun refresh() {
-            mutableState.value = DiscoverUiState.Loading
+            if (refreshInFlight) return
+            refreshInFlight = true
+            if (mutableState.value !is DiscoverUiState.Success) {
+                mutableState.value = DiscoverUiState.Loading
+            }
             viewModelScope.launch {
                 try {
                     recommendationRepository.refresh()
@@ -64,7 +123,10 @@ class DiscoverViewModel
                 } catch (cancellation: CancellationException) {
                     throw cancellation
                 } catch (failure: Exception) {
-                    mutableState.value = DiscoverUiState.Error(failure)
+                    val stillShowing = mutableState.value as? DiscoverUiState.Success
+                    mutableState.value = stillShowing?.copy(isStale = true) ?: DiscoverUiState.Error(failure)
+                } finally {
+                    refreshInFlight = false
                 }
             }
         }

@@ -131,6 +131,57 @@ class DiscoverScreenTest {
         assertTrue(retried)
     }
 
+    /**
+     * Task 9c.8, E-M: a stale [DiscoverUiState.Success] must show the `StaleDataBanner` ABOVE the
+     * rows, not replace them and not render them silently unmarked — `FavoritesScreenTest`'s
+     * identical regression guard for `FavoritesUiState.Success.isStale`, applied here now that
+     * Discover has the same field.
+     */
+    @Test
+    fun `a stale success shows the stale banner above the rows, and its retry invokes onRetry`() {
+        var retried = false
+
+        composeRule.setContent {
+            DiscoverScreen(
+                state = DiscoverUiState.Success(items = listOf(FRIEREN), isStale = true),
+                onRetry = { retried = true },
+                onLoadMore = {},
+                onAdd = {},
+                onRowClick = {},
+            )
+        }
+
+        composeRule.onNodeWithText(FRIEREN.media.title).assertIsDisplayed()
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule
+            .onNodeWithText(context.getString(DesignSystemR.string.stale_data_notice))
+            .assertIsDisplayed()
+        composeRule
+            .onNodeWithText(context.getString(DesignSystemR.string.action_retry))
+            .performClick()
+
+        assertTrue(retried)
+    }
+
+    @Test
+    fun `a non-stale success shows no stale banner`() {
+        composeRule.setContent {
+            DiscoverScreen(
+                state = DiscoverUiState.Success(items = listOf(FRIEREN), isStale = false),
+                onRetry = {},
+                onLoadMore = {},
+                onAdd = {},
+                onRowClick = {},
+            )
+        }
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule
+            .onNodeWithText(context.getString(DesignSystemR.string.stale_data_notice))
+            .assertDoesNotExist()
+    }
+
     private companion object {
         fun media(
             id: String,
