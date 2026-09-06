@@ -34,11 +34,21 @@ import javax.inject.Inject
  * (`activeGroupViewModel: ActiveGroupViewModel = hiltViewModel()`), happens before `ShowTrackNavHost`
  * even reads `AppViewModel.start`, i.e. for `AppStart.Undecided`/`AppStart.Auth` too — an
  * authenticated `GET /v1/groups` fired at the LOGIN SCREEN on every cold start. The actual fetch is
- * now driven entirely by `ShowTrackApp`'s own `LaunchedEffect`, keyed on the current destination:
- * the first visit to Feed or Groups, never before, `GroupsViewModel`'s own resume-driven-load
- * precedent one level up (this class has no `NavBackStackEntry` of its own to hang a
- * `LifecycleResumeEffect` off, so `:app` supplies the equivalent trigger from the one place that
- * does know which tab is current).
+ * now driven entirely by `ShowTrackApp`'s own `LaunchedEffect`, keyed on the current destination —
+ * `GroupsViewModel`'s own resume-driven-load precedent one level up (this class has no
+ * `NavBackStackEntry` of its own to hang a `LifecycleResumeEffect` off, so `:app` supplies the
+ * equivalent trigger from the one place that does know which tab is current).
+ *
+ * **Which destinations trigger it (whole-branch fix round, BLOCKING 2).** Originally only Feed and
+ * Groups did, which was wrong the moment task 9c.6 gave `:feature:detail` a group section: the
+ * ordinary cold-start path is Library (the start destination) -> tap a title -> Detail, and on that
+ * path no fetch was ever issued, so [state] stayed [ActiveGroupState.Loading] for the life of the
+ * Activity and Detail's whole group section and propose control rendered nothing — indistinguishable
+ * from an account in no groups, and identical for the `showtrack://detail/<id>` push deep link,
+ * which cannot pass through a tab at all. [activeGroupActionFor] now answers `Refresh` for ANY
+ * authenticated destination while [hasRequestedGroups] is `false`, keeping Feed and Groups as the
+ * two explicit re-refresh points; see [hasRequestedGroups] for why that flag rather than
+ * [hasLoadedOnce].
  */
 @HiltViewModel
 class ActiveGroupViewModel
@@ -59,6 +69,29 @@ class ActiveGroupViewModel
         private var lastGroups: List<Group> = emptyList()
         private var hasLoadedOnce = false
         private var storedGroupId: String? = null
+
+        /**
+         * Whether a groups fetch has been REQUESTED since construction or the last [reset] — set
+         * synchronously by [refresh] before it launches, cleared by [reset]. `ShowTrackApp` reads it
+         * through [activeGroupActionFor] to decide whether an ordinary authenticated destination
+         * should trigger the one load-per-session this class needs (whole-branch fix round,
+         * BLOCKING 2).
+         *
+         * NOT [hasLoadedOnce], which is the near neighbour and the wrong flag: that one is set only
+         * when a response actually LANDS, so it stays `false` for the whole round trip, and a
+         * `Library -> Detail` navigation inside that window would read it as "still not requested"
+         * and fire a second `GET /v1/groups`. Since `ShowTrackApp`'s effect re-evaluates on every
+         * destination change, that is a fetch per screen opened until the first one resolves —
+         * exactly the per-open cost the load-once shape exists to avoid.
+         *
+         * Consequence, stated rather than hidden: a FAILED first fetch leaves this `true`, so
+         * navigating around does not retry it. That is deliberate and matches what the two explicit
+         * refresh points already do — Feed and Groups re-fire [refresh] on every arrival, and
+         * `FeedScreen` offers [ActiveGroupState.Error] a real retry button. A sign-out clears it via
+         * [reset], so the next account loads from scratch.
+         */
+        internal var hasRequestedGroups = false
+            private set
 
         // Bumped on every refresh() call, and checked before either of its two writes below —
         // FeedViewModel's own `generation` shape, applied to a single-shot fetch instead of a
@@ -93,6 +126,7 @@ class ActiveGroupViewModel
          * downstream renders one yet — a documented simplification, not an oversight.
          */
         fun refresh() {
+            hasRequestedGroups = true
             val myGeneration = ++refreshGeneration
             viewModelScope.launch {
                 try {
@@ -146,6 +180,7 @@ class ActiveGroupViewModel
          */
         fun reset() {
             hasLoadedOnce = false
+            hasRequestedGroups = false
             lastGroups = emptyList()
             storedGroupId = null
             refreshGeneration++

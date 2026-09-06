@@ -141,16 +141,11 @@ fun ShowTrackApp(authEvents: Flow<AuthEvent>) {
     //
     // refresh() on Feed or Groups: a group created or left on one tab is reflected in the switcher
     // the next time either tab is visited, without either feature module knowing this ViewModel
-    // exists.
+    // exists. Plus a load-once on any OTHER authenticated destination — see activeGroupActionFor's
+    // own KDoc for why Detail (and the push deep link into it) otherwise never loaded at all.
     val activeGroupViewModel: ActiveGroupViewModel = hiltViewModel()
     val currentDestination = currentBackStackEntry?.destination
-    LaunchedEffect(currentDestination) {
-        when (activeGroupActionFor(currentDestination)) {
-            ActiveGroupAction.Reset -> activeGroupViewModel.reset()
-            ActiveGroupAction.Refresh -> activeGroupViewModel.refresh()
-            ActiveGroupAction.None -> Unit
-        }
-    }
+    ActiveGroupDestinationEffect(destination = currentDestination, viewModel = activeGroupViewModel)
 
     NavigationSuiteScaffold(
         // An empty navigationSuiteItems block does not remove the bar: NavigationSuiteScaffold
@@ -209,6 +204,37 @@ fun ShowTrackApp(authEvents: Flow<AuthEvent>) {
 }
 
 /**
+ * [ShowTrackApp]'s destination-keyed driver for [ActiveGroupViewModel], extracted from that
+ * composable's body so a plain Robolectric Compose test can compose IT — with a real
+ * [ActiveGroupViewModel] built over test fakes — and observe that the decision below actually
+ * reaches the ViewModel (`ActiveGroupDestinationEffectTest`, whole-branch fix round, SF1).
+ *
+ * Before the extraction this was an anonymous `LaunchedEffect` inside [ShowTrackApp], and a reviewer
+ * measured what that cost: **deleting the whole block left all 713 tests green** while the Feed tab
+ * spun forever on every launch and sign-out stopped clearing the previous account's groups.
+ * [activeGroupActionFor] was pinned, [ActiveGroupViewModel.refresh]/[ActiveGroupViewModel.reset]
+ * were pinned, and nothing joined the two. `:app` has no Hilt test harness, so composing
+ * [ShowTrackApp] itself is not available; this is the largest piece of that seam a test can reach.
+ *
+ * What is still NOT pinned, said plainly: that [ShowTrackApp] calls this function at all. The
+ * parameter is typed [ActiveGroupViewModel] and the app holds exactly one, so the same-type swap
+ * that has bitten this project five times is not constructible here — deleting the call is.
+ */
+@Composable
+internal fun ActiveGroupDestinationEffect(
+    destination: NavDestination?,
+    viewModel: ActiveGroupViewModel,
+) {
+    LaunchedEffect(destination) {
+        when (activeGroupActionFor(destination, viewModel.hasRequestedGroups)) {
+            ActiveGroupAction.Reset -> viewModel.reset()
+            ActiveGroupAction.Refresh -> viewModel.refresh()
+            ActiveGroupAction.None -> Unit
+        }
+    }
+}
+
+/**
  * What [ActiveGroupViewModel] should do when the current destination changes — a pure function,
  * `shouldShowNavigationTabs`/`startDestinationFor`'s own precedent (`ShowTrackNavHost.kt`): `:app`
  * has no Hilt test harness, so a decision like this has to be extracted to something a plain JUnit
@@ -219,12 +245,32 @@ fun ShowTrackApp(authEvents: Flow<AuthEvent>) {
  * activeGroupViewModel.reset()` branch entirely, or swapping it for `.refresh()`, left the whole
  * suite green — [ActiveGroupViewModel.reset] itself is well tested (`ActiveGroupViewModelTest`),
  * but nothing pinned that it is actually CALLED at the right destination. This function is that pin.
+ *
+ * **[hasRequestedGroups] (whole-branch fix round, BLOCKING 2).** Feed and Groups stay the two
+ * explicit refresh points — arriving at either always re-reads the list, which is what makes a
+ * group created or left on one tab visible on the other. Everything else that is not [AuthRoute]
+ * gets a LOAD-ONCE: the first authenticated destination of the session issues the fetch, and every
+ * later one answers `None`. Without it, the ordinary path into Detail — Library, tap a title, or a
+ * `showtrack://detail/<id>` push deep link — never issued a groups fetch at all, and Detail's group
+ * section rendered nothing for the life of the Activity. With a naive `DetailRoute -> Refresh`
+ * branch instead, every single Detail open would cost a `GET /v1/groups`, since
+ * [ActiveGroupViewModel.refresh] fetches unconditionally.
+ *
+ * [hasRequestedGroups] is read rather than [ActiveGroupState] itself because the flag flips
+ * SYNCHRONOUSLY, at the moment the fetch is requested — a state-based test (`state is Loading`)
+ * cannot tell "no fetch has been asked for" from "a fetch is in flight", so every destination
+ * change inside the first round trip would fire another one.
  */
-internal fun activeGroupActionFor(destination: NavDestination?): ActiveGroupAction =
+internal fun activeGroupActionFor(
+    destination: NavDestination?,
+    hasRequestedGroups: Boolean,
+): ActiveGroupAction =
     when {
-        destination?.hasRoute(AuthRoute::class) == true -> ActiveGroupAction.Reset
-        destination?.hasRoute(FeedRoute::class) == true -> ActiveGroupAction.Refresh
-        destination?.hasRoute(GroupsRoute::class) == true -> ActiveGroupAction.Refresh
+        destination == null -> ActiveGroupAction.None
+        destination.hasRoute(AuthRoute::class) -> ActiveGroupAction.Reset
+        destination.hasRoute(FeedRoute::class) -> ActiveGroupAction.Refresh
+        destination.hasRoute(GroupsRoute::class) -> ActiveGroupAction.Refresh
+        !hasRequestedGroups -> ActiveGroupAction.Refresh
         else -> ActiveGroupAction.None
     }
 

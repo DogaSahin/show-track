@@ -30,13 +30,20 @@ import org.robolectric.annotation.Config
  * `refresh()` — left the whole suite green. `ActiveGroupViewModel.reset()`/`refresh()` are each
  * well tested on their own (`ActiveGroupViewModelTest`); this file is what pins that the right ONE
  * is called for the right destination.
+ *
+ * The `hasRequestedGroups` half (whole-branch fix round, BLOCKING 2) is what makes the ordinary
+ * Library -> Detail path load the group list at all, and the two cases below that drive the SAME
+ * destination with both flag values are the pin: with the `!hasRequestedGroups -> Refresh` branch
+ * deleted, `` `an ordinary destination loads the groups once` `` fails; with the branch made
+ * unconditional, `` `an ordinary destination does not re-load once a fetch has been requested` ``
+ * fails. One test alone would pass against either mutation.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], application = Application::class)
 class ActiveGroupActionForTest {
     @Test
     fun `no destination yet resolves to None`() {
-        assertEquals(ActiveGroupAction.None, activeGroupActionFor(null))
+        assertEquals(ActiveGroupAction.None, activeGroupActionFor(null, hasRequestedGroups = false))
     }
 
     /**
@@ -49,7 +56,10 @@ class ActiveGroupActionForTest {
     fun `AuthRoute resolves to Reset`() {
         val controller = controllerWith { authOnlyGraph() }
 
-        assertEquals(ActiveGroupAction.Reset, activeGroupActionFor(controller.currentDestination))
+        assertEquals(
+            ActiveGroupAction.Reset,
+            activeGroupActionFor(controller.currentDestination, hasRequestedGroups = true),
+        )
     }
 
     @Test
@@ -57,7 +67,13 @@ class ActiveGroupActionForTest {
         val controller = controllerWith { defaultGraph() }
         controller.navigate(FeedRoute)
 
-        assertEquals(ActiveGroupAction.Refresh, activeGroupActionFor(controller.currentDestination))
+        // hasRequestedGroups = true: Feed re-fetches on EVERY arrival, which is what makes a group
+        // created or left on another surface show up in the switcher. The load-once branch below
+        // must not be what this case depends on.
+        assertEquals(
+            ActiveGroupAction.Refresh,
+            activeGroupActionFor(controller.currentDestination, hasRequestedGroups = true),
+        )
     }
 
     @Test
@@ -65,15 +81,58 @@ class ActiveGroupActionForTest {
         val controller = controllerWith { defaultGraph() }
         controller.navigate(GroupsRoute)
 
-        assertEquals(ActiveGroupAction.Refresh, activeGroupActionFor(controller.currentDestination))
+        assertEquals(
+            ActiveGroupAction.Refresh,
+            activeGroupActionFor(controller.currentDestination, hasRequestedGroups = true),
+        )
     }
 
-    /** The negative control: an ordinary destination that is none of the three named above. */
+    /**
+     * BLOCKING 2's own pin. `LibraryRoute` is the graph's start destination and the beginning of the
+     * ordinary path into Detail; before this branch it answered `None` unconditionally, so an
+     * account that never opened Feed or Groups issued no `GET /v1/groups` at all and Detail's group
+     * section rendered nothing for the life of the Activity.
+     */
     @Test
-    fun `an unrelated destination resolves to None`() {
+    fun `an ordinary destination loads the groups once`() {
         val controller = controllerWith { defaultGraph() }
 
-        assertEquals(ActiveGroupAction.None, activeGroupActionFor(controller.currentDestination))
+        assertEquals(
+            ActiveGroupAction.Refresh,
+            activeGroupActionFor(controller.currentDestination, hasRequestedGroups = false),
+        )
+    }
+
+    /**
+     * The other half, and the reason the flag exists rather than a bare `DetailRoute -> Refresh`
+     * branch: `ActiveGroupViewModel.refresh` fetches unconditionally, and this effect re-evaluates
+     * on EVERY destination change, so an unguarded branch would be a `GET /v1/groups` per screen
+     * opened.
+     */
+    @Test
+    fun `an ordinary destination does not re-load once a fetch has been requested`() {
+        val controller = controllerWith { defaultGraph() }
+
+        assertEquals(
+            ActiveGroupAction.None,
+            activeGroupActionFor(controller.currentDestination, hasRequestedGroups = true),
+        )
+    }
+
+    /**
+     * `AuthRoute` outranks the load-once branch: a signed-out destination must Reset, never fetch.
+     * Ordering pin — moving the `!hasRequestedGroups` branch above the `AuthRoute` one would fire
+     * an authenticated `GET /v1/groups` at the login screen, which is the exact regression fix
+     * round 1's BLOCKING B4 removed `init { refresh() }` to stop.
+     */
+    @Test
+    fun `AuthRoute resolves to Reset even when no fetch has been requested`() {
+        val controller = controllerWith { authOnlyGraph() }
+
+        assertEquals(
+            ActiveGroupAction.Reset,
+            activeGroupActionFor(controller.currentDestination, hasRequestedGroups = false),
+        )
     }
 
     private fun controllerWith(graph: NavHostController.() -> NavGraph): NavHostController =

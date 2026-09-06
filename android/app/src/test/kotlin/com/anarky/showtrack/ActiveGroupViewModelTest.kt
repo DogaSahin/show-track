@@ -13,6 +13,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -258,6 +259,30 @@ class ActiveGroupViewModelTest {
 
             assertEquals(ActiveGroupState.Loading, viewModel.state.value)
             assertNull(store.setCalls.last())
+        }
+
+    /**
+     * BLOCKING 2's other half (whole-branch fix round). `hasRequestedGroups` is the load-once latch
+     * `activeGroupActionFor` reads to decide whether an ordinary authenticated destination should
+     * fetch. If [ActiveGroupViewModel.reset] did not clear it, account B signing in after account A
+     * signed out would land on Library with the latch still `true`, no fetch would ever be issued,
+     * and B's Feed would spin on `ActiveGroupState.Loading` for the whole session — the previous
+     * account's sign-out having silently disabled the next account's only load trigger.
+     */
+    @Test
+    fun `reset clears the load-once latch so the next account fetches again`() =
+        runTest(dispatcher) {
+            val store = FakeActiveGroupStore(initial = null)
+            val repository = FakeGroupRepository(groups = listOf(ALPHA, BETA))
+            val viewModel = ActiveGroupViewModel(repository, store)
+            viewModel.refresh()
+            advanceUntilIdle()
+            assertTrue(viewModel.hasRequestedGroups)
+
+            viewModel.reset()
+            advanceUntilIdle()
+
+            assertFalse(viewModel.hasRequestedGroups)
         }
 
     /**
