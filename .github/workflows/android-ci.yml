@@ -1,0 +1,75 @@
+name: android-ci
+
+on:
+  pull_request:
+    paths:
+      - 'android/**'
+      - '.github/workflows/android-ci.yml'
+  push:
+    branches: [dev, main]
+    paths:
+      - 'android/**'
+      - '.github/workflows/android-ci.yml'
+
+# Every job in this workflow only reads the repository, so the token is pinned to exactly
+# that rather than left to inherit whatever the repository or organisation default is set to.
+# Widen per-job only if a step actually fails for lack of a permission.
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: android
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Lint
+        run: ./gradlew ktlintCheck detekt
+
+      # build-logic is an INCLUDED BUILD, so the root `ktlintCheck detekt` above does not reach it —
+      # its own step is the only way it gets linted at all. Measured before this step existed: a
+      # deliberately malformed build-logic/src/main/kotlin/.../Bad.kt (double spaces, spaced
+      # parameters, 8-space indent, no trailing newline) gave BUILD SUCCESSFUL under the root
+      # command; with the step, ktlint reports 15 violations and detekt one. The module holding both
+      # architecture rules, both TestKit suites and all six convention plugins was the one nothing
+      # checked.
+      - name: Lint build-logic
+        run: ./gradlew -p build-logic ktlintCheck detekt
+
+      # Enforces decision C-E (every user-facing string, contentDescription included, comes from
+      # R.string) — showtrack.android.library/.application set HardcodedText and
+      # ContentDescription to error with abortOnError = true. This step is what makes that a gate
+      # rather than a config that only ever ran on whichever machine last had the memory to finish
+      # it locally: task 9b.0 measured lintDebug OOMing under this project's documented local
+      # bound, which is precisely why running it here, not just documenting it in README, is the
+      # part that actually matters — "a gate that does not run the check is not a gate."
+      - name: Lint (Android)
+        run: ./gradlew lintDebug
+
+      # Also runs the build-logic convention-plugin tests, including the ones that prove the
+      # module-dependency rules fail a real build. See android/build.gradle.kts.
+      - name: Unit tests
+        run: ./gradlew testDebugUnitTest
+
+      # assembleDebugAndroidTest alongside assembleDebug: :core:network has an instrumentation
+      # test for the Android Keystore, which has no off-device stand-in. Nothing here can RUN it
+      # (there is no emulator in this pipeline), but without compiling it the androidTest source
+      # set is never built by anything and would rot silently on the first refactor.
+      # (The Room tests in :core:database and :core:data run on Robolectric instead, so they are
+      # exercised by the unit-test step above, not by this one.)
+      - name: Assemble debug
+        run: ./gradlew assembleDebug assembleDebugAndroidTest

@@ -1,0 +1,102 @@
+{
+  "_provenance": "Structure verified against AniList's live GraphQL schema by introspection on 2026-08-20: MediaListCollection{lists,user,hasNextChunk}, MediaListGroup{entries,name,isCustomList,isSplitCompletedList,status}, and MediaList.score(format: ScoreFormat). The composed USER_LIST_QUERY was executed against the live endpoint and parses. Entry VALUES below are hand-authored to exercise the three mapper behaviours that matter (status mapping, score 0 meaning unscored, one title present in both a status list and a custom list). NOT a recording of a real person's list -- see README's fixture workflow to replace it with one.",
+  "data": {
+    "MediaListCollection": {
+      "hasNextChunk": false,
+      "lists": [
+        {
+          "name": "Watching",
+          "isCustomList": false,
+          "entries": [
+            {
+              "status": "CURRENT",
+              "score": 8.5,
+              "progress": 12,
+              "media": {
+                "id": 154587,
+                "title": {
+                  "romaji": "Sousou no Frieren",
+                  "english": "Frieren: Beyond Journey's End"
+                },
+                "startDate": {
+                  "year": 2023
+                },
+                "genres": [
+                  "Adventure",
+                  "Drama",
+                  "Fantasy"
+                ],
+                "coverImage": {
+                  "large": "https://img.anili.st/154587.jpg"
+                },
+                "status": "FINISHED",
+                "nextAiringEpisode": null
+              }
+            }
+          ]
+        },
+        {
+          "name": "Completed",
+          "isCustomList": false,
+          "entries": [
+            {
+              "status": "COMPLETED",
+              "score": 0,
+              "progress": 25,
+              "media": {
+                "id": 16498,
+                "title": {
+                  "romaji": "Shingeki no Kyojin",
+                  "english": "Attack on Titan"
+                },
+                "startDate": {
+                  "year": 2013
+                },
+                "genres": [
+                  "Action",
+                  "Drama"
+                ],
+                "coverImage": {
+                  "large": "https://img.anili.st/16498.jpg"
+                },
+                "status": "FINISHED",
+                "nextAiringEpisode": null
+              }
+            }
+          ]
+        },
+        {
+          "name": "Favourites",
+          "isCustomList": true,
+          "entries": [
+            {
+              "status": "CURRENT",
+              "score": 8.5,
+              "progress": 12,
+              "media": {
+                "id": 154587,
+                "title": {
+                  "romaji": "Sousou no Frieren",
+                  "english": "Frieren: Beyond Journey's End"
+                },
+                "startDate": {
+                  "year": 2023
+                },
+                "genres": [
+                  "Adventure",
+                  "Drama",
+                  "Fantasy"
+                ],
+                "coverImage": {
+                  "large": "https://img.anili.st/154587.jpg"
+                },
+                "status": "FINISHED",
+                "nextAiringEpisode": null
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

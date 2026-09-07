@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+      Required by MediaCard's AsyncImage (Coil) to fetch cover art over the network. Declared
+      here, not in :app, so the module that needs the permission owns it — manifest merging
+      carries it up to any app that depends on :core:designsystem, which matters once the nine
+      Phase 9 feature modules are all consuming this component.
+    -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+</manifest>

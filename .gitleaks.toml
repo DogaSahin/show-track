@@ -1,0 +1,26 @@
+# Gitleaks configuration.
+#
+# `useDefault = true` is load-bearing: without it, supplying a config REPLACES the entire default
+# ruleset rather than extending it, and every scan would silently pass. A gate that does not run
+# the check is not a gate. The probe below proves it is still extending rather than replacing.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Base64 pagination cursors in the wire fixtures are not credentials"
+# Scoped to the exact fixture VALUE rather than to the file or the rule, so it cannot mask a real
+# finding anywhere — including in this same file, whose neighbours still get scanned.
+#
+# The value trips the high-entropy `grafana-api-key` heuristic because it is base64 of JSON; `eyJ`
+# is simply base64 of `{"`. It decodes to:
+#
+#   {"k":"title","v":"Cowboy Bebop","i":"c9f4397c-115b-439a-91d9-a188f9b674ac"}
+#
+# a sort key, a sort value and a row id — the entire content of an opaque cursor
+# (backend/app/pagination.py). Cursors are unsigned and documented as opaque, not secret.
+#
+# token_pair.json is a different fixture and stays fully scanned; it holds the access/refresh pair
+# (scrubbed) and must keep tripping every rule it would otherwise trip.
+regexes = [
+  '''eyJrIjoidGl0bGUiLCJ2IjoiQ293Ym95IEJlYm9wIiwiaSI6ImM5ZjQzOTdjLTExNWItNDM5YS05MWQ5LWExODhmOWI2NzRhYyJ9''',
+]

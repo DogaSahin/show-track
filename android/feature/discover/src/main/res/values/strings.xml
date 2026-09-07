@@ -1,0 +1,34 @@
+<resources>
+    <string name="discover_title">Discover</string>
+
+    <string name="discover_empty_message">No recommendations right now — add a few titles to your library and check back</string>
+
+    <string name="discover_error_message">Couldn\'t load recommendations right now. Check your connection and try again.</string>
+
+    <!-- A failed loadMore() (DiscoverUiState.Success.pageError) — the already-loaded rows stay on
+         screen underneath this footer, mirroring library_page_error/search_page_error. -->
+    <string name="discover_page_error">Couldn\'t load more. Tap to retry.</string>
+
+    <!-- The shelf header. The reason used to be a full sentence repeated under every row
+         ("Because you watched Frieren — fantasy, adventure"); now the seed names the shelf once
+         and the eyebrow above it supplies the sentence, so a strong seed producing eight
+         consecutive recommendations says it once instead of eight times.
+
+         Split into an eyebrow plus the bare title rather than one formatted string, because the
+         two are styled differently — the eyebrow is a muted label, the seed is the heading — and a
+         single %1$s string would give a translator no way to separate them.
+
+         matchedGenres no longer appears here: a header carries one line, and five stacked genre
+         lists is noise. The genres stay on the detail screen, attached to the title they
+         describe. -->
+    <string name="discover_shelf_eyebrow">Because you watched</string>
+
+    <!-- The one-tap add affordance (decision D-I). %1$s is the title, so two rows on screen never
+         share an indistinguishable contentDescription (decision C-E). -->
+    <string name="discover_add_content_description">Add %1$s to your library</string>
+
+    <!-- add() failed and the row has already been put back on screen (D-I's restore-on-failure),
+         so this reports BESIDE the row rather than replacing it. Tapping it retries via the same
+         add action. -->
+    <string name="discover_add_error">Couldn\'t add this title. Tap to try again.</string>
+</resources>

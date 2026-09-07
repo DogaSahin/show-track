@@ -1,0 +1,120 @@
+<resources>
+    <!-- Notification channel, shown in the system's per-app notification settings. -->
+    <string name="push_channel_airing_name">Airing episodes</string>
+    <string name="push_channel_airing_description">Alerts when an episode you follow is about to air.</string>
+
+    <!--
+        The prompt that must never be a silent failure. It names ntfy specifically: "install a
+        UnifiedPush distributor" is accurate and unactionable, while a product name is something
+        a person can search for. ntfy is named because it is what this deployment's backend
+        publishes through (backend decision 6-A), so it is the one that is certain to work.
+    -->
+    <string name="push_no_distributor_title">Push needs one more app</string>
+    <string name="push_no_distributor_body">ShowTrack delivers episode alerts over UnifiedPush, which needs a distributor app installed. Install ntfy from F-Droid or Google Play, then come back here.</string>
+    <string name="push_available_title">Turn on episode alerts</string>
+    <string name="push_registered_title">Episode alerts are on</string>
+    <string name="push_enable">Use this app</string>
+    <string name="push_disable">Turn off</string>
+    <string name="push_permission_body">Android also needs permission to show notifications.</string>
+    <string name="push_permission_grant">Allow notifications</string>
+    <string name="profile_title">Profile</string>
+
+    <!-- Sign-out is destructive of local session state (Gap 2, Phase 9a device walkthroughs), so
+         the button opens a confirmation dialog rather than acting immediately. -->
+    <string name="profile_sign_out">Sign out</string>
+    <string name="profile_sign_out_confirm_title">Sign out?</string>
+    <string name="profile_sign_out_confirm_body">You\'ll need to sign in again to see your library and get episode alerts.</string>
+    <string name="profile_sign_out_confirm_action">Sign out</string>
+    <string name="profile_sign_out_cancel">Cancel</string>
+    <string name="profile_sign_out_error">Couldn\'t sign out due to a local storage problem. Try again, or restart the app.</string>
+
+    <!-- Library statistics (task 9b.5, GET /v1/library/stats). A status absent from the response
+         is never rendered as zero — see LibraryStats' own KDoc — so profile_stats_status_row is
+         only ever emitted for statuses the server actually reported. Both counts below are
+         <plurals>, not plain <string>s with an embedded %d — lint's PluralsCandidate flagged the
+         earlier plain-string versions ("%d titles"/"%d rated titles"), correctly: a bare %d
+         followed by a word is exactly what plurals exists to localise. -->
+    <string name="profile_stats_title">Library stats</string>
+
+    <!-- Every count on this screen goes through profile_stats_figure rather than being converted
+         with toString(): the "," flag makes Java's formatter apply the locale's own grouping, so a
+         1200-episode total reads as 1,200 (or 1.200, or 1 200) instead of a wall of digits. The
+         numeral itself is localised by the same call. -->
+    <string name="profile_stats_figure">%1$,d</string>
+
+    <!-- The label under the headline figure, which now carries the number itself — so this is a
+         bare noun phrase and takes no %d, unlike the profile_stats_total it replaces. Still a
+         <plurals>, because "1 title" and "2 titles" differ in most languages regardless. -->
+    <plurals name="profile_stats_total_label">
+        <item quantity="one">title in your library</item>
+        <item quantity="other">titles in your library</item>
+    </plurals>
+    <string name="profile_stats_episodes_label">episodes watched</string>
+    <string name="profile_stats_added_label">added this month</string>
+    <string name="profile_stats_favorites_label">favorites</string>
+    <!-- Names the measure, not just its denominator. "7.8 / across 156 rated titles" left the
+         reader to infer what 7.8 was, while every other figure on the screen says what it is. -->
+    <plurals name="profile_stats_average_label">
+        <item quantity="one">average score, %1$d rated title</item>
+        <item quantity="other">average score, %1$d rated titles</item>
+    </plurals>
+    <string name="profile_stats_genres_title">Top genres</string>
+
+    <!-- An em dash where the average score would be. Never "0.0": a displayed zero claims every
+         title was rated zero, which is a different and false statement from "nothing is rated".
+         The label beneath it says so in words. -->
+    <string name="profile_stats_no_ratings_figure">—</string>
+    <string name="profile_stats_no_ratings">No ratings yet</string>
+    <string name="profile_stats_error">Couldn\'t load your library stats.</string>
+
+    <!-- Profile's own door to the groups screen (decision E-A, GroupsRoute). Group management is
+         occasional (create once, join once, check members rarely), so it lives here beside the
+         import entry rather than taking a tab of its own. -->
+    <string name="profile_groups_title">Groups</string>
+    <string name="profile_groups_body">Create or join a group, see who is in it, and share a watchlist.</string>
+    <string name="profile_groups_action">Manage groups</string>
+
+    <!-- Profile's own door to the AniList import screen (task 9b.6, ImportRoute). The two
+         limitations live on the import screen itself, not repeated here. -->
+    <string name="profile_import_title">Import from AniList</string>
+    <string name="profile_import_body">Bring the titles from your AniList list into ShowTrack.</string>
+    <string name="profile_import_action">Import</string>
+
+    <!-- The AniList import screen itself. import_public_requirement/import_one_way_notice are
+         shown BEFORE the username field, on every render of the form — the task brief requires
+         stating both limitations up front rather than only after a failed attempt. -->
+    <string name="import_title">Import from AniList</string>
+    <string name="import_public_requirement">Your AniList profile\'s list must be set to public — ShowTrack cannot read a private one.</string>
+    <string name="import_one_way_notice">This is a one-time, one-way copy: nothing you do in ShowTrack is ever written back to AniList.</string>
+    <string name="import_username_label">AniList username</string>
+    <string name="import_submit">Import</string>
+    <string name="import_submitting">Importing…</string>
+    <string name="import_skip">Skip for now</string>
+
+    <!-- The server returns the same 404 whether the username does not exist or the list is
+         private (ImportFailure.ListNotPublic's own KDoc) — this copy covers both honestly rather
+         than guessing which one happened. -->
+    <string name="import_error_not_public">Couldn\'t find a public AniList list for that username. Double-check the spelling, and make sure the list is set to public in AniList\'s settings.</string>
+    <string name="import_error_invalid_username">That username isn\'t valid.</string>
+    <string name="import_error_upstream_unavailable">AniList isn\'t responding right now. Try again in a moment.</string>
+    <string name="import_error_offline">You\'re offline. Check your connection and try again.</string>
+    <string name="import_error_unknown">Something went wrong. Try again.</string>
+
+    <string name="import_success_title">Import complete</string>
+    <plurals name="import_result_imported">
+        <item quantity="one">%1$d title imported</item>
+        <item quantity="other">%1$d titles imported</item>
+    </plurals>
+    <plurals name="import_result_skipped">
+        <item quantity="one">%1$d title skipped (already in your library)</item>
+        <item quantity="other">%1$d titles skipped (already in your library)</item>
+    </plurals>
+    <plurals name="import_result_failed">
+        <item quantity="one">%1$d title failed to import</item>
+        <item quantity="other">%1$d titles failed to import</item>
+    </plurals>
+    <!-- Decision 4-L: a list truncated at the backend's chunk cap must be distinguishable from a
+         complete one — an identical set of counts can describe either. -->
+    <string name="import_truncated_notice">Your AniList list is large — only part of it was imported this time.</string>
+    <string name="import_done">Done</string>
+</resources>

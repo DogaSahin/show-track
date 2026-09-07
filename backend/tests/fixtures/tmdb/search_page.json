@@ -1,0 +1,21 @@
+{
+  "page": 1,
+  "results": [
+    {
+      "id": 1396,
+      "name": "Breaking Bad",
+      "first_air_date": "2008-01-20",
+      "genre_ids": [18, 80],
+      "poster_path": "/ggFHVNu6YYI5L9pCfOacjizRGt.jpg"
+    },
+    {
+      "id": 94605,
+      "name": "Arcane",
+      "first_air_date": "",
+      "genre_ids": [16, 10759, 10765],
+      "poster_path": null
+    }
+  ],
+  "total_pages": 3,
+  "total_results": 45
+}

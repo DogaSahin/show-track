@@ -1,0 +1,98 @@
+name: backend-ci
+
+on:
+  pull_request:
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend-ci.yml'
+  push:
+    branches: [dev, main]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend-ci.yml'
+
+# Every job in this workflow only reads the repository, so the token is pinned to exactly
+# that rather than left to inherit whatever the repository or organisation default is set to.
+# Widen per-job only if a step actually fails for lack of a permission.
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: backend
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193 # postgres:17-alpine
+        env:
+          POSTGRES_USER: showtrack
+          POSTGRES_PASSWORD: showtrack
+          POSTGRES_DB: showtrack
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U showtrack -d showtrack"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://showtrack:showtrack@localhost:5432/showtrack
+      # Throwaway CI-only values, not credentials — nothing they protect exists outside this
+      # job, so there is nothing to rotate.
+      SECRET_KEY: ci-test-secret-not-used-outside-ci
+      REGISTRATION_CODE: ci-test-code
+      # No NTFY_* here on purpose, and no ntfy service either. The notification tests mock the
+      # transport boundary and never open a socket; NTFY_BASE_URL is optional, so its absence
+      # disables the dispatcher cleanly and is exactly the state the suite expects. Adding a
+      # value or a service would test ntfy rather than this project, and would make a required
+      # setting out of one deliberately kept optional (see app/config.py).
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # No python-version input on purpose: it makes setup-uv create AND activate its own
+      # venv at the workspace root and export VIRTUAL_ENV, which competes with the venv we
+      # create in backend/ — the install lands in one and the lint step reads the other.
+      # Python is pinned on `uv venv` below instead, so there is exactly one venv.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      # A venv, not `uv pip install --system`: the runner's system interpreter is
+      # Debian-packaged and marked EXTERNALLY-MANAGED (PEP 668), which uv honours and
+      # refuses to install into. Using a venv also makes CI run the same `.venv/bin/...`
+      # commands as the documented local gate. --python names the target interpreter so the
+      # install cannot drift to whatever uv would otherwise discover.
+      - name: Install dependencies
+        run: |
+          uv venv --python 3.12
+          uv pip install --python .venv/bin/python -r requirements-dev.txt
+
+      - name: Lint
+        run: |
+          .venv/bin/ruff check .
+          .venv/bin/ruff format --check .
+
+      - name: Apply migrations
+        run: .venv/bin/alembic upgrade head
+
+      # Fails if the models and the migration head disagree — i.e. someone edited a model and
+      # forgot to generate the migration. One blind spot, and it is the most likely edit of
+      # all: adding or removing a member on a StrEnum moves only the CHECK constraint bound to
+      # the column's type, which Alembic's comparator does not diff (see migrations/env.py), so
+      # `check` reports "No new upgrade operations detected" and exits 0. That case is covered
+      # by tests/test_enum_constraints.py instead, not here.
+      #
+      # Structural drift is otherwise invisible to the test suite, which only ever sees the
+      # schema `upgrade head` produced — nothing calls `create_all`. A model that gains a
+      # *column* is the exception and fails loudly, because the column reaches the emitted SQL;
+      # an index, `server_default`, nullability or enum-value change never does.
+      - name: Check for model/migration drift
+        run: .venv/bin/alembic check
+
+      - name: Test
+        run: .venv/bin/pytest -v

@@ -1,0 +1,19 @@
+<resources>
+    <string name="favorites_title">Favorites</string>
+
+    <!-- American spelling ("favorited"/"favorites"), matching this string's own title above,
+         `app/.../strings.xml`'s `destination_favorites`, and `detail_favorite_label` — the one
+         spelling convention already established everywhere else this word appears in the app's
+         UI copy (an earlier version of this file used British "favourited"/"favourites" here and
+         nowhere else, an inconsistency a review caught).
+         Deliberately NOT "Nothing in your library yet" (library_empty_default) — that claim is
+         false here and reads as data loss. This screen shows only favorited titles, so an empty
+         library and an unfavorited-everything library look identical and must not share copy. -->
+    <string name="favorites_empty_message">You haven\'t favorited anything yet</string>
+
+    <string name="favorites_error_message">Couldn\'t load your favorites. Check your connection and try again.</string>
+
+    <!-- A failed loadMore() (FavoritesUiState.Success.pageError) — the already-loaded list stays
+         on screen underneath this footer, mirroring library_page_error/discover_page_error. -->
+    <string name="favorites_page_error">Couldn\'t load more. Tap to retry.</string>
+</resources>

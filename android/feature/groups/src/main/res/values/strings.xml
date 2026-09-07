@@ -1,0 +1,153 @@
+<resources>
+    <string name="groups_title">Groups</string>
+
+    <string name="groups_create_action">Create</string>
+    <string name="groups_join_action">Join by code</string>
+
+    <string name="groups_empty_message">You\'re not in any groups yet. Create one or join with a code.</string>
+
+    <string name="groups_create_title">Create a group</string>
+    <string name="groups_create_name_label">Group name</string>
+    <!-- Deliberately NOT "Create" — the top app bar's own groups_create_action button already
+         uses that word, and both are on screen together while this dialog is open (round 1 fix:
+         GroupsScreenTest measured `onNodeWithText("Create")` matching two nodes and throwing). -->
+    <string name="groups_create_submit">Create group</string>
+    <!-- ImportForm's import_submitting convention: a visibly different label while the request is
+         in flight, on top of the enabled = false guard, so a real user sees why the button stopped
+         responding rather than just a disabled control. -->
+    <string name="groups_create_submitting">Creating…</string>
+    <string name="groups_create_cancel">Cancel</string>
+
+    <string name="groups_join_title">Join a group</string>
+    <string name="groups_join_code_label">Invite code</string>
+    <!-- Deliberately NOT "Join" — see groups_create_submit's identical note for groups_join_action. -->
+    <string name="groups_join_submit">Join group</string>
+    <string name="groups_join_submitting">Joining…</string>
+    <string name="groups_join_cancel">Cancel</string>
+
+    <!-- The invite-code card: shown ONLY in GroupsUiState.Success.justCreated, right after a
+         create or join succeeds — the code is a credential the server withholds everywhere else
+         (GET /v1/groups never returns one), so this copy only ever renders at that one moment. -->
+    <string name="groups_invite_title">You\'re in %1$s</string>
+    <string name="groups_invite_code_label">Invite code: %1$s</string>
+    <!-- Fix round 1: copy-to-clipboard is the only way this code leaves the screen before the
+         next resume clears it (decision E-I). groups_invite_copied is the button's own label the
+         instant after a tap — not a snackbar — so no extra affordance was added beyond what the
+         button itself already shows. -->
+    <string name="groups_invite_copy">Copy code</string>
+    <string name="groups_invite_copied">Copied</string>
+    <string name="groups_invite_dismiss">Got it</string>
+    <!-- Fix round 2: the label ClipData.newPlainText carries — not shown in this app's own UI,
+         but a clipboard-history surface elsewhere on the device may display it, so it goes
+         through a string resource like every other user-facing string (decision C-E). -->
+    <string name="groups_invite_clip_label">Invite code</string>
+
+    <string name="groups_error_network">Couldn\'t reach the server. Check your connection and try again.</string>
+    <string name="groups_error_unknown">Something went wrong. Please try again.</string>
+    <!-- Round 1 review, minor 4: GroupFailure.NotAMember previously fell into the generic
+         "something went wrong" copy above, but on THIS screen it is the single most likely
+         non-network failure (removed from the group elsewhere, or the group itself is gone) and
+         names something the generic copy actively misdescribes: retrying answers the identical
+         404 every time, not a transient fault. -->
+    <string name="groups_error_not_a_member">You\'re no longer a member of this group.</string>
+    <!-- Fix round 2: the single most common outcome of JoinGroupDialog's submit —
+         GroupFailure.BadRequest's own KDoc: a bad or expired code is a 400
+         (backend/app/groups/routes.py's _INVALID_CODE) the backend deliberately does not
+         distinguish further. Says the code may be wrong OR expired, never which — the server
+         does not tell the client either. -->
+    <string name="groups_join_error_bad_code">That code didn\'t work. It may be wrong or expired.</string>
+
+    <!-- Fix round 1: StaleDataBanner's own default copy ("Showing saved titles…") names the
+         wrong noun for a list of groups — see GroupsUiState.Success's own KDoc for why isStale
+         is still meaningful here despite groups having no Room cache. -->
+    <string name="groups_stale_notice">Showing your last loaded groups. Tap Retry to check for updates.</string>
+    <!-- The ACTIVE-GROUP fetch failed, which is a different failure from this screen's own list
+         failing: the list below may be fine, so this is a banner with a retry rather than an
+         ErrorState that would replace working content. Feed uses feed_groups_error_retry with a
+         full ErrorState because it has nothing else to show. -->
+    <string name="groups_active_group_error">Couldn\'t load which group is active.</string>
+
+    <!-- ===== Group detail (task 9c.2) — GroupDetailScreen.kt, GroupDetailDialogs.kt ===== -->
+
+    <string name="groups_detail_title">Members</string>
+    <string name="groups_detail_role_owner">Owner</string>
+    <string name="groups_detail_role_member">Member</string>
+    <!-- StaleDataBanner's messageRes parameter (fix round 1's own precedent on GroupsScreen) —
+         "your last loaded groups" is the wrong noun for a member list. -->
+    <string name="groups_detail_stale_notice">Showing the last loaded members. Tap Retry to check for updates.</string>
+
+    <!-- Owner only (E-F) — GroupDetailScreen hides this control entirely for a non-owner rather
+         than disabling it (decision E-F: the server enforces the rule regardless, so the UI's
+         only job is not to offer a dead end). -->
+    <string name="groups_detail_rotate_action">Rotate invite code</string>
+    <string name="groups_detail_rotate_confirm_title">Rotate the invite code?</string>
+    <!-- E-I: rotating means the previous code stops working — the copy this task's brief
+         requires ("the copy must say the previous code stops working — that is what rotation
+         means"). -->
+    <string name="groups_detail_rotate_confirm_message">The current invite code will stop working immediately. Anyone who has not joined yet will need the new one.</string>
+    <string name="groups_detail_rotate_confirm_button">Rotate</string>
+    <string name="groups_detail_rotate_cancel">Cancel</string>
+    <!-- The InviteCodeCard reused from GroupsScreen.kt (generalised to take its own title —
+         "You're in %1$s" makes no sense for a rotate, since the reader is already a member). -->
+    <string name="groups_detail_rotated_title">New invite code</string>
+
+    <!-- Offered to EVERY member, owner included (backend's remove_member permits self-removal
+         unconditionally — G-E's ownership-transfer rule only ever gates removing SOMEONE ELSE). -->
+    <string name="groups_detail_leave_action">Leave group</string>
+    <string name="groups_detail_leave_confirm_title">Leave this group?</string>
+    <!-- Round 1 review, minor 3: the previous copy ("You\'ll need a new invite code to rejoin")
+         was wrong for an owner leaving — backend/app/groups/service.py:204-221 either transfers
+         ownership to the earliest joiner or, with nobody left, DELETES the group outright; there
+         is nothing to rejoin in that second case. One message covers both audiences (member and
+         owner) honestly rather than computing isOwner a second time just to pick between two. -->
+    <string name="groups_detail_leave_confirm_message">You\'ll need a new invite code to rejoin. If you\'re the owner, leaving hands the group to another member automatically \u2014 or deletes it if no one else is left.</string>
+    <string name="groups_detail_leave_confirm_button">Leave</string>
+    <string name="groups_detail_leave_cancel">Cancel</string>
+
+    <!-- Owner only (E-F), and never rendered next to the owner's OWN row — see
+         GroupDetailScreen.kt's own note on why "remove yourself" is groups_detail_leave_action
+         instead, not this control reused. -->
+    <string name="groups_detail_remove_action">Remove</string>
+    <string name="groups_detail_remove_confirm_title">Remove %1$s?</string>
+    <string name="groups_detail_remove_confirm_message">They\'ll need a new invite code to rejoin.</string>
+    <!-- Deliberately NOT "Remove" — the per-row groups_detail_remove_action button stays on
+         screen underneath the confirm dialog (GroupDetailScreenTest measured `onNodeWithText`
+         matching three nodes and throwing: two other members' own row buttons plus this one), the
+         identical collision groups_create_submit's own note describes for GroupsScreen. -->
+    <string name="groups_detail_remove_confirm_button">Remove member</string>
+    <string name="groups_detail_remove_cancel">Cancel</string>
+
+    <!-- ===== Shared watchlist (task 9c.3) — GroupWatchlistSection.kt, GroupWatchlistDialogs.kt ===== -->
+
+    <string name="groups_watchlist_section_title">Shared watchlist</string>
+    <string name="groups_watchlist_empty_message">No one has proposed a title yet.</string>
+    <string name="groups_watchlist_page_error">Couldn\'t load more titles. Tap to retry.</string>
+    <!-- Fix round 1, finding B2: a RELOAD failure (first page or a later background refresh) is a
+         SEPARATE channel from a loadMore page-fetch failure (groups_watchlist_page_error above) —
+         GroupDetailUiState.Success.watchlistIsStale's own KDoc explains why one field answering
+         both questions left the footer's retry dead once the list was exhausted. Deliberately does
+         NOT claim "showing saved titles" the way groups_detail_stale_notice does: the watchlist can
+         be genuinely empty AND stale at once (nothing has ever loaded successfully), where that
+         phrasing would be misleading. -->
+    <string name="groups_watchlist_stale_notice">Couldn\'t refresh the shared watchlist. Tap Retry to check again.</string>
+
+    <!-- proposedBy is nullable — deleting your account leaves the entry standing (design §5.3) —
+         and a member who has since LEFT the group (still a valid id, no longer resolvable against
+         the current member list) reads identically to the viewer, so both fall back to this same
+         copy rather than rendering a blank name (this task's own first named test). -->
+    <string name="groups_watchlist_proposed_by">Proposed by %1$s</string>
+    <string name="groups_watchlist_no_proposer">Proposed anonymously</string>
+    <string name="groups_watchlist_remove_action">Remove</string>
+
+    <string name="groups_watchlist_remove_confirm_title">Remove %1$s?</string>
+    <string name="groups_watchlist_remove_confirm_message">Any member can propose it again later.</string>
+    <string name="groups_watchlist_remove_confirm_button">Remove title</string>
+    <string name="groups_watchlist_remove_cancel">Cancel</string>
+
+    <!-- Round 1's own note (this file's messageRes()) said NoSuchEntry could not be produced by
+         anything on screen; task 9c.3's remove dialog is what changes that — see messageRes()'s own
+         KDoc. groups_watchlist_error_no_such_title (fix round 1's propose strings) was removed along
+         with the propose dialog itself — see GroupDetailActionState's own KDoc for why proposing
+         moved to :feature:detail (task 9c.6). -->
+    <string name="groups_watchlist_error_no_such_entry">That title was already removed from the watchlist.</string>
+</resources>
