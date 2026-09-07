@@ -10,6 +10,29 @@
          group's own invite code, which also joins the new account to that group (decision C-M). -->
     <string name="auth_invite_code_help">The code you were given. It may also add you to a group.</string>
 
+    <!-- The wordmark and its one-line statement of what the app is. Set in caps in the layout
+         via WordmarkStyle's tracking, not spelled in caps here: an all-caps string is read out
+         letter-by-letter by TalkBack. -->
+    <string name="auth_wordmark">ShowTrack</string>
+    <string name="auth_tagline">Track what you watch.</string>
+
+    <!-- The mode switch, moved below the form (it is a way out of this form, not a filter on it).
+         Prompt and action are separate strings so only the action is emphasised and clickable. -->
+    <string name="auth_switch_to_register_prompt">New here?</string>
+    <string name="auth_switch_to_register_action">Create account</string>
+    <string name="auth_switch_to_login_prompt">Already have an account?</string>
+    <string name="auth_switch_to_login_action">Log in</string>
+
+    <!-- Text, not an eye icon: Icons.Filled.Visibility lives in material-icons-extended, an
+         artifact this project has never depended on, and a two-word button needs no legend. -->
+    <!-- The inline action on the two errors whose only answer is to sign in. NOT reusing
+         auth_mode_login: that renders the identical string on the submit button directly
+         below, so two adjacent controls would read "Log in" and do different things. -->
+    <string name="auth_error_action_switch_to_login">Switch to log in</string>
+
+    <string name="auth_password_show">Show</string>
+    <string name="auth_password_hide">Hide</string>
+
     <string name="auth_submit_login">Log in</string>
     <string name="auth_submit_register">Create account</string>
 
@@ -33,7 +56,7 @@
          Points at signing in, not at the invite code: a user told their CODE was rejected when
          it was their email that\'s already registered will go hunting for a code that can never
          work — the same mistake AccountCreatedNotSignedIn below exists to avoid. -->
-    <string name="auth_error_email_or_username_taken">That email or username is already registered. Switch to Log in above and sign in instead.</string>
+    <string name="auth_error_email_or_username_taken">That email or username is already registered. Sign in instead.</string>
     <!-- The fallback for any OTHER 4xx from register. The server defines only the two cases
          above (backend/app/users/service.py's RegistrationError); this never fires for either
          one of them. -->
@@ -41,7 +64,7 @@
     <!-- The account WAS created; only the follow-up sign-in failed. Never "try registering
          again" — registering again now answers "email already taken" and strands the user with
          nothing to try (decision C-M). The mode toggle above this message is how they act on it. -->
-    <string name="auth_error_account_created_not_signed_in">Your account was created, but we couldn\'t sign you in. Switch to Log in above and sign in with your new password.</string>
+    <string name="auth_error_account_created_not_signed_in">Your account was created, but we couldn\'t sign you in. Sign in with your new password.</string>
     <string name="auth_error_offline">You\'re offline. Check your connection and try again.</string>
     <string name="auth_error_unknown">Something went wrong. Please try again.</string>
 </resources>

@@ -14,8 +14,9 @@ android {
 }
 
 dependencies {
-    // ErrorState and LoadingState — the AuthError copy renders through ErrorState's retry
-    // affordance rather than a bare Text, matching every other screen's failure presentation.
+    // ShowTrackTheme, WordmarkStyle and MaterialTheme.shapes. NOT ErrorState any more: a form's
+    // failure is a line under the fields, not the full-screen empty state ErrorState renders, so
+    // AuthScreen now draws its own inline message.
     implementation(project(":core:designsystem"))
 
     // The route type this module registers a destination for. :core:navigation only — naming
