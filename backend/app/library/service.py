@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import ColumnElement, func, select, tuple_
+from sqlalchemy import ColumnElement, func, select, true, tuple_
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,7 +14,14 @@ from sqlalchemy.orm import InstrumentedAttribute
 from app.db import BULK_INSERT_CHUNK_SIZE, FOREIGN_KEY_VIOLATION, UNIQUE_VIOLATION, chunked
 from app.library import activity
 from app.library.models import Activity, ActivityKind, Review, UserMedia, UserMediaStatus
-from app.library.schemas import LibraryEntry, LibrarySort, LibraryStats, ReviewAuthor, ReviewRead
+from app.library.schemas import (
+    GenreCount,
+    LibraryEntry,
+    LibrarySort,
+    LibraryStats,
+    ReviewAuthor,
+    ReviewRead,
+)
 from app.media import service as media_service
 from app.media.models import Media
 from app.pagination import Cursor, encode_cursor
@@ -116,6 +123,11 @@ class SortSpec:
 # offset-less string, and _parse_next_episode_date then rejects the server's OWN cursor: a 400
 # the moment a page boundary lands in the NULL tail, which for a library of finished shows is
 # the ordinary case. Any value Postgres stores as a real timestamp works; this one is legible.
+# Five, because the ranking is a shape to read at a glance, not a dataset. A longer tail is
+# genuinely less informative: past the top few, counts flatten out and the order stops meaning
+# anything a user could act on.
+TOP_GENRES_LIMIT = 5
+
 NEXT_EPISODE_SENTINEL = datetime(9999, 1, 1, tzinfo=UTC)
 # Below the score_range CHECK floor of 1.0, so it can never collide with a real score.
 SCORE_SENTINEL = Decimal("-1")
@@ -312,13 +324,14 @@ async def list_entries(
 
 
 async def get_stats(session: AsyncSession, *, user_id: uuid.UUID) -> LibraryStats:
-    """Two small queries rather than one grouped one: `by_status` needs a GROUP BY status, while
-    the average and rated_count must NOT be grouped by anything (an average grouped by status is
-    five numbers, not one). Folding both into a single statement means either a second GROUP BY
-    dimension that turns `by_status` into a nested structure the schema doesn't want, or a window
-    function to undo the grouping. Two statements, each doing exactly one aggregation, is the
-    plainer read — Postgres scans one user's `user_media` rows twice either way, and that scan is
-    bounded by one person's library, same as list_entries above.
+    """Four statements, each doing one thing, rather than one clever one.
+
+    `by_status` needs a GROUP BY status; the scalar aggregates must NOT be grouped by anything (an
+    average grouped by status is five numbers, not one); the genre ranking needs a join to `media`
+    and an `unnest` that would multiply every row it touched; and `added_this_month` reads a
+    different table entirely. Folding any pair together means either a second GROUP BY dimension
+    that turns `by_status` into a nested structure the schema doesn't want, or window functions to
+    undo the grouping. Each scan is bounded by one person's library, same as list_entries above.
 
     Absent statuses are absent from `by_status`, not present as zero: GROUP BY only ever
     produces rows for statuses that occur, and the client renders what it is given.
@@ -327,6 +340,9 @@ async def get_stats(session: AsyncSession, *, user_id: uuid.UUID) -> LibraryStat
     skip NULLs for free, the same way `func.avg` already does. ROUND to 1 decimal place because
     Postgres's NUMERIC average widens the scale (measured: AVG(NUMERIC(3,1)) comes back with 16
     trailing zeros), and the column's own precision is the only meaningful place to land it.
+
+    `func.coalesce(func.sum(...), 0)` on the progress sum: SUM over zero rows is NULL, not 0, and
+    an empty library must report 0 episodes watched rather than failing Pydantic's `int`.
     """
     status_rows = (
         await session.execute(
@@ -335,20 +351,98 @@ async def get_stats(session: AsyncSession, *, user_id: uuid.UUID) -> LibraryStat
     ).all()
     by_status = {row.status: row.count for row in status_rows}
 
-    average_score, rated_count = (
+    # FILTER (WHERE favorite), not a fifth statement: it is the same scan of the same rows, and
+    # Postgres evaluates every aggregate in one pass.
+    average_score, rated_count, episodes_watched, favorites = (
         await session.execute(
-            select(func.round(func.avg(UserMedia.score), 1), func.count(UserMedia.score)).where(
-                UserMedia.user_id == user_id
-            )
+            select(
+                func.round(func.avg(UserMedia.score), 1),
+                func.count(UserMedia.score),
+                func.coalesce(func.sum(UserMedia.progress), 0),
+                func.count().filter(UserMedia.favorite),
+            ).where(UserMedia.user_id == user_id)
         )
     ).one()
+
+    top_genres = await _top_genres(session, user_id=user_id)
+    added_this_month = await _added_this_month(session, user_id=user_id)
 
     return LibraryStats(
         total=sum(by_status.values()),
         by_status=by_status,
         average_score=average_score,
         rated_count=rated_count,
+        episodes_watched=episodes_watched,
+        top_genres=top_genres,
+        added_this_month=added_this_month,
+        favorites=favorites,
     )
+
+
+async def _top_genres(session: AsyncSession, *, user_id: uuid.UUID) -> list[GenreCount]:
+    """`media.genres` is a text[], so counting genres means expanding the array into rows.
+
+    `unnest(media.genres)` becomes an explicit LATERAL join, which is what lets one title with
+    three genres contribute to three counts. That expansion is also exactly why this cannot ride
+    along on the aggregate statement in get_stats: it multiplies the row count, and every other
+    aggregate there would then be counted once per genre.
+
+    LATERAL is spelled out rather than left implicit. `column_valued()` alone produces the same SQL
+    and the same rows — Postgres infers the lateral because the function references a column of a
+    preceding FROM item — but SQLAlchemy cannot see the correlation and emits a cartesian-product
+    SAWarning on every call. A standing false warning in the suite is how a true one later goes
+    unread, so the join condition is made real: `true()`, because the correlation is the argument
+    to unnest, not a predicate.
+
+    `render_derived()` is load-bearing next to `table_valued("genre")`: the latter names the column
+    on the Python side only. Without it SQLAlchemy emits `AS anon_1` with no derived-column list,
+    Postgres names the output column after the function, and the query fails with
+    `column anon_1.genre does not exist`.
+
+    The tie-break on `genre` is not cosmetic. Without it, two genres on the same count come back in
+    whatever order the plan produces, so a client polling this endpoint sees the ranking shuffle
+    between identical libraries. A deterministic response is worth one extra ORDER BY term.
+    """
+    genres = func.unnest(Media.genres).table_valued("genre").render_derived().lateral()
+    rows = (
+        await session.execute(
+            select(genres.c.genre, func.count().label("count"))
+            .select_from(UserMedia)
+            .join(Media, Media.id == UserMedia.media_id)
+            .join(genres, true())
+            .where(UserMedia.user_id == user_id)
+            .group_by(genres.c.genre)
+            .order_by(func.count().desc(), genres.c.genre.asc())
+            .limit(TOP_GENRES_LIMIT)
+        )
+    ).all()
+    return [GenreCount(genre=row.genre, count=row.count) for row in rows]
+
+
+async def _added_this_month(session: AsyncSession, *, user_id: uuid.UUID) -> int:
+    """Counted from `activity`, because `user_media` has no created_at — only updated_at, which a
+    progress bump moves, so it cannot answer "when did this enter the library".
+
+    The month boundary is UTC, matching every other timestamp this service writes. A user in UTC+13
+    therefore sees the counter roll over up to thirteen hours late; a per-request timezone would
+    mean the client sending one, which is a wider contract change than this number is worth.
+
+    ActivityKind.IMPORTED is deliberately NOT counted. An import writes one row for N titles
+    (decision S-A), so it carries no per-title adds to count, and treating its payload count as
+    adds would make a ten-thousand-entry AniList import read as ten thousand deliberate additions.
+    """
+    month_start = datetime.now(UTC).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    return (
+        await session.execute(
+            select(func.count())
+            .select_from(Activity)
+            .where(
+                Activity.user_id == user_id,
+                Activity.kind == ActivityKind.ADDED,
+                Activity.created_at >= month_start,
+            )
+        )
+    ).scalar_one()
 
 
 async def bulk_add_entries(session: AsyncSession, *, user_id: uuid.UUID, rows: Sequence[dict[str, Any]]) -> int:

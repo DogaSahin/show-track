@@ -60,10 +60,27 @@ class LibraryPage(BaseModel):
     next_cursor: str | None
 
 
+class GenreCount(BaseModel):
+    """One row of the top-genres ranking. An object rather than a `dict[str, int]` because the
+    ORDER is the point — a JSON object's key order is not something a client may rely on, and the
+    ranking is exactly what makes this list worth sending.
+    """
+
+    genre: str
+    count: int
+
+
 class LibraryStats(BaseModel):
     """Aggregates computed in SQL, not by paging the library client-side: the client holds one page
-    (decision C-B), and re-downloading everything to show four numbers gets worse as the library
+    (decision C-B), and re-downloading everything to show these numbers gets worse as the library
     grows.
+
+    There is deliberately NO "hours watched" here. It would need a per-episode runtime, and the
+    schema has none: `episodes` is (media_id, season_number, number, air_date) and neither provider
+    client fetches a duration. Deriving one from a per-type constant (24 minutes for anime, 45 for
+    TV) would render a guess in the same typeface as the measured numbers beside it. Adding it
+    properly means a `media.duration_minutes` column, provider support on both sides, and a re-sync
+    backfill — a task, not a field.
     """
 
     total: int
@@ -72,6 +89,18 @@ class LibraryStats(BaseModel):
     # IEEE 754 double, and this is a NUMERIC average. Null when nothing is rated.
     average_score: Decimal | None
     rated_count: int
+    # SUM(user_media.progress). Episodes the user has marked watched, NOT episodes that exist —
+    # a library of 200 planned titles reports zero here, which is correct.
+    episodes_watched: int
+    # Ranked, capped at TOP_GENRES_LIMIT. Empty when no library title carries a genre.
+    top_genres: list[GenreCount]
+    # Counted from the ACTIVITY log (kind=added), not from user_media, because user_media has no
+    # created_at — only updated_at, which a progress bump moves. The consequence is a definition,
+    # not a bug: an AniList import writes ONE `imported` row for N titles (decision S-A), so an
+    # import contributes nothing here. "Added this month" means adds the user made, and a
+    # ten-thousand-title import is not ten thousand of those.
+    added_this_month: int
+    favorites: int
 
 
 class AddLibraryEntryRequest(BaseModel):
