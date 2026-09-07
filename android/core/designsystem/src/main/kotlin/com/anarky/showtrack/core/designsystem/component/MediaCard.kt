@@ -1,18 +1,22 @@
 package com.anarky.showtrack.core.designsystem.component
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.material3.Card
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
@@ -32,7 +36,13 @@ import java.math.BigDecimal
 // 2:3 is the standard poster/key-art proportion (AniList and TMDB cover art both ship close to
 // it), fixed so a card never resizes as art finishes loading in around it.
 private const val POSTER_ASPECT_RATIO = 2f / 3f
-private val PosterWidth = 64.dp
+
+// 58dp, and the number is a consequence rather than a taste. At a fixed 2:3 ratio the poster's
+// WIDTH sets the row height (58 -> 87dp), and the text beside it never needs that much, so the
+// poster alone decides how many titles fit on screen. 76dp made a 114dp poster and a 134dp row —
+// four and a bit visible. 58dp gives a ~107dp row and seven. "Bigger poster" and "denser list" are
+// the same dial turned opposite ways; density won because a library is a list you scan.
+private val PosterWidth = 58.dp
 
 /**
  * A row card for one [Media] title: poster, title, year, the user's library status (if any) and
@@ -51,19 +61,28 @@ fun MediaCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Card(onClick = onClick, modifier = modifier.fillMaxWidth()) {
-        Row(modifier = Modifier.padding(all = 12.dp)) {
-            MediaCover(coverImageUrl = media.coverImageUrl, modifier = Modifier.width(PosterWidth))
-            Column(
-                modifier = Modifier.padding(start = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(space = 4.dp),
-            ) {
-                Text(
-                    text = media.title,
-                    style = MaterialTheme.typography.titleMedium,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+    ) {
+        MediaCover(coverImageUrl = media.coverImageUrl, modifier = Modifier.width(PosterWidth))
+        Column(
+            modifier = Modifier.weight(1f).padding(start = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(space = 5.dp),
+        ) {
+            Text(
+                text = media.title,
+                style = MaterialTheme.typography.titleMedium,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            // Year and status on one line, separated by a dot: two facts of equal weight about the
+            // same title, where a badge on its own row made the status look like the row's subject.
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 media.year?.let { year ->
                     Text(
                         text = year.toString(),
@@ -71,14 +90,24 @@ fun MediaCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(space = 8.dp)) {
-                    status?.let { StatusBadge(status = it) }
-                    score?.let { ScoreChip(score = it) }
+                if (media.year != null && status != null) {
+                    Text(
+                        text = METADATA_SEPARATOR,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 6.dp),
+                    )
                 }
+                status?.let { StatusLabel(status = it) }
             }
+        }
+        score?.let {
+            ScoreChip(score = it, modifier = Modifier.padding(start = 12.dp))
         }
     }
 }
+
+private const val METADATA_SEPARATOR = "\u00b7"
 
 /**
  * The poster slot: exported (not `private`) because [coverImageUrl] is loaded through Coil's
@@ -148,20 +177,34 @@ private class PosterPlaceholderPainter(
     }
 }
 
+/**
+ * A colour dot plus the status name, not a filled pill.
+ *
+ * Five saturated pills running down a list compete with each other and with the cover art beside
+ * them, and the pill's fill was doing no work the label was not already doing. The dot keeps the
+ * colour coding — same [markColor] mapping, so the five statuses stay distinguishable at a
+ * glance — while spending a fraction of the visual weight on it.
+ */
 @Composable
-private fun StatusBadge(
+private fun StatusLabel(
     status: UserMediaStatus,
     modifier: Modifier = Modifier,
 ) {
-    Surface(
-        modifier = modifier,
-        shape = MaterialTheme.shapes.small,
-        color = status.containerColor(),
-    ) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = modifier) {
+        Box(
+            modifier =
+                Modifier
+                    .size(StatusDotSize)
+                    .clip(CircleShape)
+                    .background(status.markColor()),
+        )
         Text(
             text = status.label(),
-            style = MaterialTheme.typography.labelSmall,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 6.dp),
         )
     }
 }
+
+private val StatusDotSize = 7.dp

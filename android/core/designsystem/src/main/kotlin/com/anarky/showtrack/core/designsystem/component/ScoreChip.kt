@@ -11,7 +11,13 @@ import androidx.compose.ui.unit.dp
 import com.anarky.showtrack.core.designsystem.R
 import java.math.BigDecimal
 
-/** Renders the user's score, or `"—"` when unset — never a raw `null` or an empty string. */
+/**
+ * Renders the user's score, or `"—"` when unset — never a raw `null` or an empty string.
+ *
+ * Neutral, not `primaryContainer`. It used to share that colour with the WATCHING status badge, so
+ * every currently-watching row put two identical violet pills side by side and neither one read as
+ * meaning anything in particular. Colour on this screen belongs to status; a score is a number.
+ */
 @Composable
 fun ScoreChip(
     score: BigDecimal?,
@@ -20,12 +26,13 @@ fun ScoreChip(
     Surface(
         modifier = modifier,
         shape = MaterialTheme.shapes.small,
-        color = MaterialTheme.colorScheme.primaryContainer,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        contentColor = MaterialTheme.colorScheme.onSurface,
     ) {
         Text(
             text = score?.toPlainString() ?: stringResource(R.string.score_unset),
-            style = MaterialTheme.typography.labelSmall,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            style = MaterialTheme.typography.labelLarge,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
         )
     }
 }

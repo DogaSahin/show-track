@@ -17,7 +17,7 @@ import com.anarky.showtrack.core.model.UserMediaStatus
  * five [UserMediaStatus] values for its status breakdown, and a second, feature-owned copy of this
  * mapping is exactly the shared-presentation duplication C-T exists to prevent (the identical
  * reasoning `MediaSourcePresentation.displayName`'s KDoc gives for being public rather than
- * internal). [containerColor] stays `internal`: nothing outside this module needs the colour, only
+ * internal). [markColor] stays `internal`: nothing outside this module needs the colour, only
  * the text.
  */
 @Composable
@@ -32,12 +32,24 @@ fun UserMediaStatus.label(): String =
         },
     )
 
+/**
+ * The status's own colour, for a mark small enough that it must carry the hue on its own.
+ *
+ * The `*Container` roles, not these, were right while this was a filled pill behind dark text — a
+ * container is a *background*. A 7dp dot is foreground, and the containers are pale by
+ * construction: in the light scheme they made a lavender speck and a mint speck that neither
+ * carried their meaning nor survived being glanced at. These are the corresponding foreground
+ * roles, which Material already guarantees to be legible against `surface` in both schemes.
+ *
+ * PAUSED stays deliberately neutral: it is the absence of an active state, and giving it a fifth
+ * hue would say something the status does not mean.
+ */
 @Composable
-internal fun UserMediaStatus.containerColor(): Color =
+internal fun UserMediaStatus.markColor(): Color =
     when (this) {
-        UserMediaStatus.WATCHING -> MaterialTheme.colorScheme.primaryContainer
-        UserMediaStatus.COMPLETED -> MaterialTheme.colorScheme.tertiaryContainer
-        UserMediaStatus.DROPPED -> MaterialTheme.colorScheme.errorContainer
-        UserMediaStatus.PLANNED -> MaterialTheme.colorScheme.secondaryContainer
-        UserMediaStatus.PAUSED -> MaterialTheme.colorScheme.surfaceVariant
+        UserMediaStatus.WATCHING -> MaterialTheme.colorScheme.primary
+        UserMediaStatus.COMPLETED -> MaterialTheme.colorScheme.tertiary
+        UserMediaStatus.DROPPED -> MaterialTheme.colorScheme.error
+        UserMediaStatus.PLANNED -> MaterialTheme.colorScheme.secondary
+        UserMediaStatus.PAUSED -> MaterialTheme.colorScheme.outline
     }

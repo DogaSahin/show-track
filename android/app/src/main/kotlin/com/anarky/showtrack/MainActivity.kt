@@ -8,9 +8,12 @@ import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.adaptive.currentWindowAdaptiveInfo
+import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteDefaults
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffoldDefaults
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteType
@@ -147,6 +150,23 @@ fun ShowTrackApp(authEvents: Flow<AuthEvent>) {
     val currentDestination = currentBackStackEntry?.destination
     ActiveGroupDestinationEffect(destination = currentDestination, viewModel = activeGroupViewModel)
 
+    // Hoisted out of navigationSuiteItems below, which is a plain builder DSL rather than a
+    // composable scope (its own KDoc, further down, explains the same constraint for
+    // stringResource). Material's default indicator is `secondaryContainer`, which in this palette
+    // is the deep navy that means PLANNED — a colour with a meaning elsewhere in the app, and not
+    // the accent. Selection is the accent everywhere else, so it is the accent here.
+    val itemColors =
+        NavigationSuiteDefaults.itemColors(
+            navigationBarItemColors =
+                NavigationBarItemDefaults.colors(
+                    selectedIconColor = MaterialTheme.colorScheme.onPrimary,
+                    selectedTextColor = MaterialTheme.colorScheme.primary,
+                    indicatorColor = MaterialTheme.colorScheme.primary,
+                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                ),
+        )
+
     NavigationSuiteScaffold(
         // An empty navigationSuiteItems block does not remove the bar: NavigationSuiteScaffold
         // (material3-adaptive-navigation-suite 1.4.0) emits its container unconditionally for
@@ -164,6 +184,13 @@ fun ShowTrackApp(authEvents: Flow<AuthEvent>) {
             } else {
                 NavigationSuiteType.None
             },
+        navigationSuiteColors =
+            NavigationSuiteDefaults.colors(
+                // surfaceContainer, not the default surface: it lifts the bar a step off the page
+                // behind it, which is the only separation there is now that the bar has no divider
+                // and content scrolls under it.
+                navigationBarContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+            ),
         navigationSuiteItems = {
             TopLevelDestination.entries.forEach { destination ->
                 // `stringResource` is called inside each composable slot (`icon`, `label`) rather
@@ -174,16 +201,26 @@ fun ShowTrackApp(authEvents: Flow<AuthEvent>) {
                 // there because `item` is a plain function; a bare `stringResource` call at that
                 // same spot does not, because `stringResource` IS `@Composable` and needs one of
                 // the slots below, which are.
+                val selected = currentBackStackEntry?.destination?.hasRoute(destination.route::class) == true
                 item(
                     icon = {
+                        // Outlined when unselected, filled when selected — Material 3's own
+                        // selection cue for a navigation bar, and the reason every destination
+                        // carries two drawables. The indicator pill alone reads as a highlight
+                        // behind an unchanged glyph; the weight change is what makes the current
+                        // tab legible without reading the label.
                         Icon(
-                            painterResource(destination.icon),
+                            painterResource(if (selected) destination.selectedIcon else destination.icon),
                             contentDescription = stringResource(destination.label),
                         )
                     },
                     label = { Text(stringResource(destination.label)) },
-                    selected =
-                        currentBackStackEntry?.destination?.hasRoute(destination.route::class) == true,
+                    selected = selected,
+                    // Material's default indicator is `secondaryContainer`, which in this palette
+                    // is the deep navy that means PLANNED — a colour with a meaning elsewhere in
+                    // the app, and not the accent. Selection is the accent everywhere else, so it
+                    // is the accent here.
+                    colors = itemColors,
                     // Pulled out to ShowTrackNavHost.navigateToTopLevelDestination — see its KDoc
                     // for why findStartDestination() can be trusted here (navigateToLibraryClearingAuth
                     // is what keeps it in agreement with reality for an Auth-started session) and for
@@ -400,11 +437,27 @@ internal fun shouldShowNavigationTabs(
 enum class TopLevelDestination(
     @param:StringRes val label: Int,
     val icon: Int,
+    val selectedIcon: Int,
     val route: AppRoute,
 ) {
-    HOME(R.string.destination_home, R.drawable.ic_home, LibraryRoute),
-    DISCOVER(R.string.destination_discover, R.drawable.ic_explore, DiscoverRoute),
-    FEED(R.string.destination_feed, R.drawable.ic_feed, FeedRoute),
-    FAVORITES(R.string.destination_favorites, R.drawable.ic_favorite, FavoritesRoute),
-    PROFILE(R.string.destination_profile, R.drawable.ic_account_box, ProfileRoute),
+    HOME(R.string.destination_home, R.drawable.ic_nav_home_outlined, R.drawable.ic_nav_home_filled, LibraryRoute),
+    DISCOVER(
+        R.string.destination_discover,
+        R.drawable.ic_nav_discover_outlined,
+        R.drawable.ic_nav_discover_filled,
+        DiscoverRoute,
+    ),
+    FEED(R.string.destination_feed, R.drawable.ic_nav_feed_outlined, R.drawable.ic_nav_feed_filled, FeedRoute),
+    FAVORITES(
+        R.string.destination_favorites,
+        R.drawable.ic_nav_favorite_outlined,
+        R.drawable.ic_nav_favorite_filled,
+        FavoritesRoute,
+    ),
+    PROFILE(
+        R.string.destination_profile,
+        R.drawable.ic_nav_profile_outlined,
+        R.drawable.ic_nav_profile_filled,
+        ProfileRoute,
+    ),
 }

@@ -69,20 +69,31 @@ fun StatusTabRow(
     val statuses = UserMediaStatus.entries
     // "All" is prepended at index 0, ahead of one tab per status, so the two never collide.
     val selectedIndex = if (selected == null) 0 else statuses.indexOf(selected) + 1
+    // ScrollableTabRow defaults contentColor to `primary`, which it hands to selected AND
+    // unselected tabs alike — so every filter in the row rendered accent-coloured and the
+    // indicator was the only thing distinguishing the current one. Only the selected tab is
+    // accented here; the rest are onSurfaceVariant, like any other secondary text.
     ScrollableTabRow(
         selectedTabIndex = selectedIndex,
         modifier = modifier,
         edgePadding = 0.dp,
+        containerColor = MaterialTheme.colorScheme.background,
+        contentColor = MaterialTheme.colorScheme.primary,
+        divider = {},
     ) {
         Tab(
             selected = selected == null,
             onClick = { onStatusSelected(null) },
+            selectedContentColor = MaterialTheme.colorScheme.primary,
+            unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
             text = { Text(text = stringResource(R.string.status_all), style = MaterialTheme.typography.labelLarge) },
         )
         statuses.forEach { status ->
             Tab(
                 selected = status == selected,
                 onClick = { onStatusSelected(status) },
+                selectedContentColor = MaterialTheme.colorScheme.primary,
+                unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                 text = { Text(text = status.label(), style = MaterialTheme.typography.labelLarge) },
             )
         }
