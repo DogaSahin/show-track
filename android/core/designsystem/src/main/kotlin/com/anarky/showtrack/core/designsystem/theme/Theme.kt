@@ -12,32 +12,63 @@ import androidx.compose.ui.platform.LocalContext
 
 private val DarkColorScheme =
     darkColorScheme(
-        primary = Purple80,
-        secondary = PurpleGrey80,
-        tertiary = Pink80,
+        primary = Coral60,
+        onPrimary = Coral20,
+        primaryContainer = Coral40,
+        onPrimaryContainer = Coral95,
+        secondary = Ink60,
+        onSecondary = Ink05,
+        background = Ink05,
+        onBackground = Ink90,
+        surface = Ink10,
+        onSurface = Ink90,
+        surfaceVariant = Ink20,
+        onSurfaceVariant = Ink60,
+        surfaceContainer = Ink20,
+        surfaceContainerHigh = Ink30,
+        outline = Ink30,
+        outlineVariant = Ink20,
+        error = Crimson60,
+        onError = Crimson20,
+        errorContainer = Crimson20,
+        onErrorContainer = Crimson60,
     )
 
 private val LightColorScheme =
     lightColorScheme(
-        primary = Purple40,
-        secondary = PurpleGrey40,
-        tertiary = Pink40,
-    /* Other default colors to override
-    background = Color(0xFFFFFBFE),
-    surface = Color(0xFFFFFBFE),
-    onPrimary = Color.White,
-    onSecondary = Color.White,
-    onTertiary = Color.White,
-    onBackground = Color(0xFF1C1B1F),
-    onSurface = Color(0xFF1C1B1F),
-     */
+        primary = Coral40,
+        onPrimary = Paper99,
+        primaryContainer = Coral95,
+        onPrimaryContainer = Coral20,
+        secondary = Paper40,
+        onSecondary = Paper99,
+        background = Paper99,
+        onBackground = Paper10,
+        surface = Paper99,
+        onSurface = Paper10,
+        surfaceVariant = Paper95,
+        onSurfaceVariant = Paper40,
+        surfaceContainer = Paper95,
+        surfaceContainerHigh = Paper90,
+        outline = Paper70,
+        outlineVariant = Paper90,
+        error = Crimson40,
+        onError = Paper99,
+        errorContainer = Crimson95,
+        onErrorContainer = Crimson40,
     )
 
+/**
+ * [dynamicColor] defaults to **false**, and that is the point of this theme rather than an
+ * oversight. With it on, Android 12+ derives every colour from the user's *wallpaper*, so the app
+ * has no appearance of its own to recognise — two phones running ShowTrack look like two different
+ * apps. The parameter stays so a caller (or a future setting) can opt back in; the default is the
+ * decision.
+ */
 @Composable
 fun ShowTrackTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    // Dynamic color is available on Android 12+
-    dynamicColor: Boolean = true,
+    dynamicColor: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     val colorScheme =
@@ -54,6 +85,7 @@ fun ShowTrackTheme(
     MaterialTheme(
         colorScheme = colorScheme,
         typography = Typography,
+        shapes = Shapes,
         content = content,
     )
 }

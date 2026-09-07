@@ -31,6 +31,10 @@ dependencies {
     add("implementation", platform(bom))
     add("implementation", libs.findLibrary("androidx-compose-ui").get())
     add("implementation", libs.findLibrary("androidx-compose-ui-graphics").get())
+    // Declared rather than inherited: material3 pulls compose-animation in transitively, but
+    // AnimatedVisibility/animateContentSize are imported DIRECTLY by feature code, and a
+    // direct import on a transitive dependency breaks the day material3 stops needing it.
+    add("implementation", libs.findLibrary("androidx-compose-animation").get())
     add("implementation", libs.findLibrary("androidx-compose-ui-tooling-preview").get())
     add("implementation", libs.findLibrary("androidx-compose-material3").get())
     add("debugImplementation", libs.findLibrary("androidx-compose-ui-tooling").get())
