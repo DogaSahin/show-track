@@ -270,6 +270,10 @@ class ProfileViewModelTest {
                     byStatus = mapOf(UserMediaStatus.WATCHING to 5),
                     averageScore = null,
                     ratedCount = 0,
+                    episodesWatched = 0,
+                    topGenres = emptyList(),
+                    addedThisMonth = 0,
+                    favorites = 0,
                 )
             val repository = FakeLibraryRepository(initial)
             val viewModel = ProfileViewModel(FakeDistributors(), FakeAuthRepository(), repository)
@@ -283,6 +287,10 @@ class ProfileViewModelTest {
                     byStatus = mapOf(UserMediaStatus.WATCHING to 6),
                     averageScore = null,
                     ratedCount = 0,
+                    episodesWatched = 0,
+                    topGenres = emptyList(),
+                    addedThisMonth = 0,
+                    favorites = 0,
                 )
             repository.statsResult = updated
             repository.statsGate = CompletableDeferred()
@@ -314,6 +322,10 @@ class ProfileViewModelTest {
                     byStatus = mapOf(UserMediaStatus.WATCHING to 5),
                     averageScore = null,
                     ratedCount = 0,
+                    episodesWatched = 0,
+                    topGenres = emptyList(),
+                    addedThisMonth = 0,
+                    favorites = 0,
                 )
             val repository = FakeLibraryRepository(initial)
             val viewModel = ProfileViewModel(FakeDistributors(), FakeAuthRepository(), repository)
@@ -346,6 +358,10 @@ class ProfileViewModelTest {
                     byStatus = mapOf(UserMediaStatus.WATCHING to 5),
                     averageScore = null,
                     ratedCount = 0,
+                    episodesWatched = 0,
+                    topGenres = emptyList(),
+                    addedThisMonth = 0,
+                    favorites = 0,
                 )
             val repository = FakeLibraryRepository(initial)
             val viewModel = ProfileViewModel(FakeDistributors(), FakeAuthRepository(), repository)
@@ -363,6 +379,10 @@ class ProfileViewModelTest {
                     byStatus = mapOf(UserMediaStatus.WATCHING to 6),
                     averageScore = null,
                     ratedCount = 0,
+                    episodesWatched = 0,
+                    topGenres = emptyList(),
+                    addedThisMonth = 0,
+                    favorites = 0,
                 )
             repository.statsFailure = null
             repository.statsResult = updated
@@ -388,6 +408,10 @@ class ProfileViewModelTest {
                     byStatus = mapOf(UserMediaStatus.WATCHING to 5),
                     averageScore = null,
                     ratedCount = 0,
+                    episodesWatched = 0,
+                    topGenres = emptyList(),
+                    addedThisMonth = 0,
+                    favorites = 0,
                 )
             val repository = FakeLibraryRepository(initial)
             val viewModel = ProfileViewModel(FakeDistributors(), FakeAuthRepository(), repository)

@@ -16,6 +16,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
 /**
  * The user-path half of task 9c.8's (E-M) resume decision: `DiscoverViewModelTest`'s resume-shape
@@ -43,8 +44,13 @@ import org.robolectric.RobolectricTestRunner
  * parameter with a `hiltViewModel()` DEFAULT — passing one explicitly here (a plain
  * [DiscoverViewModel] built against [FakeRecommendationRepository]/[FakeLibraryRepository]) never
  * evaluates that default, so a bare `ComponentActivity` is enough.
+ *
+ * Two seeds means two shelves, and two shelves do not fit Robolectric's default 320x470px root —
+ * see `DiscoverScreenTest`'s own KDoc for the measurement and why it is a property of the shelf
+ * layout rather than a test-harness quirk.
  */
 @RunWith(RobolectricTestRunner::class)
+@Config(qualifiers = "w411dp-h891dp")
 class DiscoverResumeTest {
     @get:Rule
     val composeRule = createAndroidComposeRule<ComponentActivity>()

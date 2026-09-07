@@ -17,8 +17,7 @@ import com.anarky.showtrack.core.model.UserMediaStatus
  * five [UserMediaStatus] values for its status breakdown, and a second, feature-owned copy of this
  * mapping is exactly the shared-presentation duplication C-T exists to prevent (the identical
  * reasoning `MediaSourcePresentation.displayName`'s KDoc gives for being public rather than
- * internal). [markColor] stays `internal`: nothing outside this module needs the colour, only
- * the text.
+ * internal).
  */
 @Composable
 fun UserMediaStatus.label(): String =
@@ -43,9 +42,17 @@ fun UserMediaStatus.label(): String =
  *
  * PAUSED stays deliberately neutral: it is the absence of an active state, and giving it a fifth
  * hue would say something the status does not mean.
+ *
+ * Public, where it used to be `internal` on the grounds that "nothing outside this module needs the
+ * colour, only the text". That stopped being true when `:feature:profile` grew a proportional
+ * distribution bar: the bar and its legend ARE the colour, and the whole point is that a WATCHING
+ * segment there is the same violet as a WATCHING dot on a library row. A feature-module copy of
+ * this mapping is precisely the duplication decision C-T exists to prevent — and a second copy
+ * would be worse here than for the labels, because a drift in text is visible and a drift in hue
+ * reads as two unrelated controls.
  */
 @Composable
-internal fun UserMediaStatus.markColor(): Color =
+fun UserMediaStatus.markColor(): Color =
     when (this) {
         UserMediaStatus.WATCHING -> MaterialTheme.colorScheme.primary
         UserMediaStatus.COMPLETED -> MaterialTheme.colorScheme.tertiary

@@ -31,6 +31,17 @@ private const val DEFAULT_THRESHOLD = 3
  * like-for-like refactor — no `:feature:library` test exercised the composable's scroll trigger
  * before or after, so nothing would have gone red either way.
  *
+ * **[rearmKey] exists because [itemCount] is not always what changes when a page lands.** Every
+ * flat list here indexes one row per item, so a new page grows [itemCount] and the
+ * `remember(itemCount)` below re-evaluates. `:feature:discover` breaks that assumption: it groups
+ * recommendations into per-seed shelves, so its index space is SHELVES while a page arrives as
+ * ITEMS — and because the API orders recommendations by score rather than by seed, a page very
+ * often lands entirely inside shelves that already exist. [itemCount] is then unchanged, the cached
+ * `derivedStateOf` keeps reporting `true`, `LaunchedEffect` sees no false→true edge, and paging
+ * stops dead with a live cursor still in hand. Passing the flat item count as [rearmKey] re-arms
+ * the trigger on the thing that actually moved. Defaults to [itemCount], so every existing call
+ * site behaves exactly as before.
+ *
  * `itemCount: Int` rather than the list itself (decision D-H, extracted from `:feature:library`):
  * the primitive key is behaviourally equivalent to keying on the list reference for THIS
  * calculation specifically, because the calculation only ever reads `itemCount` and
@@ -46,10 +57,11 @@ fun EndOfListTrigger(
     listState: LazyListState,
     itemCount: Int,
     threshold: Int = DEFAULT_THRESHOLD,
+    rearmKey: Any = itemCount,
     onTriggered: () -> Unit,
 ) {
     val shouldTrigger by
-        remember(itemCount) {
+        remember(itemCount, rearmKey) {
             derivedStateOf {
                 val visibleItems = listState.layoutInfo.visibleItemsInfo
                 val lastVisibleIndex = visibleItems.lastOrNull()?.index ?: -1

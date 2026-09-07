@@ -23,6 +23,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import java.time.Instant
 import com.anarky.showtrack.core.designsystem.R as DesignSystemR
 
@@ -35,8 +36,15 @@ import com.anarky.showtrack.core.designsystem.R as DesignSystemR
  * so no ViewModel and no Hilt graph is needed. `createComposeRule`, not `createAndroidComposeRule`:
  * no Activity is needed. Robolectric supplies the Android runtime `stringResource` needs; `sdk = 35`
  * is pinned in `src/test/resources/robolectric.properties`.
+ *
+ * `@Config(qualifiers = ...)` widens Robolectric's virtual display. `createComposeRule()`'s default
+ * root measures a fixed 320x470px in this project and does NOT auto-size to content; a timeline
+ * entry carries a relative-time line the old card did not, and day headings are items too, so the
+ * six-kind fixture no longer fits. An off-screen node still EXISTS, so `onNodeWithText` finds it
+ * and `assertIsDisplayed` is what fails — which is the failure this qualifier removes.
  */
 @RunWith(RobolectricTestRunner::class)
+@Config(qualifiers = "w411dp-h891dp")
 class FeedScreenTest {
     @get:Rule
     val composeRule = createComposeRule()
@@ -184,7 +192,7 @@ class FeedScreenTest {
             )
         }
 
-        val expected = context.getString(R.string.feed_entry_imported, ACTOR.username, "5")
+        val expected = actorLine(context, R.string.feed_action_imported, "5")
         composeRule.onNodeWithText(expected).assertIsDisplayed()
         composeRule.onNodeWithText(context.getString(R.string.feed_unknown_title)).assertDoesNotExist()
 
@@ -213,22 +221,22 @@ class FeedScreenTest {
         }
 
         composeRule
-            .onNodeWithText(context.getString(R.string.feed_entry_added, ACTOR.username, TITLE))
+            .onNodeWithText(actorLine(context, R.string.feed_action_added, TITLE))
             .assertIsDisplayed()
         composeRule
-            .onNodeWithText(context.getString(R.string.feed_entry_imported, ACTOR.username, "5"))
+            .onNodeWithText(actorLine(context, R.string.feed_action_imported, "5"))
             .assertIsDisplayed()
         composeRule
-            .onNodeWithText(context.getString(R.string.feed_entry_progressed, ACTOR.username, TITLE))
+            .onNodeWithText(actorLine(context, R.string.feed_action_progressed, TITLE))
             .assertIsDisplayed()
         composeRule
-            .onNodeWithText(context.getString(R.string.feed_entry_rated, ACTOR.username, TITLE))
+            .onNodeWithText(actorLine(context, R.string.feed_action_rated, TITLE))
             .assertIsDisplayed()
         composeRule
-            .onNodeWithText(context.getString(R.string.feed_entry_completed, ACTOR.username, TITLE))
+            .onNodeWithText(actorLine(context, R.string.feed_action_completed, TITLE))
             .assertIsDisplayed()
         composeRule
-            .onNodeWithText(context.getString(R.string.feed_entry_dropped, ACTOR.username, TITLE))
+            .onNodeWithText(actorLine(context, R.string.feed_action_dropped, TITLE))
             .assertIsDisplayed()
     }
 
@@ -249,7 +257,7 @@ class FeedScreenTest {
         }
 
         val context = ApplicationProvider.getApplicationContext<Context>()
-        val row = composeRule.onNodeWithText(context.getString(R.string.feed_entry_unknown, ACTOR.username))
+        val row = composeRule.onNodeWithText(actorLine(context, R.string.feed_action_unknown))
         row.assertIsDisplayed()
         // Round 1, small item 2: FeedEntryRow's KDoc claims UNKNOWN is handled "with no code
         // change" via the mediaId != null check — this is what actually pins that claim rather
@@ -280,7 +288,7 @@ class FeedScreenTest {
             )
         }
 
-        val ratedRow = composeRule.onNodeWithText(context.getString(R.string.feed_entry_rated, ACTOR.username, TITLE))
+        val ratedRow = composeRule.onNodeWithText(actorLine(context, R.string.feed_action_rated, TITLE))
         ratedRow.assertHasClickAction()
         ratedRow.performClick()
 
@@ -305,7 +313,7 @@ class FeedScreenTest {
         }
 
         val banner = composeRule.onNodeWithText(context.getString(R.string.feed_stale_notice))
-        val row = composeRule.onNodeWithText(context.getString(R.string.feed_entry_added, ACTOR.username, TITLE))
+        val row = composeRule.onNodeWithText(actorLine(context, R.string.feed_action_added, TITLE))
         banner.assertIsDisplayed()
         row.assertIsDisplayed()
 
@@ -409,6 +417,20 @@ class FeedScreenTest {
 
         assertTrue(loadedMore)
     }
+
+    /**
+     * The visible text of one timeline row.
+     *
+     * The row renders the actor as its own styled span and the action as a separate string, so a
+     * test matching on rendered text has to join them exactly as the row does. Built from the actor
+     * rather than matching on the action alone deliberately: an assertion on "rated Frieren" would
+     * still pass if the row stopped rendering who did it.
+     */
+    private fun actorLine(
+        context: Context,
+        actionRes: Int,
+        vararg args: Any,
+    ): String = "${ACTOR.username} " + context.getString(actionRes, *args)
 
     private companion object {
         const val GROUP_ID = "group-1"

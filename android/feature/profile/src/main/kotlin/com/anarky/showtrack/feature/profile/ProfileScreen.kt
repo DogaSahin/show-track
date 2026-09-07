@@ -25,7 +25,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -35,9 +34,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.anarky.showtrack.core.designsystem.component.ErrorState
 import com.anarky.showtrack.core.designsystem.component.LoadingState
 import com.anarky.showtrack.core.designsystem.component.StaleDataBanner
-import com.anarky.showtrack.core.designsystem.component.label
-import com.anarky.showtrack.core.model.LibraryStats
-import com.anarky.showtrack.core.model.UserMediaStatus
 
 /**
  * [onSignedOut] fires exactly once, right after `AuthRepository.logout()` completes — keyed on
@@ -371,8 +367,8 @@ private fun StatsSection(
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
-            modifier = Modifier.padding(all = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(all = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Text(text = stringResource(R.string.profile_stats_title), style = MaterialTheme.typography.titleMedium)
             when (state) {
@@ -391,45 +387,4 @@ private fun StatsSection(
             }
         }
     }
-}
-
-/**
- * A status absent from [LibraryStats.byStatus] renders as absent, not as zero (the server sends
- * what exists — see [LibraryStats]'s own KDoc), which is why this iterates [UserMediaStatus.entries]
- * for a STABLE row order and skips whatever [LibraryStats.byStatus] does not carry, rather than
- * iterating the map itself.
- *
- * [LibraryStats.averageScore]'s precision is the server's job, already done (`ROUND(avg, 1)`) — this
- * renders [java.math.BigDecimal.toPlainString] as-is, with no further rounding or formatting, and
- * null renders as "no ratings yet" rather than a `0.0` that would falsely claim every title was
- * rated zero.
- */
-@Composable
-private fun StatsContent(stats: LibraryStats) {
-    Text(
-        text = pluralStringResource(R.plurals.profile_stats_total, stats.total, stats.total),
-        style = MaterialTheme.typography.bodyMedium,
-    )
-    UserMediaStatus.entries.forEach { status ->
-        val count = stats.byStatus[status] ?: return@forEach
-        Text(
-            text = stringResource(R.string.profile_stats_status_row, status.label(), count),
-            style = MaterialTheme.typography.bodySmall,
-        )
-    }
-    val average = stats.averageScore
-    Text(
-        text =
-            if (average != null) {
-                pluralStringResource(
-                    R.plurals.profile_stats_average,
-                    stats.ratedCount,
-                    average.toPlainString(),
-                    stats.ratedCount,
-                )
-            } else {
-                stringResource(R.string.profile_stats_no_ratings)
-            },
-        style = MaterialTheme.typography.bodyMedium,
-    )
 }

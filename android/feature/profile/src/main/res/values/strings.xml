@@ -35,15 +35,35 @@
          earlier plain-string versions ("%d titles"/"%d rated titles"), correctly: a bare %d
          followed by a word is exactly what plurals exists to localise. -->
     <string name="profile_stats_title">Library stats</string>
-    <plurals name="profile_stats_total">
-        <item quantity="one">%1$d title total</item>
-        <item quantity="other">%1$d titles total</item>
+
+    <!-- Every count on this screen goes through profile_stats_figure rather than being converted
+         with toString(): the "," flag makes Java's formatter apply the locale's own grouping, so a
+         1200-episode total reads as 1,200 (or 1.200, or 1 200) instead of a wall of digits. The
+         numeral itself is localised by the same call. -->
+    <string name="profile_stats_figure">%1$,d</string>
+
+    <!-- The label under the headline figure, which now carries the number itself — so this is a
+         bare noun phrase and takes no %d, unlike the profile_stats_total it replaces. Still a
+         <plurals>, because "1 title" and "2 titles" differ in most languages regardless. -->
+    <plurals name="profile_stats_total_label">
+        <item quantity="one">title in your library</item>
+        <item quantity="other">titles in your library</item>
     </plurals>
-    <string name="profile_stats_status_row">%1$s: %2$d</string>
-    <plurals name="profile_stats_average">
-        <item quantity="one">Average score: %1$s across %2$d rated title</item>
-        <item quantity="other">Average score: %1$s across %2$d rated titles</item>
+    <string name="profile_stats_episodes_label">episodes watched</string>
+    <string name="profile_stats_added_label">added this month</string>
+    <string name="profile_stats_favorites_label">favorites</string>
+    <!-- Names the measure, not just its denominator. "7.8 / across 156 rated titles" left the
+         reader to infer what 7.8 was, while every other figure on the screen says what it is. -->
+    <plurals name="profile_stats_average_label">
+        <item quantity="one">average score, %1$d rated title</item>
+        <item quantity="other">average score, %1$d rated titles</item>
     </plurals>
+    <string name="profile_stats_genres_title">Top genres</string>
+
+    <!-- An em dash where the average score would be. Never "0.0": a displayed zero claims every
+         title was rated zero, which is a different and false statement from "nothing is rated".
+         The label beneath it says so in words. -->
+    <string name="profile_stats_no_ratings_figure">—</string>
     <string name="profile_stats_no_ratings">No ratings yet</string>
     <string name="profile_stats_error">Couldn\'t load your library stats.</string>
 

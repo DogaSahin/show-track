@@ -1,7 +1,6 @@
 package com.anarky.showtrack.feature.feed
 
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -11,11 +10,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
@@ -30,13 +29,14 @@ import com.anarky.showtrack.core.designsystem.component.GroupSwitcher
 import com.anarky.showtrack.core.designsystem.component.LoadingState
 import com.anarky.showtrack.core.designsystem.component.StaleDataBanner
 import com.anarky.showtrack.core.model.ActiveGroupState
-import com.anarky.showtrack.core.model.ActivityKind
 import com.anarky.showtrack.core.model.FeedEntry
 import com.anarky.showtrack.core.model.GroupFailure
 import com.anarky.showtrack.core.navigation.AppRoute
 import com.anarky.showtrack.core.navigation.DetailRoute
 import com.anarky.showtrack.core.navigation.GroupsRoute
 import kotlinx.coroutines.flow.StateFlow
+import java.time.LocalDate
+import java.time.ZoneId
 
 /**
  * The stateful entry point, and the fifth top-level tab (task 9c.4). `hiltViewModel()` is the
@@ -257,21 +257,57 @@ private fun FeedList(
     modifier: Modifier = Modifier,
 ) {
     val entries = success.entries
+    // The device's own zone, and today's date in it, resolved once per composition rather than per
+    // row: which day an entry falls on is a LOCAL question, and asking the clock 40 times to answer
+    // it identically is work for nothing.
+    val zone = remember { ZoneId.systemDefault() }
+    val rows = remember(entries, zone) { entries.toTimeline(zone) }
+    val today = remember(rows) { LocalDate.now(zone) }
     val listState = rememberLazyListState()
 
-    EndOfListTrigger(listState = listState, itemCount = entries.size, onTriggered = onLoadMore)
+    // itemCount is the ROW count, which is what this LazyColumn indexes — day headings included.
+    // rearmKey is the entry count, because that is what a landing page actually grows.
+    EndOfListTrigger(
+        listState = listState,
+        itemCount = rows.size,
+        rearmKey = entries.size,
+        onTriggered = onLoadMore,
+    )
 
     LazyColumn(
         state = listState,
         modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(all = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(space = 8.dp),
+        contentPadding = PaddingValues(horizontal = 16.dp),
     ) {
-        // Keyed by entry id: without a key, LazyColumn identifies items by index and a refresh
-        // that reorders the list re-uses the wrong composable state for every row — the exact
-        // duplicate-key crash CursorPaginator's own KDoc names for task 9c.3's round-0 bug.
-        items(items = entries, key = FeedEntry::id) { entry ->
-            FeedEntryRow(entry = entry, onClick = { onEntryClick(entry) })
+        // Keyed by the ROW, not the entry: a day heading is an item too, and it needs a key that
+        // cannot collide with an entry id. Without keys at all, LazyColumn identifies items by
+        // index and a refresh that reorders the list re-uses the wrong composable state for every
+        // row — the exact duplicate-key crash CursorPaginator's own KDoc names for task 9c.3's
+        // round-0 bug.
+        items(
+            items = rows,
+            key = { row ->
+                when (row) {
+                    is FeedRow.Day -> "day-${row.date}"
+                    is FeedRow.Entry -> row.entry.id
+                }
+            },
+        ) { row ->
+            when (row) {
+                is FeedRow.Day -> FeedDayHeader(date = row.date, today = today)
+                is FeedRow.Entry ->
+                    FeedTimelineRow(
+                        entry = row.entry,
+                        // Recomputed per row rather than carried on FeedRow.Entry: the day the row
+                        // sits under is already known here, and duplicating it into the model
+                        // would let the two disagree after midnight.
+                        isToday =
+                            row.entry.createdAt
+                                .atZone(zone)
+                                .toLocalDate() == today,
+                        onClick = { onEntryClick(row.entry) },
+                    )
+            }
         }
         if (success.loadingMore) {
             item { LoadingState() }
@@ -290,77 +326,6 @@ private fun FeedList(
                 )
             }
         }
-    }
-}
-
-/**
- * One feed row. Tappable if and only if [FeedEntry.mediaId] is non-null — NOT gated on
- * `entry.kind == ActivityKind.IMPORTED` specifically, deliberately: [FeedEntry]'s own
- * `init` block enforces "media and mediaId are null together" structurally, so this reads that
- * invariant directly rather than re-deriving it from the kind. That also makes this row correct,
- * with no code change, for [ActivityKind.UNKNOWN] and for any future kind the backend adds that
- * also carries no media — this task's own "a seventh kind must render, not crash" requirement,
- * extended from "must render" to "must not offer a dead tap" too.
- *
- * `Modifier.clickable` is only ever ADDED when [FeedEntry.mediaId] is non-null, rather than
- * always-present with a conditional no-op lambda: the latter would still register the semantics
- * node as clickable (a screen reader announces it, `performClick()` in a test would silently
- * succeed against a no-op) for a row this task's own acceptance criterion says must not respond to
- * a tap at all.
- */
-@Composable
-private fun FeedEntryRow(
-    entry: FeedEntry,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val rowModifier =
-        if (entry.mediaId != null) {
-            modifier.fillMaxWidth().clickable(onClick = onClick)
-        } else {
-            modifier.fillMaxWidth()
-        }
-    Card(modifier = rowModifier) {
-        Text(
-            text = entry.feedText(),
-            style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.padding(all = 16.dp),
-        )
-    }
-}
-
-/**
- * One string per [ActivityKind] (E-A/E-H). [ActivityKind.IMPORTED] is the only kind whose copy
- * does not name a title — it names a COUNT instead, read out of [FeedEntry.payload] (the backend's
- * `payload={"count": inserted}`, `library/service.py`) — because [FeedEntry.media] is null for
- * this kind by construction (S-A) and every other kind's string takes a title argument that does
- * not exist here. [ActivityKind.UNKNOWN] renders a generic line naming neither a title nor a
- * payload key, since this client has no idea what either would mean for a kind it does not
- * recognise — the same defensive posture `GroupMapper.kindOf()` already takes at the mapping
- * boundary, carried through to rendering rather than stopping at "decodes without crashing."
- *
- * `entry.media?.title` (not a non-null assertion) even for the five kinds the backend always pairs
- * with a title today: [FeedEntry]'s own `init` guarantees `media`/`mediaId` are null TOGETHER, not
- * that only [ActivityKind.IMPORTED] can be the one that's null — nothing in the type system ties
- * "null media" to "this specific kind." A fallback here is what keeps a hypothetical future
- * media-less `added`/`rated`/… row rendering instead of crashing, the identical posture
- * [FeedEntryRow]'s own tappability check already takes for the same reason.
- */
-@Composable
-private fun FeedEntry.feedText(): String {
-    val actor = actor.username
-    val title = media?.title ?: stringResource(R.string.feed_unknown_title)
-    return when (kind) {
-        ActivityKind.ADDED -> stringResource(R.string.feed_entry_added, actor, title)
-        ActivityKind.PROGRESSED -> stringResource(R.string.feed_entry_progressed, actor, title)
-        ActivityKind.RATED -> stringResource(R.string.feed_entry_rated, actor, title)
-        ActivityKind.COMPLETED -> stringResource(R.string.feed_entry_completed, actor, title)
-        ActivityKind.DROPPED -> stringResource(R.string.feed_entry_dropped, actor, title)
-        ActivityKind.IMPORTED -> {
-            val count = payload["count"] ?: stringResource(R.string.feed_import_count_unknown)
-            stringResource(R.string.feed_entry_imported, actor, count)
-        }
-        ActivityKind.UNKNOWN -> stringResource(R.string.feed_entry_unknown, actor)
     }
 }
 

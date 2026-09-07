@@ -102,6 +102,16 @@ internal class FakeLibraryRepository(
     }
 
     private companion object {
-        val EMPTY_STATS = LibraryStats(total = 0, byStatus = emptyMap(), averageScore = null, ratedCount = 0)
+        val EMPTY_STATS =
+            LibraryStats(
+                total = 0,
+                byStatus = emptyMap(),
+                averageScore = null,
+                ratedCount = 0,
+                episodesWatched = 0,
+                topGenres = emptyList(),
+                addedThisMonth = 0,
+                favorites = 0,
+            )
     }
 }

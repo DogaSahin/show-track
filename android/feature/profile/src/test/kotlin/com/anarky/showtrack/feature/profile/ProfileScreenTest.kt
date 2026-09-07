@@ -72,8 +72,14 @@ class ProfileScreenTest {
         }
 
         val context = ApplicationProvider.getApplicationContext<Context>()
+        // `performScrollTo()` rather than a bigger `@Config(qualifiers = ...)`: the stats block
+        // grew a headline figure, a distribution bar and a legend, so the caption under the average
+        // now sits below Robolectric's default 470px root. A qualifier fixes that until the next
+        // section is added; scrolling is what a reader does on a screen that scrolls, and does not
+        // rot as the content grows.
         composeRule
             .onNodeWithText(context.getString(R.string.profile_stats_no_ratings))
+            .performScrollTo()
             .assertIsDisplayed()
         composeRule.onNodeWithText("0.0", substring = true).assertDoesNotExist()
     }
@@ -86,7 +92,17 @@ class ProfileScreenTest {
      */
     @Test
     fun `the average is labelled with what it is an average of`() {
-        val stats = LibraryStats(total = 400, byStatus = emptyMap(), averageScore = BigDecimal("8.4"), ratedCount = 12)
+        val stats =
+            LibraryStats(
+                total = 400,
+                byStatus = emptyMap(),
+                averageScore = BigDecimal("8.4"),
+                ratedCount = 12,
+                episodesWatched = 1200,
+                topGenres = emptyList(),
+                addedThisMonth = 9,
+                favorites = 30,
+            )
         composeRule.setContent {
             ProfileScreen(
                 pushState = PushState.NoDistributor,
@@ -102,17 +118,26 @@ class ProfileScreenTest {
         }
 
         val context = ApplicationProvider.getApplicationContext<Context>()
-        val expected = context.resources.getQuantityString(R.plurals.profile_stats_average, 12, "8.4", 12)
+        // The figure and its caption are two nodes now, not one sentence, so both are asserted:
+        // the number alone would still pass if the screen stopped saying what it averages over,
+        // which is the exact regression this test exists for.
+        val caption = context.resources.getQuantityString(R.plurals.profile_stats_average_label, 12, 12)
 
-        composeRule.onNodeWithText(expected).assertIsDisplayed()
+        composeRule.onNodeWithText("8.4").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText(caption).performScrollTo().assertIsDisplayed()
     }
 
     /**
-     * The other regression the brief names: replace `StatsContent`'s `?: return@forEach` with
-     * `?: 0` and every status absent from `by_status` renders as `"<Label>: 0"` instead of not
-     * rendering at all — the server sends what exists (`LibraryStats`'s own KDoc), and the client
-     * must not invent the rest. [PARTIAL_STATS] carries WATCHING only, so every other status row
-     * must be entirely absent.
+     * The other regression the brief names, carried over to the distribution bar: the server sends
+     * what exists (`LibraryStats`'s own KDoc), and the client must not invent the rest.
+     * [PARTIAL_STATS] carries WATCHING only, so every other status must be absent from the legend
+     * entirely rather than present at zero.
+     *
+     * The bar itself makes this stricter than it was for the old text rows, not weaker: a segment
+     * is sized by `Modifier.weight(count)`, and a zero weight is not allowed — so a `?: 0` that
+     * invented the missing four statuses would not merely render four wrong labels, it would fail
+     * at layout. This assertion covers the legend, which is where an invented status would be
+     * visible.
      */
     @Test
     fun `an absent status renders as absent, not as zero`() {
@@ -130,13 +155,9 @@ class ProfileScreenTest {
             )
         }
 
-        val context = ApplicationProvider.getApplicationContext<Context>()
-        composeRule
-            .onNodeWithText(context.getString(R.string.profile_stats_status_row, "Watching", 5))
-            .assertIsDisplayed()
-        composeRule
-            .onNodeWithText(context.getString(R.string.profile_stats_status_row, "Completed", 0))
-            .assertDoesNotExist()
+        composeRule.onNodeWithText("Watching").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Completed").assertDoesNotExist()
+        composeRule.onNodeWithText("Planned").assertDoesNotExist()
     }
 
     /**
@@ -187,6 +208,7 @@ class ProfileScreenTest {
         // looking at if a later section change pushes the button off-window again.
         composeRule
             .onNodeWithText(context.getString(R.string.profile_import_action))
+            .performScrollTo()
             .assertIsDisplayed()
             .performClick()
 
@@ -234,6 +256,10 @@ class ProfileScreenTest {
                 byStatus = mapOf(UserMediaStatus.WATCHING to 5),
                 averageScore = null,
                 ratedCount = 0,
+                episodesWatched = 0,
+                topGenres = emptyList(),
+                addedThisMonth = 0,
+                favorites = 0,
             )
 
         val PARTIAL_STATS = UNRATED_STATS

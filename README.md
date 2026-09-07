@@ -569,14 +569,16 @@ curl -s -X PATCH "localhost:8000/v1/library/$ENTRY" \
 curl -s -H "Authorization: Bearer $TOKEN" 'localhost:8000/v1/library?favorite=true'
 ```
 
-`GET /v1/library/stats` reports four numbers over your whole library, computed in SQL rather than by
-paging the library client-side — the client holds one page at a time (decision C-B), and
-re-downloading everything to show four numbers gets worse as the library grows:
+`GET /v1/library/stats` aggregates your whole library in SQL rather than by paging it
+client-side — the client holds one page at a time (decision C-B), and re-downloading everything to
+show a handful of numbers gets worse as the library grows:
 
 ```bash
 curl -s -H "Authorization: Bearer $TOKEN" localhost:8000/v1/library/stats
 # -> {"total":42,"by_status":{"watching":10,"completed":25,"dropped":2,"planned":4,"paused":1},
-#     "average_score":"7.8","rated_count":30}
+#     "average_score":"7.8","rated_count":30,"episodes_watched":615,
+#     "top_genres":[{"genre":"action","count":18},{"genre":"drama","count":11}],
+#     "added_this_month":6,"favorites":9}
 ```
 
 `average_score` is a JSON **string**, for the same reason `LibraryEntry.score` is (decision 4-N): a
@@ -585,6 +587,20 @@ when nothing in the library is rated yet, so a client can tell "no ratings" from
 without inspecting `rated_count` first. `by_status` is a `GROUP BY`, so a status with no entries is
 **absent from the map, not present at `0`** — a client renders what it is given rather than assuming
 every `UserMediaStatus` key exists.
+
+`episodes_watched` sums `progress`, so it counts episodes you have marked watched, not episodes
+that exist. `top_genres` is an ordered list of objects (never an object keyed by genre — JSON key
+order is not a contract), capped at five and tie-broken alphabetically so the ranking is stable
+between calls. `added_this_month` counts `added` rows in the **activity log** since the start of
+the current UTC month, not rows in `user_media`, which has no `created_at`; an AniList import
+writes one `imported` row for N titles (decision S-A) and so contributes nothing to it — the
+counter means adds you made, and a ten-thousand-title import is not ten thousand of those.
+
+There is deliberately **no hours-watched figure**. It needs a per-episode runtime and the schema
+has none — `episodes` is `(media_id, season_number, number, air_date)` and neither provider client
+fetches a duration — so it could only be a per-media-type constant rendered beside measured
+values. Adding it properly means a `media.duration_minutes` column, provider support on both
+sides, and a re-sync backfill.
 
 ```bash
 # import a public AniList profile — read-only, one-way, and local edits always win
@@ -1510,9 +1526,12 @@ stops firing.
 
 ### 16. Profile's library statistics
 
-1. Open the **Profile** tab. **Expect:** a statistics section showing your library total, a
-   breakdown by status, and — if you have rated anything — "Average score: *N* across *M* rated
-   title(s)".
+1. Open the **Profile** tab. **Expect:** a statistics section headed by your library total, a
+   proportional bar splitting it by status with a legend naming each status and its count, four
+   figures (episodes watched, average score with "*N* rated titles" beneath it, added this month,
+   favorites), and a ranked list of your top genres. With nothing rated, the average renders as an
+   em dash over "No ratings yet" — **never** `0.0`, which would claim you rated everything zero.
+   Statuses with no entries must be absent from the bar and legend entirely, not shown at zero.
 2. On an account whose library is small enough that every status fits on one page (fewer than 20
    entries each — `StatusTabRow`'s tabs are label-only, with no counts of their own, and the list is
    cursor-paginated at 20 per page, so this check is only countable by hand within that limit), tap

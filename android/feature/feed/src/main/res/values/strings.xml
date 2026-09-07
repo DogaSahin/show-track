@@ -29,18 +29,28 @@
     <string name="feed_error_not_a_member">You\'re no longer a member of this group.</string>
     <string name="feed_error_unknown">Something went wrong. Please try again.</string>
 
-    <!-- One string per ActivityKind (E-A/E-H), %1$s = actor username, %2$s = title. -->
-    <string name="feed_entry_added">%1$s added %2$s</string>
-    <string name="feed_entry_progressed">%1$s updated their progress on %2$s</string>
-    <string name="feed_entry_rated">%1$s rated %2$s</string>
-    <string name="feed_entry_completed">%1$s finished %2$s</string>
-    <string name="feed_entry_dropped">%1$s dropped %2$s</string>
+    <!-- One string per ActivityKind (E-A/E-H). The ACTOR is no longer part of these: the timeline
+         renders it as a separately-styled span so a reader scanning the column sees who at a
+         glance, which cannot be done inside one formatted string without matching the username
+         back out of the result (and that breaks the moment a username also appears in a title).
+         The verb and its object stay together, so only the subject is split off. %1$s = title. -->
+    <string name="feed_action_added">added %1$s</string>
+    <string name="feed_action_progressed">updated their progress on %1$s</string>
+    <string name="feed_action_rated">rated %1$s</string>
+    <string name="feed_action_completed">finished %1$s</string>
+    <string name="feed_action_dropped">dropped %1$s</string>
+
+    <!-- Day headings. Only today and yesterday get a word: those are the two a reader can place
+         without reading a date. Everything older gets a real localised date, because a day heading
+         locates an entry and "3 days ago" is easy to read and hard to locate. -->
+    <string name="feed_day_today">Today</string>
+    <string name="feed_day_yesterday">Yesterday</string>
 
     <!-- ActivityKind.IMPORTED carries media = null (backend decision S-A) — no %2$s title, a
          count instead. %2$s is FeedEntry.payload["count"], read as a plain string (payload is
          Map<String, String> end to end — GroupMapper's own stringify()), or
          feed_import_count_unknown when the backend ever omits it. -->
-    <string name="feed_entry_imported">%1$s imported %2$s titles from AniList</string>
+    <string name="feed_action_imported">imported %1$s titles from AniList</string>
     <string name="feed_import_count_unknown">several</string>
 
     <!-- Fallback when FeedEntry.media is unexpectedly null for a kind other than IMPORTED (the
@@ -51,5 +61,5 @@
     <!-- ActivityKind.UNKNOWN — a seventh kind a future backend adds must render a generic line,
          not crash a client built today (GroupMapper's own kindOf() fallback). No title, no
          payload: this client has no idea what either would mean for a kind it doesn't recognise. -->
-    <string name="feed_entry_unknown">%1$s did something in this group</string>
+    <string name="feed_action_unknown">did something in this group</string>
 </resources>

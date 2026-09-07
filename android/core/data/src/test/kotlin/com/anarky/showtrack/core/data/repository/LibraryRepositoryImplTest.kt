@@ -21,6 +21,7 @@ import com.anarky.showtrack.core.network.dto.AddLibraryEntryRequest
 import com.anarky.showtrack.core.network.dto.CreateGroupRequestDto
 import com.anarky.showtrack.core.network.dto.CreateReviewRequestDto
 import com.anarky.showtrack.core.network.dto.FeedPageDto
+import com.anarky.showtrack.core.network.dto.GenreCountDto
 import com.anarky.showtrack.core.network.dto.GroupDto
 import com.anarky.showtrack.core.network.dto.GroupWithInviteDto
 import com.anarky.showtrack.core.network.dto.ImportAniListRequest
@@ -656,7 +657,16 @@ class LibraryRepositoryImplTest {
     fun `libraryStats reads through to the wire endpoint`() =
         runTest {
             api.statsResponse =
-                LibraryStatsDto(total = 5, byStatus = mapOf("watching" to 5), averageScore = "8.4", ratedCount = 3)
+                LibraryStatsDto(
+                    total = 5,
+                    byStatus = mapOf("watching" to 5),
+                    averageScore = "8.4",
+                    ratedCount = 3,
+                    episodesWatched = 120,
+                    topGenres = listOf(GenreCountDto(genre = "action", count = 4)),
+                    addedThisMonth = 2,
+                    favorites = 1,
+                )
 
             val stats = repository.libraryStats()
 
@@ -786,7 +796,17 @@ private class FakeShowTrackApi(
     val requestedFavorites = mutableListOf<Boolean?>()
     val addRequests = mutableListOf<AddLibraryEntryRequest>()
     val updateRequests = mutableListOf<Pair<String, JsonObject>>()
-    var statsResponse = LibraryStatsDto(total = 0, byStatus = emptyMap(), averageScore = null, ratedCount = 0)
+    var statsResponse =
+        LibraryStatsDto(
+            total = 0,
+            byStatus = emptyMap(),
+            averageScore = null,
+            ratedCount = 0,
+            episodesWatched = 0,
+            topGenres = emptyList(),
+            addedThisMonth = 0,
+            favorites = 0,
+        )
     var importResponse = ImportSummaryDto(imported = 0, skipped = 0, failed = 0, truncated = false)
     var importFailure: Throwable? = null
 

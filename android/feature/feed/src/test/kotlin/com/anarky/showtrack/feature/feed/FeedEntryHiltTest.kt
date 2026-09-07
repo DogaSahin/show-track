@@ -122,7 +122,7 @@ class FeedEntryHiltTest {
 
         val context = ApplicationProvider.getApplicationContext<Context>()
         composeRule
-            .onNodeWithText(context.getString(R.string.feed_entry_rated, ACTOR.username, MEDIA_RATED.title))
+            .onNodeWithText("${ACTOR.username} " + context.getString(R.string.feed_action_rated, MEDIA_RATED.title))
             .performClick()
         composeRule.waitForIdle()
 

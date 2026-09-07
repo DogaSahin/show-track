@@ -23,10 +23,32 @@ import java.math.BigDecimal
  *
  * [ratedCount] travels with [averageScore] so a caller can say what the average is an average OF
  * ("8.4 across 12 rated titles"), not just the bare number.
+ *
+ * [episodesWatched] is the sum of every entry's progress, not a count of episodes that exist: a
+ * library of planned titles reports zero.
+ *
+ * [topGenres] is an ORDERED list, not a map — the ranking is the information, and a `Map`'s
+ * iteration order is not something the wire format guarantees. Already capped and tie-broken
+ * server-side; nothing here re-sorts it.
+ *
+ * [addedThisMonth] counts the user's own add ACTIONS in the current UTC month, read off the
+ * activity log. An AniList import contributes nothing to it (backend decision S-A writes one row
+ * for N titles), which is a definition rather than an omission — see the backend's own
+ * `_added_this_month`.
  */
 data class LibraryStats(
     val total: Int,
     val byStatus: Map<UserMediaStatus, Int>,
     val averageScore: BigDecimal?,
     val ratedCount: Int,
+    val episodesWatched: Int,
+    val topGenres: List<GenreCount>,
+    val addedThisMonth: Int,
+    val favorites: Int,
+)
+
+/** One row of [LibraryStats.topGenres]. A type rather than a `Pair` so both halves are named. */
+data class GenreCount(
+    val genre: String,
+    val count: Int,
 )

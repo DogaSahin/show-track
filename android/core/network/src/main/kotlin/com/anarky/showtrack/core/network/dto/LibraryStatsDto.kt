@@ -17,4 +17,18 @@ data class LibraryStatsDto(
     @SerialName("by_status") val byStatus: Map<String, Int>,
     @SerialName("average_score") val averageScore: String?,
     @SerialName("rated_count") val ratedCount: Int,
+    @SerialName("episodes_watched") val episodesWatched: Int,
+    @SerialName("top_genres") val topGenres: List<GenreCountDto>,
+    @SerialName("added_this_month") val addedThisMonth: Int,
+    val favorites: Int,
+)
+
+/**
+ * One row of `top_genres`. The server sends a LIST of objects rather than an object keyed by
+ * genre precisely so the ranking survives: JSON object key order is not a contract.
+ */
+@Serializable
+data class GenreCountDto(
+    val genre: String,
+    val count: Int,
 )

@@ -1,6 +1,7 @@
 package com.anarky.showtrack.core.data.mapper
 
 import com.anarky.showtrack.core.database.LibraryEntryEntity
+import com.anarky.showtrack.core.model.GenreCount
 import com.anarky.showtrack.core.model.ImportSummary
 import com.anarky.showtrack.core.model.LibraryEntry
 import com.anarky.showtrack.core.model.LibraryStats
@@ -71,6 +72,12 @@ fun LibraryStatsDto.toDomain(): LibraryStats =
                 }.toMap(),
         averageScore = averageScore?.let(::BigDecimal),
         ratedCount = ratedCount,
+        episodesWatched = episodesWatched,
+        // `map`, preserving order: the server has already ranked and capped this list, and
+        // anything that re-sorted or re-collected it here would throw that ranking away silently.
+        topGenres = topGenres.map { GenreCount(genre = it.genre, count = it.count) },
+        addedThisMonth = addedThisMonth,
+        favorites = favorites,
     )
 
 /** A plain field-for-field copy — `ImportSummaryDto`'s fields already share [ImportSummary]'s names and types. */

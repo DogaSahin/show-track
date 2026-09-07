@@ -1,10 +1,12 @@
 package com.anarky.showtrack.core.data.mapper
 
 import com.anarky.showtrack.core.database.LibraryEntryEntity
+import com.anarky.showtrack.core.model.GenreCount
 import com.anarky.showtrack.core.model.MediaSource
 import com.anarky.showtrack.core.model.MediaStatus
 import com.anarky.showtrack.core.model.MediaType
 import com.anarky.showtrack.core.model.UserMediaStatus
+import com.anarky.showtrack.core.network.dto.GenreCountDto
 import com.anarky.showtrack.core.network.dto.LibraryEntryDto
 import com.anarky.showtrack.core.network.dto.LibraryStatsDto
 import com.anarky.showtrack.core.network.dto.MediaDto
@@ -184,6 +186,14 @@ class MapperTest {
                 byStatus = mapOf("watching" to 5, "completed" to 2),
                 averageScore = "8.4",
                 ratedCount = 3,
+                episodesWatched = 412,
+                topGenres =
+                    listOf(
+                        GenreCountDto(genre = "action", count = 5),
+                        GenreCountDto(genre = "drama", count = 2),
+                    ),
+                addedThisMonth = 4,
+                favorites = 9,
             ).toDomain()
 
         assertEquals(7, stats.total)
@@ -194,11 +204,30 @@ class MapperTest {
         // fails this on the value alone, without needing 8.1's dyadic-rational argument.
         assertEquals(BigDecimal("8.4"), stats.averageScore)
         assertEquals(3, stats.ratedCount)
+        assertEquals(412, stats.episodesWatched)
+        assertEquals(4, stats.addedThisMonth)
+        assertEquals(9, stats.favorites)
+        // Distinct counts, and asserted as a LIST: the server ranks and caps this, so a mapper that
+        // round-tripped it through a Map — losing the order — must fail here rather than pass.
+        assertEquals(
+            listOf(GenreCount(genre = "action", count = 5), GenreCount(genre = "drama", count = 2)),
+            stats.topGenres,
+        )
     }
 
     @Test
     fun `an unrated library maps to a null average rather than zero`() {
-        val stats = LibraryStatsDto(total = 3, byStatus = emptyMap(), averageScore = null, ratedCount = 0).toDomain()
+        val stats =
+            LibraryStatsDto(
+                total = 3,
+                byStatus = emptyMap(),
+                averageScore = null,
+                ratedCount = 0,
+                episodesWatched = 0,
+                topGenres = emptyList(),
+                addedThisMonth = 0,
+                favorites = 0,
+            ).toDomain()
 
         assertNull(stats.averageScore)
     }
@@ -217,6 +246,10 @@ class MapperTest {
                 byStatus = mapOf("watching" to 4, "on_hold_legacy" to 2),
                 averageScore = null,
                 ratedCount = 0,
+                episodesWatched = 0,
+                topGenres = emptyList(),
+                addedThisMonth = 0,
+                favorites = 0,
             ).toDomain()
 
         assertEquals(mapOf(UserMediaStatus.WATCHING to 4), stats.byStatus)
