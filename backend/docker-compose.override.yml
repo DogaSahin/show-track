@@ -1,0 +1,41 @@
+# DEVELOPMENT ONLY. Compose loads this automatically whenever it is present, so the plain
+# `docker compose up -d` in the README keeps working exactly as it did. The server runs
+# `docker compose -f docker-compose.yml ...` to leave it out.
+#
+# Everything here is something production must NOT have: a bind-mounted source tree, the
+# auto-reloader, a test runner in the image, and a Postgres port open to the host.
+#
+# Note what is deliberately absent: an override for the api's own published port. Compose APPENDS
+# to `ports` rather than replacing it, so a second entry for 8000 would collide with the base
+# file's rather than supersede it. It does not need one — the base binds 127.0.0.1:8000, and the
+# Android emulator's 10.0.2.2 resolves to exactly that host loopback.
+
+services:
+  db:
+    # The documented dev gate runs `.venv/bin/alembic upgrade head` and `.venv/bin/pytest` on the
+    # HOST, against the localhost:5432 in .env.example's DATABASE_URL. Without this line those
+    # commands have nothing to connect to. Loopback-bound so it is not also offered to the LAN.
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  api:
+    build:
+      # The stage that carries pytest and ruff, and no compiler in the shipped layers either way.
+      target: dev
+    environment:
+      ENVIRONMENT: local
+    # Bash does not export UID, and GID is not a bash variable at all, so Compose never sees
+    # either from the environment: this resolves to the literal 1000:1000 default (`docker compose
+    # config` confirms it), which only matches a host whose uid is 1000. A developer with a
+    # different uid must `export UID` and `export GID` in their shell profile for bind-mounted
+    # files to land with their own ownership. Production has no bind mount and so no such
+    # problem — the image's own `appuser` (uid 1000, fixed in the Dockerfile) runs it.
+    user: "${UID:-1000}:${GID:-1000}"
+    volumes:
+      - .:/app
+    # Overrides the base file's `alembic upgrade head && uvicorn` chain. Migrations stay a manual
+    # step in development on purpose: the dev flow creates and reviews them by hand
+    # (`alembic revision --autogenerate`, then read the output before committing), and a container
+    # that silently upgraded the schema on every restart would apply a migration you were still
+    # in the middle of writing.
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload

@@ -453,16 +453,30 @@ uv venv --python 3.12      # pinned: CI, the Dockerfile and ruff's target-versio
                            # and a bare `uv venv` picks whatever newest Python it can find
 uv pip install -r requirements-dev.txt
 
-cp .env.example .env          # fill in TMDB_API_KEY if you have one; every other value has a
-                               # working default or is already filled in
+cp .env.example .env          # REQUIRED before any compose command, not just for the app:
+                               # docker-compose.yml interpolates POSTGRES_PASSWORD, SECRET_KEY and
+                               # REGISTRATION_CODE from it and REFUSES to start if any is unset.
+                               # The defaults it ships with work for development as-is; fill in
+                               # TMDB_API_KEY if you have one.
 docker compose up -d db       # PostgreSQL on :5432
 
 .venv/bin/alembic upgrade head    # REQUIRED before running the tests
 .venv/bin/uvicorn main:app --reload --port 8000
 ```
 
+**`docker-compose.yml` is the production configuration; `docker-compose.override.yml` is what
+makes it a development one.** Compose loads the override automatically whenever it is present, so
+the commands above behave exactly as they always have — it is what adds the bind-mounted source
+tree, the auto-reloader, the dev image target (the one carrying pytest and ruff), and the published
+Postgres port that host-run `alembic` and `pytest` connect to. The server runs
+`docker compose -f docker-compose.yml ...` to leave it out. See **Deployment** for why round that
+way: with production as the base, forgetting a flag mounts a directory rather than deploying a
+placeholder signing key.
+
 `DATABASE_URL` has no default — an unset value fails loudly at startup rather than silently
-connecting to a plausible-looking wrong database. `alembic upgrade head` is not optional before
+connecting to a plausible-looking wrong database. Note that it is read by host-run processes only:
+a container gets its own URL built by `docker-compose.yml` against the `db` service, interpolating
+just `POSTGRES_PASSWORD`, so the two only have to agree on the password. `alembic upgrade head` is not optional before
 running tests: the suite runs against a real PostgreSQL schema built by the migrations, never by
 `metadata.create_all()`, so the migrations themselves are exercised rather than merely stored.
 
@@ -1869,6 +1883,96 @@ life on the device.
 4. Tap it. **Expect:** the groups list, with the group from step 1 on it. *No Groups entry on
    Profile is decision E-A missing again; `ProfileEntryHiltTest` is what pins the binding, and
    walkthroughs 22 through 25 and 35 all start from this door.*
+
+## Deployment
+
+Self-hosted on a Linux machine you own, reached over Tailscale. The **same `docker-compose.yml`**
+runs there as in development — the difference is `docker-compose.override.yml`, which Compose loads
+automatically when present and which the server leaves out.
+
+```bash
+docker compose -f docker-compose.yml up -d --build
+```
+
+**Why production is the base file and development is the override**, rather than the other way
+round. The obvious arrangement — a `docker-compose.prod.yml` selected with `-f` — fails badly in
+one specific way: forget the flag on the server and you silently start production with whatever the
+base file says. This one used to say `SECRET_KEY: change-me-use-openssl-rand-hex-32`. Inverted, the
+worst a forgotten flag can do is bind-mount a source directory. Nothing about it can hand out
+forgeable tokens.
+
+The second half of that is `${VAR:?message}` interpolation on the three secrets. Compose **refuses
+to start** when one is unset, so a missing value is an error at `up` rather than a placeholder
+nobody chose:
+
+```
+$ docker compose -f docker-compose.yml up -d
+error while interpolating services.api.environment.SECRET_KEY:
+required variable SECRET_KEY is missing a value: set SECRET_KEY in .env — openssl rand -hex 32
+```
+
+### Before the first `up`
+
+```bash
+cp .env.example .env
+openssl rand -hex 32        # -> SECRET_KEY
+openssl rand -hex 32        # -> REGISTRATION_CODE
+openssl rand -hex 32        # -> POSTGRES_PASSWORD
+```
+
+**Set `POSTGRES_PASSWORD` before the first start, not after.** Postgres reads it only when it
+initialises an empty data directory; changing it later leaves the old password in the existing
+volume and the api unable to connect.
+
+### What the production image is
+
+Multi-stage. `build-essential` exists only in a discarded builder stage, and pytest and ruff only in
+the `dev` target the override selects — so the shipped image has neither a compiler nor a test
+runner, and runs as `appuser` (uid 1000), never root. A `HEALTHCHECK` probes `/health` with Python
+rather than curl, which `python:3.12-slim` does not ship.
+
+Migrations run inline, as `alembic upgrade head && exec uvicorn ...`, rather than from a separate
+one-shot service. The reason is reboots: `depends_on` orders `docker compose up`, but it does **not**
+order the restart policy, so after a host reboot the api container can start before Postgres accepts
+connections. Inline, that is self-healing — alembic fails, the container exits, `restart:
+unless-stopped` brings it back, and it succeeds once the database is up. (Measured: stopping
+Postgres under a running api restarted it three times, and it returned to `healthy` on its own when
+the database came back.) A separate migrate service would instead leave the api serving an
+unmigrated schema.
+
+### TLS, and why it is not optional
+
+Neither the api nor ntfy publishes a port beyond `127.0.0.1`. `tailscale serve` runs on the host,
+terminates TLS with a real Let's Encrypt certificate for the machine's `*.ts.net` name, and proxies
+to loopback:
+
+```bash
+sudo tailscale serve --bg 8000                  # https://<machine>.ts.net      -> the API
+sudo tailscale serve --bg --https=8443 8080     # https://<machine>.ts.net:8443 -> ntfy
+sudo tailscale serve status
+```
+
+Android blocks cleartext HTTP by default and this app ships no exemption, so the TLS endpoint is the
+only way the client can talk to the server at all. Binding the containers wider would add a
+plaintext route around the endpoint that exists to prevent exactly that.
+
+Set `NTFY_PUBLIC_URL` in `.env` to the tailnet address **the phone** uses — see Notifications for
+why that is a different question from `NTFY_BASE_URL`.
+
+### The host must never sleep
+
+APScheduler runs in-process (architecture rule 6), so a suspended machine silently stops episode
+sync and notification dispatch. There is no error to notice; you find out by not being told about an
+episode.
+
+```bash
+sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target
+```
+
+### Backups must leave the machine
+
+Not yet built. That box holds every rating and review, none of which is regenerable from AniList or
+TMDB, and the same disk is not a backup.
 
 ## Contributing
 
