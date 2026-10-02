@@ -7,36 +7,36 @@
     <!-- Antennas -->
     <path
         android:pathData="M47,37L41,29M61,37L67,29"
-        android:strokeColor="#FFFFFFFF"
+        android:strokeColor="#FF000000"
         android:strokeWidth="4"
         android:strokeLineCap="round" />
     <!-- TV body -->
     <path
         android:pathData="M40.5,37.5H67.5A9,9 0,0 1,76.5 46.5V63.5A9,9 0,0 1,67.5 72.5H40.5A9,9 0,0 1,31.5 63.5V46.5A9,9 0,0 1,40.5 37.5Z"
-        android:strokeColor="#FFFFFFFF"
+        android:strokeColor="#FF000000"
         android:strokeWidth="5" />
     <!-- Scrubber track (unwatched part) -->
     <path
         android:pathData="M40,63H68"
-        android:strokeColor="#FFFFFFFF"
+        android:strokeColor="#FF000000"
         android:strokeAlpha="0.35"
         android:strokeWidth="4"
         android:strokeLineCap="round" />
     <!-- Scrubber progress (watched part) -->
     <path
         android:pathData="M40,63H58"
-        android:strokeColor="#FFFFFFFF"
+        android:strokeColor="#FF000000"
         android:strokeWidth="4"
         android:strokeLineCap="round" />
     <!-- Playhead -->
     <path
         android:pathData="M53.5,63a4.5,4.5 0,1 0,9 0a4.5,4.5 0,1 0,-9 0"
-        android:fillColor="#FFFFFFFF" />
+        android:fillColor="#FF000000" />
     <!-- Play triangle -->
     <path
         android:pathData="M50,46L57.5,50.5L50,55Z"
-        android:fillColor="#FFFFFFFF"
-        android:strokeColor="#FFFFFFFF"
+        android:fillColor="#FF000000"
+        android:strokeColor="#FF000000"
         android:strokeWidth="2"
         android:strokeLineJoin="round" />
 </vector>
