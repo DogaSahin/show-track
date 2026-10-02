@@ -5,6 +5,7 @@ import androidx.navigation.compose.composable
 import com.anarky.showtrack.core.navigation.AppRoute
 import com.anarky.showtrack.core.navigation.DetailRoute
 import com.anarky.showtrack.core.navigation.DiscoverRoute
+import com.anarky.showtrack.core.navigation.SearchRoute
 
 /**
  * This module's contribution to the app's nav graph. `:app` calls it; nothing else can, because
@@ -20,6 +21,9 @@ import com.anarky.showtrack.core.navigation.DiscoverRoute
  * off the tapped row rather than minted by a `POST /v1/library` response the way `SearchNavigation`'s
  * is: no add-first workaround needed.
  *
+ * The empty state's "Search shows" goes to [SearchRoute] the same way: a route contract from
+ * `:core:navigation`, not a dependency on `:feature:search`.
+ *
  * Registered as a `TopLevelDestination` in `:app`'s `MainActivity.kt` (this task) — see that
  * file's own KDoc for why Discover needed adding to the tab set rather than merely being reachable
  * in principle: a registered route with no door in is exactly the Gap 1/Gap 2 failure mode Phase 9a
@@ -27,6 +31,9 @@ import com.anarky.showtrack.core.navigation.DiscoverRoute
  */
 fun NavGraphBuilder.discoverEntry(onNavigate: (AppRoute) -> Unit) {
     composable<DiscoverRoute> {
-        DiscoverScreen(onNavigateToDetail = { mediaId -> onNavigate(DetailRoute(mediaId = mediaId)) })
+        DiscoverScreen(
+            onNavigateToDetail = { mediaId -> onNavigate(DetailRoute(mediaId = mediaId)) },
+            onNavigateToSearch = { onNavigate(SearchRoute) },
+        )
     }
 }

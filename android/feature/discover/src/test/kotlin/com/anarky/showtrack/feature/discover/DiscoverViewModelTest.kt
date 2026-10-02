@@ -868,6 +868,39 @@ class DiscoverViewModelTest {
             assertEquals(listOf("media-frieren"), recommendations.removedIds)
         }
 
+    /** The "added to Planned" snackbar's source: one event per title that actually got added. */
+    @Test
+    fun `a successful add announces the added title once`() =
+        runTest(dispatcher) {
+            val recommendations = FakeRecommendationRepository(refreshResult = listOf(FRIEREN, BEBOP))
+            val viewModel = DiscoverViewModel(recommendations, FakeLibraryRepository())
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            viewModel.added.test {
+                viewModel.add(FRIEREN)
+                advanceUntilIdle()
+                assertEquals(FRIEREN.media, awaitItem())
+                expectNoEvents()
+            }
+        }
+
+    @Test
+    fun `a failed add announces nothing`() =
+        runTest(dispatcher) {
+            val recommendations = FakeRecommendationRepository(refreshResult = listOf(FRIEREN, BEBOP))
+            val viewModel =
+                DiscoverViewModel(recommendations, FakeLibraryRepository(addFailure = IOException("offline")))
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            viewModel.added.test {
+                viewModel.add(FRIEREN)
+                advanceUntilIdle()
+                expectNoEvents()
+            }
+        }
+
     /**
      * The restore-on-failure test — decision D-I's whole point, and the one the task brief calls
      * out as "the one that matters". [FRIEREN] sits at index 0 of a three-row feed; the add fails;
