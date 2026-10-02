@@ -97,7 +97,7 @@ internal fun AuthFieldInputs(
 }
 
 @Composable
-private fun AuthFieldReveal(
+internal fun AuthFieldReveal(
     visible: Boolean,
     content: @Composable () -> Unit,
 ) {

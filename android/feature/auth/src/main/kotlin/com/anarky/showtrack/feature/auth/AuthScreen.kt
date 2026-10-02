@@ -34,9 +34,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.anarky.showtrack.core.designsystem.theme.ShowTrackTheme
@@ -44,6 +47,9 @@ import com.anarky.showtrack.core.designsystem.theme.WordmarkStyle
 
 /** Caps the form on tablets and in landscape: a text field stretched to 900dp is unreadable. */
 private val FORM_MAX_WIDTH = 420.dp
+
+/** Log in has the screen to itself, so the wordmark is set larger there than on Sign up. */
+private val LoginWordmarkStyle = WordmarkStyle.copy(fontSize = 22.sp, lineHeight = 28.sp)
 
 /**
  * The stateful entry point. `hiltViewModel()` is the only line here that touches DI — the same
@@ -89,13 +95,18 @@ fun AuthScreen(
  * ViewModel's `submitLogin`/`submitRegister` take raw strings directly rather than reading them
  * from `AuthUiState`, so nothing upstream needs to own a draft the user is still typing.
  *
- * **On the layout.** [BoxWithConstraints] plus `heightIn(min = maxHeight)` *inside* the scroll is
- * what makes `Arrangement.Center` and `verticalScroll` coexist. A scroll modifier measures its
- * content with an infinite height constraint, so a plain `fillMaxSize()` Column inside one wraps
- * its children and `Center` has no free space left to distribute — the form silently pins to the
- * top. Giving the content a *minimum* height of the viewport restores the centring while still
- * letting it scroll once the keyboard, a long error, or a short landscape screen pushes it past
- * that height.
+ * **On the layout.** Two layers. [PosterWall] fills the whole screen at the back; the form is
+ * pinned to the bottom on a solid `background` fill with a fade attached to its top edge, so the
+ * wall shows exactly in the space the form leaves. Nothing sets the wall's height: the form's own
+ * height does — taller in REGISTER (two more fields and a title), so less wall, and the change
+ * animates with the fields. `imePadding` sits on the form layer only, so the keyboard slides the
+ * form up over a wall that stays still.
+ *
+ * [BoxWithConstraints] plus `heightIn(min = maxHeight)` *inside* the scroll is what makes
+ * `Arrangement.Bottom` and `verticalScroll` coexist: a scroll modifier measures its content with
+ * an infinite height, so without the minimum there is no free space to push the form down into.
+ * When the form outgrows the viewport (a short landscape screen, an open keyboard, a long error)
+ * it scrolls, and covers the wall completely rather than being pushed off-screen by it.
  */
 @Composable
 internal fun AuthScreen(
@@ -122,62 +133,75 @@ internal fun AuthScreen(
         }
     }
 
-    BoxWithConstraints(
-        modifier =
-            modifier
-                .fillMaxSize()
-                .background(MaterialTheme.colorScheme.background)
-                .imePadding(),
-    ) {
-        Column(
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
-                    .heightIn(min = maxHeight)
-                    .padding(horizontal = 24.dp, vertical = 32.dp),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Column(modifier = Modifier.fillMaxWidth().widthIn(max = FORM_MAX_WIDTH)) {
-                AuthHeader()
-                Spacer(modifier = Modifier.size(40.dp))
-                AuthFieldInputs(mode = state.mode, fields = fields, onSubmit = { submit() })
-                Spacer(modifier = Modifier.size(24.dp))
-                AuthMessages(state = state, validationError = validationError, onModeChange = onModeChange)
-                AuthSubmitButton(state = state, onSubmit = { submit() })
-                Spacer(modifier = Modifier.size(20.dp))
-                AuthModeSwitch(
-                    mode = state.mode,
-                    enabled = !state.submitting,
-                    onModeChange = {
-                        // A stale "password too short" carried across the switch would be advice
-                        // about a submission the other form never made.
-                        validationError = null
-                        onModeChange(it)
-                    },
-                )
+    Box(modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+        PosterWall(modifier = Modifier.fillMaxSize())
+        BoxWithConstraints(modifier = Modifier.fillMaxSize().imePadding()) {
+            Column(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                        .heightIn(min = maxHeight),
+                verticalArrangement = Arrangement.Bottom,
+            ) {
+                FormFade()
+                Column(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.background)
+                            .padding(start = 24.dp, end = 24.dp, bottom = 24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth().widthIn(max = FORM_MAX_WIDTH)) {
+                        AuthHeader(mode = state.mode)
+                        Spacer(modifier = Modifier.size(24.dp))
+                        AuthFieldInputs(mode = state.mode, fields = fields, onSubmit = { submit() })
+                        Spacer(modifier = Modifier.size(16.dp))
+                        AuthMessages(state = state, validationError = validationError, onModeChange = onModeChange)
+                        AuthSubmitButton(state = state, onSubmit = { submit() })
+                        Spacer(modifier = Modifier.size(12.dp))
+                        AuthModeSwitch(
+                            mode = state.mode,
+                            enabled = !state.submitting,
+                            onModeChange = {
+                                // A stale "password too short" carried across the switch would be
+                                // advice about a submission the other form never made.
+                                validationError = null
+                                onModeChange(it)
+                            },
+                        )
+                    }
+                }
             }
         }
     }
 }
 
+/**
+ * The wordmark alone in LOGIN — the button already says "Log in", so a title would repeat it.
+ * REGISTER shrinks the wordmark and adds "New account", the screen's only heading, revealed with
+ * the same animation as the register-only fields so the two arrive together.
+ */
 @Composable
-private fun AuthHeader() {
+private fun AuthHeader(mode: AuthMode) {
+    val isRegister = mode == AuthMode.REGISTER
     Column(horizontalAlignment = Alignment.Start) {
         Text(
             // Uppercased here rather than in strings.xml: an all-caps string resource is read out
             // letter by letter by TalkBack, where this leaves the accessible text intact.
             text = stringResource(R.string.auth_wordmark).uppercase(),
-            style = WordmarkStyle,
+            style = if (isRegister) WordmarkStyle else LoginWordmarkStyle,
             color = MaterialTheme.colorScheme.primary,
         )
-        Spacer(modifier = Modifier.size(10.dp))
-        Text(
-            text = stringResource(R.string.auth_tagline),
-            style = MaterialTheme.typography.displaySmall,
-            color = MaterialTheme.colorScheme.onBackground,
-        )
+        AuthFieldReveal(visible = isRegister) {
+            Text(
+                text = stringResource(R.string.auth_register_title),
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier.padding(top = 6.dp).semantics { heading() },
+            )
+        }
     }
 }
 
@@ -310,6 +334,7 @@ private fun AuthScreenLoginPreview() {
     AuthScreenPreview(state = AuthUiState.Form(mode = AuthMode.LOGIN))
 }
 
+@Preview(name = "Register light", showBackground = true)
 @Preview(name = "Register dark", showBackground = true, uiMode = UI_MODE_NIGHT_YES)
 @Composable
 private fun AuthScreenRegisterPreview() {
@@ -323,9 +348,9 @@ private fun AuthScreenErrorPreview() {
 }
 
 /**
- * The fixed [Box] is what makes these previews meaningful: `AuthScreen` centres itself against the
- * viewport, so rendered at wrap-content height there is nothing to centre within and the layout
- * being previewed never happens.
+ * The fixed [Box] is what makes these previews meaningful: `AuthScreen` pins the form to the
+ * bottom of the viewport and lets the poster wall fill what is left, so rendered at wrap-content
+ * height there is no wall and the layout being previewed never happens.
  */
 @Composable
 private fun AuthScreenPreview(state: AuthUiState.Form) {
