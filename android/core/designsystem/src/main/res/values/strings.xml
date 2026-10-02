@@ -33,6 +33,10 @@
     <string name="media_source_anilist">AniList</string>
     <string name="media_source_tmdb">TMDB</string>
 
+    <!-- MediaType display names, for the "Anime · 2021" caption cards share. -->
+    <string name="media_type_anime">Anime</string>
+    <string name="media_type_tv">TV</string>
+
     <!-- ScoreChip's fallback when the user has not scored a title — an em dash, never a raw
          null or empty string. -->
     <string name="score_unset">—</string>

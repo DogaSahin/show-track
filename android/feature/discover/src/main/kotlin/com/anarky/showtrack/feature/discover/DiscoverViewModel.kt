@@ -4,12 +4,16 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.anarky.showtrack.core.data.repository.LibraryRepository
 import com.anarky.showtrack.core.data.repository.RecommendationRepository
+import com.anarky.showtrack.core.model.Media
 import com.anarky.showtrack.core.model.Recommendation
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -115,6 +119,13 @@ class DiscoverViewModel
     ) : ViewModel() {
         private val mutableState = MutableStateFlow<DiscoverUiState>(DiscoverUiState.Loading)
         val state: StateFlow<DiscoverUiState> = mutableState.asStateFlow()
+
+        // One event per title a successful [add] put in the library, for the screen's "added to
+        // Planned" snackbar. A Channel, not state: a snackbar is shown once, and a StateFlow would
+        // replay the last one to every new collector, re-announcing it after rotation or a return
+        // from Detail. The same reasoning as `SearchViewModel.navigateToDetail`.
+        private val addedChannel = Channel<Media>(Channel.BUFFERED)
+        val added: Flow<Media> = addedChannel.receiveAsFlow()
 
         // A ViewModel-wide guard, independent of [state]'s shape — [addInFlight] below's identical
         // reasoning, applied to [refresh] instead of [add] (task 9c.8, E-M): once a resume effect
@@ -551,6 +562,7 @@ class DiscoverViewModel
                         source = recommendation.media.source,
                         externalId = recommendation.media.externalId,
                     )
+                    addedChannel.send(recommendation.media)
                 } catch (cancellation: CancellationException) {
                     throw cancellation
                 } catch (failure: Exception) {

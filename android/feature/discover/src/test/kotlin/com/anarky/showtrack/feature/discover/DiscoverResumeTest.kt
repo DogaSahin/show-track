@@ -3,7 +3,6 @@ package com.anarky.showtrack.feature.discover
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.ui.test.onNodeWithText
 import androidx.lifecycle.Lifecycle
 import com.anarky.showtrack.core.model.Media
 import com.anarky.showtrack.core.model.MediaSource
@@ -61,11 +60,11 @@ class DiscoverResumeTest {
         val viewModel = DiscoverViewModel(recommendations, FakeLibraryRepository())
 
         composeRule.setContent {
-            DiscoverScreen(onNavigateToDetail = {}, viewModel = viewModel)
+            DiscoverScreen(onNavigateToDetail = {}, onNavigateToSearch = {}, viewModel = viewModel)
         }
         composeRule.waitForIdle()
-        composeRule.onNodeWithText(FRIEREN.media.title).assertIsDisplayed()
-        composeRule.onNodeWithText(BEBOP.media.title).assertIsDisplayed()
+        composeRule.onNode(hasTitle(FRIEREN.media.title)).assertIsDisplayed()
+        composeRule.onNode(hasTitle(BEBOP.media.title)).assertIsDisplayed()
         // ONE call, not two: DiscoverViewModel has no `init { refresh() }` any more (this task,
         // round 1 — see that class's own KDoc), so `LifecycleResumeEffect` firing on first
         // composition (`createAndroidComposeRule` launches its Activity straight to RESUMED, and
@@ -82,8 +81,8 @@ class DiscoverResumeTest {
         composeRule.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
         composeRule.waitForIdle()
 
-        composeRule.onNodeWithText(BEBOP.media.title).assertIsDisplayed()
-        composeRule.onNodeWithText(FRIEREN.media.title).assertDoesNotExist()
+        composeRule.onNode(hasTitle(BEBOP.media.title)).assertIsDisplayed()
+        composeRule.onNode(hasTitle(FRIEREN.media.title)).assertDoesNotExist()
         // The one call this test actually exists to pin: a REAL pause/resume cycle, the shape
         // Android dispatches for an actual Discover -> Search -> add -> Back trip, triggers exactly
         // one more `refresh()` — proving `LifecycleResumeEffect` is wired to a live Lifecycle, not
