@@ -394,6 +394,7 @@ class FeedScreenTest {
         }
 
         openSwitcher()
+        composeRule.onNodeWithContentDescription("7 members").assertIsDisplayed()
         composeRule.onNodeWithText(OTHER_GROUP.name).performClick()
 
         assertEquals(OTHER_GROUP.id, selected)
@@ -511,7 +512,12 @@ class FeedScreenTest {
         val ACTOR = GroupActor(id = "user-1", username = "alex")
         val GROUP = Group(id = GROUP_ID, name = "Alpha Watchers", createdAt = Instant.parse("2026-08-28T09:00:00Z"))
         val OTHER_GROUP =
-            Group(id = "group-2", name = "Beta Watchers", createdAt = Instant.parse("2026-08-29T09:00:00Z"))
+            Group(
+                id = "group-2",
+                name = "Beta Watchers",
+                createdAt = Instant.parse("2026-08-29T09:00:00Z"),
+                memberCount = 7,
+            )
         val MEDIA =
             MediaSummary(
                 source = MediaSource.ANILIST,
