@@ -1,9 +1,13 @@
 package com.anarky.showtrack.core.designsystem.component
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -19,6 +23,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.anarky.showtrack.core.designsystem.theme.AvatarPalette
+import com.anarky.showtrack.core.model.GroupActor
 
 private const val INITIAL_SCALE = 0.42f
 
@@ -85,5 +90,31 @@ private fun AvatarCircle(
             color = Color.White,
             style = TextStyle(fontSize = (size.value * INITIAL_SCALE).sp, fontWeight = FontWeight.SemiBold),
         )
+    }
+}
+
+/**
+ * Up to [max] member avatars, each overlapping the previous by [overlap] and ringed in the
+ * background colour so the overlap reads as separate faces. Decorative, like [UserAvatar]: every
+ * place that shows a stack also says how many members there are.
+ */
+@Composable
+fun AvatarStack(
+    people: List<GroupActor>,
+    modifier: Modifier = Modifier,
+    size: Dp = 22.dp,
+    overlap: Dp = 6.dp,
+    max: Int = 4,
+) {
+    val ring = MaterialTheme.colorScheme.background
+    Row(modifier = modifier.clearAndSetSemantics {}, horizontalArrangement = Arrangement.spacedBy(-overlap)) {
+        people.take(max).forEach { person ->
+            UserAvatar(
+                userId = person.id,
+                name = person.username,
+                size = size,
+                modifier = Modifier.border(width = 2.dp, color = ring, shape = CircleShape),
+            )
+        }
     }
 }
