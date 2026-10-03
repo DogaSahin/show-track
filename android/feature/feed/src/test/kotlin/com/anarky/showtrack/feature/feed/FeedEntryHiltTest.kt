@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.navigation.NavDestination.Companion.hasRoute
@@ -122,8 +123,10 @@ class FeedEntryHiltTest {
 
         val context = ApplicationProvider.getApplicationContext<Context>()
         composeRule
-            .onNodeWithText("${ACTOR.username} " + context.getString(R.string.feed_action_rated, MEDIA_RATED.title))
-            .performClick()
+            .onNodeWithContentDescription(
+                "${ACTOR.username} " + context.getString(R.string.feed_action_rated, MEDIA_RATED.title),
+                substring = true,
+            ).performClick()
         composeRule.waitForIdle()
 
         assertTrue(navController.currentDestination?.hasRoute(DetailRoute::class) == true)

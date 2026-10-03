@@ -65,3 +65,23 @@ val Crimson40 = Color(0xFFB3261E)
 val Crimson20 = Color(0xFF4A1116)
 val Crimson90 = Color(0xFFFAD8D5)
 val Crimson95 = Color(0xFFFCEEEE)
+
+/** The star on a score: warm gold, so a rating reads as a rating on any background. */
+val StarGold = Color(0xFFF2B84B)
+
+/**
+ * Member avatar colours. A person's colour is picked from this list by their user id, so they look
+ * the same in the feed, on the race track and in group lists. Every entry carries a white initial
+ * in both themes, which is why these are mid-tones rather than theme roles.
+ */
+val AvatarPalette =
+    listOf(
+        Color(0xFFC2477A),
+        Color(0xFF2F8FA8),
+        Color(0xFFD4A017),
+        Color(0xFF5546D9),
+        Color(0xFF11796C),
+        Color(0xFFB8572B),
+        Color(0xFF7A4FB5),
+        Color(0xFF41598F),
+    )

@@ -1,5 +1,10 @@
 <resources>
-    <string name="feed_title">Activity</string>
+    <!-- Matches the tab name. -->
+    <string name="feed_title">Feed</string>
+
+    <!-- The group switcher in the title bar. %1$s is the active group's name. -->
+    <string name="feed_switch_group">Switch group, current group %1$s</string>
+    <string name="feed_manage_groups">Manage groups</string>
 
     <!-- Ruling 1 (9c.4/9c.5 circularity, progress.md): FeedScreen renders this when
          activeGroupId is null — no group is active yet, because task 9c.5 (the group switcher)
@@ -39,6 +44,27 @@
     <string name="feed_action_rated">rated %1$s</string>
     <string name="feed_action_completed">finished %1$s</string>
     <string name="feed_action_dropped">dropped %1$s</string>
+    <!-- A rating event whose payload cleared the score (score: null). -->
+    <string name="feed_action_unrated">removed their score for %1$s</string>
+
+    <!-- A progress event whose payload has the episode count after the change. %1$d is that
+         count, %2$s the title. Never "watched N episodes": the events record the count after
+         each change, not how many episodes each one added. -->
+    <plurals name="feed_action_progressed_count">
+        <item quantity="one">is %1$d episode into %2$s</item>
+        <item quantity="other">is %1$d episodes into %2$s</item>
+    </plurals>
+
+    <!-- The chip under an event, and how TalkBack says it. A run of progress updates on one day
+         reads "Ep 13 → 15" (first count to last); a single one "Ep 15". -->
+    <string name="feed_progress_range">Ep %1$d → %2$d</string>
+    <string name="feed_progress_single">Ep %1$d</string>
+    <string name="feed_progress_range_spoken">episodes %1$d to %2$d</string>
+    <string name="feed_progress_single_spoken">episode %1$d</string>
+    <!-- %1$s is the score as the server sends it, for example 9.5. -->
+    <string name="feed_score_spoken">score %1$s</string>
+    <string name="feed_dropped_at">at ep %1$d</string>
+    <string name="feed_dropped_at_spoken">at episode %1$d</string>
 
     <!-- Day headings. Only today and yesterday get a word: those are the two a reader can place
          without reading a date. Everything older gets a real localised date, because a day heading
