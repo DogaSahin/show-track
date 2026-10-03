@@ -373,6 +373,8 @@ class RecommendationRepositoryTest {
         override suspend fun groupMembers(groupId: String): List<MemberDto> =
             error("this fake only serves refresh/loadMore/remove")
 
+        override suspend fun groupInvite(groupId: String): GroupWithInviteDto = error("not used")
+
         override suspend fun rotateGroupInvite(groupId: String): GroupWithInviteDto =
             error("this fake only serves refresh/loadMore/remove")
 

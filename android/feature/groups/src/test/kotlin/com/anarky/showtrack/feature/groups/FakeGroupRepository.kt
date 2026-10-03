@@ -161,6 +161,17 @@ internal class FakeGroupRepository(
         return membersResult
     }
 
+    var inviteResult: GroupWithInvite? = null
+    var inviteFailure: GroupFailure? = null
+    var inviteCalls = 0
+        private set
+
+    override suspend fun invite(groupId: String): GroupWithInvite {
+        inviteCalls++
+        inviteFailure?.let { throw GroupOperationException(it) }
+        return inviteResult ?: error("inviteResult not set for this test")
+    }
+
     override suspend fun rotateInvite(groupId: String): GroupWithInvite {
         rotateCalls++
         rotateThrows?.let { throw it }

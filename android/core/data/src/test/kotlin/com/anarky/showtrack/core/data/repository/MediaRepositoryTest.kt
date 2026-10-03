@@ -233,6 +233,8 @@ class MediaRepositoryTest {
 
         override suspend fun groupMembers(groupId: String): List<MemberDto> = TODO("not used")
 
+        override suspend fun groupInvite(groupId: String): GroupWithInviteDto = error("not used")
+
         override suspend fun rotateGroupInvite(groupId: String): GroupWithInviteDto = TODO("not used")
 
         override suspend fun removeGroupMember(

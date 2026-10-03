@@ -1,9 +1,11 @@
 package com.anarky.showtrack.core.data.repository
 
 import com.anarky.showtrack.core.model.ActivityKind
+import com.anarky.showtrack.core.model.GroupActor
 import com.anarky.showtrack.core.model.GroupFailure
 import com.anarky.showtrack.core.model.GroupRole
 import com.anarky.showtrack.core.model.UserMediaStatus
+import com.anarky.showtrack.core.model.WatchlistCover
 import com.anarky.showtrack.core.network.api.ShowTrackApi
 import com.anarky.showtrack.core.network.dto.AddLibraryEntryRequest
 import com.anarky.showtrack.core.network.dto.CreateGroupRequestDto
@@ -31,6 +33,7 @@ import com.anarky.showtrack.core.network.dto.ReviewDto
 import com.anarky.showtrack.core.network.dto.UserDto
 import com.anarky.showtrack.core.network.dto.WatchlistItemDto
 import com.anarky.showtrack.core.network.dto.WatchlistPageDto
+import com.anarky.showtrack.core.network.dto.WatchlistPreviewDto
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -157,6 +160,49 @@ class GroupRepositoryImplTest {
             assertTrue(groupFailure is GroupFailure.AlreadyReviewed)
             // The backend's 409 body carries no id (a fixed detail string) — see that case's own KDoc.
             assertNull((groupFailure as GroupFailure.AlreadyReviewed).existingReviewId)
+        }
+
+    @Test
+    fun `groups map the summary, and a role this client does not know reads as unknown`() =
+        runTest {
+            val api = FakeApi()
+            api.groupsResponse =
+                listOf(
+                    GroupDto(
+                        id = "group-1",
+                        name = "Home",
+                        createdAt = "2026-09-01T10:00:00Z",
+                        myRole = "owner",
+                        memberCount = 4,
+                        memberPreview = listOf(GroupActorDto(id = "user-1", username = "mira")),
+                        watchlistCount = 6,
+                        watchlistPreview = listOf(WatchlistPreviewDto(mediaId = "media-1", coverImageUrl = null)),
+                    ),
+                    GroupDto(id = "group-2", name = "Club", createdAt = "2026-09-02T10:00:00Z", myRole = "moderator"),
+                )
+
+            val (home, club) = repository(api).groups()
+
+            assertEquals(GroupRole.OWNER, home.myRole)
+            assertEquals(4, home.memberCount)
+            assertEquals(listOf(GroupActor(id = "user-1", username = "mira")), home.memberPreview)
+            assertEquals(6, home.watchlistCount)
+            assertEquals(listOf(WatchlistCover(mediaId = "media-1", coverImageUrl = null)), home.watchlistPreview)
+            assertNull(club.myRole)
+            assertNull(club.memberCount)
+        }
+
+    @Test
+    fun `invite reads the current code, and a 403 surfaces NotPermitted`() =
+        runTest {
+            val api = FakeApi()
+
+            val current = repository(api).invite("group-1")
+            api.inviteFailure = httpError(403)
+            val failure = runCatching { repository(api).invite("group-1") }.exceptionOrNull()
+
+            assertEquals(api.groupWithInviteResponse.inviteCode, current.inviteCode)
+            assertEquals(GroupFailure.NotPermitted, (failure as GroupOperationException).failure)
         }
 
     /**
@@ -599,6 +645,13 @@ class GroupRepositoryImplTest {
         }
 
         override suspend fun groupMembers(groupId: String): List<MemberDto> = membersResponse
+
+        var inviteFailure: Throwable? = null
+
+        override suspend fun groupInvite(groupId: String): GroupWithInviteDto {
+            inviteFailure?.let { throw it }
+            return groupWithInviteResponse
+        }
 
         override suspend fun rotateGroupInvite(groupId: String): GroupWithInviteDto {
             rotateFailure?.let { throw it }
