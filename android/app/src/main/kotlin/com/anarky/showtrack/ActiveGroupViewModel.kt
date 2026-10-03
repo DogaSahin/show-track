@@ -146,7 +146,7 @@ class ActiveGroupViewModel
             }
         }
 
-        /** [GroupSwitcher][com.anarky.showtrack.core.designsystem.component.GroupSwitcher]'s own callback. */
+        /** The Feed group switcher's own callback. */
         fun selectGroup(groupId: String) {
             viewModelScope.launch { activeGroupStore.setActiveGroup(groupId) }
         }

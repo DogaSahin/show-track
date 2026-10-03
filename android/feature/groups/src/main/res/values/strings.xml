@@ -4,6 +4,15 @@
     <string name="groups_create_action">Create</string>
     <string name="groups_join_action">Join by code</string>
 
+    <!-- A group card in the list. -->
+    <plurals name="groups_card_members">
+        <item quantity="one">%d member</item>
+        <item quantity="other">%d members</item>
+    </plurals>
+    <string name="groups_card_active">Active</string>
+    <string name="groups_card_watchlist_empty">Nothing on the watchlist yet</string>
+    <!-- After the preview posters, how many more titles the watchlist holds. -->
+    <string name="groups_card_more">+%1$d</string>
     <string name="groups_empty_message">You\'re not in any groups yet. Create one or join with a code.</string>
 
     <string name="groups_create_title">Create a group</string>
@@ -69,7 +78,7 @@
 
     <!-- ===== Group detail (task 9c.2) — GroupDetailScreen.kt, GroupDetailDialogs.kt ===== -->
 
-    <string name="groups_detail_title">Members</string>
+    <string name="groups_detail_title">Group</string>
     <string name="groups_detail_role_owner">Owner</string>
     <string name="groups_detail_role_member">Member</string>
     <!-- StaleDataBanner's messageRes parameter (fix round 1's own precedent on GroupsScreen) —
@@ -79,7 +88,7 @@
     <!-- Owner only (E-F) — GroupDetailScreen hides this control entirely for a non-owner rather
          than disabling it (decision E-F: the server enforces the rule regardless, so the UI's
          only job is not to offer a dead end). -->
-    <string name="groups_detail_rotate_action">Rotate invite code</string>
+    <string name="groups_detail_rotate_action">New invite code</string>
     <string name="groups_detail_rotate_confirm_title">Rotate the invite code?</string>
     <!-- E-I: rotating means the previous code stops working — the copy this task's brief
          requires ("the copy must say the previous code stops working — that is what rotation
@@ -87,9 +96,6 @@
     <string name="groups_detail_rotate_confirm_message">The current invite code will stop working immediately. Anyone who has not joined yet will need the new one.</string>
     <string name="groups_detail_rotate_confirm_button">Rotate</string>
     <string name="groups_detail_rotate_cancel">Cancel</string>
-    <!-- The InviteCodeCard reused from GroupsScreen.kt (generalised to take its own title —
-         "You're in %1$s" makes no sense for a rotate, since the reader is already a member). -->
-    <string name="groups_detail_rotated_title">New invite code</string>
 
     <!-- Offered to EVERY member, owner included (backend's remove_member permits self-removal
          unconditionally — G-E's ownership-transfer rule only ever gates removing SOMEONE ELSE). -->
@@ -119,7 +125,43 @@
 
     <!-- ===== Shared watchlist (task 9c.3) — GroupWatchlistSection.kt, GroupWatchlistDialogs.kt ===== -->
 
-    <string name="groups_watchlist_section_title">Shared watchlist</string>
+    <!-- The group page. -->
+    <string name="groups_back">Back</string>
+    <string name="groups_detail_more">More options</string>
+    <string name="groups_tab_watchlist">Watchlist</string>
+    <string name="groups_tab_watchlist_count">Watchlist %1$d</string>
+    <string name="groups_tab_members_count">Members %1$d</string>
+    <!-- Your own row in the member list. %1$s is your username. -->
+    <string name="groups_member_name_you">%1$s (you)</string>
+    <!-- %1$s is the month and year, e.g. Mar 2025. -->
+    <string name="groups_member_joined">joined %1$s</string>
+    <!-- The ⋯ on a member's row (owner only). %1$s is that member's name. -->
+    <string name="groups_member_more">More options for %1$s</string>
+    <string name="groups_watchlist_empty_hint">Open any show and tap Propose to a group.</string>
+
+    <!-- The owner's invite strip. %1$s is how long the code works, or that it expired. -->
+    <string name="groups_invite_strip_label">Invite code · %1$s</string>
+    <plurals name="groups_invite_works_days">
+        <item quantity="one">works %d more day</item>
+        <item quantity="other">works %d more days</item>
+    </plurals>
+    <plurals name="groups_invite_works_hours">
+        <item quantity="one">works %d more hour</item>
+        <item quantity="other">works %d more hours</item>
+    </plurals>
+    <string name="groups_invite_works_soon">works less than an hour more</string>
+    <!-- %1$s is how long ago, in the platform's wording, e.g. "2 days ago". -->
+    <string name="groups_invite_strip_expired">Expired %1$s</string>
+    <string name="groups_invite_new_code">New code</string>
+    <string name="groups_invite_fallback">Invite people</string>
+    <!-- The owner's strip while the current code is still loading. -->
+    <string name="groups_invite_loading">Invite code</string>
+    <string name="groups_invite_share">Share invite code</string>
+    <!-- What the share sheet sends. %1$s is the group name, %2$s the code. -->
+    <string name="groups_invite_share_text">Join my group %1$s on ShowTrack with code %2$s</string>
+    <!-- How TalkBack reads the strip. %1$s is the code spelled one character at a time, %2$s the label. -->
+    <string name="groups_invite_strip_spoken">Invite code %1$s, %2$s</string>
+
     <string name="groups_watchlist_empty_message">No one has proposed a title yet.</string>
     <string name="groups_watchlist_page_error">Couldn\'t load more titles. Tap to retry.</string>
     <!-- Fix round 1, finding B2: a RELOAD failure (first page or a later background refresh) is a

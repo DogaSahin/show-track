@@ -129,7 +129,7 @@ class ActiveGroupViewModelTest {
     /**
      * [ActiveGroupViewModel.selectGroup] writes through to the store, and the resolved
      * [ActiveGroupState.Success.activeGroupId] reacts to that write — proving the round trip this
-     * class exists for: [com.anarky.showtrack.core.designsystem.component.GroupSwitcher]'s own
+     * class exists for: the Feed group switcher's own
      * callback reaches persistence, and persistence reaches back into the resolved state, entirely
      * through the store's `Flow`, not a locally-mutated field.
      */

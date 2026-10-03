@@ -4,7 +4,6 @@ import android.content.ClipData
 import android.content.ClipDescription
 import android.os.Build
 import android.os.PersistableBundle
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,11 +11,14 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -26,7 +28,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
@@ -38,13 +39,15 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.anarky.showtrack.core.data.repository.GroupWithInvite
 import com.anarky.showtrack.core.designsystem.component.EmptyState
 import com.anarky.showtrack.core.designsystem.component.ErrorState
-import com.anarky.showtrack.core.designsystem.component.GroupSwitcher
+import com.anarky.showtrack.core.designsystem.component.LargeTitleScaffold
 import com.anarky.showtrack.core.designsystem.component.LoadingState
 import com.anarky.showtrack.core.designsystem.component.StaleDataBanner
 import com.anarky.showtrack.core.model.ActiveGroupState
 import com.anarky.showtrack.core.model.Group
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+
+private val ActionHeight = 40.dp
 
 /**
  * The stateful entry point. `hiltViewModel()` is the only line here that touches DI —
@@ -65,63 +68,22 @@ import kotlinx.coroutines.launch
  *
  * [activeGroup] arrives as a `StateFlow<ActiveGroupState>` (task 9c.5) and is collected here,
  * inside this composable's own body — `FeedScreen`'s identical reasoning (`FeedNavigation.kt`'s own
- * KDoc): `groupsEntry`'s registration runs far less often than the active group can change.
- * [ActiveGroupState.Loading]/[ActiveGroupState.Error] both resolve to a `null` active id, so no
- * switcher renders.
+ * KDoc): `groupsEntry`'s registration runs far less often than the active group can change. It
+ * marks the active group's card "Active"; switching groups happens in the Feed's title bar.
  *
- * **BOTH halves of the switcher come from [activeGroup] (whole-branch fix round, BLOCKING 3): the
- * selected id AND the tabs.** They used to come from two different lists — the tabs from
- * [GroupsViewModel]'s own [GroupsUiState.Success.groups], the selection validated inside
- * `ActiveGroupViewModel.recompute` against ITS list — and this is the one screen where the two can
- * diverge, because it is the one screen where groups are created and joined. Creating or joining a
- * group appended it to [GroupsViewModel]'s list immediately (`applyGroupChange`) without
- * navigating, so `ActiveGroupViewModel` never re-fetched: the new group appeared as a tappable tab
- * whose id `recompute`'s fallback then rejected, silently reverting the selection to the old group
- * AND overwriting the user's choice in `ActiveGroupStore` — a tap that visibly snapped back with no
- * error and did not survive to the next launch. `FeedScreen` and `DetailScreen` never had this
- * because they already render from [activeGroup]'s own list; this screen now agrees with them, so
- * there is ONE owner of "which groups exist" for switching purposes rather than two lists to keep
- * in step.
+ * [onRetryGroups] is `ActiveGroupViewModel::refresh`, and it has two triggers here: a successful
+ * create/join changes this account's membership, so the app-wide groups list must be re-read (the
+ * Feed switcher renders from it), and the [ActiveGroupState.Error] banner's Retry. One parameter,
+ * not two of the same type bound to the same function.
  *
- * [onRetryGroups] is what stops that single owner going stale here, and it has TWO triggers on this
- * screen rather than one. `:app` binds it to `ActiveGroupViewModel::refresh` — the same value
- * `feedEntry` receives under the same name — and it fires (a) when a successful create/join changes
- * this account's membership, so the new group reaches the switcher without the user navigating away
- * and back, and (b) from the [ActiveGroupState.Error] banner's Retry. One parameter, not two of the
- * same type bound to the same function: an `(onGroupsChanged, onRetryGroups)` pair would be exactly
- * the inert same-type wire this project has shipped five times.
- *
- * [GroupsViewModel] keeps its own list for the screen's CONTENT — the rows, the invite banner, the
- * stale banner — which is a different concern with its own failure channel, not a second copy of
- * the switcher's list.
- *
- * Six parameters trips detekt's `LongParameterList` (threshold 6); suppressed rather than bundled
- * into a holder, matching the stateless overload's own identical suppression and `FeedScreen`'s —
- * a holder that exists for this one call site is indirection without fewer moving parts.
- *
- * **What that actually looks like for the person on this screen (fix round 2 — an earlier version
- * of this paragraph described the CODE, not what is on screen).** [GroupsViewModel.state] is
- * independent of [activeGroup] and loads on its own resume-driven schedule, so it is entirely
- * possible for [GroupsViewModel.state] to already be a [GroupsUiState.Success] with three groups
- * fully listed WHILE [activeGroup] is still [ActiveGroupState.Loading] or has landed on
- * [ActiveGroupState.Error] — the two fetches race, and nothing here waits for one on the other. In
- * the [ActiveGroupState.Loading] half of that window the person sees the full group list and no
- * switcher: no indication of which group is currently active. That much is still accepted, and it
- * self-heals — [ActiveGroupViewModel.refresh] fires on arrival at Groups (`ShowTrackApp`'s own
- * destination effect) and the switcher appears when it lands.
- *
- * **The [ActiveGroupState.Error] half is no longer accepted (fix round, M3).** It used to render
- * exactly the same nothing, and this KDoc pointed at Feed's retry as the recovery — which meant
- * leaving the screen you are on to fix a failure reported on it, and only if you knew to. That was
- * not a design choice so much as an omission: `groupsEntry` was the one groups-shaped entry in
- * `appDestinations` that received no `onRetryGroups` at all, so there was nothing to wire a retry
- * to even if the screen had rendered one. It now renders a banner with a live Retry.
+ * [GroupsViewModel] keeps its own list for the screen's CONTENT — the cards, the invite card, the
+ * stale banner — a different concern with its own failure channel. The two fetches race: while
+ * [activeGroup] is still loading, the cards show with no "Active" mark, which fills in when it lands.
  */
 @Suppress("LongParameterList")
 @Composable
 fun GroupsScreen(
     activeGroup: StateFlow<ActiveGroupState>,
-    onSwitchGroup: (String) -> Unit,
     onRetryGroups: () -> Unit,
     onGroupClick: (Group) -> Unit,
     modifier: Modifier = Modifier,
@@ -148,7 +110,6 @@ fun GroupsScreen(
 
     GroupsScreen(
         activeGroup = currentActiveGroup,
-        onSwitchGroup = onSwitchGroup,
         onRetryGroups = onRetryGroups,
         state = state,
         actionState = actionState,
@@ -216,22 +177,10 @@ fun GroupsScreen(
  * `GroupsViewModel.clearCreateError`/`clearJoinError`, which clear only their own
  * [GroupsActionState] field — the SEPARATE channel discipline (decision C-S) applies here too.
  *
- * **[activeGroupId]/[onSwitchGroup] (task 9c.5)** carry no default (fix round 2, BLOCKING F2 —
- * they briefly did, `= null`/`= {}`, purely so pre-existing tests kept compiling, and a reviewer
- * measured the cost: dropping the real [onSwitchGroup] argument from the stateful overload's own
- * call above still compiled, and the switcher's tap silently did nothing). Every test call site in
- * `GroupsScreenTest` now passes both explicitly, most with `activeGroup = ActiveGroupState.Loading` — with that,
- * [GroupSwitcher] is never reached, same rendering outcome the old default produced, but no longer
- * because a missing argument is invisible.
- *
- * **[activeGroup] arrives whole, and the switcher's tabs come from it (whole-branch fix round,
- * BLOCKING 3).** The tabs used to be read off `(state as? GroupsUiState.Success)?.groups`, which
- * put the switcher's TABS and the switcher's VALIDATION on two independently-refreshed lists — see
- * the stateful overload's own KDoc for the reverted-selection bug that produced. Taking the whole
- * [ActiveGroupState] rather than a `String?`/`List<Group>` pair is `FeedScreen`'s own stateless
- * shape, and it is what lets this overload distinguish the three cases at all — [ActiveGroupState.Error]
- * now renders a retry banner instead of the same nothing [ActiveGroupState.Loading] does (M3).
- * [GroupSwitcher]'s `groups.size < 2` gate (E-K) still means an empty list renders nothing here.
+ * [activeGroup] and [onRetryGroups] carry no default (fix round 2, BLOCKING F2): a default here
+ * is what once let the real wiring be dropped from the stateful overload with everything still
+ * compiling. [ActiveGroupState.Error] renders a retry banner above the cards rather than replacing
+ * them: the account's own list may have loaded perfectly well.
  */
 @Suppress("LongParameterList")
 @Composable
@@ -246,7 +195,6 @@ internal fun GroupsScreen(
     onJoinDialogOpened: () -> Unit,
     onGroupClick: (Group) -> Unit,
     activeGroup: ActiveGroupState,
-    onSwitchGroup: (String) -> Unit,
     onRetryGroups: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -261,29 +209,30 @@ internal fun GroupsScreen(
         }
     }
 
-    Column(modifier = modifier.fillMaxSize()) {
-        GroupsTopBar(
-            onCreateClick = {
-                onCreateDialogOpened()
-                showCreateDialog = true
-            },
-            onJoinClick = {
-                onJoinDialogOpened()
-                showJoinDialog = true
-            },
-        )
-        ActiveGroupChrome(
-            activeGroup = activeGroup,
-            onSwitchGroup = onSwitchGroup,
-            onRetryGroups = onRetryGroups,
-        )
-        GroupsContent(
-            state = state,
-            onRetry = onRetry,
-            onDismissInvite = onDismissInvite,
-            onGroupClick = onGroupClick,
-            modifier = Modifier.weight(weight = 1f).fillMaxWidth(),
-        )
+    LargeTitleScaffold(title = stringResource(R.string.groups_title), modifier = modifier.fillMaxSize()) { padding ->
+        Column(modifier = Modifier.padding(padding).fillMaxSize()) {
+            GroupsActions(
+                onCreateClick = {
+                    onCreateDialogOpened()
+                    showCreateDialog = true
+                },
+                onJoinClick = {
+                    onJoinDialogOpened()
+                    showJoinDialog = true
+                },
+            )
+            if (activeGroup is ActiveGroupState.Error) {
+                StaleDataBanner(onRetry = onRetryGroups, messageRes = R.string.groups_active_group_error)
+            }
+            GroupsContent(
+                state = state,
+                activeGroupId = (activeGroup as? ActiveGroupState.Success)?.activeGroupId,
+                onRetry = onRetry,
+                onDismissInvite = onDismissInvite,
+                onGroupClick = onGroupClick,
+                modifier = Modifier.weight(weight = 1f).fillMaxWidth(),
+            )
+        }
     }
 
     if (showCreateDialog) {
@@ -305,54 +254,15 @@ internal fun GroupsScreen(
 }
 
 /**
- * The row between [GroupsTopBar] and the group list that belongs to the ACTIVE group rather than to
- * this screen's own list — pulled out of the stateless [GroupsScreen] overload for the same reason
- * [GroupsContent] was, to keep that function under detekt's `LongMethod` threshold; no behaviour
- * moved with it that the caller could observe differently.
- *
- * All three [ActiveGroupState] cases are answered here, which they were not before (fix round, M3):
- *
- * - [ActiveGroupState.Loading] renders nothing. This screen's own list loads on its own schedule
- *   and is worth showing meanwhile — the stateful overload's KDoc describes that window.
- * - [ActiveGroupState.Error] renders a banner with a live Retry, NOT an `ErrorState`. `FeedScreen`
- *   replaces its whole content for this state because it has nothing else to show; here the
- *   account's own group list may have loaded perfectly well, and blanking it for a failed
- *   active-group fetch would destroy working content to report an unrelated failure. Before this,
- *   `groupsEntry` was handed no retry at all and this state rendered the same nothing `Loading`
- *   does — a dead end escapable only by navigating to Feed and back.
- * - [ActiveGroupState.Success] renders [GroupSwitcher], gated by its own `groups.size < 2` (E-K).
+ * The body below the two actions — pulled out of the stateless [GroupsScreen] overload purely to
+ * keep that function's own length under detekt's `LongMethod` threshold. [activeGroupId] marks
+ * the active group's card; it is null while the active group is unknown.
  */
-@Composable
-private fun ActiveGroupChrome(
-    activeGroup: ActiveGroupState,
-    onSwitchGroup: (String) -> Unit,
-    onRetryGroups: () -> Unit,
-) {
-    when (activeGroup) {
-        is ActiveGroupState.Loading -> Unit
-        is ActiveGroupState.Error ->
-            StaleDataBanner(onRetry = onRetryGroups, messageRes = R.string.groups_active_group_error)
-        is ActiveGroupState.Success -> {
-            val activeGroupId = activeGroup.activeGroupId
-            if (activeGroupId != null) {
-                GroupSwitcher(
-                    groups = activeGroup.groups,
-                    activeGroupId = activeGroupId,
-                    onGroupSelected = onSwitchGroup,
-                )
-            }
-        }
-    }
-}
-
-/**
- * The body below [ActiveGroupChrome] — pulled out of the stateless [GroupsScreen] overload purely
- * to keep that function's own length under detekt's `LongMethod` threshold; no behaviour moved with
- * it that the caller could observe differently.
- */
+@Suppress("LongParameterList")
 @Composable
 private fun GroupsContent(
     state: GroupsUiState,
+    activeGroupId: String?,
     onRetry: () -> Unit,
     onDismissInvite: () -> Unit,
     onGroupClick: (Group) -> Unit,
@@ -370,6 +280,7 @@ private fun GroupsContent(
             is GroupsUiState.Success ->
                 GroupsSuccessContent(
                     state = state,
+                    activeGroupId = activeGroupId,
                     onRetry = onRetry,
                     onDismissInvite = onDismissInvite,
                     onGroupClick = onGroupClick,
@@ -391,6 +302,7 @@ private fun GroupsContent(
 @Composable
 private fun GroupsSuccessContent(
     state: GroupsUiState.Success,
+    activeGroupId: String?,
     onRetry: () -> Unit,
     onDismissInvite: () -> Unit,
     onGroupClick: (Group) -> Unit,
@@ -413,32 +325,36 @@ private fun GroupsSuccessContent(
                     modifier = Modifier.fillMaxSize(),
                 )
             } else {
-                GroupsList(groups = state.groups, onGroupClick = onGroupClick)
+                GroupsList(groups = state.groups, activeGroupId = activeGroupId, onGroupClick = onGroupClick)
             }
         }
     }
 }
 
+/** Create group (filled) and Join with code (outlined), side by side under the title. */
 @Composable
-private fun GroupsTopBar(
+private fun GroupsActions(
     onCreateClick: () -> Unit,
     onJoinClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Row(
+        horizontalArrangement = Arrangement.spacedBy(space = 8.dp),
         modifier = modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            text = stringResource(R.string.groups_title),
-            style = MaterialTheme.typography.titleLarge,
-            modifier = Modifier.weight(weight = 1f),
-        )
-        TextButton(onClick = onJoinClick) {
-            Text(text = stringResource(R.string.groups_join_action))
-        }
-        TextButton(onClick = onCreateClick) {
+        Button(
+            onClick = onCreateClick,
+            shape = MaterialTheme.shapes.medium,
+            modifier = Modifier.weight(1f).height(ActionHeight),
+        ) {
             Text(text = stringResource(R.string.groups_create_action))
+        }
+        OutlinedButton(
+            onClick = onJoinClick,
+            shape = MaterialTheme.shapes.medium,
+            modifier = Modifier.weight(1f).height(ActionHeight),
+        ) {
+            Text(text = stringResource(R.string.groups_join_action))
         }
     }
 }
@@ -532,7 +448,7 @@ internal fun InviteCodeCard(
  * a plain function so it is callable (and its `Build.VERSION.SDK_INT` branch testable in
  * isolation) without composing anything.
  */
-private fun sensitiveInviteCodeClipEntry(
+internal fun sensitiveInviteCodeClipEntry(
     label: String,
     code: String,
 ): ClipEntry {
@@ -549,34 +465,20 @@ private fun sensitiveInviteCodeClipEntry(
 @Composable
 private fun GroupsList(
     groups: List<Group>,
+    activeGroupId: String?,
     onGroupClick: (Group) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     LazyColumn(
         modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(all = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(space = 8.dp),
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(space = 10.dp),
     ) {
         // Keyed by group id: without a key, LazyColumn identifies items by index and a refresh
         // that reorders the list re-uses the wrong composable state for the wrong row.
         items(items = groups, key = Group::id) { group ->
-            GroupRow(group = group, onClick = { onGroupClick(group) })
+            GroupCard(group = group, isActive = group.id == activeGroupId, onClick = { onGroupClick(group) })
         }
-    }
-}
-
-@Composable
-private fun GroupRow(
-    group: Group,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Card(modifier = modifier.fillMaxWidth().clickable(onClick = onClick)) {
-        Text(
-            text = group.name,
-            style = MaterialTheme.typography.titleMedium,
-            modifier = Modifier.padding(all = 16.dp),
-        )
     }
 }
 

@@ -67,6 +67,8 @@ data object GroupsRoute : AppRoute
 @Serializable
 data class GroupDetailRoute(
     val groupId: String,
+    /** The name the groups list already shows, for the page header; null when the caller has none. */
+    val groupName: String? = null,
 ) : AppRoute
 
 @Serializable

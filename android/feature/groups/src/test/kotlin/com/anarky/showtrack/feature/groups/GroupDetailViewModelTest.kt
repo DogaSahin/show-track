@@ -106,7 +106,7 @@ class GroupDetailViewModelTest {
             advanceUntilIdle()
 
             assertEquals(
-                GroupDetailUiState.Success(members = listOf(OWNER, MEMBER)),
+                GroupDetailUiState.Success(members = listOf(OWNER, MEMBER), watchlistComplete = true),
                 viewModel.state.value,
             )
             assertEquals(OWNER.userId, viewModel.currentUserId.value)
@@ -151,7 +151,10 @@ class GroupDetailViewModelTest {
             val groupRepository = FakeGroupRepository(membersResult = listOf(OWNER))
             val viewModel = viewModel(groupRepository)
             advanceUntilIdle()
-            assertEquals(GroupDetailUiState.Success(members = listOf(OWNER)), viewModel.state.value)
+            assertEquals(
+                GroupDetailUiState.Success(members = listOf(OWNER), watchlistComplete = true),
+                viewModel.state.value,
+            )
 
             groupRepository.membersResult = listOf(OWNER, MEMBER)
             groupRepository.membersGate = CompletableDeferred()
@@ -160,12 +163,18 @@ class GroupDetailViewModelTest {
 
             // Still the OLD member list, and still Success — never Loading — while the network
             // round trip this refresh triggered is genuinely still in flight.
-            assertEquals(GroupDetailUiState.Success(members = listOf(OWNER)), viewModel.state.value)
+            assertEquals(
+                GroupDetailUiState.Success(members = listOf(OWNER), watchlistComplete = true),
+                viewModel.state.value,
+            )
 
             groupRepository.membersGate?.complete(Unit)
             advanceUntilIdle()
 
-            assertEquals(GroupDetailUiState.Success(members = listOf(OWNER, MEMBER)), viewModel.state.value)
+            assertEquals(
+                GroupDetailUiState.Success(members = listOf(OWNER, MEMBER), watchlistComplete = true),
+                viewModel.state.value,
+            )
         }
 
     @Test
@@ -180,7 +189,7 @@ class GroupDetailViewModelTest {
             advanceUntilIdle()
 
             assertEquals(
-                GroupDetailUiState.Success(members = listOf(OWNER), isStale = true),
+                GroupDetailUiState.Success(members = listOf(OWNER), isStale = true, watchlistComplete = true),
                 viewModel.state.value,
             )
         }
@@ -1231,6 +1240,64 @@ class GroupDetailViewModelTest {
             viewModel.clearRemoveEntryError()
             assertNull(viewModel.actionState.value.removeEntryError)
             assertEquals(GroupFailure.NotPermitted, viewModel.actionState.value.removeError)
+        }
+
+    @Test
+    fun `loadInvite reads the current code once, and a failure leaves the strip on its fallback`() =
+        runTest(dispatcher) {
+            val groupRepository = FakeGroupRepository(membersResult = listOf(OWNER))
+            groupRepository.inviteResult = INVITE
+            val viewModel = viewModel(groupRepository = groupRepository)
+            advanceUntilIdle()
+
+            viewModel.loadInvite()
+            viewModel.loadInvite()
+            advanceUntilIdle()
+            assertEquals(InviteState.Ready(INVITE), viewModel.invite.value)
+            assertEquals(1, groupRepository.inviteCalls)
+
+            val failing = FakeGroupRepository(membersResult = listOf(OWNER))
+            failing.inviteFailure = GroupFailure.NotPermitted
+            val other = viewModel(groupRepository = failing)
+            other.loadInvite()
+            advanceUntilIdle()
+            assertEquals(InviteState.Unavailable, other.invite.value)
+        }
+
+    @Test
+    fun `a read that lands after a rotate does not bring the old code back`() =
+        runTest(dispatcher) {
+            val groupRepository = FakeGroupRepository(membersResult = listOf(OWNER))
+            val oldCode = INVITE.copy(inviteCode = "OLDCODE00000")
+            val gate = CompletableDeferred<Unit>()
+            groupRepository.inviteGate = gate
+            groupRepository.inviteResult = oldCode
+            groupRepository.rotateResult = INVITE
+            val viewModel = viewModel(groupRepository = groupRepository)
+            advanceUntilIdle()
+
+            viewModel.loadInvite()
+            advanceUntilIdle()
+            viewModel.rotateInvite()
+            advanceUntilIdle()
+            gate.complete(Unit)
+            advanceUntilIdle()
+
+            assertEquals(InviteState.Ready(INVITE), viewModel.invite.value)
+        }
+
+    @Test
+    fun `a successful rotate puts the new code in the strip`() =
+        runTest(dispatcher) {
+            val groupRepository = FakeGroupRepository(membersResult = listOf(OWNER))
+            groupRepository.rotateResult = INVITE
+            val viewModel = viewModel(groupRepository = groupRepository)
+            advanceUntilIdle()
+
+            viewModel.rotateInvite()
+            advanceUntilIdle()
+
+            assertEquals(InviteState.Ready(INVITE), viewModel.invite.value)
         }
 
     private companion object {
