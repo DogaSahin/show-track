@@ -5,7 +5,7 @@ from decimal import Decimal
 import pytest
 
 from app.library.models import UserMediaStatus
-from app.media.models import MediaSource
+from app.media.models import MediaSource, MediaType
 from app.pagination import encode_cursor
 from tests.factories import make_media, make_user, make_user_media
 
@@ -344,5 +344,89 @@ async def test_the_favorite_filter_does_not_replace_the_caller_scope(auth_client
     await db_session.flush()
 
     body = (await auth_client.get("/v1/library", params={"favorite": "true"})).json()
+
+    assert body["items"] == []
+
+
+async def _seed_typed(db_session, user_id):
+    """Two anime and two TV titles, one favourite of each, each with a distinct score."""
+    rows = [
+        ("Frieren", MediaType.ANIME, True, "9.5", UserMediaStatus.COMPLETED),
+        ("Dandadan", MediaType.ANIME, False, "8.0", UserMediaStatus.WATCHING),
+        ("Severance", MediaType.TV, True, "9.0", UserMediaStatus.WATCHING),
+        ("Shogun", MediaType.TV, False, "8.5", UserMediaStatus.COMPLETED),
+    ]
+    for title, media_type, favorite, score, entry_status in rows:
+        media = make_media(external_id=uuid.uuid4().hex[:12], title=title, type=media_type)
+        db_session.add(media)
+        await db_session.flush()
+        db_session.add(make_user_media(user_id, media.id, favorite=favorite, score=Decimal(score), status=entry_status))
+    await db_session.flush()
+
+
+@pytest.mark.parametrize("sort", ["score", "next_episode_date", "title"])
+@pytest.mark.parametrize(
+    ("media_type", "expected"), [("anime", {"Frieren", "Dandadan"}), ("tv", {"Severance", "Shogun"})]
+)
+async def test_the_type_filter_returns_only_that_type_under_every_sort(
+    auth_client, db_session, auth_user, sort, media_type, expected
+):
+    await _seed_typed(db_session, auth_user.id)
+
+    body = (await auth_client.get("/v1/library", params={"type": media_type, "sort": sort})).json()
+
+    assert {item["media"]["title"] for item in body["items"]} == expected
+
+
+async def test_the_type_filter_combines_with_favorite_and_status(auth_client, db_session, auth_user):
+    await _seed_typed(db_session, auth_user.id)
+
+    favourites = (await auth_client.get("/v1/library", params={"type": "anime", "favorite": "true"})).json()
+    watching = (await auth_client.get("/v1/library", params={"type": "tv", "status": "watching"})).json()
+
+    assert [item["media"]["title"] for item in favourites["items"]] == ["Frieren"]
+    assert [item["media"]["title"] for item in watching["items"]] == ["Severance"]
+
+
+async def test_paging_with_the_type_filter_returns_every_matching_row_once(auth_client, db_session, auth_user):
+    for index in range(7):
+        anime = make_media(external_id=uuid.uuid4().hex[:12], title=f"Anime {index}", type=MediaType.ANIME)
+        show = make_media(external_id=uuid.uuid4().hex[:12], title=f"Show {index}", type=MediaType.TV)
+        db_session.add_all([anime, show])
+        await db_session.flush()
+        db_session.add_all(
+            [
+                make_user_media(auth_user.id, anime.id, score=Decimal("8.0")),
+                make_user_media(auth_user.id, show.id, score=Decimal("8.0")),
+            ]
+        )
+    await db_session.flush()
+
+    seen = await _page_through(auth_client, {"type": "anime", "sort": "score"}, limit=3)
+
+    assert len(seen) == 7
+    assert len(set(seen)) == 7
+    titles = {
+        item["media"]["title"]
+        for item in (await auth_client.get("/v1/library", params={"type": "anime", "limit": 100})).json()["items"]
+    }
+    assert titles == {f"Anime {index}" for index in range(7)}
+
+
+async def test_an_unknown_type_is_rejected(auth_client):
+    response = await auth_client.get("/v1/library", params={"type": "movie"})
+
+    assert response.status_code == 422
+
+
+async def test_the_type_filter_does_not_replace_the_caller_scope(auth_client, db_session, auth_user):
+    other = make_user(username="type-scope-other", email="type-scope@example.com")
+    shared = make_media(external_id=uuid.uuid4().hex[:12], title="Someone else's anime", type=MediaType.ANIME)
+    db_session.add_all([other, shared])
+    await db_session.flush()
+    db_session.add(make_user_media(other.id, shared.id, favorite=True))
+    await db_session.flush()
+
+    body = (await auth_client.get("/v1/library", params={"type": "anime", "favorite": "true"})).json()
 
     assert body["items"] == []

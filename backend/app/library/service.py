@@ -23,7 +23,7 @@ from app.library.schemas import (
     ReviewRead,
 )
 from app.media import service as media_service
-from app.media.models import Media
+from app.media.models import Media, MediaType
 from app.pagination import Cursor, encode_cursor
 from app.users.models import User
 
@@ -274,6 +274,7 @@ async def list_entries(
     now: datetime,
     media_id: uuid.UUID | None = None,
     favorite: bool | None = None,
+    media_type: MediaType | None = None,
 ) -> tuple[list[LibraryEntry], str | None]:
     """Keyset pagination over a composite (sort_value, id).
 
@@ -307,6 +308,10 @@ async def list_entries(
         statement = statement.where(UserMedia.media_id == media_id)
     if favorite is not None:
         statement = statement.where(UserMedia.favorite == favorite)
+    if media_type is not None:
+        # Not part of the sort key, so the cursor is unchanged: like `status`, a client must send
+        # the same filters with the cursor it was given.
+        statement = statement.where(Media.type == media_type)
     if cursor is not None:
         key = tuple_(expression, UserMedia.id)
         position = (cursor.value, cursor.id)
