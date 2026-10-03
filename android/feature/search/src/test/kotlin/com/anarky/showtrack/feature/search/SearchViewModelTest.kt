@@ -4,6 +4,7 @@ import app.cash.turbine.test
 import com.anarky.showtrack.core.data.paging.Page
 import com.anarky.showtrack.core.data.repository.LibraryRepository
 import com.anarky.showtrack.core.data.repository.MediaRepository
+import com.anarky.showtrack.core.model.EpisodeList
 import com.anarky.showtrack.core.model.LibraryEntry
 import com.anarky.showtrack.core.model.LibraryFilter
 import com.anarky.showtrack.core.model.LibraryPatch
@@ -465,6 +466,8 @@ class SearchViewModelTest {
             source: MediaSource,
             externalId: String,
         ): Media = error("not exercised by SearchViewModel")
+
+        override suspend fun episodes(mediaId: String): EpisodeList = error("not used here")
 
         override suspend fun detail(mediaId: String): Media = error("not exercised by SearchViewModel")
     }

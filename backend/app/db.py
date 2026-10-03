@@ -143,6 +143,13 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
         yield session
 
 
+def get_session_factory() -> async_sessionmaker[AsyncSession]:
+    """For work that outlives a request (a background task), which must not borrow the request's
+    session. A dependency so tests can hand it their own transaction-bound session instead.
+    """
+    return get_sessionmaker()
+
+
 # Postgres' Bind message encodes the parameter count as an int16, so one statement carries at
 # most 32,767 bound parameters, and asyncpg enforces that. `media` binds twelve parameters per
 # row — eleven columns plus the client-side `id` from UUIDPrimaryKeyMixin's uuid4 default, which

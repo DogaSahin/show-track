@@ -44,6 +44,9 @@ class PageProvider(MediaProvider):
     async def get_by_id(self, external_id: str) -> Any:
         return None
 
+    async def get_episodes(self, external_id: str):
+        raise AssertionError("not used")
+
     async def fetch_similar(self, external_id: str):
         raise AssertionError("not used")
 

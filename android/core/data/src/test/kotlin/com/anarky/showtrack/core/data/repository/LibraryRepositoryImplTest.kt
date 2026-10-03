@@ -21,6 +21,7 @@ import com.anarky.showtrack.core.network.api.ShowTrackApi
 import com.anarky.showtrack.core.network.dto.AddLibraryEntryRequest
 import com.anarky.showtrack.core.network.dto.CreateGroupRequestDto
 import com.anarky.showtrack.core.network.dto.CreateReviewRequestDto
+import com.anarky.showtrack.core.network.dto.EpisodeListDto
 import com.anarky.showtrack.core.network.dto.FeedPageDto
 import com.anarky.showtrack.core.network.dto.GenreCountDto
 import com.anarky.showtrack.core.network.dto.GroupDto
@@ -845,6 +846,9 @@ private class FakeShowTrackApi(
         error("this fake only serves observeLibrary/refresh/loadMore")
 
     override suspend fun resolveMedia(request: ResolveMediaRequestDto): MediaDto =
+        error("this fake only serves observeLibrary/refresh/loadMore")
+
+    override suspend fun mediaEpisodes(id: String): EpisodeListDto =
         error("this fake only serves observeLibrary/refresh/loadMore")
 
     override suspend fun me(): UserDto = error("this fake only serves observeLibrary/refresh/loadMore")

@@ -4,6 +4,7 @@ import com.anarky.showtrack.core.network.api.ShowTrackApi
 import com.anarky.showtrack.core.network.dto.AddLibraryEntryRequest
 import com.anarky.showtrack.core.network.dto.CreateGroupRequestDto
 import com.anarky.showtrack.core.network.dto.CreateReviewRequestDto
+import com.anarky.showtrack.core.network.dto.EpisodeListDto
 import com.anarky.showtrack.core.network.dto.FeedPageDto
 import com.anarky.showtrack.core.network.dto.GroupDto
 import com.anarky.showtrack.core.network.dto.GroupWithInviteDto
@@ -357,6 +358,9 @@ class RecommendationRepositoryTest {
         override suspend fun mediaDetail(id: String): MediaDto = error("this fake only serves refresh/loadMore/remove")
 
         override suspend fun resolveMedia(request: ResolveMediaRequestDto): MediaDto =
+            error("this fake only serves refresh/loadMore/remove")
+
+        override suspend fun mediaEpisodes(id: String): EpisodeListDto =
             error("this fake only serves refresh/loadMore/remove")
 
         override suspend fun me(): UserDto = error("this fake only serves refresh/loadMore/remove")

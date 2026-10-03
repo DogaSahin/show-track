@@ -11,7 +11,7 @@ from app.media import service
 from app.media.models import MediaSource
 from app.media.providers import get_providers
 from app.media.providers.base import MediaProvider, MediaRef
-from app.media.schemas import MediaDetail, MediaSearchResponse, ResolveMediaRequest
+from app.media.schemas import EpisodeList, MediaDetail, MediaSearchResponse, ResolveMediaRequest
 from app.users.dependencies import get_current_user
 from app.users.models import User
 
@@ -62,3 +62,12 @@ async def read_media(media_id: uuid.UUID, session: SessionDep) -> MediaDetail:
     if detail is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="media not found")
     return detail
+
+
+@router.get("/{media_id}/episodes", response_model=EpisodeList)
+async def read_episodes(media_id: uuid.UUID, session: SessionDep) -> EpisodeList:
+    """Seasons and episodes from the database; never a provider call."""
+    episodes = await service.get_episode_list(session, media_id, datetime.now(tz=UTC))
+    if episodes is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="media not found")
+    return episodes

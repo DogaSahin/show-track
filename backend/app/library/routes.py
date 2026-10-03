@@ -3,10 +3,10 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db import get_session
+from app.db import get_session, get_session_factory
 from app.library import import_service, service
 from app.library.models import UserMediaStatus
 from app.library.schemas import (
@@ -37,6 +37,7 @@ router = APIRouter(prefix="/library", tags=["library"])
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 ProvidersDep = Annotated[Mapping[MediaSource, MediaProvider], Depends(get_providers)]
 CurrentUserDep = Annotated[User, Depends(get_current_user)]
+SessionFactoryDep = Annotated[media_service.SessionFactory, Depends(get_session_factory)]
 
 # Declared for OpenAPI rather than handled here. app/errors.py owns the mapping; documenting the
 # statuses on the route is what keeps that mapping discoverable from the call site.
@@ -61,6 +62,8 @@ async def add_to_library(
     providers: ProvidersDep,
     current_user: CurrentUserDep,
     response: Response,
+    background_tasks: BackgroundTasks,
+    session_factory: SessionFactoryDep,
 ) -> LibraryEntry:
     """Idempotent (decision 4-D): adding a title already tracked returns it untouched with 200.
 
@@ -84,6 +87,16 @@ async def add_to_library(
     entry, created = await service.add_entry(session, user_id=user_id, media_id=media.id)
     await session.commit()
 
+    if media.episodes_synced_at is None:
+        # After the response, in a session of its own: the episode list is there when the user
+        # opens the title, rather than after the next sync cycle.
+        background_tasks.add_task(
+            media_service.fetch_and_store_episodes,
+            session_factory,
+            providers,
+            media.id,
+            MediaRef(source=media.source, external_id=media.external_id),
+        )
     if not created:
         response.status_code = status.HTTP_200_OK
     return service.to_entry(entry, media, datetime.now(tz=UTC))

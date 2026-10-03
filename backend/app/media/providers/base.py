@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from enum import StrEnum
 from typing import ClassVar, Protocol, runtime_checkable
@@ -29,6 +29,18 @@ class NextEpisode:
     # tz-aware. TMDB supplies a date only, so TMDB values are midnight UTC — fabricated
     # precision, documented in the spec. AniList supplies a real airing timestamp.
     airs_at: datetime | None
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderEpisode:
+    """One episode as a provider lists it. Specials (TMDB season 0) never appear here."""
+
+    season_number: int
+    number: int
+    # None when the provider has no title (AniList never does).
+    title: str | None
+    # Day granularity: TMDB gives a date, and an AniList airing timestamp is cut to its UTC date.
+    air_date: date | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,6 +107,13 @@ class MediaProvider(ABC):
     @abstractmethod
     async def get_by_id(self, external_id: str) -> ProviderMedia | None:
         """None when the provider has no such title. Raises ProviderError subclasses otherwise."""
+
+    @abstractmethod
+    async def get_episodes(self, external_id: str) -> tuple[ProviderEpisode, ...] | None:
+        """Every regular episode of a title, in no particular order; None when the provider has
+        no such title. Raises ProviderError subclasses otherwise, never returns a partial list:
+        a caller replaces what it stored with this answer, so a half list would delete episodes.
+        """
 
     @abstractmethod
     async def fetch_similar(self, external_id: str) -> Sequence[MediaRef]:

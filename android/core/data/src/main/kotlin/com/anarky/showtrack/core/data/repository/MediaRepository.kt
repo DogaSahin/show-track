@@ -1,5 +1,6 @@
 package com.anarky.showtrack.core.data.repository
 
+import com.anarky.showtrack.core.model.EpisodeList
 import com.anarky.showtrack.core.model.Media
 import com.anarky.showtrack.core.model.MediaSource
 import com.anarky.showtrack.core.model.SearchResults
@@ -14,6 +15,9 @@ interface MediaRepository {
     suspend fun loadMoreResults()
 
     suspend fun detail(mediaId: String): Media
+
+    /** A title's seasons and episodes (`GET /v1/media/{id}/episodes`). Throws on failure. */
+    suspend fun episodes(mediaId: String): EpisodeList
 
     /**
      * A search result as a stored title, so it can be opened without adding it to the library

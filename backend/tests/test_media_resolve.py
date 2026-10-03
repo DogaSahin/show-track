@@ -47,6 +47,9 @@ class StubProvider(MediaProvider):
             raise self._error
         return self._result
 
+    async def get_episodes(self, external_id: str):
+        raise AssertionError("not used")
+
     async def fetch_similar(self, external_id: str):
         raise AssertionError("not used")
 

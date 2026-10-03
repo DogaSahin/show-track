@@ -16,4 +16,6 @@ data class Media(
     val nextEpisodeNumber: Int?,
     val nextEpisodeDate: Instant?,
     val daysUntilNextEpisode: Int?,
+    /** Regular episodes the server knows of; null until the title's episode list is fetched. */
+    val totalEpisodes: Int? = null,
 )
