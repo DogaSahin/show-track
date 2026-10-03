@@ -28,6 +28,9 @@ import com.anarky.showtrack.core.network.dto.SearchItemDto
 import com.anarky.showtrack.core.network.dto.UserDto
 import com.anarky.showtrack.core.network.dto.WatchlistItemDto
 import com.anarky.showtrack.core.network.dto.WatchlistPageDto
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
 import org.junit.Assert.assertEquals
@@ -171,6 +174,28 @@ class MediaRepositoryTest {
         sources = sources,
     )
 
+    @Test
+    fun `a failing older search does not roll back a newer one`() =
+        runTest {
+            val api = FakeApi(response(hasMore = true))
+            val olderGate = CompletableDeferred<Unit>()
+            api.gates = mapOf("y" to olderGate)
+            api.failingQueries = setOf("y")
+            val repository = MediaRepositoryImpl(api)
+
+            val older = launch { runCatching { repository.search("y") } }
+            runCurrent()
+            val newer = launch { repository.search("x") }
+            runCurrent()
+            olderGate.complete(Unit)
+            older.join()
+            newer.join()
+
+            // Page 2 must belong to the query on screen, not to whatever preceded the failed one.
+            repository.loadMoreResults()
+            assertEquals("x", api.lastQuery)
+        }
+
     /**
      * Every method but `searchMedia`/`mediaDetail` is unused by [MediaRepositoryImpl] and would
      * signal a repository that has started reaching outside its own concern if it were ever hit.
@@ -181,6 +206,10 @@ class MediaRepositoryTest {
         var lastQuery: String? = null
         var lastPage: Int? = null
         var nextFailure: Throwable? = null
+
+        // Per-query hooks for interleaving two searches.
+        var gates: Map<String, CompletableDeferred<Unit>> = emptyMap()
+        var failingQueries: Set<String> = emptySet()
 
         override suspend fun library(
             cursor: String?,
@@ -209,6 +238,8 @@ class MediaRepositoryTest {
         ): MediaSearchResponseDto {
             lastQuery = query
             lastPage = page
+            gates[query]?.await()
+            if (query in failingQueries) throw IOException("offline")
             nextFailure?.let { throw it }
             return next
         }
