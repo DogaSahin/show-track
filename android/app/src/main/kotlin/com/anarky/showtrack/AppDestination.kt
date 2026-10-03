@@ -117,7 +117,6 @@ internal fun appDestinations(
             // the Groups screen had no retry to wire and rendered nothing at all (fix round, M3).
             groupsEntry(
                 activeGroup = activeGroup,
-                onSwitchGroup = onSwitchGroup,
                 onRetryGroups = onRetryGroups,
                 onNavigate = onNavigate,
             )
