@@ -66,6 +66,8 @@ internal class FakeLibraryRepository(
 
     override suspend fun libraryStats() = error("not exercised by DiscoverViewModel")
 
+    override suspend fun upcomingWatching(limit: Int): List<LibraryEntry> = emptyList()
+
     override suspend fun importAniList(username: String) = error("not exercised by DiscoverViewModel")
 
     private companion object {

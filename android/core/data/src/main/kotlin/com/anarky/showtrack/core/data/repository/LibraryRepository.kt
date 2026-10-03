@@ -92,6 +92,14 @@ interface LibraryRepository {
     suspend fun libraryStats(): LibraryStats
 
     /**
+     * The first [limit] Watching entries ordered by next episode, soonest first (titles with no
+     * known next episode sort last on the server). One-shot and uncached, like [libraryStats]:
+     * Library's "Airing soon" row re-reads it on its own schedule, and it never touches the main
+     * list's paginator or the Room cache.
+     */
+    suspend fun upcomingWatching(limit: Int): List<LibraryEntry>
+
+    /**
      * `POST /v1/library/import/anilist` (task 9b.6, backend decision 4-H). One-shot, the same
      * shape [libraryStats] has: no cache, no `StateFlow` upstream — the caller (`ImportViewModel`)
      * drives it once per submit and holds the result itself.
