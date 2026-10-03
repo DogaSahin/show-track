@@ -35,6 +35,16 @@ data object DiscoverRoute : AppRoute
 @Serializable
 data object FavoritesRoute : AppRoute
 
+/**
+ * Every favourite of one media type, as a grid ("See all" from a Favorites shelf). [type] is the
+ * wire value, `anime` or `tv`, rather than `MediaType`: this module stays free of `:core:model`,
+ * and a route argument is a plain value anyway — the same reasoning [DetailRoute] carries a bare id.
+ */
+@Serializable
+data class FavoritesGridRoute(
+    val type: String,
+) : AppRoute
+
 @Serializable
 data object ProfileRoute : AppRoute
 

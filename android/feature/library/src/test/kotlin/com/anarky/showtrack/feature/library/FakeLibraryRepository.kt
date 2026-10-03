@@ -1,13 +1,14 @@
 package com.anarky.showtrack.feature.library
 
+import com.anarky.showtrack.core.data.paging.Page
 import com.anarky.showtrack.core.data.repository.LibraryRepository
 import com.anarky.showtrack.core.model.LibraryEntry
 import com.anarky.showtrack.core.model.LibraryFilter
 import com.anarky.showtrack.core.model.LibraryPatch
+import com.anarky.showtrack.core.model.LibrarySort
 import com.anarky.showtrack.core.model.MediaSource
+import com.anarky.showtrack.core.model.MediaType
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flowOf
 import javax.inject.Inject
 
@@ -51,11 +52,12 @@ internal class FakeLibraryRepository
         // quietly), `LibraryViewModel` never touches the favourites surface at all — so a call
         // reaching here is a bug, and should fail loudly the same way `add`/`update`/
         // `entryForMedia` already do, rather than passing unnoticed.
-        override val favoriteEntries: StateFlow<List<LibraryEntry>> = MutableStateFlow(emptyList())
-
-        override suspend fun refreshFavorites(): Unit = error("not exercised by LibraryEntryHiltTest")
-
-        override suspend fun loadMoreFavorites(): Unit = error("not exercised by LibraryEntryHiltTest")
+        override suspend fun favoritesPage(
+            type: MediaType?,
+            sort: LibrarySort,
+            cursor: String?,
+            limit: Int,
+        ): Page<LibraryEntry> = Page(emptyList(), null)
 
         override suspend fun libraryStats() = error("not exercised by LibraryEntryHiltTest")
 

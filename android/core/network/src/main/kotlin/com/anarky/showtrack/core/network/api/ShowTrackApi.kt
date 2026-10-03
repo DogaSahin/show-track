@@ -79,6 +79,7 @@ interface ShowTrackApi {
         @Query("sort") sort: String?,
         @Query("media_id") mediaId: String?,
         @Query("favorite") favorite: Boolean?,
+        @Query("type") type: String?,
     ): LibraryPageDto
 
     @POST("v1/library")

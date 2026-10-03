@@ -14,6 +14,7 @@ import com.anarky.showtrack.core.model.LibraryPatch
 import com.anarky.showtrack.core.model.LibrarySort
 import com.anarky.showtrack.core.model.LibraryStats
 import com.anarky.showtrack.core.model.MediaSource
+import com.anarky.showtrack.core.model.MediaType
 import com.anarky.showtrack.core.model.ScoreChange
 import com.anarky.showtrack.core.model.UserMediaStatus
 import com.anarky.showtrack.core.network.api.ShowTrackApi
@@ -23,8 +24,6 @@ import com.anarky.showtrack.core.network.dto.LibraryEntryDto
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -87,37 +86,10 @@ class LibraryRepositoryImpl
                         sort = current.sort.wire,
                         mediaId = null,
                         favorite = null,
+                        type = null,
                     )
                 Page(page.items.map(LibraryEntryDto::toDomain), page.nextCursor)
             }
-
-        // A SEPARATE CursorPaginator from [paginator] above (this class's own KDoc / task 9b.4,
-        // decision D-H): Library and Favorites are both `TopLevelDestination`s with saved state
-        // and can be open at once, so sharing one paginator would make switching tabs reset the
-        // OTHER screen's scroll position and page counter. `favorite = true` is the only filter
-        // this fetch ever sends — status/sort/mediaId stay null/default because Favorites has no
-        // tabs or sort control (decision D-H's "layout is duplicated, the trap is not").
-        private val favoritesPaginator =
-            CursorPaginator<LibraryEntry> { cursor ->
-                val page =
-                    api.library(
-                        cursor = cursor,
-                        limit = PAGE_SIZE,
-                        status = null,
-                        sort = null,
-                        mediaId = null,
-                        favorite = true,
-                    )
-                Page(page.items.map(LibraryEntryDto::toDomain), page.nextCursor)
-            }
-
-        // A SEPARATE published list from `favoritesPaginator.items`, deliberately — not a
-        // passthrough the way an earlier version of this class had. `refreshFavorites`/
-        // `loadMoreFavorites` set this explicitly from the page `restart()`/`loadMore()` actually
-        // RETURNED, never by re-reading `favoritesPaginator.items` after the fact — `items` can
-        // have grown by the time the caller looks at it (`CursorPaginator.restart`'s own KDoc).
-        private val mutableFavoriteEntries = MutableStateFlow<List<LibraryEntry>>(emptyList())
-        override val favoriteEntries: StateFlow<List<LibraryEntry>> = mutableFavoriteEntries.asStateFlow()
 
         /**
          * The cache wins only before the first network page arrives, and only for the default
@@ -266,49 +238,35 @@ class LibraryRepositoryImpl
          */
         override suspend fun entryForMedia(mediaId: String): LibraryEntry? =
             api
-                .library(cursor = null, limit = 1, status = null, sort = null, mediaId = mediaId, favorite = null)
-                .items
+                .library(
+                    cursor = null,
+                    limit = 1,
+                    status = null,
+                    sort = null,
+                    mediaId = mediaId,
+                    favorite = null,
+                    type = null,
+                ).items
                 .firstOrNull()
                 ?.toDomain()
 
-        /**
-         * `favoritesPaginator.restart()`'s RETURNED page, not a re-read of [favoriteEntries] or
-         * `favoritesPaginator.items.value` — the same "fetch before mutate, use what it handed
-         * back" discipline [refresh] above and `RecommendationRepositoryImpl.refresh` both follow,
-         * and for the identical reason: a failed restart leaves [mutableFavoriteEntries] exactly
-         * as it was (this line is never reached when the fetch throws), and a caller that instead
-         * re-read the paginator's own list after the fact would be exposed to whatever a
-         * concurrently-racing [loadMoreFavorites] had appended in the meantime — see
-         * [loadMoreFavorites]'s KDoc, where `loadMore()` returns the page it fetched rather than
-         * leaving it in a field that outlives the call.
-         */
-        override suspend fun refreshFavorites() {
-            val firstPage = favoritesPaginator.restart()
-            mutableFavoriteEntries.value = firstPage
-        }
-
-        /**
-         * Appends the page `loadMore()` actually fetched onto [mutableFavoriteEntries] — never
-         * re-publishes the whole of `favoritesPaginator.items.value`, mirroring
-         * `RecommendationRepositoryImpl.loadMore`'s own KDoc for why.
-         *
-         * **Whole-branch fix round, BLOCKING 4.** This used to guard on
-         * `favoritesPaginator.hasMore.value` and then append a `lastFetchedFavoritesPage` field
-         * written inside the fetch lambda. Both halves were wrong together: the flag was read
-         * BEFORE `loadMore()` suspended on the paginator's mutex, and the field was read AFTER it
-         * returned — so a concurrent `refreshFavorites()` that came back exhausted while this call
-         * was queued on that mutex left `loadMore()` fetching nothing and this line appending the
-         * REFRESH's page a second time. Every id twice, and `FavoritesList` keys its `LazyColumn`
-         * by `LibraryEntry::id`: `IllegalArgumentException: Key "…" was already used`, a
-         * composition crash. `CursorPaginator`'s own KDoc names the rule this broke — "checking a
-         * flag is not atomic across a suspension point; taking a lock is".
-         *
-         * `loadMore()` now answers `null` when it fetched nothing, decided inside the lock, so
-         * there is no flag to read early and no field to read late.
-         */
-        override suspend fun loadMoreFavorites() {
-            val page = favoritesPaginator.loadMore() ?: return
-            mutableFavoriteEntries.value = mutableFavoriteEntries.value + page
+        override suspend fun favoritesPage(
+            type: MediaType?,
+            sort: LibrarySort,
+            cursor: String?,
+            limit: Int,
+        ): Page<LibraryEntry> {
+            val page =
+                api.library(
+                    cursor = cursor,
+                    limit = limit,
+                    status = null,
+                    sort = sort.wire,
+                    mediaId = null,
+                    favorite = true,
+                    type = type?.name?.lowercase(),
+                )
+            return Page(page.items.map(LibraryEntryDto::toDomain), page.nextCursor)
         }
 
         /** A plain pass-through — no cache, no paginator, nothing to sequence. */
@@ -323,6 +281,7 @@ class LibraryRepositoryImpl
                     sort = LibrarySort.NEXT_EPISODE_DATE.wire,
                     mediaId = null,
                     favorite = null,
+                    type = null,
                 ).items
                 .map(LibraryEntryDto::toDomain)
 

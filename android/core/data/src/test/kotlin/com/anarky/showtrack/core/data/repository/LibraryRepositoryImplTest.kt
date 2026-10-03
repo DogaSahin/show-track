@@ -14,6 +14,7 @@ import com.anarky.showtrack.core.model.LibraryFilter
 import com.anarky.showtrack.core.model.LibraryPatch
 import com.anarky.showtrack.core.model.LibrarySort
 import com.anarky.showtrack.core.model.MediaSource
+import com.anarky.showtrack.core.model.MediaType
 import com.anarky.showtrack.core.model.ScoreChange
 import com.anarky.showtrack.core.model.UserMediaStatus
 import com.anarky.showtrack.core.network.api.ShowTrackApi
@@ -354,111 +355,41 @@ class LibraryRepositoryImplTest {
         }
 
     /**
-     * Task 9b.4's own view (decision D-F/D-H). `favorite = true` is the whole point of this
-     * fetch — status/sort/mediaId stay unset because Favorites has no tabs or sort control.
+     * Favorites' one read: favourites only, in the asked sort, optionally one media type, from the
+     * cursor the caller hands in, returning the page with its next cursor. Nothing about the main
+     * library view is touched.
      */
     @Test
-    fun `refreshFavorites requests favorite = true and publishes the page`() =
+    fun `favoritesPage sends the favourite, type, sort and cursor and returns the next cursor`() =
+        runTest {
+            api.enqueueLibraryPage(pageOf("Favourite title", nextCursor = "fav-2"))
+
+            val page =
+                repository.favoritesPage(
+                    type = MediaType.ANIME,
+                    sort = LibrarySort.SCORE,
+                    cursor = "fav-1",
+                    limit = 3,
+                )
+
+            assertEquals(listOf("Favourite title"), page.items.map { it.media.title })
+            assertEquals("fav-2", page.nextCursor)
+            assertEquals(true, api.requestedFavorites.last())
+            assertEquals("anime", api.requestedTypes.last())
+            assertEquals("score", api.requestedSorts.last())
+            assertEquals("fav-1", api.requestedCursors.last())
+            assertEquals(3, api.requestedLimits.last())
+            assertNull(api.requestedStatuses.last())
+        }
+
+    @Test
+    fun `favoritesPage without a type asks for every type`() =
         runTest {
             api.enqueueLibraryPage(pageOf("Favourite title"))
 
-            repository.refreshFavorites()
+            repository.favoritesPage(type = null, sort = LibrarySort.TITLE, cursor = null, limit = 20)
 
-            assertEquals(true, api.requestedFavorites.last())
-            assertNull(api.requestedStatuses.last())
-            assertNull(api.requestedSorts.last())
-            assertEquals(listOf("Favourite title"), repository.favoriteEntries.value.map { it.media.title })
-        }
-
-    /**
-     * Decision D-H, made real: Library and Favorites are both `TopLevelDestination`s with saved
-     * state and can be open at once, so [LibraryRepositoryImpl] gives the favourites view its OWN
-     * `CursorPaginator` rather than reusing the one behind [LibraryRepository.observeLibrary].
-     * Confirmed both directions — driving the main view's paginator through two pages first, then
-     * loading favourites, must not disturb what `observeLibrary()` still emits; and paging
-     * favourites forward must accumulate on `favoriteEntries` alone.
-     */
-    @Test
-    fun `the favourites view has its own paginator, independent of the main library view`() =
-        runTest {
-            repository.refresh()
-            repository.loadMore()
-            assertEquals(listOf("1", "2"), repository.observeLibrary().first().map { it.id })
-
-            api.enqueueLibraryPage(pageOf("Favourite title", nextCursor = "fav-c2"))
-            repository.refreshFavorites()
-
-            assertEquals(listOf("Favourite title"), repository.favoriteEntries.value.map { it.media.title })
-            // The main view's own accumulated pages are untouched by the favourites fetch — a
-            // shared paginator would have reset this back to page one.
-            assertEquals(listOf("1", "2"), repository.observeLibrary().first().map { it.id })
-
-            api.enqueueLibraryPage(pageOf("Second favourite"))
-            repository.loadMoreFavorites()
-
-            assertEquals(
-                listOf("Favourite title", "Second favourite"),
-                repository.favoriteEntries.value.map { it.media.title },
-            )
-        }
-
-    /**
-     * The SEQUENTIAL exhaustion case (review finding, round 2). `CursorPaginator.loadMore()` now
-     * answers `null` when it fetched nothing, so `loadMoreFavorites` appends nothing — this pins
-     * that a scrolled-to-the-bottom list firing `loadMoreFavorites()` again never duplicates the
-     * final page. The CONCURRENT case, which this test cannot reach and which is what the round-2
-     * `hasMore` guard actually got wrong, is the next test down.
-     */
-    @Test
-    fun `loadMoreFavorites after the last page does not re-append it`() =
-        runTest {
-            api.enqueueLibraryPage(pageOf("Favourite title", nextCursor = null))
-            repository.refreshFavorites()
-            assertEquals(listOf("Favourite title"), repository.favoriteEntries.value.map { it.media.title })
-
-            repository.loadMoreFavorites()
-
-            assertEquals(listOf("Favourite title"), repository.favoriteEntries.value.map { it.media.title })
-        }
-
-    /**
-     * BLOCKING 4 (whole-branch fix round). The round-2 guard this replaces read
-     * `favoritesPaginator.hasMore.value` BEFORE `loadMore()` suspended on the paginator's mutex,
-     * and appended a `lastFetchedFavoritesPage` field read AFTER it returned. Both reads sat
-     * outside the lock the fetch itself takes, which `CursorPaginator`'s own KDoc says does not
-     * work: "checking a flag is not atomic across a suspension point; taking a lock is."
-     *
-     * The interleaving this constructs is the ordinary resume frame: the screen resumes with the
-     * list scrolled to the bottom, so `refresh()` and `EndOfListTrigger` both fire, and the
-     * favourites list has since shrunk to a single page (the user unfavourited rows elsewhere), so
-     * the restart comes back EXHAUSTED while the `loadMore` is queued behind it on the mutex.
-     *
-     * Before the fix: `hasMore` was still `true` when `loadMoreFavorites` read it, the queued
-     * `loadMore()` then short-circuited on `started && cursor == null` and fetched nothing, and the
-     * append ran anyway against the restart's own page — two rows, the same id twice, and
-     * `FavoritesList`'s `LazyColumn` keyed by `LibraryEntry::id` throws
-     * `IllegalArgumentException: Key "…" was already used`.
-     */
-    @Test
-    fun `a loadMoreFavorites queued behind an exhausting refresh does not re-append its page`() =
-        runTest {
-            api.enqueueLibraryPage(pageOf("Favourite title", nextCursor = null))
-            val gate = CompletableDeferred<Unit>()
-            api.libraryGate = gate
-
-            val refresh = launch { repository.refreshFavorites() }
-            // The refresh now holds the paginator's mutex and is suspended inside its fetch.
-            runCurrent()
-            val loadMore = launch { repository.loadMoreFavorites() }
-            // ...and the loadMore is queued on that same mutex, having already passed whatever
-            // pre-fetch checks it makes.
-            runCurrent()
-
-            gate.complete(Unit)
-            refresh.join()
-            loadMore.join()
-
-            assertEquals(listOf("Favourite title"), repository.favoriteEntries.value.map { it.media.title })
+            assertNull(api.requestedTypes.last())
         }
 
     @Test
@@ -810,6 +741,7 @@ private class FakeShowTrackApi(
     val requestedSorts = mutableListOf<String?>()
     val requestedMediaIds = mutableListOf<String?>()
     val requestedFavorites = mutableListOf<Boolean?>()
+    val requestedTypes = mutableListOf<String?>()
     val addRequests = mutableListOf<AddLibraryEntryRequest>()
     val updateRequests = mutableListOf<Pair<String, JsonObject>>()
     var statsResponse =
@@ -860,6 +792,7 @@ private class FakeShowTrackApi(
         sort: String?,
         mediaId: String?,
         favorite: Boolean?,
+        type: String?,
     ): LibraryPageDto {
         requestedCursors += cursor
         requestedLimits += limit
@@ -867,6 +800,7 @@ private class FakeShowTrackApi(
         requestedSorts += sort
         requestedMediaIds += mediaId
         requestedFavorites += favorite
+        requestedTypes += type
         libraryGate?.await()
         if (shouldFail) {
             shouldFail = false

@@ -3,6 +3,7 @@ package com.anarky.showtrack.feature.detail
 import android.app.Application
 import androidx.lifecycle.SavedStateHandle
 import app.cash.turbine.test
+import com.anarky.showtrack.core.data.paging.Page
 import com.anarky.showtrack.core.data.repository.LibraryRepository
 import com.anarky.showtrack.core.data.repository.MediaRepository
 import com.anarky.showtrack.core.model.AuthFailure
@@ -10,6 +11,7 @@ import com.anarky.showtrack.core.model.GroupActor
 import com.anarky.showtrack.core.model.GroupFailure
 import com.anarky.showtrack.core.model.LibraryEntry
 import com.anarky.showtrack.core.model.LibraryPatch
+import com.anarky.showtrack.core.model.LibrarySort
 import com.anarky.showtrack.core.model.Media
 import com.anarky.showtrack.core.model.MediaSource
 import com.anarky.showtrack.core.model.MediaStatus
@@ -2002,11 +2004,12 @@ class DetailViewModelTest {
             return entry
         }
 
-        override val favoriteEntries: StateFlow<List<LibraryEntry>> = MutableStateFlow(emptyList())
-
-        override suspend fun refreshFavorites(): Unit = error("not exercised by DetailViewModel")
-
-        override suspend fun loadMoreFavorites(): Unit = error("not exercised by DetailViewModel")
+        override suspend fun favoritesPage(
+            type: MediaType?,
+            sort: LibrarySort,
+            cursor: String?,
+            limit: Int,
+        ): Page<LibraryEntry> = Page(emptyList(), null)
 
         override suspend fun libraryStats() = error("not exercised by DetailViewModel")
 

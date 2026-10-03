@@ -90,6 +90,7 @@ class ShowTrackApiTest {
                 sort = "score",
                 mediaId = "m-1",
                 favorite = true,
+                type = "anime",
             )
 
             val url = server.takeRequest().url
@@ -97,6 +98,7 @@ class ShowTrackApiTest {
             assertEquals("score", url.queryParameter("sort"))
             assertEquals("m-1", url.queryParameter("media_id"))
             assertEquals("true", url.queryParameter("favorite"))
+            assertEquals("anime", url.queryParameter("type"))
             // The point of passing null rather than "null": an absent filter must not appear.
             assertNull(url.queryParameter("cursor"))
         }
@@ -118,7 +120,15 @@ class ShowTrackApiTest {
                     .build(),
             )
 
-            api.library(cursor = null, limit = 20, status = null, sort = null, mediaId = null, favorite = false)
+            api.library(
+                cursor = null,
+                limit = 20,
+                status = null,
+                sort = null,
+                mediaId = null,
+                favorite = false,
+                type = null,
+            )
 
             assertEquals("false", server.takeRequest().url.queryParameter("favorite"))
         }
