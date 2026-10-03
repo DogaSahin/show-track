@@ -11,9 +11,11 @@ import com.anarky.showtrack.core.model.ImportSummary
 import com.anarky.showtrack.core.model.LibraryEntry
 import com.anarky.showtrack.core.model.LibraryFilter
 import com.anarky.showtrack.core.model.LibraryPatch
+import com.anarky.showtrack.core.model.LibrarySort
 import com.anarky.showtrack.core.model.LibraryStats
 import com.anarky.showtrack.core.model.MediaSource
 import com.anarky.showtrack.core.model.ScoreChange
+import com.anarky.showtrack.core.model.UserMediaStatus
 import com.anarky.showtrack.core.network.api.ShowTrackApi
 import com.anarky.showtrack.core.network.dto.AddLibraryEntryRequest
 import com.anarky.showtrack.core.network.dto.ImportAniListRequest
@@ -311,6 +313,18 @@ class LibraryRepositoryImpl
 
         /** A plain pass-through — no cache, no paginator, nothing to sequence. */
         override suspend fun libraryStats(): LibraryStats = api.libraryStats().toDomain()
+
+        override suspend fun upcomingWatching(limit: Int): List<LibraryEntry> =
+            api
+                .library(
+                    cursor = null,
+                    limit = limit,
+                    status = UserMediaStatus.WATCHING.name.lowercase(),
+                    sort = LibrarySort.NEXT_EPISODE_DATE.wire,
+                    mediaId = null,
+                    favorite = null,
+                ).items
+                .map(LibraryEntryDto::toDomain)
 
         /**
          * A plain pass-through like [libraryStats] above, plus the one thing [libraryStats] never

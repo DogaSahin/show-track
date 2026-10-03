@@ -3,8 +3,10 @@ package com.anarky.showtrack.feature.library
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.anarky.showtrack.core.data.repository.LibraryRepository
+import com.anarky.showtrack.core.model.LibraryEntry
 import com.anarky.showtrack.core.model.LibraryFilter
 import com.anarky.showtrack.core.model.LibrarySort
+import com.anarky.showtrack.core.model.LibraryStats
 import com.anarky.showtrack.core.model.UserMediaStatus
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -217,8 +219,50 @@ class LibraryViewModel
                 initialValue = LibraryUiState.Loading,
             )
 
+        // The header's counts ("9 shows", and the numbers in the status menu) and the "Airing soon"
+        // row. Each is its own one-shot read with its own channel (decision C-S): a failure in
+        // either leaves the list untouched and simply keeps the last answer, or nothing — the
+        // count hides and the row stays away rather than showing "0" or an error.
+        private val mutableStats = MutableStateFlow<LibraryStats?>(null)
+        val stats: StateFlow<LibraryStats?> = mutableStats.asStateFlow()
+
+        private val mutableAiringSoon = MutableStateFlow<List<LibraryEntry>>(emptyList())
+        val airingSoon: StateFlow<List<LibraryEntry>> = mutableAiringSoon.asStateFlow()
+
         init {
             refresh()
+        }
+
+        /**
+         * Re-reads the counts and the "Airing soon" row. Called on every resume by `LibraryScreen`:
+         * an add, a status change or a removal made on another screen changes both, and this
+         * ViewModel outlives that round trip. The row keeps only titles with a known next episode,
+         * at most [AIRING_SOON_LIMIT]; it never depends on the list's own filter or sort.
+         */
+        @Suppress("TooGenericExceptionCaught")
+        fun refreshOverview() {
+            viewModelScope.launch {
+                try {
+                    mutableStats.value = repository.libraryStats()
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (_: Exception) {
+                    // Keep the last counts; with none yet, the header simply shows no count.
+                }
+            }
+            viewModelScope.launch {
+                try {
+                    mutableAiringSoon.value =
+                        repository
+                            .upcomingWatching(limit = AIRING_SOON_LIMIT)
+                            .filter { it.media.nextEpisodeDate != null }
+                            .take(AIRING_SOON_LIMIT)
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (_: Exception) {
+                    // Keep the last row; with none yet, the section stays hidden.
+                }
+            }
         }
 
         // Neither of these touches `mutableLoadState.hasLoaded` — see its KDoc for why resetting
@@ -427,5 +471,6 @@ class LibraryViewModel
 
         private companion object {
             const val SUBSCRIPTION_TIMEOUT_MS = 5_000L
+            const val AIRING_SOON_LIMIT = 10
         }
     }

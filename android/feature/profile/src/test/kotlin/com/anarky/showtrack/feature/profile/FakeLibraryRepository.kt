@@ -94,6 +94,8 @@ internal class FakeLibraryRepository(
         return statsResult
     }
 
+    override suspend fun upcomingWatching(limit: Int): List<LibraryEntry> = emptyList()
+
     override suspend fun importAniList(username: String): ImportSummary {
         importCalls++
         lastUsername = username

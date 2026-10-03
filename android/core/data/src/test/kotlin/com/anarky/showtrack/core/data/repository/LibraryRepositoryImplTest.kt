@@ -674,6 +674,22 @@ class LibraryRepositoryImplTest {
             assertEquals(BigDecimal("8.4"), stats.averageScore)
         }
 
+    /** The "Airing soon" read: one page of Watching titles by next episode, and nothing cached. */
+    @Test
+    fun `upcomingWatching asks for watching titles by next episode and leaves the cache alone`() =
+        runTest {
+            dao.replaceAll(listOf(cachedEntry))
+
+            val entries = repository.upcomingWatching(limit = 10)
+
+            assertEquals(listOf("1"), entries.map { it.id })
+            assertEquals(listOf<String?>(null), api.requestedCursors)
+            assertEquals(listOf(10), api.requestedLimits)
+            assertEquals(listOf<String?>("watching"), api.requestedStatuses)
+            assertEquals(listOf<String?>("next_episode_date"), api.requestedSorts)
+            assertEquals(listOf("media-cached"), dao.observeAll().first().map { it.mediaId })
+        }
+
     /** The pass-through half of task 9b.6: a successful import maps every field, `truncated` included. */
     @Test
     fun `importAniList reads through the three counts and the truncated flag`() =

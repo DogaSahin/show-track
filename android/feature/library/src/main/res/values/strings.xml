@@ -16,6 +16,21 @@
          anymore. Reword `LIBRARY_EMPTY_DEFAULT_COPY` in that test file to match. -->
     <string name="library_empty_default">Nothing in your library yet</string>
     <string name="library_empty_filtered">Nothing here</string>
+    <!-- Under library_empty_filtered: clears the status filter. -->
+    <string name="library_empty_show_all">Show all</string>
+
+    <!-- The row of Watching shows with an episode coming, at the top of "All shows". -->
+    <string name="library_airing_soon">Airing soon</string>
+
+    <!-- A row's last line after the status. %1$s is the episode ("Ep 15", "S2 E7"), %2$s when it
+         airs ("in 2 days", "Tomorrow"). Totals ("14 of 28") join these once shows carry an
+         episode count. -->
+    <string name="library_episode_when">%1$s %2$s</string>
+    <plurals name="library_eps_watched">
+        <item quantity="one">%d ep watched</item>
+        <item quantity="other">%d eps watched</item>
+    </plurals>
+    <string name="library_not_started">Not started</string>
 
     <string name="library_error_message">Couldn\'t load your library. Check your connection and try again.</string>
 
@@ -24,11 +39,17 @@
          full-screen library_error_message above. -->
     <string name="library_page_error">Couldn\'t load more. Tap to retry.</string>
 
-    <!-- %1$s is the CURRENT sort's own label (e.g. "Sort: Score"), so the button always shows
-         what's active rather than a static "Sort" that leaves the DropdownMenu as the only way
-         to tell. -->
-    <string name="library_sort_button">Sort: %1$s</string>
-    <string name="library_sort_content_description">Sort the library</string>
+    <!-- What TalkBack says for the two filter buttons, which on screen show only the bare choice
+         ("Watching ▾", "Next episode ▾"). %1$s is that choice. -->
+    <string name="library_status_description">Status: %1$s</string>
+    <string name="library_sort_description">Sort: %1$s</string>
+    <!-- The status button and menu entry for no status filter. -->
+    <string name="library_status_all">All shows</string>
+    <!-- At the end of the filter row: how many shows the current status filter holds. -->
+    <plurals name="library_count">
+        <item quantity="one">%d show</item>
+        <item quantity="other">%d shows</item>
+    </plurals>
     <string name="library_sort_title">Title</string>
     <string name="library_sort_score">Score</string>
     <string name="library_sort_next_episode">Next episode</string>
