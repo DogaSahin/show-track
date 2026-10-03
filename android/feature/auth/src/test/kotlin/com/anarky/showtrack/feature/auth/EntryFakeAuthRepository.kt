@@ -1,6 +1,7 @@
 package com.anarky.showtrack.feature.auth
 
 import com.anarky.showtrack.core.data.repository.AuthRepository
+import com.anarky.showtrack.core.model.CurrentUser
 import javax.inject.Inject
 
 /**
@@ -16,6 +17,8 @@ internal class EntryFakeAuthRepository
     @Inject
     constructor() : AuthRepository {
         override suspend fun hasSession(): Boolean = true
+
+        override suspend fun currentUser(): CurrentUser = error("not exercised by AuthEntryHiltTest")
 
         override suspend fun currentUserId(): String = error("AuthEntryHiltTest only exercises login")
 

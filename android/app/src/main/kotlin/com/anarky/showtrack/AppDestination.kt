@@ -104,7 +104,9 @@ internal fun appDestinations(
         AppDestination(DetailRoute::class) { detailEntry(activeGroup = activeGroup) },
         AppDestination(DiscoverRoute::class) { onNavigate -> discoverEntry(onNavigate) },
         AppDestination(FavoritesRoute::class) { onNavigate -> favoritesEntry(onNavigate) },
-        AppDestination(ProfileRoute::class) { onNavigate -> profileEntry(onNavigate) },
+        AppDestination(
+            ProfileRoute::class,
+        ) { onNavigate -> profileEntry(activeGroup = activeGroup, onNavigate = onNavigate) },
         AppDestination(SearchRoute::class) { onNavigate -> searchEntry(onNavigate) },
         AppDestination(GroupsRoute::class) { onNavigate ->
             // onRetryGroups was the one asymmetry in this table: feedEntry received all three
