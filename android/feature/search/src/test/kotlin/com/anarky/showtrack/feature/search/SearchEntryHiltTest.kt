@@ -21,6 +21,7 @@ import com.anarky.showtrack.core.model.MediaSource
 import com.anarky.showtrack.core.model.MediaStatus
 import com.anarky.showtrack.core.model.MediaSummary
 import com.anarky.showtrack.core.model.MediaType
+import com.anarky.showtrack.core.model.SearchResult
 import com.anarky.showtrack.core.model.SearchResults
 import com.anarky.showtrack.core.model.UserMediaStatus
 import com.anarky.showtrack.core.navigation.DetailRoute
@@ -63,7 +64,12 @@ class SearchEntryHiltTest {
     @JvmField
     val mediaRepository: MediaRepository =
         EntryFakeMediaRepository(
-            searchResult = SearchResults(items = listOf(searchSummary()), hasMore = false, degraded = emptyList()),
+            searchResult =
+                SearchResults(
+                    items = listOf(SearchResult(searchSummary())),
+                    hasMore = false,
+                    degraded = emptyList(),
+                ),
         )
 
     @BindValue

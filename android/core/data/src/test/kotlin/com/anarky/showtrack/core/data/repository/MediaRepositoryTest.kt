@@ -16,14 +16,15 @@ import com.anarky.showtrack.core.network.dto.LibraryPageDto
 import com.anarky.showtrack.core.network.dto.LibraryStatsDto
 import com.anarky.showtrack.core.network.dto.MediaDto
 import com.anarky.showtrack.core.network.dto.MediaSearchResponseDto
-import com.anarky.showtrack.core.network.dto.MediaSummaryDto
 import com.anarky.showtrack.core.network.dto.MemberDto
 import com.anarky.showtrack.core.network.dto.ProgressEntryDto
 import com.anarky.showtrack.core.network.dto.ProposeTitleRequestDto
 import com.anarky.showtrack.core.network.dto.PushTargetDto
 import com.anarky.showtrack.core.network.dto.RecommendationPageDto
 import com.anarky.showtrack.core.network.dto.RegisterTargetRequest
+import com.anarky.showtrack.core.network.dto.ResolveMediaRequestDto
 import com.anarky.showtrack.core.network.dto.ReviewDto
+import com.anarky.showtrack.core.network.dto.SearchItemDto
 import com.anarky.showtrack.core.network.dto.UserDto
 import com.anarky.showtrack.core.network.dto.WatchlistItemDto
 import com.anarky.showtrack.core.network.dto.WatchlistPageDto
@@ -89,7 +90,7 @@ class MediaRepositoryTest {
             assertEquals(
                 listOf("Bebop"),
                 repository.searchResults.value.items
-                    .map { it.title },
+                    .map { it.media.title },
             )
             // The half the previous version of this test never pinned: that the new query was
             // actually the one sent to the API, not merely that the displayed items changed.
@@ -121,7 +122,7 @@ class MediaRepositoryTest {
             assertEquals(
                 listOf("Frieren", "Frieren 2"),
                 repository.searchResults.value.items
-                    .map { it.title },
+                    .map { it.media.title },
             )
             // The page fetched by loadMoreResults() must have been requested as a continuation
             // of "frieren", not "bebop" — the failed search must not have won the race to name
@@ -142,7 +143,7 @@ class MediaRepositoryTest {
             repository.loadMoreResults()
 
             val results = repository.searchResults.value
-            assertEquals(listOf("Frieren", "Bebop"), results.items.map { it.title })
+            assertEquals(listOf("Frieren", "Bebop"), results.items.map { it.media.title })
             assertFalse(results.hasMore)
             assertEquals("frieren", api.lastQuery)
             assertEquals(2, api.lastPage)
@@ -155,7 +156,7 @@ class MediaRepositoryTest {
     ) = MediaSearchResponseDto(
         items =
             titles.map { title ->
-                MediaSummaryDto(
+                SearchItemDto(
                     source = "anilist",
                     externalId = "1",
                     type = "anime",
@@ -213,6 +214,14 @@ class MediaRepositoryTest {
         }
 
         override suspend fun mediaDetail(id: String): MediaDto = TODO("not used")
+
+        var lastResolve: ResolveMediaRequestDto? = null
+        var resolveAnswer: MediaDto? = null
+
+        override suspend fun resolveMedia(request: ResolveMediaRequestDto): MediaDto {
+            lastResolve = request
+            return checkNotNull(resolveAnswer) { "set resolveAnswer first" }
+        }
 
         override suspend fun me(): UserDto = TODO("not used")
 
@@ -281,4 +290,31 @@ class MediaRepositoryTest {
             patch: JsonObject,
         ): ReviewDto = TODO("not used")
     }
+
+    @Test
+    fun `resolving sends the wire source and returns the stored title`() =
+        runTest {
+            val api = FakeApi(response())
+            api.resolveAnswer =
+                MediaDto(
+                    id = "m-1",
+                    source = "tmdb",
+                    externalId = "95396",
+                    type = "tv",
+                    title = "Severance",
+                    year = 2022,
+                    genres = emptyList(),
+                    coverImageUrl = null,
+                    status = "airing",
+                    nextEpisodeSeason = null,
+                    nextEpisodeNumber = null,
+                    nextEpisodeDate = null,
+                    daysUntilNextEpisode = null,
+                )
+
+            val media = MediaRepositoryImpl(api).resolve(MediaSource.TMDB, "95396")
+
+            assertEquals(ResolveMediaRequestDto(source = "tmdb", externalId = "95396"), api.lastResolve)
+            assertEquals("m-1", media.id)
+        }
 }

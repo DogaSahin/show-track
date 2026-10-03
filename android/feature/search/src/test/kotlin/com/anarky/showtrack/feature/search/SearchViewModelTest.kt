@@ -13,6 +13,7 @@ import com.anarky.showtrack.core.model.MediaSource
 import com.anarky.showtrack.core.model.MediaStatus
 import com.anarky.showtrack.core.model.MediaSummary
 import com.anarky.showtrack.core.model.MediaType
+import com.anarky.showtrack.core.model.SearchResult
 import com.anarky.showtrack.core.model.SearchResults
 import com.anarky.showtrack.core.model.UserMediaStatus
 import kotlinx.coroutines.CompletableDeferred
@@ -78,7 +79,11 @@ class SearchViewModelTest {
             // reading `sources` a TMDB outage is indistinguishable from a complete result set
             // (decision C-O).
             val degradedResults =
-                SearchResults(items = listOf(SUMMARY), hasMore = false, degraded = listOf(MediaSource.TMDB))
+                SearchResults(
+                    items = listOf(SearchResult(SUMMARY)),
+                    hasMore = false,
+                    degraded = listOf(MediaSource.TMDB),
+                )
             val media = FakeMediaRepository(resultsAfterSearch = degradedResults)
             val viewModel = SearchViewModel(media, FakeLibraryRepository())
 
@@ -143,7 +148,7 @@ class SearchViewModelTest {
             // failure (task 9a.4's carried-forward fix) — this asserts the SCREEN, not the
             // repository: a second, failing query must not leave the first query's results
             // silently on screen underneath no error at all.
-            val results = SearchResults(items = listOf(SUMMARY), hasMore = false, degraded = emptyList())
+            val results = SearchResults(items = listOf(SearchResult(SUMMARY)), hasMore = false, degraded = emptyList())
             val media = FakeMediaRepository(resultsAfterSearch = results)
             val viewModel = SearchViewModel(media, FakeLibraryRepository())
 
@@ -204,7 +209,7 @@ class SearchViewModelTest {
             // The results a failed page-2 fetch left behind are still valid — this must never
             // promote state to a full-screen Error, which would discard a populated list over one
             // failed next page (carried forward from task 9a.8's shipped bug).
-            val results = SearchResults(items = listOf(SUMMARY), hasMore = true, degraded = emptyList())
+            val results = SearchResults(items = listOf(SearchResult(SUMMARY)), hasMore = true, degraded = emptyList())
             val failure = IOException("offline")
             val media = FakeMediaRepository(resultsAfterSearch = results, loadMoreFailure = failure)
             val viewModel = SearchViewModel(media, FakeLibraryRepository())
@@ -223,7 +228,7 @@ class SearchViewModelTest {
     @Test
     fun `a successful loadMore clears a previous page error`() =
         runTest(dispatcher) {
-            val results = SearchResults(items = listOf(SUMMARY), hasMore = true, degraded = emptyList())
+            val results = SearchResults(items = listOf(SearchResult(SUMMARY)), hasMore = true, degraded = emptyList())
             val failure = IOException("offline")
             val media = FakeMediaRepository(resultsAfterSearch = results, loadMoreFailure = failure)
             val viewModel = SearchViewModel(media, FakeLibraryRepository())
@@ -245,7 +250,7 @@ class SearchViewModelTest {
     @Test
     fun `adding a result sets adding to its externalId until the call resolves`() =
         runTest(dispatcher) {
-            val results = SearchResults(items = listOf(SUMMARY), hasMore = false, degraded = emptyList())
+            val results = SearchResults(items = listOf(SearchResult(SUMMARY)), hasMore = false, degraded = emptyList())
             val media = FakeMediaRepository(resultsAfterSearch = results)
             val library = FakeLibraryRepository(addResult = ENTRY_WITH_MEDIA_ID_M1)
             val viewModel = SearchViewModel(media, library)
@@ -271,7 +276,7 @@ class SearchViewModelTest {
             // add() may have already succeeded server-side (LibraryRepositoryImpl.add's post-add
             // refresh() can fail independently of the POST — task 9a.5's carried-forward note),
             // so a failure here must not wipe the results list the user is looking at.
-            val results = SearchResults(items = listOf(SUMMARY), hasMore = false, degraded = emptyList())
+            val results = SearchResults(items = listOf(SearchResult(SUMMARY)), hasMore = false, degraded = emptyList())
             val media = FakeMediaRepository(resultsAfterSearch = results)
             val failure = IOException("offline")
             val library = FakeLibraryRepository(addFailure = failure)
@@ -297,7 +302,7 @@ class SearchViewModelTest {
             // searchQuery` guard in runSearch, the in-flight search resolving after the clear
             // would overwrite Idle with a Success — a result list left standing under an empty
             // search box.
-            val results = SearchResults(items = listOf(SUMMARY), hasMore = false, degraded = emptyList())
+            val results = SearchResults(items = listOf(SearchResult(SUMMARY)), hasMore = false, degraded = emptyList())
             val searchGate = CompletableDeferred<Unit>()
             val media = FakeMediaRepository(resultsAfterSearch = results, searchGate = searchGate)
             val viewModel = SearchViewModel(media, FakeLibraryRepository())
@@ -353,8 +358,10 @@ class SearchViewModelTest {
             // The old guard read `current.adding` off that state, so it would pass a second tap
             // here. `addInFlight` is a ViewModel field, not part of the state's shape, so it must
             // still block the second call.
-            val firstResults = SearchResults(items = listOf(SUMMARY), hasMore = false, degraded = emptyList())
-            val secondResults = SearchResults(items = listOf(OTHER_SUMMARY), hasMore = false, degraded = emptyList())
+            val firstResults =
+                SearchResults(items = listOf(SearchResult(SUMMARY)), hasMore = false, degraded = emptyList())
+            val secondResults =
+                SearchResults(items = listOf(SearchResult(OTHER_SUMMARY)), hasMore = false, degraded = emptyList())
             val media = FakeMediaRepository(resultsAfterSearch = firstResults)
             val addGate = CompletableDeferred<Unit>()
             val library = FakeLibraryRepository(addResult = ENTRY_WITH_MEDIA_ID_M1, addGate = addGate)
@@ -385,7 +392,12 @@ class SearchViewModelTest {
     @Test
     fun `a second add is ignored while one is already in flight`() =
         runTest(dispatcher) {
-            val results = SearchResults(items = listOf(SUMMARY, OTHER_SUMMARY), hasMore = false, degraded = emptyList())
+            val results =
+                SearchResults(
+                    items = listOf(SearchResult(SUMMARY), SearchResult(OTHER_SUMMARY)),
+                    hasMore = false,
+                    degraded = emptyList(),
+                )
             val media = FakeMediaRepository(resultsAfterSearch = results)
             val library = FakeLibraryRepository(addResult = ENTRY_WITH_MEDIA_ID_M1)
             val viewModel = SearchViewModel(media, library)
@@ -404,7 +416,7 @@ class SearchViewModelTest {
         runTest(dispatcher) {
             // The inverse of the bug 9a.8 shipped: a shared slot would let ANY success clear an
             // unrelated failure. loadMore's pageError and add's addError must stay independent.
-            val results = SearchResults(items = listOf(SUMMARY), hasMore = true, degraded = emptyList())
+            val results = SearchResults(items = listOf(SearchResult(SUMMARY)), hasMore = true, degraded = emptyList())
             val loadMoreFailure = IOException("offline")
             val media = FakeMediaRepository(resultsAfterSearch = results, loadMoreFailure = loadMoreFailure)
             val library = FakeLibraryRepository(addResult = ENTRY_WITH_MEDIA_ID_M1)
@@ -448,6 +460,11 @@ class SearchViewModelTest {
             loadMoreCalls++
             loadMoreFailure?.let { throw it }
         }
+
+        override suspend fun resolve(
+            source: MediaSource,
+            externalId: String,
+        ): Media = error("not exercised by SearchViewModel")
 
         override suspend fun detail(mediaId: String): Media = error("not exercised by SearchViewModel")
     }

@@ -2,6 +2,7 @@ package com.anarky.showtrack.feature.search
 
 import com.anarky.showtrack.core.data.repository.MediaRepository
 import com.anarky.showtrack.core.model.Media
+import com.anarky.showtrack.core.model.MediaSource
 import com.anarky.showtrack.core.model.SearchResults
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -24,6 +25,11 @@ internal class EntryFakeMediaRepository(
     }
 
     override suspend fun loadMoreResults() = error("SearchEntryHiltTest does not exercise paging")
+
+    override suspend fun resolve(
+        source: MediaSource,
+        externalId: String,
+    ): Media = error("SearchEntryHiltTest does not exercise resolve")
 
     override suspend fun detail(mediaId: String): Media = error("SearchEntryHiltTest does not exercise detail")
 }

@@ -190,7 +190,7 @@ private fun SearchResultsList(
     onResultClick: (MediaSummary) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val items = success.results.items
+    val items = remember(success.results.items) { success.results.items.map { it.media } }
     val listState = rememberLazyListState()
 
     val shouldLoadMore by

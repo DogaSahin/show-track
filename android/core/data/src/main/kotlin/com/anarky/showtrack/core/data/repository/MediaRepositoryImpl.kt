@@ -4,8 +4,10 @@ import com.anarky.showtrack.core.data.mapper.toDomain
 import com.anarky.showtrack.core.data.paging.NumberedPage
 import com.anarky.showtrack.core.data.paging.PagePaginator
 import com.anarky.showtrack.core.model.Media
+import com.anarky.showtrack.core.model.MediaSource
 import com.anarky.showtrack.core.model.SearchResults
 import com.anarky.showtrack.core.network.api.ShowTrackApi
+import com.anarky.showtrack.core.network.dto.ResolveMediaRequestDto
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -71,6 +73,15 @@ class MediaRepositoryImpl
         }
 
         override suspend fun detail(mediaId: String): Media = api.mediaDetail(mediaId).toDomain()
+
+        override suspend fun resolve(
+            source: MediaSource,
+            externalId: String,
+        ): Media =
+            api
+                .resolveMedia(
+                    ResolveMediaRequestDto(source = source.name.lowercase(), externalId = externalId),
+                ).toDomain()
 
         private fun publish() {
             mutableResults.value = latest.copy(items = paginator.items.value)

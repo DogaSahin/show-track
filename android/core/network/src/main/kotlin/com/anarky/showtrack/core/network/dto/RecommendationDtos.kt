@@ -11,7 +11,7 @@ import kotlinx.serialization.Serializable
  * `com.anarky.showtrack.core.data.mapper.toDomain` (the `PersistedMediaDto` overload) for where
  * that becomes the mapper's own documented default rather than an accident.
  *
- * It DOES have an `id`, unlike [MediaSummaryDto] — the id is what lets a recommendation row open
+ * It DOES have an `id`, unlike [SearchItemDto] — the id is what lets a recommendation row open
  * the detail screen directly, no add-first workaround.
  */
 @Serializable

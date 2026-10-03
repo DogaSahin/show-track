@@ -20,6 +20,7 @@ import com.anarky.showtrack.core.network.dto.ProposeTitleRequestDto
 import com.anarky.showtrack.core.network.dto.PushTargetDto
 import com.anarky.showtrack.core.network.dto.RecommendationPageDto
 import com.anarky.showtrack.core.network.dto.RegisterTargetRequest
+import com.anarky.showtrack.core.network.dto.ResolveMediaRequestDto
 import com.anarky.showtrack.core.network.dto.ReviewDto
 import com.anarky.showtrack.core.network.dto.UserDto
 import com.anarky.showtrack.core.network.dto.WatchlistItemDto
@@ -127,6 +128,15 @@ interface ShowTrackApi {
         @Query("q") query: String,
         @Query("page") page: Int,
     ): MediaSearchResponseDto
+
+    /**
+     * `POST /v1/media/resolve`: a search result's stored row (created if need be), so it can be
+     * opened without adding it. Errors as for `POST /v1/library`.
+     */
+    @POST("v1/media/resolve")
+    suspend fun resolveMedia(
+        @Body request: ResolveMediaRequestDto,
+    ): MediaDto
 
     /** `GET /v1/media/{id}`, a MediaDetail — the same shape [LibraryEntryDto] embeds. */
     @GET("v1/media/{id}")
