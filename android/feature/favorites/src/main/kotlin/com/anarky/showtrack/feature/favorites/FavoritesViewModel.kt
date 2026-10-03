@@ -3,71 +3,42 @@ package com.anarky.showtrack.feature.favorites
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.anarky.showtrack.core.data.repository.LibraryRepository
+import com.anarky.showtrack.core.model.LibraryEntry
+import com.anarky.showtrack.core.model.LibraryPatch
+import com.anarky.showtrack.core.model.LibrarySort
+import com.anarky.showtrack.core.model.MediaType
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+internal const val PODIUM_SIZE = 3
+internal const val FAVORITES_PAGE_SIZE = 20
+
 /**
- * The favourites screen (task 9b.4, decision D-H).
+ * The Favorites tab: three reads per refresh (the podium and the two shelves, in parallel), each
+ * shelf paging on its own afterwards, and removal with Undo.
  *
- * The constructor names ONE interface from `:core:data` — architecture rule 2, structural rather
- * than a review item, the same shape `LibraryViewModel`/`DiscoverViewModel` use.
+ * **Refresh on resume, not in `init`.** `FavoritesScreen`'s `LifecycleResumeEffect` is the only
+ * caller of [refresh] for both the first load and every return from show details, where a
+ * favourite or a score can have changed; this ViewModel outlives that trip.
  *
- * **`state` is a plain [MutableStateFlow], not `combine(...).stateIn(WhileSubscribed(5_000))` the
- * way `LibraryViewModel.state` is** (decision C-U). `WhileSubscribed` exists on the library screen
- * to stop a continuously-updating, Room-backed [kotlinx.coroutines.flow.Flow] from being
- * re-collected (and its query re-run) for a screen nobody is watching. Nothing here is like that:
- * [LibraryRepository.favoriteEntries] has no Room-backed upstream at all — it is backed by its own
- * network-only `CursorPaginator` (see [LibraryRepository.favoriteEntries]'s own KDoc) — so there is
- * no independent background writer to gate a subscription against, and [refresh]/[loadMore] are
- * one-shot suspend calls THIS ViewModel drives itself, exactly `DiscoverViewModel`'s shape rather
- * than `LibraryViewModel`'s.
+ * **Paging can't double up.** Every refresh bumps [generation]; a page that lands after a newer
+ * refresh started is dropped instead of being appended to rows it never belonged to, and appends
+ * are de-duplicated by entry id regardless. A repeated id is a composition crash in a keyed lazy
+ * list, which is exactly how this screen once failed.
  *
- * **Two failure channels, not one** (decision C-S) — see [FavoritesUiState]'s KDoc: a failed
- * [refresh] may replace the whole screen with [FavoritesUiState.Error], OR mark a populated screen
- * [FavoritesUiState.Success.isStale] instead of destroying it — see [refresh]'s own KDoc for which
- * and why. A failed [loadMore] must leave [FavoritesUiState.Success.entries] standing and surface
- * beside the list instead, in either case.
- *
- * No `add` here, unlike `DiscoverViewModel` — favouriting happens on Detail or Library, and this
- * screen only ever reflects it, on the next [refresh].
- *
- * **[refresh] is guarded against re-entrancy (task 9c.8, E-M)**: `FavoritesScreen` wires the SAME
- * function to both `LifecycleResumeEffect` and `StaleDataBanner`/[FavoritesUiState.Error]'s retry
- * action, so a manual retry can land WHILE a resume-triggered fetch is still in flight. Before this
- * task neither call was guarded, so the two raced last-write-wins — a retry's response landing
- * before the resume's (or vice versa) could mark freshly-loaded data [FavoritesUiState.Success.isStale]
- * on top of a result that had already superseded it. [refreshInFlight] is a private, `state`-shape-
- * independent field, not a value scoped inside [FavoritesUiState.Success] — [DiscoverViewModel]'s
- * `addInFlight` field carries the identical reasoning: [refresh] can be called while [state] is
- * [FavoritesUiState.Loading] or [FavoritesUiState.Error] too, where there is no [FavoritesUiState.Success]
- * to scope a flag inside.
- *
- * **A dropped re-entrant call, not a coalesced one** (review finding M2, round 1): a second
- * [refresh] landing while [refreshInFlight] is `true` is discarded outright, not queued to run
- * again once the first finishes. Concretely: a slow resume-triggered [refresh] is still in flight,
- * the user goes to Detail, unfavourites a title, and returns — that second resume's [refresh] is
- * dropped, and the FIRST call's response (fetched before the unfavourite happened) is what renders,
- * with no automatic follow-up to correct it. `FeedViewModel.loadingGeneration` is the shape that
- * WOULD coalesce (a generation captured and re-checked, rather than a bare boolean) and was not
- * adopted here — [refresh] has no "subject" that changes under it the way a group switch does, so
- * the accepted cost is narrower: the NEXT resume is what corrects a dropped one, not this call.
- *
- * **No `init { refresh() }`** (review finding, round 2 — an earlier version of this class had
- * one). `FavoritesScreen`'s `LifecycleResumeEffect` already fires on the very first composition,
- * not only a later resume: `Lifecycle` replays `ON_CREATE`/`ON_START`/`ON_RESUME` to a
- * freshly-registered observer when the `Lifecycle` it is attached to is already resumed by the
- * time the effect enters composition (`FavoritesResumeTest` measured this directly). An `init`
- * block here would therefore not be covering some gap the resume effect misses — it would be a
- * SECOND, redundant `GET /v1/library?favorite=true` on every first open. `ProfileViewModel` keeps
- * its own `init` alongside the identical resume effect for the opposite reason stated in ITS own
- * KDoc: its `refresh()` is a synchronous `PackageManager` read, so a duplicate call there costs
- * nothing — `refresh()` here is a real network round trip, so the duplicate is not free and is
- * worth removing.
+ * **Removal is optimistic.** The poster disappears at once and comes back in the same place if the
+ * server refuses, or when Undo is tapped. [removals] keeps a refresh that raced the request from
+ * showing it again.
  */
 @HiltViewModel
 class FavoritesViewModel
@@ -78,170 +49,225 @@ class FavoritesViewModel
         private val mutableState = MutableStateFlow<FavoritesUiState>(FavoritesUiState.Loading)
         val state: StateFlow<FavoritesUiState> = mutableState.asStateFlow()
 
-        // See this class's own KDoc for why this exists and why it lives here rather than inside
-        // FavoritesUiState.Success.
-        private var refreshInFlight = false
+        private val eventChannel = Channel<FavoritesEvent>(Channel.BUFFERED)
+        val events: Flow<FavoritesEvent> = eventChannel.receiveAsFlow()
 
-        // Set when [loadMore] is dropped because a [refresh] is in flight, and drained by that
-        // refresh's own `finally` (whole-branch fix round, BLOCKING 4) — `DiscoverViewModel`'s
-        // identical mechanism, adopted here because this class had the identical hole: the guard
-        // existed on ONE of the two functions that need it.
-        //
-        // Why a bare `if (refreshInFlight) return` in [loadMore] would not do: `EndOfListTrigger`
-        // only emits on the false -> true edge of its own `shouldTrigger` (that composable's own
-        // KDoc), and a dropped `loadMore()` changes neither the item count nor the scroll position,
-        // so the trigger never re-fires on its own — paging would stop silently until the user
-        // scrolled up past the threshold and back down. That is the project's dropped-call rule
-        // ("acceptable only if something will re-issue it, or the user can see it was dropped")
-        // failing both clauses at once.
-        //
-        // Cleared by [loadMore] itself, and only once that call has passed every early return and
-        // is genuinely about to fetch — never unconditionally in [refresh]'s `finally`, which would
-        // drop the same signal a second time if the re-issued call bailed out on its own
-        // `loadingMore` guard (`DiscoverViewModel` round 3's own finding).
-        private var pendingLoadMoreAfterRefresh = false
+        private var generation = 0
+        private var refreshInFlight = false
+        private val removals = FavoriteRemovals()
+        private val removedFrom = mutableMapOf<String, Placement>()
 
         /**
-         * Called from the initial resume (there is no `init` — see this class's own KDoc) and from
-         * [FavoritesUiState.Error]'s retry action.
-         *
-         * [FavoritesUiState.Loading] is written wholesale ONLY when [state] is not already
-         * [FavoritesUiState.Success] (review finding, round 2). Writing it unconditionally — an
-         * earlier version of this function did — is exactly right for the first load and for a
-         * retry from [FavoritesUiState.Error] (decision C-S: clear the error before launching a
-         * retry, not only on success, the same discipline `DiscoverViewModel.refresh` follows),
-         * but is wrong for the case this function exists to serve on every OTHER call: a resume
-         * over an already-populated screen. [repository.refreshFavorites] is a real network round
-         * trip in production (unlike the non-suspending fakes this class's own tests originally
-         * used, which is why this bug shipped unnoticed) — blanking a populated list to a
-         * full-screen spinner for that round trip on every Favorites -> Detail -> Back, or every
-         * tab switch back to Favorites, meant `FavoritesList` left composition while `Loading`
-         * rendered, which recreated `rememberLazyListState()` and reset scroll position; that part
-         * is fixed by this condition — `FavoritesList` now stays composed across a resume that
-         * starts from [FavoritesUiState.Success], since [state] never passes through [FavoritesUiState.Loading]
-         * to get there. **What this condition does NOT fix, and was never asked to (review finding,
-         * round 3): `refreshFavorites()` still calls `CursorPaginator.restart()` under the hood,
-         * which still drops pages 2..n on every resume.** A user paged to 60 entries and scrolled
-         * to ~55 still lands on `Success(20)` when a resume's fetch succeeds — the SAME
-         * `rememberLazyListState()` instance survives (unlike before this fix), but the DATA under
-         * it shrinks, so the list clamps toward its own end, `EndOfListTrigger` immediately
-         * re-fires, and the user ends up somewhere near index 19 after the ensuing `loadMore()`
-         * calls rather than back at 55. Multi-page resume is a real, open design question (does a
-         * resume re-fetch page 1 only, all previously-loaded pages, or nothing beyond a background
-         * favourite/unfavourite diff?) that this task does not answer — this condition only fixes
-         * the single-page case (composition survives; no data truncation to notice) and the
-         * COMPOSITION-level reset for a multi-page one (no `LazyListState` recreation), not the
-         * data-level one.
-         *
-         * A resume over [FavoritesUiState.Success] is now a silent re-fetch that swaps `entries` in
-         * place once it lands, with the stale list still on screen for the round trip's duration.
-         *
-         * **On failure** (review finding, round 3): the `catch` re-reads [mutableState] rather than
-         * trusting whether THIS call started from [FavoritesUiState.Success], so it also catches a
-         * list a concurrent [loadMore] extended while this fetch was failing. If [state] is still a
-         * [FavoritesUiState.Success] when the failure lands, this marks it
-         * [FavoritesUiState.Success.isStale] instead of replacing it with [FavoritesUiState.Error] —
-         * decision C-B's objection was never to showing older rows, only to showing them UNMARKED;
-         * blanking a working, populated screen to a full-screen error over a background resume the
-         * user never asked for would trade "possibly stale, marked" for "nothing, with a Retry
-         * button that itself re-enters [FavoritesUiState.Loading]" — worse on both axes. The
-         * full-screen [FavoritesUiState.Error] stays exactly for the case it always covered: nothing
-         * usable is on screen yet.
-         *
-         * This is also the acceptance path for "unfavouriting elsewhere removes the entry from
-         * this view": [repository.refreshFavorites] re-fetches `favorite=true` from the server, so
-         * a title unfavourited from Detail or Library simply stops coming back the next time this
-         * runs — there is no separate reconciliation step needed.
+         * Reloads the podium and both shelves from their first page. A refresh over a populated
+         * screen never blanks it: on failure the rows stay and are marked stale, and only a first
+         * load with nothing on screen becomes [FavoritesUiState.Error]. A second call while one is
+         * in flight is dropped.
          */
         @Suppress("TooGenericExceptionCaught")
         fun refresh() {
             if (refreshInFlight) return
             refreshInFlight = true
-            if (mutableState.value !is FavoritesUiState.Success) {
-                mutableState.value = FavoritesUiState.Loading
-            }
+            if (mutableState.value !is FavoritesUiState.Success) mutableState.value = FavoritesUiState.Loading
+            val launchedAt = ++generation
             viewModelScope.launch {
                 try {
-                    repository.refreshFavorites()
-                    // `.copy()` off whatever Success is current, NOT a fresh Success(entries = ...)
-                    // — whole-branch fix round, the sixth instance of "a field-by-field rebuild
-                    // that drops a field added later" and the one that was live. Success carries
-                    // four fields; naming one reset `loadingMore`, `pageError` and `isStale` to
-                    // their defaults. `loadingMore` is the damaging one: [loadMore]'s own
-                    // re-entrancy guard reads it, so a resume-driven refresh landing mid-page-fetch
-                    // cleared the footer spinner while the fetch was still running AND reopened the
-                    // guard for a second, concurrent `loadMoreFavorites()`. `isStale`/`pageError`
-                    // are cleared DELIBERATELY here — a successful refresh is a newer, authoritative
-                    // read — which is why they are named rather than left to `copy`'s carry-forward.
-                    val previous = mutableState.value as? FavoritesUiState.Success
-                    val entries = repository.favoriteEntries.value
-                    mutableState.value =
-                        previous?.copy(entries = entries, isStale = false, pageError = null)
-                            ?: FavoritesUiState.Success(entries = entries)
+                    val loaded =
+                        coroutineScope {
+                            // One more than the podium shows: the reserve steps up when a podium title is removed.
+                            val podium =
+                                async { repository.favoritesPage(null, LibrarySort.SCORE, null, PODIUM_SIZE + 1) }
+                            val anime = async { firstPage(MediaType.ANIME) }
+                            val tv = async { firstPage(MediaType.TV) }
+                            FavoritesUiState.Success(
+                                podium =
+                                    podium
+                                        .await()
+                                        .items
+                                        .filter { it.score != null }
+                                        .visible(launchedAt),
+                                anime = anime.await().visible(launchedAt),
+                                tv = tv.await().visible(launchedAt),
+                            )
+                        }
+                    removals.settle(launchedAt)
+                    mutableState.value = loaded
                 } catch (cancellation: CancellationException) {
                     throw cancellation
                 } catch (failure: Exception) {
-                    val stillShowing = mutableState.value as? FavoritesUiState.Success
-                    mutableState.value = stillShowing?.copy(isStale = true) ?: FavoritesUiState.Error(failure)
+                    // A load-more still in flight was started before this refresh, so its page will
+                    // be dropped as stale: clear its spinner here or the shelf never pages again.
+                    val showing = mutableState.value as? FavoritesUiState.Success
+                    mutableState.value =
+                        showing?.copy(
+                            isStale = true,
+                            anime = showing.anime.copy(loadingMore = false),
+                            tv = showing.tv.copy(loadingMore = false),
+                        ) ?: FavoritesUiState.Error(failure)
                 } finally {
                     refreshInFlight = false
-                    // Cleared by loadMore() itself, only once it actually commits to a fetch — see
-                    // the field's own comment for the stall a premature clear reintroduces.
-                    if (pendingLoadMoreAfterRefresh) {
-                        loadMore()
-                    }
                 }
             }
         }
 
-        /**
-         * Re-entrant calls are dropped up front, the same guard `LibraryViewModel.loadMore`/
-         * `DiscoverViewModel.loadMore` use: a `LazyColumn`'s end-reached callback fires on every
-         * frame near the bottom, and without this a scroll near the bottom would queue up a fetch
-         * per frame.
-         *
-         * **Also deferred while [refreshInFlight] (whole-branch fix round, BLOCKING 4).** This is
-         * the seventh instance this phase of "a guard that exists but is not applied at the call
-         * site that needs it": [refreshInFlight] was already here and already guarding [refresh],
-         * and `DiscoverViewModel.loadMore` — driving the structurally identical repository —
-         * already had this half. This one did not, so a resume-driven [refresh] and a scroll-driven
-         * [loadMore] were free to overlap. That is the interleaving `LibraryRepositoryImpl`'s
-         * `loadMoreFavorites` fix closes at the data layer; the pair matters because they are the
-         * two ends of the same window, and only closing one leaves the UI reporting "not loading"
-         * during a live fetch and spending a duplicate round trip.
-         *
-         * DEFERRED, not dropped: [pendingLoadMoreAfterRefresh] is what re-issues it — see that
-         * field's own comment for why `EndOfListTrigger` cannot be relied on to do so.
-         *
-         * Routed through [FavoritesUiState.Success.pageError], never [FavoritesUiState.Error]: the
-         * rows a failed page-2 fetch left behind are still valid and still on screen.
-         */
+        /** The next page of one shelf, if it has one and isn't already loading or being refreshed. */
         @Suppress("TooGenericExceptionCaught")
-        fun loadMore() {
-            if (refreshInFlight) {
-                pendingLoadMoreAfterRefresh = true
-                return
-            }
+        fun loadMore(type: MediaType) {
             val current = mutableState.value as? FavoritesUiState.Success ?: return
-            if (current.loadingMore) return
-            pendingLoadMoreAfterRefresh = false
-            mutableState.value = current.copy(loadingMore = true, pageError = null)
+            val shelf = current.shelf(type)
+            val cursor = shelf.nextCursor ?: return
+            if (shelf.loadingMore || refreshInFlight) return
+            val launchedAt = generation
+            updateShelf(type) { it.copy(loadingMore = true, pageError = null) }
             viewModelScope.launch {
                 try {
-                    repository.loadMoreFavorites()
-                    replaceSuccess {
-                        it.copy(entries = repository.favoriteEntries.value, loadingMore = false, pageError = null)
+                    val page = repository.favoritesPage(type, LibrarySort.SCORE, cursor, FAVORITES_PAGE_SIZE)
+                    if (launchedAt != generation) return@launch
+                    updateShelf(type) { latest ->
+                        latest.copy(
+                            entries =
+                                (latest.entries + page.items.filterNot { removals.hides(it.id, launchedAt) })
+                                    .distinctBy(LibraryEntry::id),
+                            nextCursor = page.nextCursor,
+                            loadingMore = false,
+                        )
                     }
                 } catch (cancellation: CancellationException) {
                     throw cancellation
                 } catch (failure: Exception) {
-                    replaceSuccess { it.copy(loadingMore = false, pageError = failure) }
+                    if (launchedAt ==
+                        generation
+                    ) {
+                        updateShelf(type) { it.copy(loadingMore = false, pageError = failure) }
+                    }
                 }
             }
         }
 
-        private inline fun replaceSuccess(transform: (FavoritesUiState.Success) -> FavoritesUiState.Success) {
-            val latest = mutableState.value as? FavoritesUiState.Success ?: return
-            mutableState.value = transform(latest)
+        /** Takes [entry] off the podium and its shelf at once, then asks the server to unfavourite it. */
+        @Suppress("TooGenericExceptionCaught")
+        fun remove(entry: LibraryEntry) {
+            val current = mutableState.value as? FavoritesUiState.Success ?: return
+            if (!removals.begin(entry.id)) return
+            removedFrom[entry.id] = current.placementOf(entry)
+            mutableState.value = current.without(entry.id)
+            viewModelScope.launch {
+                try {
+                    repository.update(entry.id, LibraryPatch(favorite = false))
+                    removals.confirm(entry.id, generation)
+                    eventChannel.send(FavoritesEvent.Removed(entry))
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (_: Exception) {
+                    removals.forget(entry.id)
+                    putBack(entry)
+                    eventChannel.send(FavoritesEvent.EditFailed)
+                }
+            }
         }
+
+        /** Puts [entry] back where it was at once, then asks the server to favourite it again. */
+        @Suppress("TooGenericExceptionCaught")
+        fun undo(entry: LibraryEntry) {
+            removals.forget(entry.id)
+            val placement = removedFrom[entry.id] ?: return
+            putBack(entry)
+            viewModelScope.launch {
+                try {
+                    repository.update(entry.id, LibraryPatch(favorite = true))
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (_: Exception) {
+                    // Still removed on the server: take it away again, and keep it hidden from a
+                    // refresh that raced this request.
+                    removals.begin(entry.id)
+                    removals.confirm(entry.id, generation)
+                    removedFrom[entry.id] = placement
+                    (mutableState.value as? FavoritesUiState.Success)?.let { mutableState.value = it.without(entry.id) }
+                    eventChannel.send(FavoritesEvent.EditFailed)
+                }
+            }
+        }
+
+        private suspend fun firstPage(type: MediaType): FavoriteShelf {
+            val page = repository.favoritesPage(type, LibrarySort.SCORE, null, FAVORITES_PAGE_SIZE)
+            return FavoriteShelf(entries = page.items, nextCursor = page.nextCursor)
+        }
+
+        private fun List<LibraryEntry>.visible(launchedAt: Int) = filterNot { removals.hides(it.id, launchedAt) }
+
+        private fun FavoriteShelf.visible(launchedAt: Int) = copy(entries = entries.visible(launchedAt))
+
+        private fun putBack(entry: LibraryEntry) {
+            val placement = removedFrom.remove(entry.id) ?: return
+            val current = mutableState.value as? FavoritesUiState.Success ?: return
+            mutableState.value = current.with(entry, placement)
+        }
+
+        private inline fun updateShelf(
+            type: MediaType,
+            transform: (FavoriteShelf) -> FavoriteShelf,
+        ) {
+            val current = mutableState.value as? FavoritesUiState.Success ?: return
+            mutableState.value =
+                when (type) {
+                    MediaType.ANIME -> current.copy(anime = transform(current.anime))
+                    MediaType.TV -> current.copy(tv = transform(current.tv))
+                }
+        }
+    }
+
+/** Where a removed favourite was, so Undo and a refused removal put it back in the same place. */
+internal data class Placement(
+    val podiumIndex: Int,
+    val shelfIndex: Int,
+)
+
+internal fun FavoritesUiState.Success.shelf(type: MediaType): FavoriteShelf =
+    when (type) {
+        MediaType.ANIME -> anime
+        MediaType.TV -> tv
+    }
+
+internal fun FavoritesUiState.Success.placementOf(entry: LibraryEntry) =
+    Placement(
+        podiumIndex = podium.indexOfFirst { it.id == entry.id },
+        shelfIndex = shelf(entry.media.type).entries.indexOfFirst { it.id == entry.id },
+    )
+
+internal fun FavoritesUiState.Success.without(entryId: String) =
+    copy(
+        podium = podium.filterNot { it.id == entryId },
+        anime = anime.copy(entries = anime.entries.filterNot { it.id == entryId }),
+        tv = tv.copy(entries = tv.entries.filterNot { it.id == entryId }),
+    )
+
+internal fun FavoritesUiState.Success.with(
+    entry: LibraryEntry,
+    placement: Placement,
+): FavoritesUiState.Success {
+    val restoredPodium = if (placement.podiumIndex >= 0) podium.insertedAt(placement.podiumIndex, entry) else podium
+    val shelf = shelf(entry.media.type)
+    val restoredShelf =
+        if (placement.shelfIndex >=
+            0
+        ) {
+            shelf.copy(entries = shelf.entries.insertedAt(placement.shelfIndex, entry))
+        } else {
+            shelf
+        }
+    return when (entry.media.type) {
+        MediaType.ANIME -> copy(podium = restoredPodium, anime = restoredShelf)
+        MediaType.TV -> copy(podium = restoredPodium, tv = restoredShelf)
+    }
+}
+
+/** [entry] at [index] (clamped), unless an entry with its id is already there. */
+internal fun List<LibraryEntry>.insertedAt(
+    index: Int,
+    entry: LibraryEntry,
+): List<LibraryEntry> =
+    if (any { it.id == entry.id }) {
+        this
+    } else {
+        toMutableList().apply { add(index.coerceIn(0, size), entry) }
     }
