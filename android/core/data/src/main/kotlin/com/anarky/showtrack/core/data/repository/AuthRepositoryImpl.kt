@@ -3,6 +3,7 @@ package com.anarky.showtrack.core.data.repository
 import android.util.Log
 import com.anarky.showtrack.core.data.push.PushRepository
 import com.anarky.showtrack.core.model.AuthFailure
+import com.anarky.showtrack.core.model.CurrentUser
 import com.anarky.showtrack.core.network.api.AuthApi
 import com.anarky.showtrack.core.network.api.ShowTrackApi
 import com.anarky.showtrack.core.network.auth.TokenStore
@@ -12,6 +13,7 @@ import com.anarky.showtrack.core.network.dto.RegisterRequest
 import kotlinx.coroutines.CancellationException
 import retrofit2.HttpException
 import java.io.IOException
+import java.time.Instant
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -59,6 +61,23 @@ class AuthRepositoryImpl
                 throw mapCurrentUserIdFailure(failure)
             }
         }
+
+        @Suppress("TooGenericExceptionCaught")
+        override suspend fun currentUser(): CurrentUser =
+            try {
+                val dto = showTrackApi.me()
+                cachedUserId = dto.id
+                CurrentUser(
+                    id = dto.id,
+                    username = dto.username,
+                    email = dto.email,
+                    createdAt = Instant.parse(dto.createdAt),
+                )
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (failure: Exception) {
+                throw mapCurrentUserIdFailure(failure)
+            }
 
         @Suppress("TooGenericExceptionCaught")
         override suspend fun login(

@@ -2,6 +2,7 @@ package com.anarky.showtrack.core.data.repository
 
 import com.anarky.showtrack.core.data.push.PushRepository
 import com.anarky.showtrack.core.model.AuthFailure
+import com.anarky.showtrack.core.model.CurrentUser
 import com.anarky.showtrack.core.model.PushNotification
 import com.anarky.showtrack.core.network.api.AuthApi
 import com.anarky.showtrack.core.network.api.ShowTrackApi
@@ -49,6 +50,7 @@ import org.robolectric.annotation.Config
 import retrofit2.HttpException
 import retrofit2.Response
 import java.io.IOException
+import java.time.Instant
 
 /** Builds an `HttpException` the way Retrofit itself does, for a non-2xx response. */
 private fun httpError(code: Int): HttpException = HttpException(Response.error<Any>(code, "".toResponseBody(null)))
@@ -202,6 +204,23 @@ class AuthRepositoryTest {
             val id = repository.currentUserId()
 
             assertEquals("user-42", id)
+        }
+
+    @Test
+    fun `currentUser maps the whole account and refreshes the cached id`() =
+        runTest {
+            val showTrackApi =
+                FakeShowTrackApi(meResult = UserDto("user-42", "alex", "a@b.test", "2025-03-14T10:00:00Z"))
+            val repository = AuthRepositoryImpl(FakeAuthApi(), showTrackApi, FakeTokenStore(), FakePush())
+
+            val user = repository.currentUser()
+            repository.currentUserId()
+
+            assertEquals(
+                CurrentUser("user-42", "alex", "a@b.test", Instant.parse("2025-03-14T10:00:00Z")),
+                user,
+            )
+            assertEquals("currentUserId reuses what currentUser fetched", 1, showTrackApi.meCalls)
         }
 
     /**

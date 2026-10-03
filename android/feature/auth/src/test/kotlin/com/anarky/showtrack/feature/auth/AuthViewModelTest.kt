@@ -3,6 +3,7 @@ package com.anarky.showtrack.feature.auth
 import com.anarky.showtrack.core.data.repository.AuthRepository
 import com.anarky.showtrack.core.data.repository.RegisteredButNotLoggedIn
 import com.anarky.showtrack.core.model.AuthFailure
+import com.anarky.showtrack.core.model.CurrentUser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -170,6 +171,8 @@ class AuthViewModelTest {
         var registerOutcome: Throwable? = null,
     ) : AuthRepository {
         override suspend fun hasSession(): Boolean = true
+
+        override suspend fun currentUser(): CurrentUser = error("not exercised by AuthViewModelTest")
 
         override suspend fun currentUserId(): String = error("not exercised by AuthViewModelTest")
 
