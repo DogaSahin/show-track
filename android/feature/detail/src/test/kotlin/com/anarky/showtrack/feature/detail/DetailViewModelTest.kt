@@ -1933,6 +1933,11 @@ class DetailViewModelTest {
 
         override suspend fun loadMoreResults(): Unit = error("not exercised by DetailViewModel")
 
+        override suspend fun resolve(
+            source: MediaSource,
+            externalId: String,
+        ): Media = error("not used by Detail")
+
         override suspend fun detail(mediaId: String): Media {
             lastMediaId = mediaId
             detailGate?.await()

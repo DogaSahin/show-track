@@ -4,11 +4,11 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 /**
- * A search result. Carries NO `id`, deliberately: search writes nothing, so there is no row to
- * have one, and identity is `(source, external_id)` (decision C-N).
+ * One item of `GET /v1/media/search` (`SearchItem` on the backend): the summary fields plus what
+ * the caller already has. The extras default, so a server without them still decodes.
  */
 @Serializable
-data class MediaSummaryDto(
+data class SearchItemDto(
     val source: String,
     @SerialName("external_id") val externalId: String,
     val type: String,
@@ -16,6 +16,20 @@ data class MediaSummaryDto(
     val year: Int?,
     val genres: List<String>,
     @SerialName("cover_image_url") val coverImageUrl: String?,
+    @SerialName("media_id") val mediaId: String? = null,
+    @SerialName("library_entry") val libraryEntry: LibraryEntryRefDto? = null,
+)
+
+@Serializable
+data class LibraryEntryRefDto(
+    val id: String,
+    val status: String,
+)
+
+@Serializable
+data class ResolveMediaRequestDto(
+    val source: String,
+    @SerialName("external_id") val externalId: String,
 )
 
 /**
@@ -26,7 +40,7 @@ data class MediaSummaryDto(
  */
 @Serializable
 data class MediaSearchResponseDto(
-    val items: List<MediaSummaryDto>,
+    val items: List<SearchItemDto>,
     val page: Int,
     @SerialName("has_more") val hasMore: Boolean,
     val sources: Map<String, String>,

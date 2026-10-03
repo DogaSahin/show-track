@@ -26,7 +26,9 @@ Self-hosted. It runs on your own machine and is reached over Tailscale.
 
 Data comes from **AniList** (anime, GraphQL) and **TMDB** (TV, REST), normalised behind one provider
 interface. `GET /v1/media/search` fans out to both live with a per-provider timeout, so a slow
-provider degrades its own share of results rather than failing the search. Every other read path is
+provider degrades its own share of results rather than failing the search. Each result says whether
+the title is already stored and whether it is in your library; opening one that isn't stored yet
+(`POST /v1/media/resolve`) fetches that single title, as adding it does. Every other read path is
 database-only.
 
 ## Layout

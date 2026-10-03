@@ -24,6 +24,7 @@ import com.anarky.showtrack.core.network.dto.RecommendationDto
 import com.anarky.showtrack.core.network.dto.RecommendationPageDto
 import com.anarky.showtrack.core.network.dto.RecommendationReasonDto
 import com.anarky.showtrack.core.network.dto.RegisterTargetRequest
+import com.anarky.showtrack.core.network.dto.ResolveMediaRequestDto
 import com.anarky.showtrack.core.network.dto.ReviewDto
 import com.anarky.showtrack.core.network.dto.UserDto
 import com.anarky.showtrack.core.network.dto.WatchlistItemDto
@@ -354,6 +355,9 @@ class RecommendationRepositoryTest {
         ): MediaSearchResponseDto = error("this fake only serves refresh/loadMore/remove")
 
         override suspend fun mediaDetail(id: String): MediaDto = error("this fake only serves refresh/loadMore/remove")
+
+        override suspend fun resolveMedia(request: ResolveMediaRequestDto): MediaDto =
+            error("this fake only serves refresh/loadMore/remove")
 
         override suspend fun me(): UserDto = error("this fake only serves refresh/loadMore/remove")
 

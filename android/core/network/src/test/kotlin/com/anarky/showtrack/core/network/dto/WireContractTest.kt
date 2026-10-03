@@ -221,4 +221,43 @@ class WireContractTest {
         assertEquals("someone@example.com", user.email)
         assertEquals("2026-09-01T08:58:37.582626Z", user.createdAt)
     }
+
+    /** A body shaped exactly like the backend's SearchItem. A misspelled @SerialName fails here. */
+    @Test
+    fun `a search item decodes what the caller already has of it`() {
+        val item =
+            json.decodeFromString<SearchItemDto>(
+                """
+                {"source": "anilist", "external_id": "154587", "type": "anime", "title": "Frieren",
+                 "year": 2023, "genres": ["drama"], "cover_image_url": null,
+                 "media_id": "m-1", "library_entry": {"id": "e-1", "status": "planned"}}
+                """.trimIndent(),
+            )
+
+        assertEquals("m-1", item.mediaId)
+        assertEquals(LibraryEntryRefDto(id = "e-1", status = "planned"), item.libraryEntry)
+    }
+
+    /** A server from before these fields still decodes: the title is simply unknown to the client. */
+    @Test
+    fun `a search item without the library fields still decodes`() {
+        val item =
+            json.decodeFromString<SearchItemDto>(
+                """
+                {"source": "tmdb", "external_id": "95396", "type": "tv", "title": "Severance",
+                 "year": 2022, "genres": [], "cover_image_url": null}
+                """.trimIndent(),
+            )
+
+        assertNull(item.mediaId)
+        assertNull(item.libraryEntry)
+    }
+
+    @Test
+    fun `a resolve request is sent with the server's field names`() {
+        assertEquals(
+            """{"source":"anilist","external_id":"154587"}""",
+            json.encodeToString(ResolveMediaRequestDto(source = "anilist", externalId = "154587")),
+        )
+    }
 }

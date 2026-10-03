@@ -3,14 +3,15 @@ import logging
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from itertools import zip_longest
 
-from sqlalchemy import select
+from sqlalchemy import and_, exists, select, tuple_
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import BULK_INSERT_CHUNK_SIZE, chunked
+from app.library.models import UserMedia
 from app.media.models import Media, MediaSource
 from app.media.providers.base import (
     MediaProvider,
@@ -20,7 +21,16 @@ from app.media.providers.base import (
     ProviderSearchPage,
 )
 from app.media.providers.errors import ProviderError, ProviderRateLimited, ProviderTimeout
-from app.media.schemas import MediaDetail, MediaSearchResponse, MediaSummary, PersistedMedia, SourceStatus
+from app.media.schemas import (
+    LibraryEntryRef,
+    MediaDetail,
+    MediaSearchResponse,
+    MediaSummary,
+    PersistedMedia,
+    SearchItem,
+    SourceStatus,
+)
+from app.sync.service import apply_refresh
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +124,7 @@ async def search_media(providers: Mapping[MediaSource, MediaProvider], query: st
 
     pages = [outcome.page for outcome in outcomes if outcome.page is not None]
     return MediaSearchResponse(
-        items=[_to_summary(item) for item in _interleave(pages)],
+        items=[SearchItem(**_to_summary(item).model_dump()) for item in _interleave(pages)],
         page=page,
         has_more=any(page_result.has_more for page_result in pages),
         sources=sources,
@@ -314,3 +324,104 @@ def to_detail(media: Media, now: datetime) -> MediaDetail:
 async def get_media_detail(session: AsyncSession, media_id: uuid.UUID, now: datetime) -> MediaDetail | None:
     media = await session.get(Media, media_id)
     return to_detail(media, now) if media is not None else None
+
+
+# A title nobody tracks is outside the sync job's worklist, so its airing fields freeze. Opening it
+# from search refreshes it once it is this old.
+UNLIBRARIED_REFRESH_AFTER = timedelta(hours=24)
+
+
+async def search_with_library_state(
+    session: AsyncSession,
+    providers: Mapping[MediaSource, MediaProvider],
+    *,
+    user_id: uuid.UUID,
+    query: str,
+    page: int,
+) -> MediaSearchResponse:
+    """`search_media`, then one query marking which results are stored and which the caller tracks.
+
+    The read transaction the auth dependency began is ended before the provider fan-out (decision
+    4-M: no connection idle-in-transaction across an external HTTP call). It is ended with a
+    commit, not a rollback: nothing is pending, so the two are equivalent in production, and a
+    rollback would also discard rows a test seeded inside the savepoint its session runs in
+    (`apply_refresh`'s docstring measured that). `user_id` is passed in already read.
+
+    One query whatever the page size: `media` outer-joined to the caller's own `user_media` rows,
+    filtered on the page's (source, external_id) pairs. Scoped by the join condition, so another
+    user's entry can never mark a result. It runs over whatever came back, so a degraded search
+    (one provider down) still gets the fields for the results it has.
+    """
+    await session.commit()
+    response = await search_media(providers, query, page)
+    if not response.items:
+        return response
+
+    pairs = list({(item.source, item.external_id) for item in response.items})
+    rows = await session.execute(
+        select(Media.source, Media.external_id, Media.id, UserMedia.id, UserMedia.status)
+        .outerjoin(UserMedia, and_(UserMedia.media_id == Media.id, UserMedia.user_id == user_id))
+        .where(tuple_(Media.source, Media.external_id).in_(pairs))
+    )
+    known = {
+        (source, external_id): (media_id, entry_id, entry_status)
+        for source, external_id, media_id, entry_id, entry_status in rows
+    }
+
+    def annotate(item: SearchItem) -> SearchItem:
+        match = known.get((item.source, item.external_id))
+        if match is None:
+            return item
+        media_id, entry_id, entry_status = match
+        entry = LibraryEntryRef(id=entry_id, status=entry_status) if entry_id is not None else None
+        return item.model_copy(update={"media_id": media_id, "library_entry": entry})
+
+    return response.model_copy(update={"items": [annotate(item) for item in response.items]})
+
+
+async def resolve_media(
+    session: AsyncSession,
+    providers: Mapping[MediaSource, MediaProvider],
+    ref: MediaRef,
+    now: datetime,
+) -> MediaDetail:
+    """A search result's stored row, created if need be, so a client can open it without adding it.
+
+    A new title goes through `get_or_create_media` (race-free, insert-once). An existing row that
+    no library holds and that was last synced over `UNLIBRARIED_REFRESH_AFTER` ago is refreshed
+    from its provider first, through the sync job's own writer (`apply_refresh`), so freshness
+    still has one owner. If that refresh fails, the stored row is returned as it is: a slightly
+    stale screen beats an error for a title that exists. Flushes; the caller commits.
+
+    A row this endpoint just created has never been synced (only the sync writer stamps
+    `last_synced_at`), so opening it a second time refreshes it once; from then on it is fresh.
+    """
+    existing = await _select_by_ref(session, ref)
+    if existing is None:
+        media = await get_or_create_media(session, providers, ref)
+        return to_detail(media, now)
+
+    media_id, last_synced_at = existing.id, existing.last_synced_at
+    tracked = await session.scalar(select(exists().where(UserMedia.media_id == media_id)))
+    stale = last_synced_at is None or now - last_synced_at > UNLIBRARIED_REFRESH_AFTER
+    provider = providers.get(ref.source)
+    if not tracked and stale and provider is not None:
+        # Decision 4-M again: end the read transaction before the provider call (a commit, for
+        # the reason given in search_with_library_state).
+        await session.commit()
+        try:
+            detail = await provider.get_by_id(ref.external_id)
+        except ProviderError:
+            logger.info("refreshing %s %s on resolve failed; returning the stored row", ref.source, ref.external_id)
+        except Exception:
+            # A provider-client bug (an unmapped payload, say) must not turn a title that exists
+            # into a 500 either; logged loudly because, unlike an outage, it needs fixing.
+            logger.exception(
+                "refreshing %s %s on resolve raised; returning the stored row", ref.source, ref.external_id
+            )
+        else:
+            fetched = {(ref.source, ref.external_id): detail} if detail is not None else {}
+            await apply_refresh(session, [(media_id, ref.source, ref.external_id)], fetched, (), now=now)
+
+    media = await session.get(Media, media_id, populate_existing=True)
+    return to_detail(media, now)

@@ -29,6 +29,7 @@ import com.anarky.showtrack.core.network.dto.ProposeTitleRequestDto
 import com.anarky.showtrack.core.network.dto.PushTargetDto
 import com.anarky.showtrack.core.network.dto.RecommendationPageDto
 import com.anarky.showtrack.core.network.dto.RegisterTargetRequest
+import com.anarky.showtrack.core.network.dto.ResolveMediaRequestDto
 import com.anarky.showtrack.core.network.dto.ReviewDto
 import com.anarky.showtrack.core.network.dto.UserDto
 import com.anarky.showtrack.core.network.dto.WatchlistItemDto
@@ -758,6 +759,8 @@ class GroupRepositoryImplTest {
         ): MediaSearchResponseDto = error("not used")
 
         override suspend fun mediaDetail(id: String): MediaDto = error("not used")
+
+        override suspend fun resolveMedia(request: ResolveMediaRequestDto): MediaDto = error("not used")
 
         // GroupRepositoryImpl no longer calls api.me() (round 1 review moved currentUserId() to
         // AuthRepositoryImpl — see GroupRepository.kt's own KDoc) — kept as a loud failure, not a
