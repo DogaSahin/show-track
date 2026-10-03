@@ -5,6 +5,11 @@
     <!-- The group switcher in the title bar. %1$s is the active group's name. -->
     <string name="feed_switch_group">Switch group, current group %1$s</string>
     <string name="feed_manage_groups">Manage groups</string>
+    <!-- What TalkBack says for the member count beside a group in the switcher menu. -->
+    <plurals name="feed_group_members">
+        <item quantity="one">%d member</item>
+        <item quantity="other">%d members</item>
+    </plurals>
 
     <!-- Ruling 1 (9c.4/9c.5 circularity, progress.md): FeedScreen renders this when
          activeGroupId is null — no group is active yet, because task 9c.5 (the group switcher)

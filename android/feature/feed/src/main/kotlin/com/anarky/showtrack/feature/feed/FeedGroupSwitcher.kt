@@ -19,6 +19,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -37,8 +38,8 @@ private val SwitcherMaxWidth = 180.dp
  * menu of every group (the active one highlighted) with Manage groups at the bottom.
  *
  * Shown even with a single group, unlike the old tab row: the pill also says WHICH group this feed
- * is, and the menu is the way to Groups. Member counts in the menu wait for the groups list to
- * carry them.
+ * is, and the menu is the way to Groups. Each group shows its member count when the groups list
+ * carries one.
  */
 @Composable
 internal fun FeedGroupSwitcher(
@@ -110,6 +111,18 @@ private fun GroupMenu(
                     )
                 },
                 leadingIcon = { GroupAvatar(groupId = group.id, name = group.name, size = 24.dp) },
+                trailingIcon =
+                    group.memberCount?.let { count ->
+                        {
+                            val spoken = pluralStringResource(R.plurals.feed_group_members, count, count)
+                            Text(
+                                text = count.toString(),
+                                modifier = Modifier.clearAndSetSemantics { contentDescription = spoken },
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    },
                 onClick = {
                     onDismiss()
                     if (!isActive) onSwitchGroup(group.id)

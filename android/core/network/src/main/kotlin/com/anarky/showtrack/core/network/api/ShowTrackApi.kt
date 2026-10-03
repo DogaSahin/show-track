@@ -209,6 +209,15 @@ interface ShowTrackApi {
         @Path("id") groupId: String,
     ): List<MemberDto>
 
+    /**
+     * `GET /v1/groups/{id}/invite`: the current code and expiry, read-only (never rotates; an
+     * expired code comes back as it is). Owner only — a non-owner gets a 403.
+     */
+    @GET("v1/groups/{id}/invite")
+    suspend fun groupInvite(
+        @Path("id") groupId: String,
+    ): GroupWithInviteDto
+
     /** `POST /v1/groups/{id}/invite/rotate`. Owner only — a non-owner gets a 403. */
     @POST("v1/groups/{id}/invite/rotate")
     suspend fun rotateGroupInvite(

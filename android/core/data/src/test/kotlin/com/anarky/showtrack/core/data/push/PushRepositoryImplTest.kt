@@ -115,6 +115,8 @@ private class FakeApi : ShowTrackApi {
 
     override suspend fun groupMembers(groupId: String): List<MemberDto> = error("not used")
 
+    override suspend fun groupInvite(groupId: String): GroupWithInviteDto = error("not used")
+
     override suspend fun rotateGroupInvite(groupId: String): GroupWithInviteDto = error("not used")
 
     override suspend fun removeGroupMember(

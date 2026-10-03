@@ -56,6 +56,8 @@ internal class FakeGroupRepository(
 
     override suspend fun rotateInvite(groupId: String): GroupWithInvite = error("not exercised by this fake")
 
+    override suspend fun invite(groupId: String): GroupWithInvite = error("not exercised by this fake")
+
     override suspend fun removeMember(
         groupId: String,
         userId: String,

@@ -1,7 +1,7 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select, tuple_
+from sqlalchemy import case, func, select, tuple_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,7 +9,15 @@ from app.config import get_settings
 from app.db import FOREIGN_KEY_VIOLATION, UNIQUE_VIOLATION
 from app.groups import invites
 from app.groups.models import Group, GroupMember, GroupRole, GroupWatchlist
-from app.groups.schemas import FeedActor, FeedItem, ProgressEntry, WatchlistItem
+from app.groups.schemas import (
+    FeedActor,
+    FeedItem,
+    GroupSummary,
+    MemberPreview,
+    ProgressEntry,
+    WatchlistItem,
+    WatchlistPreview,
+)
 from app.library.models import Activity, Review, UserMedia
 from app.library.schemas import ReviewRead
 from app.library.service import MediaMissing, to_review_read
@@ -125,14 +133,106 @@ async def join_by_code(session: AsyncSession, *, code: str, user: User, now: dat
     return group, True
 
 
-async def list_groups(session: AsyncSession, *, user_id: uuid.UUID) -> list[Group]:
-    statement = (
-        select(Group)
-        .join(GroupMember, GroupMember.group_id == Group.id)
-        .where(GroupMember.user_id == user_id)
-        .order_by(Group.created_at.asc(), Group.id.asc())
+MEMBER_PREVIEW_SIZE = 4
+WATCHLIST_PREVIEW_SIZE = 4
+
+
+async def list_group_summaries(session: AsyncSession, *, user_id: uuid.UUID) -> list[GroupSummary]:
+    """The caller's groups with their role, counts and previews, in THREE queries however many
+    groups there are: the groups with the caller's role, then one ranked query each for members
+    and watchlist. Each ranked query carries its partition's total as a window count, computed
+    before the rank filter, so the counts cost no extra query.
+
+    Scoping: the first query only returns groups the caller belongs to, and the other two only
+    read rows of those group ids.
+    """
+    rows = (
+        await session.execute(
+            select(Group, GroupMember.role)
+            .join(GroupMember, GroupMember.group_id == Group.id)
+            .where(GroupMember.user_id == user_id)
+            .order_by(Group.created_at.asc(), Group.id.asc())
+        )
+    ).all()
+    if not rows:
+        return []
+    group_ids = [group.id for group, _ in rows]
+
+    owner_first = case((GroupMember.role == GroupRole.OWNER, 0), else_=1)
+    members = (
+        select(
+            GroupMember.group_id,
+            User.id.label("user_id"),
+            User.username,
+            func.row_number()
+            .over(
+                partition_by=GroupMember.group_id,
+                order_by=(owner_first, GroupMember.joined_at.asc(), GroupMember.id.asc()),
+            )
+            .label("rank"),
+            func.count().over(partition_by=GroupMember.group_id).label("total"),
+        )
+        .join(User, User.id == GroupMember.user_id)
+        .where(GroupMember.group_id.in_(group_ids))
+        .subquery()
     )
-    return list(await session.scalars(statement))
+    member_rows = (
+        await session.execute(
+            select(members).where(members.c.rank <= MEMBER_PREVIEW_SIZE).order_by(members.c.group_id, members.c.rank)
+        )
+    ).all()
+
+    watchlist = (
+        select(
+            GroupWatchlist.group_id,
+            GroupWatchlist.media_id,
+            Media.cover_image_url,
+            func.row_number()
+            .over(
+                partition_by=GroupWatchlist.group_id,
+                order_by=(GroupWatchlist.created_at.desc(), GroupWatchlist.id.desc()),
+            )
+            .label("rank"),
+            func.count().over(partition_by=GroupWatchlist.group_id).label("total"),
+        )
+        .join(Media, Media.id == GroupWatchlist.media_id)
+        .where(GroupWatchlist.group_id.in_(group_ids))
+        .subquery()
+    )
+    watchlist_rows = (
+        await session.execute(
+            select(watchlist)
+            .where(watchlist.c.rank <= WATCHLIST_PREVIEW_SIZE)
+            .order_by(watchlist.c.group_id, watchlist.c.rank)
+        )
+    ).all()
+
+    member_preview: dict[uuid.UUID, list[MemberPreview]] = {}
+    member_count: dict[uuid.UUID, int] = {}
+    for row in member_rows:
+        member_preview.setdefault(row.group_id, []).append(MemberPreview(id=row.user_id, username=row.username))
+        member_count[row.group_id] = row.total
+    watchlist_preview: dict[uuid.UUID, list[WatchlistPreview]] = {}
+    watchlist_count: dict[uuid.UUID, int] = {}
+    for row in watchlist_rows:
+        watchlist_preview.setdefault(row.group_id, []).append(
+            WatchlistPreview(media_id=row.media_id, cover_image_url=row.cover_image_url)
+        )
+        watchlist_count[row.group_id] = row.total
+
+    return [
+        GroupSummary(
+            id=group.id,
+            name=group.name,
+            created_at=group.created_at,
+            my_role=role,
+            member_count=member_count.get(group.id, 0),
+            member_preview=member_preview.get(group.id, []),
+            watchlist_count=watchlist_count.get(group.id, 0),
+            watchlist_preview=watchlist_preview.get(group.id, []),
+        )
+        for group, role in rows
+    ]
 
 
 async def list_members(session: AsyncSession, *, group_id: uuid.UUID) -> list[tuple[GroupMember, User]]:

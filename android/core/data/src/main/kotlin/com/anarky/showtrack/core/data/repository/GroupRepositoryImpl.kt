@@ -64,6 +64,8 @@ class GroupRepositoryImpl
         override suspend fun rotateInvite(groupId: String): GroupWithInvite =
             guarded { api.rotateGroupInvite(groupId).toDomain() }
 
+        override suspend fun invite(groupId: String): GroupWithInvite = guarded { api.groupInvite(groupId).toDomain() }
+
         override suspend fun removeMember(
             groupId: String,
             userId: String,

@@ -36,6 +36,40 @@ class WireContractTest {
             "missing fixture wire/$name"
         }.use { it.readBytes().decodeToString() }
 
+    /** A body shaped exactly like the backend's GroupSummary. A misspelled @SerialName fails here. */
+    @Test
+    fun `a group summary decodes every field`() {
+        val group =
+            json.decodeFromString<GroupDto>(
+                """
+                {"id": "g-1", "name": "Home", "created_at": "2026-09-01T10:00:00Z", "my_role": "owner",
+                 "member_count": 4, "member_preview": [{"id": "u-1", "username": "mira"}],
+                 "watchlist_count": 6, "watchlist_preview": [{"media_id": "m-1", "cover_image_url": null}]}
+                """.trimIndent(),
+            )
+
+        assertEquals("owner", group.myRole)
+        assertEquals(4, group.memberCount)
+        assertEquals(listOf(GroupActorDto(id = "u-1", username = "mira")), group.memberPreview)
+        assertEquals(6, group.watchlistCount)
+        assertEquals(listOf(WatchlistPreviewDto(mediaId = "m-1", coverImageUrl = null)), group.watchlistPreview)
+    }
+
+    /** A server from before the summary fields still decodes, with every summary field "unknown". */
+    @Test
+    fun `a group without the summary fields still decodes`() {
+        val group =
+            json.decodeFromString<GroupDto>(
+                """{"id": "g-1", "name": "Home", "created_at": "2026-09-01T10:00:00Z"}""",
+            )
+
+        assertNull(group.myRole)
+        assertNull(group.memberCount)
+        assertEquals(emptyList<GroupActorDto>(), group.memberPreview)
+        assertNull(group.watchlistCount)
+        assertEquals(emptyList<WatchlistPreviewDto>(), group.watchlistPreview)
+    }
+
     @Test
     fun `a real library page decodes`() {
         val page = json.decodeFromString<LibraryPageDto>(fixture("library_page.json"))

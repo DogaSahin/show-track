@@ -867,6 +867,8 @@ private class FakeShowTrackApi(
     override suspend fun groupMembers(groupId: String): List<MemberDto> =
         error("the library repository must not touch groups")
 
+    override suspend fun groupInvite(groupId: String): GroupWithInviteDto = error("not used")
+
     override suspend fun rotateGroupInvite(groupId: String): GroupWithInviteDto =
         error("the library repository must not touch groups")
 
