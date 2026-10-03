@@ -47,6 +47,9 @@ class BatchProvider(MediaProvider):
     async def get_by_id(self, external_id: str):
         raise AssertionError("the sync job must use get_many, not get_by_id")
 
+    async def get_episodes(self, external_id: str):
+        return ()
+
     async def fetch_similar(self, external_id: str):
         raise AssertionError("not used in these tests")
 

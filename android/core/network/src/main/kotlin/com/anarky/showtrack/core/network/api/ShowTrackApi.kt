@@ -3,6 +3,7 @@ package com.anarky.showtrack.core.network.api
 import com.anarky.showtrack.core.network.dto.AddLibraryEntryRequest
 import com.anarky.showtrack.core.network.dto.CreateGroupRequestDto
 import com.anarky.showtrack.core.network.dto.CreateReviewRequestDto
+import com.anarky.showtrack.core.network.dto.EpisodeListDto
 import com.anarky.showtrack.core.network.dto.FeedPageDto
 import com.anarky.showtrack.core.network.dto.GroupDto
 import com.anarky.showtrack.core.network.dto.GroupWithInviteDto
@@ -137,6 +138,12 @@ interface ShowTrackApi {
     suspend fun resolveMedia(
         @Body request: ResolveMediaRequestDto,
     ): MediaDto
+
+    /** `GET /v1/media/{id}/episodes`: seasons and episodes, from the server's database only. */
+    @GET("v1/media/{id}/episodes")
+    suspend fun mediaEpisodes(
+        @Path("id") id: String,
+    ): EpisodeListDto
 
     /** `GET /v1/media/{id}`, a MediaDetail — the same shape [LibraryEntryDto] embeds. */
     @GET("v1/media/{id}")

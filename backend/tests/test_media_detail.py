@@ -48,6 +48,9 @@ class CountingProvider(MediaProvider):
         self.calls += 1
         return self._result
 
+    async def get_episodes(self, external_id: str):
+        raise AssertionError("not used in these tests")
+
     async def fetch_similar(self, external_id: str):
         raise AssertionError("not used in these tests")
 

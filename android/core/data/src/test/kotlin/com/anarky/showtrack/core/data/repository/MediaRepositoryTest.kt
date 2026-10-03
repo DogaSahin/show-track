@@ -5,6 +5,8 @@ import com.anarky.showtrack.core.network.api.ShowTrackApi
 import com.anarky.showtrack.core.network.dto.AddLibraryEntryRequest
 import com.anarky.showtrack.core.network.dto.CreateGroupRequestDto
 import com.anarky.showtrack.core.network.dto.CreateReviewRequestDto
+import com.anarky.showtrack.core.network.dto.EpisodeDto
+import com.anarky.showtrack.core.network.dto.EpisodeListDto
 import com.anarky.showtrack.core.network.dto.FeedPageDto
 import com.anarky.showtrack.core.network.dto.GroupDto
 import com.anarky.showtrack.core.network.dto.GroupWithInviteDto
@@ -25,6 +27,7 @@ import com.anarky.showtrack.core.network.dto.RegisterTargetRequest
 import com.anarky.showtrack.core.network.dto.ResolveMediaRequestDto
 import com.anarky.showtrack.core.network.dto.ReviewDto
 import com.anarky.showtrack.core.network.dto.SearchItemDto
+import com.anarky.showtrack.core.network.dto.SeasonDto
 import com.anarky.showtrack.core.network.dto.UserDto
 import com.anarky.showtrack.core.network.dto.WatchlistItemDto
 import com.anarky.showtrack.core.network.dto.WatchlistPageDto
@@ -35,6 +38,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
+import java.time.LocalDate
 
 class MediaRepositoryTest {
     @Test
@@ -171,6 +175,60 @@ class MediaRepositoryTest {
         sources = sources,
     )
 
+    @Test
+    fun `an episode list maps seasons, dates and an unfetched list`() =
+        runTest {
+            val api = FakeApi(response())
+            api.episodesAnswer =
+                EpisodeListDto(
+                    syncedAt = "2026-10-01T08:00:00Z",
+                    totalEpisodes = 2,
+                    seasons =
+                        listOf(
+                            SeasonDto(
+                                number = 1,
+                                episodeCount = 2,
+                                episodes =
+                                    listOf(
+                                        EpisodeDto(
+                                            id = "e1",
+                                            number = 1,
+                                            title = "Pilot",
+                                            airDate = "2022-02-18",
+                                            aired = true,
+                                        ),
+                                        EpisodeDto(id = "e2", number = 2, title = null, airDate = null, aired = false),
+                                    ),
+                            ),
+                        ),
+                )
+            val repository = MediaRepositoryImpl(api)
+
+            val list = repository.episodes("m-1")
+
+            assertTrue(list.isAvailable)
+            assertEquals(2, list.totalEpisodes)
+            assertEquals(
+                LocalDate.of(2022, 2, 18),
+                list.seasons
+                    .single()
+                    .episodes
+                    .first()
+                    .airDate,
+            )
+            assertEquals(
+                null,
+                list.seasons
+                    .single()
+                    .episodes
+                    .last()
+                    .airDate,
+            )
+
+            api.episodesAnswer = EpisodeListDto(syncedAt = null, totalEpisodes = null, seasons = emptyList())
+            assertFalse(repository.episodes("m-1").isAvailable)
+        }
+
     /**
      * Every method but `searchMedia`/`mediaDetail` is unused by [MediaRepositoryImpl] and would
      * signal a repository that has started reaching outside its own concern if it were ever hit.
@@ -217,6 +275,13 @@ class MediaRepositoryTest {
 
         var lastResolve: ResolveMediaRequestDto? = null
         var resolveAnswer: MediaDto? = null
+
+        var episodesAnswer: EpisodeListDto? = null
+
+        override suspend fun mediaEpisodes(id: String): EpisodeListDto =
+            checkNotNull(episodesAnswer) {
+                "set episodesAnswer first"
+            }
 
         override suspend fun resolveMedia(request: ResolveMediaRequestDto): MediaDto {
             lastResolve = request

@@ -7,6 +7,7 @@ import com.anarky.showtrack.core.data.paging.Page
 import com.anarky.showtrack.core.data.repository.LibraryRepository
 import com.anarky.showtrack.core.data.repository.MediaRepository
 import com.anarky.showtrack.core.model.AuthFailure
+import com.anarky.showtrack.core.model.EpisodeList
 import com.anarky.showtrack.core.model.GroupActor
 import com.anarky.showtrack.core.model.GroupFailure
 import com.anarky.showtrack.core.model.LibraryEntry
@@ -1937,6 +1938,8 @@ class DetailViewModelTest {
             source: MediaSource,
             externalId: String,
         ): Media = error("not used by Detail")
+
+        override suspend fun episodes(mediaId: String): EpisodeList = error("not used here")
 
         override suspend fun detail(mediaId: String): Media {
             lastMediaId = mediaId

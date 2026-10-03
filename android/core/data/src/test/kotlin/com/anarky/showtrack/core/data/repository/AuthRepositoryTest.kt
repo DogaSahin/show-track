@@ -11,6 +11,7 @@ import com.anarky.showtrack.core.network.auth.TokenStore
 import com.anarky.showtrack.core.network.dto.AddLibraryEntryRequest
 import com.anarky.showtrack.core.network.dto.CreateGroupRequestDto
 import com.anarky.showtrack.core.network.dto.CreateReviewRequestDto
+import com.anarky.showtrack.core.network.dto.EpisodeListDto
 import com.anarky.showtrack.core.network.dto.FeedPageDto
 import com.anarky.showtrack.core.network.dto.GroupDto
 import com.anarky.showtrack.core.network.dto.GroupWithInviteDto
@@ -398,6 +399,8 @@ class AuthRepositoryTest {
         override suspend fun mediaDetail(id: String): MediaDto = error("not used")
 
         override suspend fun resolveMedia(request: ResolveMediaRequestDto): MediaDto = error("not used")
+
+        override suspend fun mediaEpisodes(id: String): EpisodeListDto = error("not used")
 
         override suspend fun registerPushTarget(request: RegisterTargetRequest): PushTargetDto = error("not used")
 

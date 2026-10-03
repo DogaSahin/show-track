@@ -17,6 +17,9 @@ class SyncSummary(BaseModel):
     # A provider raised, or no provider is registered for that source. Counted per title, so the
     # summary reflects how much data went stale.
     failed: int = 0
+    # The episode-list phase, counted per title.
+    episodes_refreshed: int = 0
+    episodes_failed: int = 0
 
 
 class ThresholdScanSummary(BaseModel):

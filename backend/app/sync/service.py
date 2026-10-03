@@ -4,15 +4,19 @@ from collections import defaultdict
 from collections.abc import Collection, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import DateTime, case, exists, literal, or_, select
+from sqlalchemy import DateTime, and_, case, exists, func, literal, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.db import BULK_INSERT_CHUNK_SIZE, chunked, get_sessionmaker
 from app.library.models import UserMedia
+
+# A module reference, not `from ... import`: app.media.service imports this module too, and a
+# module reference is what lets either side be imported first.
+from app.media import service as media_service
 from app.media.models import Media, MediaSource, MediaStatus
-from app.media.providers.base import MediaProvider, ProviderMedia
+from app.media.providers.base import MediaProvider, ProviderEpisode, ProviderMedia
 from app.media.providers.errors import ProviderError, ProviderRateLimited
 from app.notifications.models import (
     NotificationPrefs,
@@ -53,6 +57,14 @@ DEFAULT_SYNC_INTERVAL = timedelta(hours=24)
 UNKNOWN_DATE_SYNC_INTERVAL = timedelta(hours=6)
 
 Worklist = list[tuple[uuid.UUID, MediaSource, str]]
+
+# Episode lists change far less often than next-episode pointers, so they get their own, slower
+# schedule: a list never fetched is always due; an airing or upcoming title's list once a day; a
+# finished title's list never again (its status changing is what makes it due one last time, see
+# _apply). A TMDB list costs one request per season, which is why finished shows are left alone.
+EPISODE_REFRESH_INTERVAL = timedelta(hours=24)
+# Bounds one cycle's provider cost, oldest lists first; the rest wait for the next cycle.
+EPISODE_TITLES_PER_CYCLE = 25
 
 
 def _due_cutoff(now: datetime):
@@ -107,6 +119,11 @@ def _apply(media: Media, detail: ProviderMedia) -> bool:
         "next_episode_date": episode.airs_at if episode else None,
     }
     changed = False
+    if media.status != detail.status:
+        # A status change (a show finishing, or a new season starting) is when the episode list is
+        # most likely to have moved: make it due for one more refresh. A flag, not a cleared stamp,
+        # so the stored list stays readable until that refresh lands.
+        media.episodes_refresh_due = True
     for field, value in incoming.items():
         if getattr(media, field) != value:
             setattr(media, field, value)
@@ -135,6 +152,85 @@ async def collect_worklist(session: AsyncSession, *, now: datetime) -> Worklist:
         .where(or_(Media.last_synced_at.is_(None), Media.last_synced_at <= _due_cutoff(now)))
     )
     return [(media_id, source, external_id) for media_id, source, external_id in await session.execute(tracked)]
+
+
+async def collect_episode_worklist(session: AsyncSession, *, now: datetime) -> Worklist:
+    """Tracked titles whose episode list is due (see EPISODE_REFRESH_INTERVAL), never-fetched first."""
+    due = (
+        select(Media.id, Media.source, Media.external_id)
+        .where(exists().where(UserMedia.media_id == Media.id))
+        .where(
+            or_(
+                Media.episodes_synced_at.is_(None),
+                Media.episodes_refresh_due.is_(True),
+                and_(
+                    Media.status.in_(SYNCABLE_STATUSES),
+                    Media.episodes_synced_at <= now - EPISODE_REFRESH_INTERVAL,
+                ),
+            )
+        )
+        # Random among equally-due titles: a title that fails every time (and so is never stamped)
+        # must not hold the same slot every cycle while the rest of the queue waits.
+        .order_by(Media.episodes_synced_at.asc().nulls_first(), func.random())
+        .limit(EPISODE_TITLES_PER_CYCLE)
+    )
+    return [(media_id, source, external_id) for media_id, source, external_id in await session.execute(due)]
+
+
+async def fetch_episode_lists(
+    providers: Mapping[MediaSource, MediaProvider], worklist: Sequence[tuple[uuid.UUID, MediaSource, str]]
+) -> tuple[dict[uuid.UUID, tuple[ProviderEpisode, ...] | None], int]:
+    """One provider call per title, with no session open (decision 4-M). Returns the lists that
+    came back and how many titles failed. A failed title keeps its stored list and stays due.
+
+    Every exception is caught per title, not only ProviderError: nothing above a scheduled job
+    catches anything, and one malformed answer must not cost the other titles their refresh.
+    A rate limit abandons the rest of that source for this cycle, as fetch_all does.
+    """
+    lists: dict[uuid.UUID, tuple[ProviderEpisode, ...] | None] = {}
+    failed = 0
+    rate_limited: set[MediaSource] = set()
+    for media_id, source, external_id in worklist:
+        provider = providers.get(source)
+        if provider is None or source in rate_limited:
+            failed += 1
+            continue
+        try:
+            episodes = await provider.get_episodes(external_id)
+        except ProviderRateLimited as exc:
+            logger.warning("%s rate limited during episode sync; retry_after=%s", source, exc.retry_after)
+            rate_limited.add(source)
+            failed += 1
+            continue
+        except Exception:
+            logger.exception("fetching episodes for %s %s failed", source, external_id)
+            failed += 1
+            continue
+        # None: the provider no longer knows the title. Kept as None so the writer only moves the
+        # stamp and leaves the stored list alone.
+        lists[media_id] = episodes
+    return lists, failed
+
+
+async def store_episode_lists(
+    session: AsyncSession, lists: Mapping[uuid.UUID, tuple[ProviderEpisode, ...] | None], *, now: datetime
+) -> tuple[int, int]:
+    """Write each fetched list in its own savepoint, so one title's database error costs only that
+    title. Returns (refreshed, failed).
+    """
+    refreshed = failed = 0
+    for media_id, episodes in lists.items():
+        try:
+            async with session.begin_nested():
+                if episodes is None:
+                    await media_service.mark_episodes_checked(session, media_id, now)
+                else:
+                    await media_service.store_episodes(session, media_id, episodes, now)
+            refreshed += 1
+        except Exception:
+            logger.exception("storing episodes for %s failed", media_id)
+            failed += 1
+    return refreshed, failed
 
 
 async def fetch_all(
@@ -296,7 +392,18 @@ async def run_sync(providers: Mapping[MediaSource, MediaProvider], *, now: datet
 
             summary = await apply_refresh(session, worklist, fetched, failed_sources, now=now)
             await session.commit()
-            return summary
+
+            # The episode phase, after the refresh committed: a failure here never costs the
+            # next-episode data above. Same shape: read, end the transaction, call providers with
+            # no transaction open, then write.
+            episode_work = await collect_episode_worklist(session, now=now)
+            await session.rollback()
+            lists, failed = await fetch_episode_lists(providers, episode_work)
+            refreshed, store_failed = await store_episode_lists(session, lists, now=now)
+            await session.commit()
+            return summary.model_copy(
+                update={"episodes_refreshed": refreshed, "episodes_failed": failed + store_failed}
+            )
 
 
 # The SQL prefilter's window. One horizon covers both thresholds because notify_soon_hours is
