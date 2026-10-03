@@ -1,65 +1,56 @@
 package com.anarky.showtrack.feature.library
 
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.anarky.showtrack.core.designsystem.component.CountdownBadge
 import com.anarky.showtrack.core.designsystem.component.EmptyState
 import com.anarky.showtrack.core.designsystem.component.EndOfListTrigger
 import com.anarky.showtrack.core.designsystem.component.ErrorState
+import com.anarky.showtrack.core.designsystem.component.LargeTitleScaffold
 import com.anarky.showtrack.core.designsystem.component.LoadingState
-import com.anarky.showtrack.core.designsystem.component.MediaCard
 import com.anarky.showtrack.core.designsystem.component.StaleDataBanner
-import com.anarky.showtrack.core.designsystem.component.StatusTabRow
 import com.anarky.showtrack.core.model.LibraryEntry
 import com.anarky.showtrack.core.model.LibraryFilter
 import com.anarky.showtrack.core.model.LibrarySort
+import com.anarky.showtrack.core.model.LibraryStats
 import com.anarky.showtrack.core.model.UserMediaStatus
 
+private const val AIRING_SOON_KEY = "airing-soon"
+
 /**
- * The stateful entry point. `hiltViewModel()` is the only line in this module that touches DI:
- * it resolves [LibraryViewModel] out of the nearest `ViewModelStoreOwner`'s Hilt-backed factory,
- * so the ViewModel's `LibraryRepository` arrives from the singleton component with no wiring
- * here at all.
+ * The stateful entry point. `hiltViewModel()` is the only line in this module that touches DI.
  *
  * [onEntryClick] hands the whole [LibraryEntry] to the caller rather than a raw id, so the
- * navigation entry point below can pull `entry.media.id` — the entry's OWN id is a different
- * identifier that `DetailRoute` does not take (see `LibraryNavigation.kt`).
+ * navigation entry point can pull `entry.media.id` — the entry's OWN id is a different identifier
+ * that `DetailRoute` does not take (see `LibraryNavigation.kt`). [onSearchClick] is the same shape:
+ * this screen stays ignorant of navigation and hands the tap up.
  *
- * [onSearchClick] is the same shape: this screen stays ignorant of navigation, so it hands the
- * tap up rather than knowing `SearchRoute` exists. `LibraryNavigation.kt` is what turns it into
- * an `onNavigate` call (Gap 1, Phase 9a device walkthroughs — the search screen existed and had
- * no door in).
+ * The counts and the "Airing soon" row reload on every resume ([LibraryViewModel.refreshOverview]):
+ * an add or status change made in Detail or Search changes both, and this ViewModel outlives that
+ * round trip.
  */
 @Composable
 fun LibraryScreen(
@@ -68,14 +59,19 @@ fun LibraryScreen(
     modifier: Modifier = Modifier,
     viewModel: LibraryViewModel = hiltViewModel(),
 ) {
-    // collectAsStateWithLifecycle, not collectAsState: the latter keeps collecting while the
-    // screen is in the background, which is what makes the ViewModel's WhileSubscribed(5s)
-    // upstream never stop.
     val state by viewModel.state.collectAsStateWithLifecycle()
     val filter by viewModel.filter.collectAsStateWithLifecycle()
+    val stats by viewModel.stats.collectAsStateWithLifecycle()
+    val airingSoon by viewModel.airingSoon.collectAsStateWithLifecycle()
+    LifecycleResumeEffect(viewModel) {
+        viewModel.refreshOverview()
+        onPauseOrDispose { }
+    }
     LibraryScreen(
         state = state,
         filter = filter,
+        stats = stats,
+        airingSoon = airingSoon,
         onStatusSelected = viewModel::selectStatus,
         onSortSelected = viewModel::selectSort,
         onLoadMore = viewModel::loadMore,
@@ -88,23 +84,25 @@ fun LibraryScreen(
 
 /**
  * The stateless half, split out so it can be previewed and driven by a test without a graph or a
- * ViewModel — `AuthScreen`'s pattern, applied here.
+ * ViewModel.
  *
- * [filter] is a separate parameter from [state] on purpose: it drives the tab row and the sort
- * menu directly, and it stays valid (and keeps showing whatever the user tapped) even while
- * [state] is [LibraryUiState.Loading] or [LibraryUiState.Error] — see
- * [LibraryViewModel.filter]'s KDoc.
+ * [filter] is a separate parameter from [state] on purpose: it drives the two dropdowns directly,
+ * and it stays valid (and keeps showing whatever the user picked) even while [state] is
+ * [LibraryUiState.Loading] or [LibraryUiState.Error] — see [LibraryViewModel.filter]'s KDoc.
  *
- * Eight parameters (now nine, with [onSearchClick]) trips detekt's `LongParameterList`
- * (threshold 6); suppressed rather than bundling the callbacks into an `Actions` holder class,
- * which would exist for this one call site only and would still need the same number of fields —
- * indirection without fewer moving parts.
+ * The filter row sits outside the list, so it stays pinned while the list scrolls and the large
+ * title collapses; a divider appears under it once the list has moved.
+ *
+ * The parameter count trips detekt's `LongParameterList`; suppressed rather than bundling the
+ * callbacks into an `Actions` holder that would exist for this one call site only.
  */
 @Suppress("LongParameterList")
 @Composable
 internal fun LibraryScreen(
     state: LibraryUiState,
     filter: LibraryFilter,
+    stats: LibraryStats?,
+    airingSoon: List<LibraryEntry>,
     onStatusSelected: (UserMediaStatus?) -> Unit,
     onSortSelected: (LibrarySort) -> Unit,
     onLoadMore: () -> Unit,
@@ -113,98 +111,47 @@ internal fun LibraryScreen(
     onSearchClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier = modifier.fillMaxSize()) {
-        LibraryHeader(sort = filter.sort, onSortSelected = onSortSelected, onSearchClick = onSearchClick)
-        StatusTabRow(selected = filter.status, onStatusSelected = onStatusSelected)
-        Box(modifier = Modifier.weight(weight = 1f).fillMaxWidth()) {
-            when (state) {
-                is LibraryUiState.Loading -> LoadingState(modifier = Modifier.fillMaxSize())
-                is LibraryUiState.Error ->
-                    ErrorState(
-                        message = stringResource(R.string.library_error_message),
-                        onRetry = onRetry,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                is LibraryUiState.Success ->
-                    // `isStale` (decision C-B made real): the banner sits ABOVE the content
-                    // rather than replacing it — cached rows are still worth showing, they are
-                    // just not guaranteed current, which is exactly what the banner says.
-                    Column(modifier = Modifier.fillMaxSize()) {
-                        if (state.isStale) {
-                            StaleDataBanner(onRetry = onRetry)
-                        }
-                        Box(modifier = Modifier.weight(weight = 1f).fillMaxWidth()) {
-                            if (state.entries.isEmpty()) {
-                                EmptyState(
-                                    message =
-                                        stringResource(
-                                            if (filter.isDefault) {
-                                                R.string.library_empty_default
-                                            } else {
-                                                R.string.library_empty_filtered
-                                            },
-                                        ),
-                                    modifier = Modifier.fillMaxSize(),
-                                )
-                            } else {
-                                LibraryList(
-                                    success = state,
-                                    onLoadMore = onLoadMore,
-                                    onEntryClick = onEntryClick,
-                                )
-                            }
-                        }
-                    }
+    val listState = rememberLazyListState()
+    LargeTitleScaffold(
+        title = stringResource(R.string.library_title),
+        modifier = modifier.fillMaxSize(),
+        actions = {
+            IconButton(onClick = onSearchClick) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_search),
+                    contentDescription = stringResource(R.string.library_search_content_description),
+                )
             }
-        }
-    }
-}
-
-/**
- * The title, the search action (Gap 1 — the only route into `:feature:search`), and the sort
- * control (C-J's companion decision for `LibrarySort`'s three values).
- */
-@Composable
-private fun LibraryHeader(
-    sort: LibrarySort,
-    onSortSelected: (LibrarySort) -> Unit,
-    onSearchClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    var menuExpanded by remember { mutableStateOf(false) }
-    Row(
-        modifier = modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = stringResource(R.string.library_title),
-            style = MaterialTheme.typography.titleLarge,
-            modifier = Modifier.weight(weight = 1f),
-        )
-        IconButton(onClick = onSearchClick) {
-            Icon(
-                painter = painterResource(R.drawable.ic_search),
-                contentDescription = stringResource(R.string.library_search_content_description),
+        },
+    ) { padding ->
+        Column(modifier = Modifier.padding(padding).fillMaxSize()) {
+            LibraryFilterRow(
+                filter = filter,
+                stats = stats,
+                onStatusSelected = onStatusSelected,
+                onSortSelected = onSortSelected,
             )
-        }
-        Box {
-            TextButton(onClick = { menuExpanded = true }) {
-                Text(text = stringResource(R.string.library_sort_button, stringResource(sort.labelRes())))
-            }
-            DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
-                LibrarySort.entries.forEach { option ->
-                    DropdownMenuItem(
-                        text = {
-                            Text(
-                                text = stringResource(option.labelRes()),
-                                fontWeight = if (option == sort) FontWeight.Bold else FontWeight.Normal,
-                            )
-                        },
-                        onClick = {
-                            menuExpanded = false
-                            onSortSelected(option)
-                        },
-                    )
+            if (listState.canScrollBackward) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Box(modifier = Modifier.weight(weight = 1f).fillMaxWidth()) {
+                when (state) {
+                    is LibraryUiState.Loading -> LoadingState(modifier = Modifier.fillMaxSize())
+                    is LibraryUiState.Error ->
+                        ErrorState(
+                            message = stringResource(R.string.library_error_message),
+                            onRetry = onRetry,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    is LibraryUiState.Success ->
+                        LibraryContent(
+                            success = state,
+                            filter = filter,
+                            airingSoon = if (filter.status == null) airingSoon else emptyList(),
+                            listState = listState,
+                            onShowAll = { onStatusSelected(null) },
+                            onRetry = onRetry,
+                            onLoadMore = onLoadMore,
+                            onEntryClick = onEntryClick,
+                        )
                 }
             }
         }
@@ -212,78 +159,88 @@ private fun LibraryHeader(
 }
 
 /**
- * [LibrarySort]'s three values, presented as their own strings rather than `LibrarySort.name` —
- * the enum's constant names ("NEXT_EPISODE_DATE") are Kotlin identifiers, not UI copy (C-E).
+ * The stale banner above the list (it never replaces it), then the list or its empty state.
+ *
+ * The empty message differs by filter: "Nothing in your library yet" is only true on the default
+ * view; under a filter it would read as data loss, so it says "Nothing here" and offers to clear a
+ * status filter.
  */
-private fun LibrarySort.labelRes(): Int =
-    when (this) {
-        LibrarySort.TITLE -> R.string.library_sort_title
-        LibrarySort.SCORE -> R.string.library_sort_score
-        LibrarySort.NEXT_EPISODE_DATE -> R.string.library_sort_next_episode
+@Suppress("LongParameterList")
+@Composable
+private fun LibraryContent(
+    success: LibraryUiState.Success,
+    filter: LibraryFilter,
+    airingSoon: List<LibraryEntry>,
+    listState: LazyListState,
+    onShowAll: () -> Unit,
+    onRetry: () -> Unit,
+    onLoadMore: () -> Unit,
+    onEntryClick: (LibraryEntry) -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        if (success.isStale) StaleDataBanner(onRetry = onRetry)
+        Box(modifier = Modifier.weight(weight = 1f).fillMaxWidth()) {
+            if (success.entries.isEmpty()) {
+                EmptyState(
+                    message =
+                        stringResource(
+                            if (filter.isDefault) R.string.library_empty_default else R.string.library_empty_filtered,
+                        ),
+                    actionLabel = if (filter.status != null) stringResource(R.string.library_empty_show_all) else null,
+                    onAction = if (filter.status != null) onShowAll else null,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                LibraryList(
+                    success = success,
+                    airingSoon = airingSoon,
+                    listState = listState,
+                    onLoadMore = onLoadMore,
+                    onEntryClick = onEntryClick,
+                )
+            }
+        }
     }
+}
 
 /**
- * The list itself, plus paging. [success] is the whole [LibraryUiState.Success] rather than its
- * fields exploded into parallel parameters — that keeps `entries`/`loadingMore`/`pageError`
- * together as the one cohesive value they already are upstream, and keeps this composable's
- * parameter count under detekt's `LongParameterList` threshold without a suppression.
+ * "Airing soon" (when there is one), then the list, plus paging via [EndOfListTrigger].
  *
- * [onLoadMore] is called once each time the last visible row reaches the end of the list:
- * `shouldLoadMore` below only flips `false` → `true` at that moment, and
- * `LaunchedEffect(shouldLoadMore)` only re-runs its block when the KEY it is given actually
- * changes value — so scrolling that merely holds the last row on screen does not keep re-calling
- * [onLoadMore] every frame. [LibraryViewModel.loadMore]'s own re-entry guard is still the thing
- * this composable relies on for correctness, though: it is what makes it SAFE, rather than merely
- * unlikely, for this call site to invoke [onLoadMore] without first checking whether a fetch is
- * already in flight.
+ * `itemCount` is this LazyColumn's own index space, the airing row included, so the trigger
+ * measures "near the end" against what is actually laid out. [LibraryViewModel.loadMore]'s own
+ * re-entry guard is what makes it SAFE for this call site to fire without checking whether a fetch
+ * is already in flight.
  *
- * [LibraryUiState.Success.pageError] renders as a small footer row rather than replacing the list
- * (see its KDoc for why it must never do that) — tapping it retries by calling [onLoadMore] again.
- *
- * The end-of-list detection itself moved to [EndOfListTrigger] in `:core:designsystem` (decision
- * D-H, task 9b.3): `:feature:discover`'s own list needed the identical shape, and "list scrolled
- * near its end" is not something either screen should reimplement — see that composable's own KDoc
- * for the `remember(itemCount)` reasoning this file used to carry directly, including why an `Int`
- * key is safe here even though this file's list can change size for two different reasons (a fresh
- * page appended, or a filter swap replacing it outright).
+ * [LibraryUiState.Success.pageError] renders as a footer rather than replacing the list; tapping
+ * it retries by calling [onLoadMore] again.
  */
 @Composable
 private fun LibraryList(
     success: LibraryUiState.Success,
+    airingSoon: List<LibraryEntry>,
+    listState: LazyListState,
     onLoadMore: () -> Unit,
     onEntryClick: (LibraryEntry) -> Unit,
-    modifier: Modifier = Modifier,
 ) {
     val entries = success.entries
-    val listState = rememberLazyListState()
+    val headerCount = if (airingSoon.isNotEmpty()) 1 else 0
 
-    EndOfListTrigger(listState = listState, itemCount = entries.size, onTriggered = onLoadMore)
+    EndOfListTrigger(listState = listState, itemCount = entries.size + headerCount, onTriggered = onLoadMore)
 
     LazyColumn(
         state = listState,
-        modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(all = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(space = 8.dp),
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(bottom = 12.dp),
     ) {
-        // Keyed by entry id: without a key, LazyColumn identifies items by index and a refresh
-        // that reorders the list re-uses the wrong composable state for every row.
+        if (airingSoon.isNotEmpty()) {
+            item(key = AIRING_SOON_KEY) { AiringSoonSection(entries = airingSoon, onEntryClick = onEntryClick) }
+        }
         items(items = entries, key = LibraryEntry::id) { entry ->
-            Column(verticalArrangement = Arrangement.spacedBy(space = 4.dp)) {
-                MediaCard(
-                    media = entry.media,
-                    status = entry.status,
-                    score = entry.score,
-                    onClick = { onEntryClick(entry) },
-                )
-                CountdownBadge(daysUntil = entry.media.daysUntilNextEpisode)
-            }
+            LibraryRow(entry = entry, onClick = { onEntryClick(entry) })
         }
         if (success.loadingMore) {
             item { LoadingState() }
         } else if (success.pageError != null) {
-            // Not loading AND pageError != null: the previous page fetch already finished and
-            // failed. Shown as a tap-to-retry row rather than a spinner — nothing is in flight
-            // for the user to wait on.
             item {
                 Text(
                     text = stringResource(R.string.library_page_error),

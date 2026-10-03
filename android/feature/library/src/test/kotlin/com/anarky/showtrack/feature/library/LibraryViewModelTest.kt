@@ -6,6 +6,7 @@ import com.anarky.showtrack.core.model.LibraryEntry
 import com.anarky.showtrack.core.model.LibraryFilter
 import com.anarky.showtrack.core.model.LibraryPatch
 import com.anarky.showtrack.core.model.LibrarySort
+import com.anarky.showtrack.core.model.LibraryStats
 import com.anarky.showtrack.core.model.Media
 import com.anarky.showtrack.core.model.MediaSource
 import com.anarky.showtrack.core.model.MediaStatus
@@ -26,6 +27,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -627,12 +629,61 @@ class LibraryViewModelTest {
 
         override suspend fun loadMoreFavorites(): Unit = error("not exercised by LibraryViewModel")
 
-        override suspend fun libraryStats() = error("not exercised by LibraryViewModel")
+        var stats: LibraryStats? = null
+        var upcoming: List<LibraryEntry> = emptyList()
+
+        override suspend fun libraryStats(): LibraryStats = stats ?: throw IOException("stats offline")
+
+        override suspend fun upcomingWatching(limit: Int): List<LibraryEntry> = upcoming
 
         override suspend fun importAniList(username: String) = error("not exercised by LibraryViewModel")
     }
 
+    @Test
+    fun `refreshOverview loads the counts and keeps only titles with a next episode`() =
+        runTest(dispatcher) {
+            val repository = FakeLibraryRepository()
+            val noNextEpisode =
+                ENTRY.copy(id = "entry-2", media = ENTRY.media.copy(id = "media-2", nextEpisodeDate = null))
+            repository.stats = STATS
+            repository.upcoming = listOf(ENTRY, noNextEpisode)
+            val viewModel = LibraryViewModel(repository)
+
+            viewModel.refreshOverview()
+            advanceUntilIdle()
+
+            assertEquals(STATS, viewModel.stats.value)
+            assertEquals(listOf(ENTRY), viewModel.airingSoon.value)
+        }
+
+    @Test
+    fun `a failed overview leaves no count and no airing row, and the list unaffected`() =
+        runTest(dispatcher) {
+            val repository = FakeLibraryRepository()
+            val viewModel = LibraryViewModel(repository)
+            backgroundScope.launch { viewModel.state.collect {} }
+
+            viewModel.refreshOverview()
+            advanceUntilIdle()
+
+            assertNull(viewModel.stats.value)
+            assertEquals(emptyList<LibraryEntry>(), viewModel.airingSoon.value)
+            assertTrue(viewModel.state.value is LibraryUiState.Success)
+        }
+
     private companion object {
+        val STATS =
+            LibraryStats(
+                total = 9,
+                byStatus = mapOf(UserMediaStatus.WATCHING to 9),
+                averageScore = null,
+                ratedCount = 0,
+                episodesWatched = 0,
+                topGenres = emptyList(),
+                addedThisMonth = 0,
+                favorites = 0,
+            )
+
         val ENTRY =
             LibraryEntry(
                 id = "entry-1",
