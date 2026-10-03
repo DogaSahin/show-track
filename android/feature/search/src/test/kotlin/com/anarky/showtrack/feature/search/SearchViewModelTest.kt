@@ -1,11 +1,13 @@
 package com.anarky.showtrack.feature.search
 
 import app.cash.turbine.test
+import com.anarky.showtrack.core.data.paging.Page
 import com.anarky.showtrack.core.data.repository.LibraryRepository
 import com.anarky.showtrack.core.data.repository.MediaRepository
 import com.anarky.showtrack.core.model.LibraryEntry
 import com.anarky.showtrack.core.model.LibraryFilter
 import com.anarky.showtrack.core.model.LibraryPatch
+import com.anarky.showtrack.core.model.LibrarySort
 import com.anarky.showtrack.core.model.Media
 import com.anarky.showtrack.core.model.MediaSource
 import com.anarky.showtrack.core.model.MediaStatus
@@ -485,11 +487,12 @@ class SearchViewModelTest {
 
         override suspend fun entryForMedia(mediaId: String): LibraryEntry? = error("not exercised by SearchViewModel")
 
-        override val favoriteEntries: StateFlow<List<LibraryEntry>> = MutableStateFlow(emptyList())
-
-        override suspend fun refreshFavorites(): Unit = error("not exercised by SearchViewModel")
-
-        override suspend fun loadMoreFavorites(): Unit = error("not exercised by SearchViewModel")
+        override suspend fun favoritesPage(
+            type: MediaType?,
+            sort: LibrarySort,
+            cursor: String?,
+            limit: Int,
+        ): Page<LibraryEntry> = Page(emptyList(), null)
 
         override suspend fun libraryStats() = error("not exercised by SearchViewModel")
 

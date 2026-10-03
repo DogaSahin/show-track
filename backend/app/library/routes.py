@@ -23,7 +23,7 @@ from app.library.schemas import (
     UpdateReviewRequest,
 )
 from app.media import service as media_service
-from app.media.models import MediaSource
+from app.media.models import MediaSource, MediaType
 from app.media.providers import get_providers
 from app.media.providers.base import MediaProvider, MediaRef
 from app.pagination import InvalidCursor, decode_cursor
@@ -104,6 +104,9 @@ async def list_library(
     # cursor, same sorts. `bool | None`, so absent means "no filter" and `false` means
     # "non-favourites", which a plain `bool = False` default would collapse.
     favorite: bool | None = None,
+    # Anime or TV only, for Favorites' two shelves. Aliased because `type` shadows the builtin;
+    # an unknown value is a 422 from the enum, the same as `status`.
+    media_type: Annotated[MediaType | None, Query(alias="type")] = None,
     sort: LibrarySort = LibrarySort.TITLE,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     # Capped: decode_cursor contains RecursionError, but not paying for a megabyte of nesting in
@@ -131,6 +134,7 @@ async def list_library(
         now=datetime.now(tz=UTC),
         media_id=media_id,
         favorite=favorite,
+        media_type=media_type,
     )
     return LibraryPage(items=items, next_cursor=next_cursor)
 

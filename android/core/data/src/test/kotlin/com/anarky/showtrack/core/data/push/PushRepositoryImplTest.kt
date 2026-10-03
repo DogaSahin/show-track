@@ -62,6 +62,7 @@ private class FakeApi : ShowTrackApi {
         sort: String?,
         mediaId: String?,
         favorite: Boolean?,
+        type: String?,
     ): LibraryPageDto = error("not used")
 
     override suspend fun addLibraryEntry(request: AddLibraryEntryRequest): LibraryEntryDto = error("not used")

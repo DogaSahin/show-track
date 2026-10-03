@@ -100,7 +100,15 @@ class NetworkModuleTest {
         runBlocking {
             component
                 .showTrackApi()
-                .library(cursor = null, limit = 20, status = null, sort = null, mediaId = null, favorite = null)
+                .library(
+                    cursor = null,
+                    limit = 20,
+                    status = null,
+                    sort = null,
+                    mediaId = null,
+                    favorite = null,
+                    type = null,
+                )
         }
 
         assertEquals("Bearer ${StoredTokens.pair.access}", server.takeRequest().headers["Authorization"])

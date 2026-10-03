@@ -85,3 +85,10 @@ val AvatarPalette =
         Color(0xFF7A4FB5),
         Color(0xFF41598F),
     )
+
+/** Podium medals. Gold is [StarGold]; these are the other two places. */
+val MedalSilver = Color(0xFFC9CCD6)
+val MedalBronze = Color(0xFFD29A6B)
+
+/** The favourite heart, the same pink wherever a favourite is marked. */
+val FavoriteHeart = Color(0xFFFF7A9A)
