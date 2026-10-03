@@ -8,6 +8,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ApplicationProvider
+import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
@@ -57,9 +58,11 @@ class ProfileResumeTest {
 
         composeRule.setContent {
             ProfileScreen(
+                activeGroup = MutableStateFlow(NO_GROUPS),
                 onSignedOut = {},
                 onGroupsClick = {},
                 onImportClick = {},
+                onSearchClick = {},
                 viewModel = viewModel,
             )
         }

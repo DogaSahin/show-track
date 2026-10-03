@@ -475,4 +475,20 @@ class ProfileViewModelTest {
 
             assertEquals(0, repository.statsCalls)
         }
+
+    @Test
+    fun `refreshUser loads the account, and a failure keeps the last one shown`() =
+        runTest(dispatcher) {
+            val auth = FakeAuthRepository()
+            val viewModel = ProfileViewModel(FakeDistributors(), auth, FakeLibraryRepository())
+
+            viewModel.refreshUser()
+            advanceUntilIdle()
+            assertEquals(FakeAuthRepository.USER, viewModel.user.value)
+
+            auth.currentUserFailure = IOException("offline")
+            viewModel.refreshUser()
+            advanceUntilIdle()
+            assertEquals(FakeAuthRepository.USER, viewModel.user.value)
+        }
 }

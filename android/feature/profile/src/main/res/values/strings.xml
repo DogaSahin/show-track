@@ -3,21 +3,18 @@
     <string name="push_channel_airing_name">Airing episodes</string>
     <string name="push_channel_airing_description">Alerts when an episode you follow is about to air.</string>
 
-    <!--
-        The prompt that must never be a silent failure. It names ntfy specifically: "install a
-        UnifiedPush distributor" is accurate and unactionable, while a product name is something
-        a person can search for. ntfy is named because it is what this deployment's backend
-        publishes through (backend decision 6-A), so it is the one that is certain to work.
-    -->
-    <string name="push_no_distributor_title">Push needs one more app</string>
-    <string name="push_no_distributor_body">ShowTrack delivers episode alerts over UnifiedPush, which needs a distributor app installed. Install ntfy from F-Droid or Google Play, then come back here.</string>
-    <string name="push_available_title">Turn on episode alerts</string>
-    <string name="push_registered_title">Episode alerts are on</string>
-    <string name="push_enable">Use this app</string>
-    <string name="push_disable">Turn off</string>
-    <string name="push_permission_body">Android also needs permission to show notifications.</string>
-    <string name="push_permission_grant">Allow notifications</string>
     <string name="profile_title">Profile</string>
+    <!-- Under the username. %1$s is the month and year the account was created, e.g. March 2025. -->
+    <string name="profile_member_since">Member since %1$s</string>
+    <!-- Section label over the settings card, shown uppercase. -->
+    <string name="profile_section_app">App</string>
+    <!-- The Groups row's subtitle when the account is in no group yet. With groups, the subtitle
+         is their names, joined in the layout. -->
+    <string name="profile_groups_subtitle_none">Create or join a group</string>
+    <string name="profile_import_subtitle">Copy your AniList list into ShowTrack</string>
+    <!-- Library total of zero: no stats to draw, so point at the way to get some. -->
+    <string name="profile_stats_empty">Add shows to your library to see your stats here.</string>
+    <string name="profile_stats_empty_action">Search</string>
 
     <!-- Sign-out is destructive of local session state (Gap 2, Phase 9a device walkthroughs), so
          the button opens a confirmation dialog rather than acting immediately. -->
@@ -28,13 +25,6 @@
     <string name="profile_sign_out_cancel">Cancel</string>
     <string name="profile_sign_out_error">Couldn\'t sign out due to a local storage problem. Try again, or restart the app.</string>
 
-    <!-- Library statistics (task 9b.5, GET /v1/library/stats). A status absent from the response
-         is never rendered as zero — see LibraryStats' own KDoc — so profile_stats_status_row is
-         only ever emitted for statuses the server actually reported. Both counts below are
-         <plurals>, not plain <string>s with an embedded %d — lint's PluralsCandidate flagged the
-         earlier plain-string versions ("%d titles"/"%d rated titles"), correctly: a bare %d
-         followed by a word is exactly what plurals exists to localise. -->
-    <string name="profile_stats_title">Library stats</string>
 
     <!-- Every count on this screen goes through profile_stats_figure rather than being converted
          with toString(): the "," flag makes Java's formatter apply the locale's own grouping, so a
@@ -71,14 +61,10 @@
          occasional (create once, join once, check members rarely), so it lives here beside the
          import entry rather than taking a tab of its own. -->
     <string name="profile_groups_title">Groups</string>
-    <string name="profile_groups_body">Create or join a group, see who is in it, and share a watchlist.</string>
-    <string name="profile_groups_action">Manage groups</string>
 
     <!-- Profile's own door to the AniList import screen (task 9b.6, ImportRoute). The two
          limitations live on the import screen itself, not repeated here. -->
     <string name="profile_import_title">Import from AniList</string>
-    <string name="profile_import_body">Bring the titles from your AniList list into ShowTrack.</string>
-    <string name="profile_import_action">Import</string>
 
     <!-- The AniList import screen itself. import_public_requirement/import_one_way_notice are
          shown BEFORE the username field, on every render of the form — the task brief requires

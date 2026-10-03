@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.anarky.showtrack.core.data.repository.AuthRepository
 import com.anarky.showtrack.core.data.repository.LibraryRepository
+import com.anarky.showtrack.core.model.CurrentUser
 import com.anarky.showtrack.core.model.LibraryStats
 import com.anarky.showtrack.feature.profile.push.DistributorSource
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -125,6 +126,12 @@ class ProfileViewModel
         private val mutableStatsState = MutableStateFlow<LibraryStatsUiState>(LibraryStatsUiState.Loading)
         val statsState: StateFlow<LibraryStatsUiState> = mutableStatsState.asStateFlow()
 
+        // The signed-in account for the header. Null until the first load lands; a failed load keeps
+        // whatever was shown before (or nothing), because the header is decoration around the
+        // stats and settings, and an error banner over a username would outweigh it.
+        private val mutableUser = MutableStateFlow<CurrentUser?>(null)
+        val user: StateFlow<CurrentUser?> = mutableUser.asStateFlow()
+
         // Guards [refreshStats] against re-entrancy (task 9c.8, E-M) — `FavoritesViewModel.refreshInFlight`'s
         // identical reasoning: `ProfileScreen` wires the SAME function to both `LifecycleResumeEffect`
         // and the stats section's retry action, so a manual retry can land while a resume-triggered
@@ -220,6 +227,20 @@ class ProfileViewModel
                         stillShowing?.copy(isStale = true) ?: LibraryStatsUiState.Error(failure)
                 } finally {
                     statsRefreshInFlight = false
+                }
+            }
+        }
+
+        /** Reloads the header's account details. A failure leaves the last known ones in place. */
+        @Suppress("TooGenericExceptionCaught")
+        fun refreshUser() {
+            viewModelScope.launch {
+                try {
+                    mutableUser.value = authRepository.currentUser()
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (failure: Exception) {
+                    Log.w(TAG, "account load failed: ${failure.javaClass.simpleName}")
                 }
             }
         }
