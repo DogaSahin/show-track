@@ -365,6 +365,8 @@ class RecommendationRepositoryTest {
         override suspend fun mediaEpisodes(id: String): EpisodeListDto =
             error("this fake only serves refresh/loadMore/remove")
 
+        override suspend fun deleteLibraryEntry(id: String): Unit = error("not used here")
+
         override suspend fun watchedEpisodes(id: String): WatchedEpisodesDto =
             error("this fake only serves refresh/loadMore/remove")
 

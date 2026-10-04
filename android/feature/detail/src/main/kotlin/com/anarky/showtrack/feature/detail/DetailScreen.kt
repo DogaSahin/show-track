@@ -1,77 +1,60 @@
 package com.anarky.showtrack.feature.detail
 
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.layout.Arrangement
+import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.FilterChip
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.anarky.showtrack.core.designsystem.component.CountdownBadge
 import com.anarky.showtrack.core.designsystem.component.ErrorState
 import com.anarky.showtrack.core.designsystem.component.LoadingState
-import com.anarky.showtrack.core.designsystem.component.MediaCover
-import com.anarky.showtrack.core.designsystem.component.ScoreChip
-import com.anarky.showtrack.core.designsystem.component.StatusTab
 import com.anarky.showtrack.core.model.ActiveGroupState
 import com.anarky.showtrack.core.model.Group
-import com.anarky.showtrack.core.model.LibraryEntry
-import com.anarky.showtrack.core.model.Media
+import com.anarky.showtrack.core.model.MediaType
 import com.anarky.showtrack.core.model.UserMediaStatus
 import kotlinx.coroutines.flow.StateFlow
 import java.math.BigDecimal
+import java.time.LocalDate
 
-private val PosterWidth = 120.dp
-
-// 1.0 through 10.0 in half-point steps. The floor is 1.0, not 0.0: the server's `score_range`
-// CHECK constraint (backend/app/library/models.py) rejects anything below it with a 422 —
-// NUMERIC(3,1) (backend decision 4-N) only fixes the PRECISION, not the range. "Unrated" already
-// has its own affordance via clearScore(), so 0 was never doing double duty here.
-private val ScoreOptions: List<BigDecimal> = (2..20).map { half -> BigDecimal(half).divide(BigDecimal(2)).setScale(1) }
-
-/**
- * The stateful entry point. `hiltViewModel()` is the only line here that touches DI — the same
- * shape `LibraryScreen` and `AuthScreen` use.
- *
- * No `mediaId` parameter: unlike the earlier skeleton, [DetailViewModel] reads it itself from the
- * `SavedStateHandle` Hilt hands it, which is already populated from `DetailRoute`'s argument by
- * the surrounding `NavBackStackEntry` (see `DetailNavigation.kt`).
- *
- * [activeGroup] is a PARAMETER, not read from a singleton — E-C's own requirement ("features
- * RECEIVE the active group, they never read a singleton for it"), `FeedScreen`'s identical shape.
- * Collected here, inside this composable's own body, so this screen reacts to a switch even though
- * `detailEntry`'s registration itself runs far less often than that (`FeedNavigation.kt`'s own KDoc
- * explains why a `StateFlow` rather than a plain value is what makes that possible).
- * [LifecycleResumeEffect] is keyed on the RESOLVED group id — only meaningful for
- * [ActiveGroupState.Success] — so [DetailViewModel.setActiveGroup] is called with the group id
- * itself (never [ActiveGroupState] as a whole): [DetailViewModel] has no reason to know the
- * difference between "still loading" and "loaded, zero groups" the way `FeedScreen` does, since
- * both collapse into the identical [GroupSectionState.Absent] outcome here.
- */
 @Composable
 fun DetailScreen(
     activeGroup: StateFlow<ActiveGroupState>,
@@ -86,346 +69,316 @@ fun DetailScreen(
         onPauseOrDispose { }
     }
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val backDispatcher = LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
     DetailScreen(
         state = state,
         groups = groups,
-        onRetry = viewModel::retry,
-        onAddToLibrary = viewModel::addToLibrary,
-        onScoreSelected = viewModel::setScore,
-        onScoreCleared = viewModel::clearScore,
-        onProgressChange = viewModel::setProgress,
-        onStatusSelected = viewModel::setStatus,
-        onFavoriteToggle = viewModel::toggleFavorite,
-        onProposeToGroup = viewModel::proposeToGroup,
-        onRetryGroupSection = viewModel::retryGroupSection,
-        onOpenReviewEditor = viewModel::openReviewEditor,
-        onSaveReview = viewModel::saveReview,
-        onCancelReviewEditor = viewModel::closeReviewEditor,
-        onClearReviewError = viewModel::clearReviewError,
+        actions =
+            DetailActions(
+                onBack = { backDispatcher?.onBackPressed() },
+                onRetry = viewModel::retry,
+                onAddToLibrary = viewModel::addToLibrary,
+                onRemoveFromLibrary = viewModel::removeFromLibrary,
+                onScoreSelected = viewModel::setScore,
+                onScoreCleared = viewModel::clearScore,
+                onStatusSelected = viewModel::setStatus,
+                onFavoriteToggle = viewModel::toggleFavorite,
+                onAcceptCatchUp = viewModel::acceptCatchUp,
+                onDismissCatchUp = viewModel::dismissCatchUp,
+                episodes =
+                    EpisodeActions(
+                        onToggleEpisode = viewModel::toggleEpisode,
+                        onToggleSeason = viewModel::toggleSeason,
+                        onMarkSeason = viewModel::markSeason,
+                        onRetry = viewModel::retryEpisodes,
+                    ),
+                onProposeToGroup = viewModel::proposeToGroup,
+                onRetryGroupSection = viewModel::retryGroupSection,
+                onOpenReviewEditor = viewModel::openReviewEditor,
+                onSaveReview = viewModel::saveReview,
+                onCancelReviewEditor = viewModel::closeReviewEditor,
+                onClearReviewError = viewModel::clearReviewError,
+            ),
         modifier = modifier,
     )
 }
 
-/**
- * The stateless half, split out so it can be previewed and driven by a test without a graph or a
- * ViewModel — `LibraryScreen`'s pattern.
- *
- * Now fifteen parameters (task 9c.6 added [groups], [onProposeToGroup], [onRetryGroupSection];
- * task 9c.7 added [onOpenReviewEditor], [onSaveReview], [onCancelReviewEditor],
- * [onClearReviewError]), well past detekt's `LongParameterList` threshold of 6; suppressed rather
- * than bundling the twelve callbacks into an `Actions` holder class, which would exist for this
- * one call site only — `LibraryScreen`'s own justification for the same suppression, one screen
- * earlier.
- *
- * [onProposeToGroup]/[onRetryGroupSection]/[onOpenReviewEditor]/[onSaveReview]/[onCancelReviewEditor]/
- * [onClearReviewError] carry NO default (`FeedScreen`'s fix-round-2 lesson, BLOCKING F2, restated
- * here before it could be rediscovered): a defaulted `= {}` here would let [DetailScreen]'s own
- * stateful call above compile even if one of these wires were DROPPED from it entirely.
- *
- * **What a no-default parameter does NOT catch (fix round 1, BLOCKING B1 — the same overclaim this
- * KDoc made three times over on the way to this task, corrected here rather than repeated a fourth
- * time): a STUBBED wire.** `:feature:detail`'s own [DetailScreenTest] drives this stateless overload
- * directly and supplies every one of these callbacks itself — nothing stops the STATEFUL overload
- * above from wiring `onSaveReview = { _, _ -> }` (present, compiles, type-checks, does nothing) while
- * every test in that file stays green, because none of them exercises the STATEFUL wiring at all.
- * [DetailResumeTest] is the harness that exists for exactly this seam — it composes THIS stateful
- * function with a real [DetailViewModel] and asserts the callback actually reaches it
- * (`the review editor on the real, composed screen actually saves`, fix round 1's own addition,
- * `FeedEntryHiltTest`'s and this file's own earlier `onProposeToGroup`/`onRetryGroupSection`
- * findings' identical lesson). A no-default parameter's real job is narrower than it sounds: it
- * turns a dropped argument into a compile error. It says nothing about what that argument DOES.
- */
-@Suppress("LongParameterList")
+/** Everything the screen can ask for, so the stateless overload stays readable. */
+internal data class DetailActions(
+    val onBack: () -> Unit = {},
+    val onRetry: () -> Unit = {},
+    val onAddToLibrary: () -> Unit = {},
+    val onRemoveFromLibrary: () -> Unit = {},
+    val onScoreSelected: (BigDecimal) -> Unit = {},
+    val onScoreCleared: () -> Unit = {},
+    val onStatusSelected: (UserMediaStatus) -> Unit = {},
+    val onFavoriteToggle: () -> Unit = {},
+    val onAcceptCatchUp: (CatchUp) -> Unit = {},
+    val onDismissCatchUp: (CatchUp) -> Unit = {},
+    val episodes: EpisodeActions = EpisodeActions(),
+    val onProposeToGroup: (String) -> Unit = {},
+    val onRetryGroupSection: () -> Unit = {},
+    val onOpenReviewEditor: () -> Unit = {},
+    val onSaveReview: (String, Boolean) -> Unit = { _, _ -> },
+    val onCancelReviewEditor: () -> Unit = {},
+    val onClearReviewError: () -> Unit = {},
+)
+
 @Composable
 internal fun DetailScreen(
     state: DetailUiState,
     groups: List<Group>,
-    onRetry: () -> Unit,
-    onAddToLibrary: () -> Unit,
-    onScoreSelected: (BigDecimal) -> Unit,
-    onScoreCleared: () -> Unit,
-    onProgressChange: (Int) -> Unit,
-    onStatusSelected: (UserMediaStatus) -> Unit,
-    onFavoriteToggle: () -> Unit,
-    onProposeToGroup: (String) -> Unit,
-    onRetryGroupSection: () -> Unit,
-    onOpenReviewEditor: () -> Unit,
-    onSaveReview: (String, Boolean) -> Unit,
-    onCancelReviewEditor: () -> Unit,
-    onClearReviewError: () -> Unit,
+    actions: DetailActions,
     modifier: Modifier = Modifier,
+    today: LocalDate = remember { LocalDate.now() },
 ) {
+    val snackbarHostState = remember { SnackbarHostState() }
     Box(modifier = modifier.fillMaxSize()) {
         when (state) {
             is DetailUiState.Loading -> LoadingState(modifier = Modifier.fillMaxSize())
             is DetailUiState.Error ->
                 ErrorState(
                     message = stringResource(R.string.detail_error_message),
-                    onRetry = onRetry,
+                    onRetry = actions.onRetry,
                     modifier = Modifier.fillMaxSize(),
                 )
             is DetailUiState.Success ->
                 DetailContent(
                     success = state,
                     groups = groups,
-                    onAddToLibrary = onAddToLibrary,
-                    onScoreSelected = onScoreSelected,
-                    onScoreCleared = onScoreCleared,
-                    onProgressChange = onProgressChange,
-                    onStatusSelected = onStatusSelected,
-                    onFavoriteToggle = onFavoriteToggle,
-                    onProposeToGroup = onProposeToGroup,
-                    onRetryGroupSection = onRetryGroupSection,
-                    onOpenReviewEditor = onOpenReviewEditor,
-                    onSaveReview = onSaveReview,
-                    onCancelReviewEditor = onCancelReviewEditor,
-                    onClearReviewError = onClearReviewError,
+                    actions = actions,
+                    today = today,
+                    snackbarHostState = snackbarHostState,
                 )
         }
+        SnackbarHost(hostState = snackbarHostState, modifier = Modifier.align(Alignment.BottomCenter))
     }
 }
 
-@Suppress("LongParameterList")
 @Composable
 private fun DetailContent(
     success: DetailUiState.Success,
     groups: List<Group>,
-    onAddToLibrary: () -> Unit,
-    onScoreSelected: (BigDecimal) -> Unit,
-    onScoreCleared: () -> Unit,
-    onProgressChange: (Int) -> Unit,
-    onStatusSelected: (UserMediaStatus) -> Unit,
-    onFavoriteToggle: () -> Unit,
-    onProposeToGroup: (String) -> Unit,
-    onRetryGroupSection: () -> Unit,
-    onOpenReviewEditor: () -> Unit,
-    onSaveReview: (String, Boolean) -> Unit,
-    onCancelReviewEditor: () -> Unit,
-    onClearReviewError: () -> Unit,
-    modifier: Modifier = Modifier,
+    actions: DetailActions,
+    today: LocalDate,
+    snackbarHostState: SnackbarHostState,
 ) {
     val (media, entry) = success.data
-    Column(
-        modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(all = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(space = 16.dp),
-    ) {
-        MediaHeader(media = media)
-        // entry == null is the normal "not in your library" state (decision C-D), never an error
-        // — the only branch here is which controls that puts on screen, Add versus Score/
-        // Progress/Status/Favourite.
+    val listState = rememberLazyListState()
+    // Null until the user picks a range: the grid then opens on the next episode's.
+    var animeRange by rememberSaveable { mutableStateOf<Int?>(null) }
+    val animeColumns = animeColumns()
+    // Settle the starting range once, so ticking episode 100 does not jump the grid to 101–200.
+    val ready = success.episodes as? EpisodesState.Ready
+    LaunchedEffect(ready != null) {
+        if (ready != null && animeRange == null) animeRange = defaultAnimeRange(ready)
+    }
+    CatchUpSnackbar(success = success, actions = actions, snackbarHostState = snackbarHostState)
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+            item(key = "hero") { DetailHero(media = media) }
+            item(key = "genres") { GenreChips(genres = media.genres, modifier = Modifier.padding(top = 12.dp)) }
+            item(key = "next") { NextEpisodeBar(media = media, modifier = Modifier.padding(top = 12.dp)) }
+            item(key = "tracking") { TrackingSection(success = success, actions = actions) }
+            episodeItems(
+                state = success.episodes,
+                anime = media.type == MediaType.ANIME,
+                today = today,
+                animeRange = animeRange,
+                animeColumns = animeColumns,
+                actions = actions.episodes.copy(onAnimeRange = { animeRange = it }),
+            )
+            item(key = "group") {
+                Box(modifier = Modifier.padding(16.dp)) {
+                    GroupSection(
+                        groupSection = success.groupSection,
+                        groups = groups,
+                        proposing = success.proposing,
+                        proposeError = success.proposeError,
+                        justProposedToGroupId = success.justProposedToGroupId,
+                        onProposeToGroup = actions.onProposeToGroup,
+                        onRetry = actions.onRetryGroupSection,
+                    )
+                }
+            }
+            item(key = "reviews") {
+                Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                    ReviewEditorSection(
+                        reviewEditor = success.reviewEditor,
+                        onOpen = actions.onOpenReviewEditor,
+                        onSave = actions.onSaveReview,
+                        onCancel = actions.onCancelReviewEditor,
+                        onClearError = actions.onClearReviewError,
+                    )
+                }
+            }
+        }
+        DetailTopBar(
+            title = media.title,
+            listState = listState,
+            inLibrary = entry != null,
+            onBack = actions.onBack,
+            onRemove = actions.onRemoveFromLibrary,
+        )
+    }
+}
+
+/** 7 tiles a row, or 6 on a phone too narrow for seven 48 dp tiles. */
+@Composable
+private fun animeColumns(): Int =
+    if (LocalConfiguration.current.screenWidthDp >= ANIME_COLUMNS_MIN_WIDTH_DP) ANIME_COLUMNS else ANIME_COLUMNS_NARROW
+
+/** The tracking card, or Add to library when the title is not in it yet. */
+@Composable
+private fun TrackingSection(
+    success: DetailUiState.Success,
+    actions: DetailActions,
+) {
+    val (media, entry) = success.data
+    Box(modifier = Modifier.padding(vertical = 12.dp)) {
         if (entry == null) {
-            AddSection(
+            AddToLibraryButton(
                 saving = success.saving,
-                actionError = success.actionError as? DetailActionError.Add,
-                onAddToLibrary = onAddToLibrary,
+                error = success.actionError as? DetailActionError.Add,
+                onAdd = actions.onAddToLibrary,
             )
         } else {
-            EditSection(
+            TrackingCard(
                 entry = entry,
+                totalEpisodes = (success.episodes as? EpisodesState.Ready)?.list?.totalEpisodes ?: media.totalEpisodes,
                 saving = success.saving,
-                actionError = success.actionError as? DetailActionError.Edit,
-                onScoreSelected = onScoreSelected,
-                onScoreCleared = onScoreCleared,
-                onProgressChange = onProgressChange,
-                onStatusSelected = onStatusSelected,
-                onFavoriteToggle = onFavoriteToggle,
+                error = success.actionError,
+                onStatusSelected = actions.onStatusSelected,
+                onScoreSelected = actions.onScoreSelected,
+                onScoreCleared = actions.onScoreCleared,
+                onFavoriteToggle = actions.onFavoriteToggle,
             )
         }
-        // E-G: writing a review is a TITLE action, not a group one — rendered unconditionally,
-        // independent of whether any group is active, unlike GroupSection just below it.
-        ReviewEditorSection(
-            reviewEditor = success.reviewEditor,
-            onOpen = onOpenReviewEditor,
-            onSave = onSaveReview,
-            onCancel = onCancelReviewEditor,
-            onClearError = onClearReviewError,
-        )
-        // Decision C-S: a failed group section (or a failed propose) leaves everything above it —
-        // the title, the Add/Edit controls, saving/actionError — fully usable. GroupSection is
-        // rendered unconditionally here; it decides internally whether it has anything to show at
-        // all (its own KDoc on the Absent-and-no-groups early return).
-        GroupSection(
-            groupSection = success.groupSection,
-            groups = groups,
-            proposing = success.proposing,
-            proposeError = success.proposeError,
-            justProposedToGroupId = success.justProposedToGroupId,
-            onProposeToGroup = onProposeToGroup,
-            onRetry = onRetryGroupSection,
-        )
     }
 }
 
-/** Cover, title, year/genres and the airing countdown — the same regardless of library state. */
+/** "Also mark E4–E5 as watched?" One at a time: a newer prompt replaces the one on screen. */
 @Composable
-private fun MediaHeader(
-    media: Media,
-    modifier: Modifier = Modifier,
+private fun CatchUpSnackbar(
+    success: DetailUiState.Success,
+    actions: DetailActions,
+    snackbarHostState: SnackbarHostState,
 ) {
-    Row(modifier = modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(space = 12.dp)) {
-        MediaCover(coverImageUrl = media.coverImageUrl, modifier = Modifier.width(PosterWidth))
-        Column(verticalArrangement = Arrangement.spacedBy(space = 4.dp)) {
-            Text(text = media.title, style = MaterialTheme.typography.headlineSmall)
-            val subtitle =
-                listOfNotNull(media.year?.toString(), media.genres.takeIf { it.isNotEmpty() }?.joinToString())
-            if (subtitle.isNotEmpty()) {
-                Text(
-                    text = subtitle.joinToString(separator = " · "),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+    val catchUp = (success.episodes as? EpisodesState.Ready)?.catchUp
+    val resources = LocalResources.current
+    LaunchedEffect(catchUp) {
+        if (catchUp == null) return@LaunchedEffect
+        val message =
+            if (catchUp.fromNumber == catchUp.toNumber) {
+                resources.getString(R.string.detail_catch_up_prompt_single, catchUp.fromNumber)
+            } else {
+                resources.getString(R.string.detail_catch_up_prompt, catchUp.fromNumber, catchUp.toNumber)
             }
-            CountdownBadge(daysUntil = media.daysUntilNextEpisode)
-        }
-    }
-}
-
-/** `entry == null`: one primary action. [actionError] is `add()`'s own failure, never a load failure. */
-@Composable
-private fun AddSection(
-    saving: Boolean,
-    actionError: DetailActionError.Add?,
-    onAddToLibrary: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(space = 8.dp)) {
-        Button(onClick = onAddToLibrary, enabled = !saving, modifier = Modifier.fillMaxWidth()) {
-            Text(text = stringResource(R.string.detail_add_button))
-        }
-        // add() may have already succeeded server-side even though this call threw
-        // (LibraryRepositoryImpl.add's post-add refresh() can fail independently of the POST —
-        // task 9a.5's carried-forward review note), so this copy is worded to not claim the add
-        // failed outright, and Add stays safe to tap again either way (the endpoint is idempotent).
-        if (actionError != null) {
-            Text(
-                text = stringResource(R.string.detail_add_error),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
+        snackbarHostState.currentSnackbarData?.dismiss()
+        val result =
+            snackbarHostState.showSnackbar(
+                message = message,
+                actionLabel = resources.getString(R.string.detail_catch_up_action),
+                duration = SnackbarDuration.Long,
             )
-        }
-    }
-}
-
-/** `entry != null`: score, progress, status and favourite, each sending only the field it edits. */
-@Suppress("LongParameterList")
-@Composable
-private fun EditSection(
-    entry: LibraryEntry,
-    saving: Boolean,
-    actionError: DetailActionError.Edit?,
-    onScoreSelected: (BigDecimal) -> Unit,
-    onScoreCleared: () -> Unit,
-    onProgressChange: (Int) -> Unit,
-    onStatusSelected: (UserMediaStatus) -> Unit,
-    onFavoriteToggle: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(space = 12.dp)) {
-        ScoreEditor(
-            score = entry.score,
-            saving = saving,
-            onScoreSelected = onScoreSelected,
-            onScoreCleared = onScoreCleared,
-        )
-        ProgressStepper(progress = entry.progress, saving = saving, onProgressChange = onProgressChange)
-        StatusSelector(selected = entry.status, saving = saving, onStatusSelected = onStatusSelected)
-        FilterChip(
-            selected = entry.favorite,
-            onClick = onFavoriteToggle,
-            enabled = !saving,
-            label = { Text(text = stringResource(R.string.detail_favorite_label)) },
-        )
-        if (actionError != null) {
-            Text(
-                text = stringResource(R.string.detail_edit_error),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-            )
-        }
-    }
-}
-
-/** Tapping the chip opens a menu of the same half-point values the server accepts, plus "clear". */
-@Composable
-private fun ScoreEditor(
-    score: BigDecimal?,
-    saving: Boolean,
-    onScoreSelected: (BigDecimal) -> Unit,
-    onScoreCleared: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    var menuExpanded by remember { mutableStateOf(false) }
-    Box(modifier = modifier) {
-        ScoreChip(score = score, modifier = Modifier.clickable(enabled = !saving) { menuExpanded = true })
-        DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
-            ScoreOptions.forEach { option ->
-                DropdownMenuItem(
-                    text = { Text(text = option.toPlainString()) },
-                    onClick = {
-                        menuExpanded = false
-                        onScoreSelected(option)
-                    },
-                )
-            }
-            DropdownMenuItem(
-                text = { Text(text = stringResource(R.string.detail_score_clear)) },
-                onClick = {
-                    menuExpanded = false
-                    onScoreCleared()
-                },
-            )
-        }
-    }
-}
-
-@Composable
-private fun ProgressStepper(
-    progress: Int,
-    saving: Boolean,
-    onProgressChange: (Int) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Row(
-        modifier = modifier,
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(space = 8.dp),
-    ) {
-        TextButton(
-            onClick = { onProgressChange((progress - 1).coerceAtLeast(minimumValue = 0)) },
-            enabled = !saving && progress > 0,
+        if (result ==
+            SnackbarResult.ActionPerformed
         ) {
-            Text(text = stringResource(R.string.detail_progress_decrease))
-        }
-        Text(text = stringResource(R.string.detail_progress_label, progress))
-        TextButton(onClick = { onProgressChange(progress + 1) }, enabled = !saving) {
-            Text(text = stringResource(R.string.detail_progress_increase))
+            actions.onAcceptCatchUp(catchUp)
+        } else {
+            actions.onDismissCatchUp(catchUp)
         }
     }
 }
 
 /**
- * [StatusTab] — the standalone `FilterChip` export, not
- * [com.anarky.showtrack.core.designsystem.component.StatusTabRow] — because there is no "All"
- * here: an entry's status is always exactly one of the five values, never the library screen's
- * filter-only null case.
+ * Over the backdrop: back and ⋯ on dark circles. Once the header scrolls away, a plain bar with the
+ * title takes their place.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun StatusSelector(
-    selected: UserMediaStatus,
-    saving: Boolean,
-    onStatusSelected: (UserMediaStatus) -> Unit,
-    modifier: Modifier = Modifier,
+private fun DetailTopBar(
+    title: String,
+    listState: LazyListState,
+    inLibrary: Boolean,
+    onBack: () -> Unit,
+    onRemove: () -> Unit,
 ) {
-    Row(
-        modifier = modifier.horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(space = 8.dp),
-    ) {
-        UserMediaStatus.entries.forEach { status ->
-            StatusTab(
-                status = status,
-                selected = status == selected,
-                onClick = { onStatusSelected(status) },
-                enabled = !saving,
+    val scrolled by remember { derivedStateOf { listState.firstVisibleItemIndex > 0 } }
+    var confirmRemove by remember { mutableStateOf(false) }
+    val menu: @Composable () -> Unit = {
+        if (inLibrary) MoreMenu(overlay = !scrolled, onRemove = { confirmRemove = true })
+    }
+    if (scrolled) {
+        TopAppBar(
+            title = { Text(text = title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+            navigationIcon = {
+                IconButton(onClick = onBack) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_arrow_back),
+                        contentDescription = stringResource(R.string.detail_back),
+                    )
+                }
+            },
+            actions = { menu() },
+            colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
+        )
+    } else {
+        Row(modifier = Modifier.fillMaxWidth().statusBarsPadding().padding(8.dp)) {
+            OverlayIconButton(
+                iconRes = R.drawable.ic_arrow_back,
+                contentDescription = stringResource(R.string.detail_back),
+                onClick = onBack,
+            )
+            Spacer(modifier = Modifier.weight(1f))
+            menu()
+        }
+    }
+    if (confirmRemove) {
+        AlertDialog(
+            onDismissRequest = { confirmRemove = false },
+            title = { Text(text = stringResource(R.string.detail_remove_confirm_title)) },
+            text = { Text(text = stringResource(R.string.detail_remove_confirm_body)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmRemove = false
+                        onRemove()
+                    },
+                ) { Text(text = stringResource(R.string.detail_remove_confirm)) }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { confirmRemove = false },
+                ) { Text(text = stringResource(R.string.detail_remove_cancel)) }
+            },
+        )
+    }
+}
+
+@Composable
+private fun MoreMenu(
+    overlay: Boolean,
+    onRemove: () -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        val description = stringResource(R.string.detail_more)
+        if (overlay) {
+            OverlayIconButton(iconRes = R.drawable.ic_more, contentDescription = description, onClick = { open = true })
+        } else {
+            IconButton(onClick = { open = true }) {
+                Icon(painter = painterResource(R.drawable.ic_more), contentDescription = description)
+            }
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            DropdownMenuItem(
+                text = { Text(text = stringResource(R.string.detail_remove_from_library)) },
+                onClick = {
+                    open = false
+                    onRemove()
+                },
             )
         }
     }

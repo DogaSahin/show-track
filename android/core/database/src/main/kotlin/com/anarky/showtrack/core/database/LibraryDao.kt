@@ -32,4 +32,7 @@ interface LibraryDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(entries: List<LibraryEntryEntity>)
+
+    @Query("DELETE FROM library_entries WHERE id = :id")
+    suspend fun deleteById(id: String)
 }

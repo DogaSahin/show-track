@@ -39,6 +39,8 @@ internal class FakeLibraryRepository
             externalId: String,
         ): LibraryEntry = error("not exercised by LibraryEntryHiltTest")
 
+        override suspend fun remove(entryId: String): Unit = error("not used here")
+
         override suspend fun watchedEpisodes(entryId: String): Set<String> = error("not used here")
 
         override suspend fun setWatched(

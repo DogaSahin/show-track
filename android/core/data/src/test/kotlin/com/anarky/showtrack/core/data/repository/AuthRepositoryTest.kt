@@ -404,6 +404,8 @@ class AuthRepositoryTest {
 
         override suspend fun mediaEpisodes(id: String): EpisodeListDto = error("not used")
 
+        override suspend fun deleteLibraryEntry(id: String): Unit = error("not used here")
+
         override suspend fun watchedEpisodes(id: String): WatchedEpisodesDto = error("not used")
 
         override suspend fun setWatchedEpisodes(

@@ -9,6 +9,7 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -34,6 +35,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import java.io.IOException
 import java.math.BigDecimal
 import java.time.Instant
@@ -90,6 +92,8 @@ import com.anarky.showtrack.core.designsystem.R as DesignSystemR
  * `the Add to library button...`/`the retry button on a failed initial load...` cover the other two.
  */
 @RunWith(RobolectricTestRunner::class)
+// Tall, so every row of the screen's lazy list is composed and findable.
+@Config(qualifiers = "w411dp-h3000dp")
 class DetailResumeTest {
     @get:Rule
     val composeRule = createAndroidComposeRule<ComponentActivity>()
@@ -324,31 +328,27 @@ class DetailResumeTest {
         assertEquals(2, library.updateCalls)
         assertEquals(LibraryPatch(score = ScoreChange.Clear), library.lastPatch)
 
-        // Progress: increase (ENTRY.progress is 3).
+        // Status: open the dropdown on the current status, then choose Completed.
         composeRule
-            .onNodeWithText(context.getString(R.string.detail_progress_increase))
+            .onNodeWithText(context.getString(DesignSystemR.string.status_watching))
             .performScrollTo()
             .performClick()
         composeRule.waitForIdle()
-        assertEquals(3, library.updateCalls)
-        assertEquals(LibraryPatch(progress = 4), library.lastPatch)
-
-        // Status: select Completed (ENTRY.status is WATCHING).
         composeRule
-            .onNodeWithText(context.getString(DesignSystemR.string.status_completed))
+            .onAllNodesWithText(context.getString(DesignSystemR.string.status_completed))
+            .onFirst()
+            .performSemanticsClick()
+        composeRule.waitForIdle()
+        assertEquals(3, library.updateCalls)
+        assertEquals(LibraryPatch(status = UserMediaStatus.COMPLETED), library.lastPatch)
+
+        // Favourite: the heart button (ENTRY.favorite is false).
+        composeRule
+            .onNodeWithContentDescription(context.getString(R.string.detail_favorite_content_description))
             .performScrollTo()
             .performClick()
         composeRule.waitForIdle()
         assertEquals(4, library.updateCalls)
-        assertEquals(LibraryPatch(status = UserMediaStatus.COMPLETED), library.lastPatch)
-
-        // Favourite: toggle (ENTRY.favorite is false).
-        composeRule
-            .onNodeWithText(context.getString(R.string.detail_favorite_label))
-            .performScrollTo()
-            .performClick()
-        composeRule.waitForIdle()
-        assertEquals(5, library.updateCalls)
         assertEquals(LibraryPatch(favorite = true), library.lastPatch)
     }
 

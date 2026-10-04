@@ -51,6 +51,8 @@ internal class FakeLibraryRepository(
         return DUMMY_ENTRY
     }
 
+    override suspend fun remove(entryId: String): Unit = error("not used here")
+
     override suspend fun watchedEpisodes(entryId: String): Set<String> = error("not used here")
 
     override suspend fun setWatched(

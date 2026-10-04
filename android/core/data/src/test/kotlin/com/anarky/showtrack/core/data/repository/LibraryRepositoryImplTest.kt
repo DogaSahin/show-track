@@ -511,6 +511,19 @@ class LibraryRepositoryImplTest {
         }
 
     @Test
+    fun `removing deletes the entry, drops its cached row, and survives a failed refresh`() =
+        runTest {
+            repository.refresh()
+            assertEquals(true, dao.observeAll().first().any { it.id == "1" })
+            api.failNext()
+
+            repository.remove("1")
+
+            assertEquals(listOf("1"), api.deleted)
+            assertEquals(false, dao.observeAll().first().any { it.id == "1" })
+        }
+
+    @Test
     fun `marking episodes sends one batch and the cached row takes the new progress`() =
         runTest {
             repository.refresh()
@@ -877,6 +890,12 @@ private class FakeShowTrackApi(
 
     override suspend fun mediaEpisodes(id: String): EpisodeListDto =
         error("this fake only serves observeLibrary/refresh/loadMore")
+
+    val deleted = mutableListOf<String>()
+
+    override suspend fun deleteLibraryEntry(id: String) {
+        deleted += id
+    }
 
     override suspend fun watchedEpisodes(id: String): WatchedEpisodesDto =
         error("this fake only serves observeLibrary/refresh/loadMore")
