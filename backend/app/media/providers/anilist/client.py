@@ -6,6 +6,7 @@ from app.media.models import MediaSource, MediaType
 from app.media.providers.anilist import mapper
 from app.media.providers.anilist.errors import AniListGraphQLError
 from app.media.providers.anilist.queries import (
+    EPISODES_QUERY,
     MEDIA_BATCH_QUERY,
     MEDIA_QUERY,
     MEDIA_RECOMMENDATIONS_QUERY,
@@ -16,6 +17,7 @@ from app.media.providers.base import (
     SIMILAR_LIMIT,
     MediaProvider,
     MediaRef,
+    ProviderEpisode,
     ProviderListEntry,
     ProviderMedia,
     ProviderSearchPage,
@@ -38,6 +40,10 @@ MAX_LIST_CHUNKS = 20
 # AniList's Page cap for a single request. `perPage: 50` was confirmed honoured against the live
 # API. get_many chunks to this internally so callers never need to know it.
 BATCH_SIZE = 50
+
+# AniList's own page cap; 40 pages covers 2,000 scheduled episodes.
+SCHEDULE_PER_PAGE = 50
+MAX_SCHEDULE_PAGES = 40
 
 
 class AniListProvider(MediaProvider):
@@ -84,6 +90,42 @@ class AniListProvider(MediaProvider):
         if not isinstance(raw_media, dict):
             return None
         return mapper.to_media(raw_media)
+
+    async def get_episodes(self, external_id: str) -> tuple[ProviderEpisode, ...] | None:
+        """The airing schedule, paged, plus the total. Capped at MAX_SCHEDULE_PAGES pages: past
+        that (thousands of episodes) the total still fills in the remaining numbers, undated.
+        """
+        try:
+            media_id = int(external_id)
+        except ValueError:
+            return None
+        total: Any = None
+        schedule: list[dict[str, Any]] = []
+        more = False
+        for page in range(1, MAX_SCHEDULE_PAGES + 1):
+            body = await self._post(EPISODES_QUERY, {"id": media_id, "page": page, "perPage": SCHEDULE_PER_PAGE})
+            raw_media = body["data"].get("Media") if body is not None else None
+            if not isinstance(raw_media, dict):
+                if page == 1:
+                    return None
+                # The title answered a moment ago: losing it mid-paging is a failure, never "no
+                # such title", or the caller would act on a partial list.
+                raise ProviderUnavailable(f"AniList lost {external_id} while paging its schedule")
+            total = raw_media.get("episodes")
+            connection = raw_media.get("airingSchedule")
+            if not isinstance(connection, dict):
+                break
+            nodes = connection.get("nodes")
+            if isinstance(nodes, list):
+                schedule.extend(node for node in nodes if isinstance(node, dict))
+            page_info = connection.get("pageInfo")
+            more = isinstance(page_info, dict) and bool(page_info.get("hasNextPage"))
+            if not more:
+                break
+        if more and not (isinstance(total, int) and total > 0):
+            # Past the cap with no total to fill the rest: a partial list would delete episodes.
+            raise ProviderUnavailable(f"AniList schedule for {external_id} exceeds {MAX_SCHEDULE_PAGES} pages")
+        return mapper.to_episodes(total, schedule)
 
     async def fetch_similar(self, external_id: str) -> Sequence[MediaRef]:
         try:

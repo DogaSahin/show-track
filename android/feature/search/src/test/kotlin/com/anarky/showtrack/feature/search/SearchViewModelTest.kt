@@ -6,6 +6,7 @@ import com.anarky.showtrack.core.data.repository.LibraryRepository
 import com.anarky.showtrack.core.data.repository.MediaRepository
 import com.anarky.showtrack.core.data.search.RecentSearchStore
 import com.anarky.showtrack.core.data.search.RecentSearches
+import com.anarky.showtrack.core.model.EpisodeList
 import com.anarky.showtrack.core.model.LibraryEntry
 import com.anarky.showtrack.core.model.LibraryFilter
 import com.anarky.showtrack.core.model.LibraryPatch
@@ -595,6 +596,8 @@ class SearchViewModelTest {
             return ENTRY_WITH_MEDIA_ID_M1.media
         }
 
+        override suspend fun episodes(mediaId: String): EpisodeList = error("not used here")
+
         override suspend fun detail(mediaId: String): Media = error("not exercised by SearchViewModel")
     }
 
@@ -625,6 +628,14 @@ class SearchViewModelTest {
             addFailure?.let { throw it }
             return addResult
         }
+
+        override suspend fun watchedEpisodes(entryId: String): Set<String> = error("not used here")
+
+        override suspend fun setWatched(
+            entryId: String,
+            episodeIds: Collection<String>,
+            watched: Boolean,
+        ): LibraryEntry = error("not used here")
 
         override suspend fun update(
             entryId: String,

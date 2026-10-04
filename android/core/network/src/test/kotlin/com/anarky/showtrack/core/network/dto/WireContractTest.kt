@@ -260,4 +260,53 @@ class WireContractTest {
             json.encodeToString(ResolveMediaRequestDto(source = "anilist", externalId = "154587")),
         )
     }
+
+    /** A body shaped exactly like the backend's EpisodeList. A misspelled @SerialName fails here. */
+    @Test
+    fun `an episode list decodes every field`() {
+        val list =
+            json.decodeFromString<EpisodeListDto>(
+                """
+                {"synced_at": "2026-10-01T08:00:00Z", "total_episodes": 19,
+                 "seasons": [{"number": 1, "episode_count": 1,
+                   "episodes": [{"id": "e-1", "number": 1, "title": "Good News About Hell",
+                                 "air_date": "2022-02-18", "aired": true}]}]}
+                """.trimIndent(),
+            )
+
+        assertEquals(19, list.totalEpisodes)
+        assertEquals(1, list.seasons.single().episodeCount)
+        assertEquals(
+            EpisodeDto(id = "e-1", number = 1, title = "Good News About Hell", airDate = "2022-02-18", aired = true),
+            list.seasons
+                .single()
+                .episodes
+                .single(),
+        )
+    }
+
+    /** total_episodes rides on every media object; a server without it still decodes. */
+    @Test
+    fun `a media object carries its episode total when the server sends one`() {
+        val base =
+            """"id": "m-1", "source": "tmdb", "external_id": "95396", "type": "tv", "title": "Severance",
+               "year": 2022, "genres": [], "cover_image_url": null, "status": "airing",
+               "next_episode_season": null, "next_episode_number": null, "next_episode_date": null,
+               "days_until_next_episode": null"""
+
+        assertEquals(19, json.decodeFromString<MediaDto>("{$base, \"total_episodes\": 19}").totalEpisodes)
+        assertNull(json.decodeFromString<MediaDto>("{$base}").totalEpisodes)
+    }
+
+    @Test
+    fun `watched episodes travel with the server's field names`() {
+        assertEquals(
+            """{"episode_ids":["e-4","e-5"],"watched":true}""",
+            json.encodeToString(SetWatchedRequestDto(episodeIds = listOf("e-4", "e-5"), watched = true)),
+        )
+        assertEquals(
+            listOf("e-1"),
+            json.decodeFromString<WatchedEpisodesDto>("""{"episode_ids": ["e-1"]}""").episodeIds,
+        )
+    }
 }

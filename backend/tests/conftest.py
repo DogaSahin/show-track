@@ -1,4 +1,5 @@
 from collections.abc import AsyncGenerator, Mapping
+from contextlib import asynccontextmanager
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -6,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 
 from app.config import Settings, get_settings
-from app.db import get_session
+from app.db import get_session, get_session_factory
 from app.media.models import MediaSource
 from app.media.providers import get_providers
 from app.media.providers.base import MediaProvider
@@ -71,6 +72,14 @@ async def db_session(engine: AsyncEngine) -> AsyncGenerator[AsyncSession, None]:
 async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     """An HTTP client whose routes share the test's transaction."""
     app.dependency_overrides[get_session] = lambda: db_session
+
+    # Background work borrows the test's session too, so what it writes stays inside the test's
+    # transaction (and is visible to the test) rather than going to a separate connection.
+    @asynccontextmanager
+    async def borrowed_session() -> AsyncGenerator[AsyncSession, None]:
+        yield db_session
+
+    app.dependency_overrides[get_session_factory] = lambda: borrowed_session
     try:
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as ac:
@@ -79,6 +88,7 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
         # pop, not clear(): this fixture only owns the one key it set, and Phase 2 adds an
         # auth-dependency override that an outer fixture may already have installed.
         app.dependency_overrides.pop(get_session, None)
+        app.dependency_overrides.pop(get_session_factory, None)
 
 
 @pytest.fixture

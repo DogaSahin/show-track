@@ -3,6 +3,7 @@ package com.anarky.showtrack.core.data.repository
 import com.anarky.showtrack.core.data.mapper.toDomain
 import com.anarky.showtrack.core.data.paging.NumberedPage
 import com.anarky.showtrack.core.data.paging.PagePaginator
+import com.anarky.showtrack.core.model.EpisodeList
 import com.anarky.showtrack.core.model.Media
 import com.anarky.showtrack.core.model.MediaSource
 import com.anarky.showtrack.core.model.SearchResults
@@ -82,6 +83,8 @@ class MediaRepositoryImpl
         }
 
         override suspend fun detail(mediaId: String): Media = api.mediaDetail(mediaId).toDomain()
+
+        override suspend fun episodes(mediaId: String): EpisodeList = api.mediaEpisodes(mediaId).toDomain()
 
         override suspend fun resolve(
             source: MediaSource,

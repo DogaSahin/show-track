@@ -52,6 +52,14 @@ internal class FakeLibraryRepository(
         return pages[type to cursor] ?: Page(emptyList(), null)
     }
 
+    override suspend fun watchedEpisodes(entryId: String): Set<String> = error("not used here")
+
+    override suspend fun setWatched(
+        entryId: String,
+        episodeIds: Collection<String>,
+        watched: Boolean,
+    ): LibraryEntry = error("not used here")
+
     override suspend fun update(
         entryId: String,
         patch: LibraryPatch,

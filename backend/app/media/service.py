@@ -1,36 +1,46 @@
 import asyncio
 import logging
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from itertools import zip_longest
 
-from sqlalchemy import and_, exists, select, tuple_
+from sqlalchemy import ColumnElement, Integer, and_, delete, exists, func, literal, or_, select, tuple_, update
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import BULK_INSERT_CHUNK_SIZE, chunked
-from app.library.models import UserMedia
-from app.media.models import Media, MediaSource
+
+# Module references, not `from ... import`: app.sync.service and app.library.service import
+# this module too, and a module reference is what lets either side be imported first.
+from app.library import service as library_service
+from app.library.models import UserMedia, WatchedEpisode
+from app.media.models import Episode, Media, MediaSource, MediaStatus
 from app.media.providers.base import (
     MediaProvider,
     MediaRef,
+    ProviderEpisode,
     ProviderMedia,
     ProviderMediaSummary,
     ProviderSearchPage,
 )
 from app.media.providers.errors import ProviderError, ProviderRateLimited, ProviderTimeout
 from app.media.schemas import (
+    EpisodeItem,
+    EpisodeList,
     LibraryEntryRef,
     MediaDetail,
     MediaSearchResponse,
     MediaSummary,
     PersistedMedia,
     SearchItem,
+    SeasonEpisodes,
     SourceStatus,
 )
-from app.sync.service import apply_refresh
+from app.sync import service as sync_service
 
 logger = logging.getLogger(__name__)
 
@@ -318,6 +328,7 @@ def to_detail(media: Media, now: datetime) -> MediaDetail:
         next_episode_number=media.next_episode_number,
         next_episode_date=media.next_episode_date,
         days_until_next_episode=days_until(media.next_episode_date, now),
+        total_episodes=media.total_episodes,
     )
 
 
@@ -389,7 +400,7 @@ async def resolve_media(
 
     A new title goes through `get_or_create_media` (race-free, insert-once). An existing row that
     no library holds and that was last synced over `UNLIBRARIED_REFRESH_AFTER` ago is refreshed
-    from its provider first, through the sync job's own writer (`apply_refresh`), so freshness
+    from its provider first, through the sync job's own writer (`sync_service.apply_refresh`), so freshness
     still has one owner. If that refresh fails, the stored row is returned as it is: a slightly
     stale screen beats an error for a title that exists. Flushes; the caller commits.
 
@@ -421,7 +432,191 @@ async def resolve_media(
             )
         else:
             fetched = {(ref.source, ref.external_id): detail} if detail is not None else {}
-            await apply_refresh(session, [(media_id, ref.source, ref.external_id)], fetched, (), now=now)
+            await sync_service.apply_refresh(session, [(media_id, ref.source, ref.external_id)], fetched, (), now=now)
 
     media = await session.get(Media, media_id, populate_existing=True)
     return to_detail(media, now)
+
+
+# Six bound parameters per row (the client-side id plus five columns), so this stays far below
+# Postgres' 32,767-parameter ceiling even for a 1,000-episode show.
+EPISODE_INSERT_CHUNK_SIZE = 1000
+
+SessionFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
+
+
+async def store_episodes(
+    session: AsyncSession,
+    media_id: uuid.UUID,
+    episodes: Sequence[ProviderEpisode],
+    now: datetime,
+) -> None:
+    """Replace a title's stored episode list with a provider's answer. Flushes; the caller commits.
+
+    Upserts on the (media_id, season_number, number) constraint, then deletes what the provider no
+    longer lists (a renumbered TMDB season, say). Stamps the list as fetched and stores its size.
+    """
+    unique = {(episode.season_number, episode.number): episode for episode in episodes}
+    if not unique:
+        # An empty answer never wipes a stored list: watched episodes hang off these rows, and a
+        # title that really lost every episode is far less likely than a provider glitch.
+        has_stored = await session.scalar(select(exists().where(Episode.media_id == media_id)))
+        if has_stored:
+            await mark_episodes_checked(session, media_id, now)
+            return
+    ordered = [unique[key] for key in sorted(unique)]
+    for chunk in chunked(ordered, EPISODE_INSERT_CHUNK_SIZE):
+        insert = pg_insert(Episode).values(
+            [
+                {
+                    "media_id": media_id,
+                    "season_number": episode.season_number,
+                    "number": episode.number,
+                    "title": episode.title,
+                    "air_date": episode.air_date,
+                }
+                for episode in chunk
+            ]
+        )
+        await session.execute(
+            insert.on_conflict_do_update(
+                index_elements=["media_id", "season_number", "number"],
+                set_={"title": insert.excluded.title, "air_date": insert.excluded.air_date},
+            )
+        )
+
+    if unique:
+        # The kept pairs travel as two array parameters, not two parameters per episode, so even a
+        # very long show stays far below Postgres' bind-parameter ceiling.
+        kept = select(
+            func.unnest(literal([season for season, _ in unique], ARRAY(Integer))),
+            func.unnest(literal([number for _, number in unique], ARRAY(Integer))),
+        )
+        stale_ids = select(Episode.id).where(
+            Episode.media_id == media_id, tuple_(Episode.season_number, Episode.number).not_in(kept)
+        )
+        # Watched rows on the episodes about to go cascade away with them, so each entry's progress
+        # drops by as many first. Otherwise progress would sit above the watched count, and the
+        # backfill below would read that as "ahead" and tick the wrong episodes.
+        lost = (
+            select(func.count())
+            .where(WatchedEpisode.user_media_id == UserMedia.id, WatchedEpisode.episode_id.in_(stale_ids))
+            .correlate(UserMedia)
+            .scalar_subquery()
+        )
+        await session.execute(
+            update(UserMedia)
+            .where(UserMedia.media_id == media_id, lost > 0)
+            .values(progress=func.greatest(UserMedia.progress - lost, 0))
+            .execution_options(synchronize_session=False)
+        )
+        await session.execute(delete(Episode).where(Episode.id.in_(stale_ids)))
+    await session.execute(
+        update(Media)
+        .where(Media.id == media_id)
+        # An empty list has no meaningful total ("x of 0"), so it stays unknown.
+        .values(episodes_synced_at=now, total_episodes=len(unique) or None, episodes_refresh_due=False)
+    )
+    # The UPDATE ran in the database; a Media already loaded in this session still holds the old
+    # values until it is re-read (the async identity-map trap).
+    await session.get(Media, media_id, populate_existing=True)
+    # Entries whose progress predates their watched episodes (or that are ahead of the episodes
+    # known until now) get their first N aired episodes ticked.
+    await library_service.backfill_watched(session, [media_id], now)
+
+
+async def fetch_and_store_episodes(
+    session_factory: SessionFactory,
+    providers: Mapping[MediaSource, MediaProvider],
+    media_id: uuid.UUID,
+    ref: MediaRef,
+) -> None:
+    """Fetch one title's episode list and store it, in a session of its own. Runs after a title is
+    added to a library, so its episodes are there when the user opens it rather than after the
+    next sync. Nothing above a background task catches anything, so every failure is logged and
+    swallowed: the sync job retries a list that is still unfetched.
+    """
+    provider = providers.get(ref.source)
+    if provider is None:
+        return
+    try:
+        episodes = await provider.get_episodes(ref.external_id)
+        if episodes is None:
+            return
+        async with session_factory() as session:
+            await store_episodes(session, media_id, episodes, datetime.now(tz=UTC))
+            await session.commit()
+    except ProviderError:
+        logger.info("fetching episodes for %s %s failed; the sync job will retry", ref.source, ref.external_id)
+    except Exception:
+        logger.exception("storing episodes for %s %s failed", ref.source, ref.external_id)
+
+
+async def mark_episodes_checked(session: AsyncSession, media_id: uuid.UUID, now: datetime) -> None:
+    """The provider no longer knows the title. Its stored list is kept as it is (it may be a passing
+    404, and watched records hang off these rows); only the stamp moves, so it is not asked again
+    every cycle. Flushes; the caller commits.
+    """
+    await session.execute(
+        update(Media).where(Media.id == media_id).values(episodes_synced_at=now, episodes_refresh_due=False)
+    )
+    await session.get(Media, media_id, populate_existing=True)
+
+
+def is_aired(episode: Episode, media: Media, now: datetime) -> bool:
+    """An undated episode of a finished show has aired; of an airing or upcoming show, not yet.
+
+    A dated episode has aired once its day has begun (UTC), except the one the next-episode pointer
+    names while its exact air time is still ahead: a TMDB date is the local air date, so an evening
+    US episode would otherwise read as aired most of a day early.
+    """
+    if episode.air_date is None:
+        return media.status == MediaStatus.FINISHED
+    today = now.astimezone(UTC).date()
+    if episode.air_date < today:
+        return True
+    if episode.air_date > today:
+        return False
+    is_next = (episode.season_number, episode.number) == (media.next_episode_season, media.next_episode_number)
+    return not (is_next and media.next_episode_date is not None and media.next_episode_date > now)
+
+
+def aired_clause(today: date) -> ColumnElement[bool]:
+    """is_aired as SQL, for bulk work (a backfill), joined to `media`. It leaves out the
+    next-episode-today refinement: a backfill only ever ticks episodes a user already counted.
+    """
+    return or_(
+        Episode.air_date <= today,
+        and_(Episode.air_date.is_(None), Media.status == MediaStatus.FINISHED),
+    )
+
+
+async def get_episode_list(session: AsyncSession, media_id: uuid.UUID, now: datetime) -> EpisodeList | None:
+    """Database only, like every read but search. None when the title does not exist."""
+    media = await session.get(Media, media_id)
+    if media is None:
+        return None
+    if media.episodes_synced_at is None:
+        return EpisodeList(synced_at=None, total_episodes=None, seasons=[])
+
+    rows = await session.scalars(
+        select(Episode).where(Episode.media_id == media_id).order_by(Episode.season_number, Episode.number)
+    )
+    seasons: dict[int, list[EpisodeItem]] = {}
+    for episode in rows:
+        seasons.setdefault(episode.season_number, []).append(
+            EpisodeItem(
+                id=episode.id,
+                number=episode.number,
+                title=episode.title,
+                air_date=episode.air_date,
+                aired=is_aired(episode, media, now),
+            )
+        )
+    return EpisodeList(
+        synced_at=media.episodes_synced_at,
+        total_episodes=media.total_episodes,
+        seasons=[
+            SeasonEpisodes(number=number, episode_count=len(items), episodes=items) for number, items in seasons.items()
+        ],
+    )

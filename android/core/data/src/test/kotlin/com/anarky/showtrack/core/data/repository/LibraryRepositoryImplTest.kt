@@ -21,6 +21,7 @@ import com.anarky.showtrack.core.network.api.ShowTrackApi
 import com.anarky.showtrack.core.network.dto.AddLibraryEntryRequest
 import com.anarky.showtrack.core.network.dto.CreateGroupRequestDto
 import com.anarky.showtrack.core.network.dto.CreateReviewRequestDto
+import com.anarky.showtrack.core.network.dto.EpisodeListDto
 import com.anarky.showtrack.core.network.dto.FeedPageDto
 import com.anarky.showtrack.core.network.dto.GenreCountDto
 import com.anarky.showtrack.core.network.dto.GroupDto
@@ -41,7 +42,9 @@ import com.anarky.showtrack.core.network.dto.RecommendationPageDto
 import com.anarky.showtrack.core.network.dto.RegisterTargetRequest
 import com.anarky.showtrack.core.network.dto.ResolveMediaRequestDto
 import com.anarky.showtrack.core.network.dto.ReviewDto
+import com.anarky.showtrack.core.network.dto.SetWatchedRequestDto
 import com.anarky.showtrack.core.network.dto.UserDto
+import com.anarky.showtrack.core.network.dto.WatchedEpisodesDto
 import com.anarky.showtrack.core.network.dto.WatchlistItemDto
 import com.anarky.showtrack.core.network.dto.WatchlistPageDto
 import kotlinx.coroutines.CompletableDeferred
@@ -508,6 +511,30 @@ class LibraryRepositoryImplTest {
         }
 
     @Test
+    fun `marking episodes sends one batch and the cached row takes the new progress`() =
+        runTest {
+            repository.refresh()
+            api.enqueueEntry(entryBody().copy(id = "1", progress = 15))
+
+            val updated = repository.setWatched("1", listOf("e-4", "e-5"), watched = true)
+
+            assertEquals(
+                "1" to SetWatchedRequestDto(episodeIds = listOf("e-4", "e-5"), watched = true),
+                api.watchedRequests.single(),
+            )
+            assertEquals(15, updated.progress)
+            // The cached row; the Library list reads paged results, not the cache (RT-11), as for update().
+            assertEquals(
+                15,
+                dao
+                    .observeAll()
+                    .first()
+                    .single { it.id == "1" }
+                    .progress,
+            )
+        }
+
+    @Test
     fun `an unrated score is sent as an explicit null, not omitted`() =
         runTest {
             // The whole reason the PATCH body is a JsonObject. An omitted score means "leave it
@@ -745,6 +772,7 @@ private class FakeShowTrackApi(
     val requestedTypes = mutableListOf<String?>()
     val addRequests = mutableListOf<AddLibraryEntryRequest>()
     val updateRequests = mutableListOf<Pair<String, JsonObject>>()
+    val watchedRequests = mutableListOf<Pair<String, SetWatchedRequestDto>>()
     var statsResponse =
         LibraryStatsDto(
             total = 0,
@@ -846,6 +874,20 @@ private class FakeShowTrackApi(
 
     override suspend fun resolveMedia(request: ResolveMediaRequestDto): MediaDto =
         error("this fake only serves observeLibrary/refresh/loadMore")
+
+    override suspend fun mediaEpisodes(id: String): EpisodeListDto =
+        error("this fake only serves observeLibrary/refresh/loadMore")
+
+    override suspend fun watchedEpisodes(id: String): WatchedEpisodesDto =
+        error("this fake only serves observeLibrary/refresh/loadMore")
+
+    override suspend fun setWatchedEpisodes(
+        id: String,
+        request: SetWatchedRequestDto,
+    ): LibraryEntryDto {
+        watchedRequests += id to request
+        return queuedEntries.removeFirst()
+    }
 
     override suspend fun me(): UserDto = error("this fake only serves observeLibrary/refresh/loadMore")
 

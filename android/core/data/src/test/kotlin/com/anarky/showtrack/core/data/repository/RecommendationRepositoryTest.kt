@@ -4,6 +4,7 @@ import com.anarky.showtrack.core.network.api.ShowTrackApi
 import com.anarky.showtrack.core.network.dto.AddLibraryEntryRequest
 import com.anarky.showtrack.core.network.dto.CreateGroupRequestDto
 import com.anarky.showtrack.core.network.dto.CreateReviewRequestDto
+import com.anarky.showtrack.core.network.dto.EpisodeListDto
 import com.anarky.showtrack.core.network.dto.FeedPageDto
 import com.anarky.showtrack.core.network.dto.GroupDto
 import com.anarky.showtrack.core.network.dto.GroupWithInviteDto
@@ -26,7 +27,9 @@ import com.anarky.showtrack.core.network.dto.RecommendationReasonDto
 import com.anarky.showtrack.core.network.dto.RegisterTargetRequest
 import com.anarky.showtrack.core.network.dto.ResolveMediaRequestDto
 import com.anarky.showtrack.core.network.dto.ReviewDto
+import com.anarky.showtrack.core.network.dto.SetWatchedRequestDto
 import com.anarky.showtrack.core.network.dto.UserDto
+import com.anarky.showtrack.core.network.dto.WatchedEpisodesDto
 import com.anarky.showtrack.core.network.dto.WatchlistItemDto
 import com.anarky.showtrack.core.network.dto.WatchlistPageDto
 import kotlinx.coroutines.test.runTest
@@ -358,6 +361,17 @@ class RecommendationRepositoryTest {
 
         override suspend fun resolveMedia(request: ResolveMediaRequestDto): MediaDto =
             error("this fake only serves refresh/loadMore/remove")
+
+        override suspend fun mediaEpisodes(id: String): EpisodeListDto =
+            error("this fake only serves refresh/loadMore/remove")
+
+        override suspend fun watchedEpisodes(id: String): WatchedEpisodesDto =
+            error("this fake only serves refresh/loadMore/remove")
+
+        override suspend fun setWatchedEpisodes(
+            id: String,
+            request: SetWatchedRequestDto,
+        ): LibraryEntryDto = error("this fake only serves refresh/loadMore/remove")
 
         override suspend fun me(): UserDto = error("this fake only serves refresh/loadMore/remove")
 

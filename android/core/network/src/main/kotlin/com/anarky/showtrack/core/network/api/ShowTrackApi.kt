@@ -3,6 +3,7 @@ package com.anarky.showtrack.core.network.api
 import com.anarky.showtrack.core.network.dto.AddLibraryEntryRequest
 import com.anarky.showtrack.core.network.dto.CreateGroupRequestDto
 import com.anarky.showtrack.core.network.dto.CreateReviewRequestDto
+import com.anarky.showtrack.core.network.dto.EpisodeListDto
 import com.anarky.showtrack.core.network.dto.FeedPageDto
 import com.anarky.showtrack.core.network.dto.GroupDto
 import com.anarky.showtrack.core.network.dto.GroupWithInviteDto
@@ -22,7 +23,9 @@ import com.anarky.showtrack.core.network.dto.RecommendationPageDto
 import com.anarky.showtrack.core.network.dto.RegisterTargetRequest
 import com.anarky.showtrack.core.network.dto.ResolveMediaRequestDto
 import com.anarky.showtrack.core.network.dto.ReviewDto
+import com.anarky.showtrack.core.network.dto.SetWatchedRequestDto
 import com.anarky.showtrack.core.network.dto.UserDto
+import com.anarky.showtrack.core.network.dto.WatchedEpisodesDto
 import com.anarky.showtrack.core.network.dto.WatchlistItemDto
 import com.anarky.showtrack.core.network.dto.WatchlistPageDto
 import kotlinx.serialization.json.JsonObject
@@ -31,6 +34,7 @@ import retrofit2.http.DELETE
 import retrofit2.http.GET
 import retrofit2.http.PATCH
 import retrofit2.http.POST
+import retrofit2.http.PUT
 import retrofit2.http.Path
 import retrofit2.http.Query
 
@@ -88,6 +92,19 @@ interface ShowTrackApi {
         @Body request: AddLibraryEntryRequest,
     ): LibraryEntryDto
 
+    /** `GET /v1/library/{id}/episodes/watched`: the ids of the episodes this entry has ticked. */
+    @GET("v1/library/{id}/episodes/watched")
+    suspend fun watchedEpisodes(
+        @Path("id") id: String,
+    ): WatchedEpisodesDto
+
+    /** Returns the updated entry (the same shape as PATCH), carrying the recounted progress. */
+    @PUT("v1/library/{id}/episodes/watched")
+    suspend fun setWatchedEpisodes(
+        @Path("id") id: String,
+        @Body request: SetWatchedRequestDto,
+    ): LibraryEntryDto
+
     /**
      * `PATCH /v1/library/{id}`. The body is a [JsonObject] rather than a data class because
      * `score` is a tri-state field: absent means "leave it", `null` means "unrate", and a string
@@ -137,6 +154,12 @@ interface ShowTrackApi {
     suspend fun resolveMedia(
         @Body request: ResolveMediaRequestDto,
     ): MediaDto
+
+    /** `GET /v1/media/{id}/episodes`: seasons and episodes, from the server's database only. */
+    @GET("v1/media/{id}/episodes")
+    suspend fun mediaEpisodes(
+        @Path("id") id: String,
+    ): EpisodeListDto
 
     /** `GET /v1/media/{id}`, a MediaDetail — the same shape [LibraryEntryDto] embeds. */
     @GET("v1/media/{id}")

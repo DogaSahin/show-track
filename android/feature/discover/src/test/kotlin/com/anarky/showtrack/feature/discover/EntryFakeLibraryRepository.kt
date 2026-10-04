@@ -31,6 +31,14 @@ internal class EntryFakeLibraryRepository : LibraryRepository {
         externalId: String,
     ): LibraryEntry = error("DiscoverEntryHiltTest does not exercise add")
 
+    override suspend fun watchedEpisodes(entryId: String): Set<String> = error("not used here")
+
+    override suspend fun setWatched(
+        entryId: String,
+        episodeIds: Collection<String>,
+        watched: Boolean,
+    ): LibraryEntry = error("not used here")
+
     override suspend fun update(
         entryId: String,
         patch: LibraryPatch,

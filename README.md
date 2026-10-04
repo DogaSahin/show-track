@@ -29,7 +29,9 @@ interface. `GET /v1/media/search` fans out to both live with a per-provider time
 provider degrades its own share of results rather than failing the search. Each result says whether
 the title is already stored and whether it is in your library; opening one that isn't stored yet
 (`POST /v1/media/resolve`) fetches that single title, as adding it does. Every other read path is
-database-only.
+database-only. Each tracked title's season and episode list is stored too: fetched when the title is
+added, then kept fresh by the sync job while the show is airing. Progress is tracked per episode,
+so gaps are kept, and a title's progress is the number of episodes ticked.
 
 ## Layout
 
