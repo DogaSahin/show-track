@@ -297,4 +297,16 @@ class WireContractTest {
         assertEquals(19, json.decodeFromString<MediaDto>("{$base, \"total_episodes\": 19}").totalEpisodes)
         assertNull(json.decodeFromString<MediaDto>("{$base}").totalEpisodes)
     }
+
+    @Test
+    fun `watched episodes travel with the server's field names`() {
+        assertEquals(
+            """{"episode_ids":["e-4","e-5"],"watched":true}""",
+            json.encodeToString(SetWatchedRequestDto(episodeIds = listOf("e-4", "e-5"), watched = true)),
+        )
+        assertEquals(
+            listOf("e-1"),
+            json.decodeFromString<WatchedEpisodesDto>("""{"episode_ids": ["e-1"]}""").episodeIds,
+        )
+    }
 }

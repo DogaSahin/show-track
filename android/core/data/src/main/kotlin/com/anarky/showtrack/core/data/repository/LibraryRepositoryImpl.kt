@@ -21,6 +21,7 @@ import com.anarky.showtrack.core.network.api.ShowTrackApi
 import com.anarky.showtrack.core.network.dto.AddLibraryEntryRequest
 import com.anarky.showtrack.core.network.dto.ImportAniListRequest
 import com.anarky.showtrack.core.network.dto.LibraryEntryDto
+import com.anarky.showtrack.core.network.dto.SetWatchedRequestDto
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -213,6 +214,25 @@ class LibraryRepositoryImpl
             // because `add` is a one-off action, unlike `update`'s per-tap edits below.
             refresh()
             return created
+        }
+
+        override suspend fun watchedEpisodes(entryId: String): Set<String> =
+            api.watchedEpisodes(entryId).episodeIds.toSet()
+
+        override suspend fun setWatched(
+            entryId: String,
+            episodeIds: Collection<String>,
+            watched: Boolean,
+        ): LibraryEntry {
+            val updated =
+                api
+                    .setWatchedEpisodes(
+                        entryId,
+                        SetWatchedRequestDto(episodeIds = episodeIds.toList(), watched = watched),
+                    ).toDomain()
+            // Same single-row upsert as update(): the new progress shows in the Library list at once.
+            dao.insertAll(listOf(updated.toEntity()))
+            return updated
         }
 
         override suspend fun update(

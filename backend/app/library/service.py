@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import ColumnElement, func, select, true, tuple_
+from sqlalchemy import ColumnElement, Uuid, delete, func, literal, select, true, tuple_
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,7 +13,7 @@ from sqlalchemy.orm import InstrumentedAttribute
 
 from app.db import BULK_INSERT_CHUNK_SIZE, FOREIGN_KEY_VIOLATION, UNIQUE_VIOLATION, chunked
 from app.library import activity
-from app.library.models import Activity, ActivityKind, Review, UserMedia, UserMediaStatus
+from app.library.models import Activity, ActivityKind, Review, UserMedia, UserMediaStatus, WatchedEpisode
 from app.library.schemas import (
     GenreCount,
     LibraryEntry,
@@ -23,7 +23,7 @@ from app.library.schemas import (
     ReviewRead,
 )
 from app.media import service as media_service
-from app.media.models import Media, MediaType
+from app.media.models import Episode, Media, MediaType
 from app.pagination import Cursor, encode_cursor
 from app.users.models import User
 
@@ -218,7 +218,9 @@ async def get_entry(
     return (row.UserMedia, row.Media) if row is not None else None
 
 
-async def update_entry(session: AsyncSession, entry: UserMedia, changes: dict[str, Any]) -> UserMedia:
+async def update_entry(
+    session: AsyncSession, entry: UserMedia, changes: dict[str, Any], *, now: datetime | None = None
+) -> UserMedia:
     """`changes` comes from model_dump(exclude_unset=True), so an absent field never appears here
     and an explicit null does. An empty dict dirties nothing, so SQLAlchemy emits no UPDATE and
     `updated_at` is not bumped — correct, because nothing was updated.
@@ -242,6 +244,13 @@ async def update_entry(session: AsyncSession, entry: UserMedia, changes: dict[st
     await session.flush()
     await session.refresh(entry)
 
+    if "progress" in changes:
+        # The legacy way to set progress (older app versions; the episode screen uses
+        # set_watched instead): the watched set becomes the first N aired episodes, which
+        # replaces any gaps. Progress itself stays as sent, even past the episodes known.
+        await _lock_entry(session, entry)
+        await _replace_with_first_aired(session, entry, now or datetime.now(tz=UTC))
+
     kind = activity.kind_for(changes)
     if kind is not None:
         await _emit(
@@ -252,6 +261,145 @@ async def update_entry(session: AsyncSession, entry: UserMedia, changes: dict[st
             payload=activity.payload_for(changes),
         )
     return entry
+
+
+class EpisodesNotLoaded(Exception):
+    """The title's episode list has not been fetched yet, so there is nothing to mark."""
+
+
+class EpisodesNotOfThisTitle(Exception):
+    """An id is not an episode of this entry's title (or does not exist)."""
+
+
+class EpisodeNotAired(Exception):
+    """Marking an episode watched before it has aired."""
+
+
+async def watched_episode_ids(session: AsyncSession, entry: UserMedia) -> list[uuid.UUID]:
+    """The caller already proved ownership by loading `entry` through get_entry."""
+    rows = await session.scalars(select(WatchedEpisode.episode_id).where(WatchedEpisode.user_media_id == entry.id))
+    return list(rows)
+
+
+async def set_watched(
+    session: AsyncSession,
+    entry: UserMedia,
+    media: Media,
+    episode_ids: Sequence[uuid.UUID],
+    *,
+    watched: bool,
+    now: datetime,
+) -> UserMedia:
+    """Mark or unmark a batch of episodes, then set `progress` to the watched count. All or
+    nothing: any id that is not this title's, or (when marking) an episode not aired yet, rejects
+    the whole request before anything is written. Idempotent. Flushes; the caller commits.
+
+    At most one feed activity, and only when the count actually moved: a whole season is one
+    "progressed" item, and re-marking what was already marked posts nothing.
+    """
+    if media.episodes_synced_at is None:
+        raise EpisodesNotLoaded
+    # One request at a time per entry: two taps in flight would each count only their own insert
+    # and write a stale progress. The lock also re-reads progress (populate_existing).
+    await _lock_entry(session, entry)
+    wanted = set(episode_ids)
+    episodes = list(await session.scalars(select(Episode).where(Episode.id.in_(wanted), Episode.media_id == media.id)))
+    if len(episodes) != len(wanted):
+        raise EpisodesNotOfThisTitle
+    if watched and not all(media_service.is_aired(episode, media, now) for episode in episodes):
+        raise EpisodeNotAired
+
+    if watched:
+        await session.execute(
+            pg_insert(WatchedEpisode)
+            .values([{"user_media_id": entry.id, "episode_id": episode_id} for episode_id in sorted(wanted)])
+            .on_conflict_do_nothing()
+        )
+    else:
+        await session.execute(
+            delete(WatchedEpisode).where(
+                WatchedEpisode.user_media_id == entry.id, WatchedEpisode.episode_id.in_(wanted)
+            )
+        )
+
+    count = await session.scalar(
+        select(func.count()).select_from(WatchedEpisode).where(WatchedEpisode.user_media_id == entry.id)
+    )
+    if count != entry.progress:
+        # Straight to the shared write path (activity included), but NOT through update_entry's
+        # legacy branch, which would replace these exact episodes with "the first N".
+        entry.progress = count
+        await session.flush()
+        await session.refresh(entry)
+        await _emit(
+            session,
+            user_id=entry.user_id,
+            media_id=entry.media_id,
+            kind=ActivityKind.PROGRESSED,
+            payload=activity.payload_for({"progress": count}),
+        )
+    return entry
+
+
+def _first_aired(media_id: Any, limit: Any, today: Any) -> Any:
+    """The first `limit` aired episodes of a title, in season and episode order."""
+    return (
+        select(Episode.id)
+        .join(Media, Media.id == Episode.media_id)
+        .where(Episode.media_id == media_id, media_service.aired_clause(today))
+        .order_by(Episode.season_number, Episode.number)
+        .limit(limit)
+    )
+
+
+async def _replace_with_first_aired(session: AsyncSession, entry: UserMedia, now: datetime) -> None:
+    await session.execute(delete(WatchedEpisode).where(WatchedEpisode.user_media_id == entry.id))
+    if entry.progress <= 0:
+        return
+    firsts = _first_aired(entry.media_id, entry.progress, now.astimezone(UTC).date())
+    await session.execute(
+        pg_insert(WatchedEpisode).from_select(
+            ["user_media_id", "episode_id"], select(literal(entry.id, Uuid()), firsts.subquery().c.id)
+        )
+    )
+
+
+async def _lock_entry(session: AsyncSession, entry: UserMedia) -> None:
+    await session.execute(
+        select(UserMedia).where(UserMedia.id == entry.id).with_for_update().execution_options(populate_existing=True)
+    )
+
+
+async def backfill_watched(
+    session: AsyncSession, media_ids: Sequence[uuid.UUID], now: datetime, *, user_id: uuid.UUID | None = None
+) -> None:
+    """Tick the first `progress` aired episodes for every entry of these titles whose progress is
+    ahead of its watched episodes: entries from before episodes were tracked, AniList imports, and
+    entries that counted past the episodes known until a new list arrived. An entry whose
+    progress came from set_watched always equals its count, so it is never touched.
+    Flushes; the caller commits.
+    """
+    if not media_ids:
+        return
+    watched_count = (
+        select(func.count()).where(WatchedEpisode.user_media_id == UserMedia.id).correlate(UserMedia).scalar_subquery()
+    )
+    firsts = (
+        _first_aired(UserMedia.media_id, UserMedia.progress, now.astimezone(UTC).date()).correlate(UserMedia).lateral()
+    )
+    source = (
+        select(UserMedia.id, firsts.c.id)
+        .select_from(UserMedia)
+        .join(firsts, true())
+        .where(UserMedia.media_id.in_(list(media_ids)), UserMedia.progress > watched_count)
+    )
+    if user_id is not None:
+        # An import touches only the importing user's entries.
+        source = source.where(UserMedia.user_id == user_id)
+    await session.execute(
+        pg_insert(WatchedEpisode).from_select(["user_media_id", "episode_id"], source).on_conflict_do_nothing()
+    )
+    await session.flush()
 
 
 async def delete_entry(session: AsyncSession, entry: UserMedia) -> None:
@@ -481,6 +629,8 @@ async def bulk_add_entries(session: AsyncSession, *, user_id: uuid.UUID, rows: S
             .returning(UserMedia.id)
         )
         inserted += len((await session.execute(statement)).all())
+
+    await backfill_watched(session, sorted({row["media_id"] for row in stamped}), datetime.now(tz=UTC), user_id=user_id)
 
     if inserted:
         # media_id is None: an import is about N titles, not one (S-A/S-D). Guarded on the count

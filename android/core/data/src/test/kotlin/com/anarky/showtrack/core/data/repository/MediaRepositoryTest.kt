@@ -28,7 +28,9 @@ import com.anarky.showtrack.core.network.dto.ResolveMediaRequestDto
 import com.anarky.showtrack.core.network.dto.ReviewDto
 import com.anarky.showtrack.core.network.dto.SearchItemDto
 import com.anarky.showtrack.core.network.dto.SeasonDto
+import com.anarky.showtrack.core.network.dto.SetWatchedRequestDto
 import com.anarky.showtrack.core.network.dto.UserDto
+import com.anarky.showtrack.core.network.dto.WatchedEpisodesDto
 import com.anarky.showtrack.core.network.dto.WatchlistItemDto
 import com.anarky.showtrack.core.network.dto.WatchlistPageDto
 import kotlinx.coroutines.test.runTest
@@ -279,9 +281,14 @@ class MediaRepositoryTest {
         var episodesAnswer: EpisodeListDto? = null
 
         override suspend fun mediaEpisodes(id: String): EpisodeListDto =
-            checkNotNull(episodesAnswer) {
-                "set episodesAnswer first"
-            }
+            checkNotNull(episodesAnswer) { "set episodesAnswer first" }
+
+        override suspend fun watchedEpisodes(id: String): WatchedEpisodesDto = TODO("not used")
+
+        override suspend fun setWatchedEpisodes(
+            id: String,
+            request: SetWatchedRequestDto,
+        ): LibraryEntryDto = TODO("not used")
 
         override suspend fun resolveMedia(request: ResolveMediaRequestDto): MediaDto {
             lastResolve = request
