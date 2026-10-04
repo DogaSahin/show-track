@@ -2,6 +2,7 @@ package com.anarky.showtrack.feature.detail
 
 import android.app.Application
 import androidx.lifecycle.SavedStateHandle
+import app.cash.turbine.ReceiveTurbine
 import app.cash.turbine.test
 import com.anarky.showtrack.core.data.paging.Page
 import com.anarky.showtrack.core.data.repository.LibraryRepository
@@ -186,10 +187,7 @@ class DetailViewModelTest {
                 // for the whole round trip because it outranks Loading.
                 assertEquals(DetailUiState.Loading, awaitItem())
                 advanceUntilIdle()
-                assertEquals(
-                    DetailUiState.Success(DetailData(media = MEDIA, entry = null)),
-                    awaitItem(),
-                )
+                assertEquals(DetailData(media = MEDIA, entry = null), awaitSettledSuccess().data)
                 cancelAndIgnoreRemainingEvents()
             }
         }
@@ -269,26 +267,6 @@ class DetailViewModelTest {
         }
 
     @Test
-    fun `changing the progress sends only the progress`() =
-        runTest(dispatcher) {
-            val library = FakeLibrary(entry = ENTRY)
-            val viewModel =
-                DetailViewModel(
-                    savedState("media-1"),
-                    FakeMedia(),
-                    library,
-                    FakeGroupRepository(),
-                    FakeAuthRepository(),
-                )
-            advanceUntilIdle()
-
-            viewModel.setProgress(7)
-            advanceUntilIdle()
-
-            assertEquals(LibraryPatch(progress = 7), library.lastPatch)
-        }
-
-    @Test
     fun `toggling favorite sends the flipped value`() =
         runTest(dispatcher) {
             val library = FakeLibrary(entry = ENTRY)
@@ -345,7 +323,7 @@ class DetailViewModelTest {
                 )
             advanceUntilIdle()
 
-            viewModel.setProgress(99)
+            viewModel.setStatus(UserMediaStatus.PAUSED)
             advanceUntilIdle()
 
             assertEquals(5, (viewModel.state.value as DetailUiState.Success).data.entry?.progress)
@@ -393,7 +371,7 @@ class DetailViewModelTest {
             viewModel.state.test {
                 assertEquals(DetailUiState.Loading, awaitItem())
                 advanceUntilIdle()
-                assertEquals(DetailUiState.Success(DetailData(media = MEDIA, entry = ENTRY)), awaitItem())
+                assertEquals(DetailData(media = MEDIA, entry = ENTRY), awaitSettledSuccess().data)
 
                 viewModel.setScore(BigDecimal("9.0"))
                 assertTrue((awaitItem() as DetailUiState.Success).saving)
@@ -418,7 +396,7 @@ class DetailViewModelTest {
             advanceUntilIdle()
 
             viewModel.setScore(BigDecimal("9.0"))
-            viewModel.setProgress(4)
+            viewModel.setStatus(UserMediaStatus.PAUSED)
             advanceUntilIdle()
 
             assertEquals(1, library.updateCalls)
@@ -1913,6 +1891,14 @@ class DetailViewModelTest {
         assertEquals(expected.message, error.cause.message)
     }
 
+    /** The loaded screen once its Episodes section has settled (it loads right after the title). */
+    private suspend fun ReceiveTurbine<DetailUiState>.awaitSettledSuccess(): DetailUiState.Success {
+        while (true) {
+            val item = awaitItem()
+            if (item is DetailUiState.Success && item.episodes !is EpisodesState.Loading) return item
+        }
+    }
+
     // internal, not private (fix round 1, BLOCKING B1): DetailResumeTest.kt needs a real
     // DetailViewModel constructed against a fake it does not have to duplicate — nested-class
     // access from another file in the same module (`DetailViewModelTest.FakeMedia(...)`) rather
@@ -1939,7 +1925,16 @@ class DetailViewModelTest {
             externalId: String,
         ): Media = error("not used by Detail")
 
-        override suspend fun episodes(mediaId: String): EpisodeList = error("not used here")
+        // A server that has not fetched this title's episode list yet, unless a test says otherwise.
+        var episodesResult: EpisodeList = EpisodeList(syncedAt = null, totalEpisodes = null, seasons = emptyList())
+        var episodesFailure: Throwable? = null
+        var episodesGate: CompletableDeferred<Unit>? = null
+
+        override suspend fun episodes(mediaId: String): EpisodeList {
+            episodesGate?.await()
+            episodesFailure?.let { throw it }
+            return episodesResult
+        }
 
         override suspend fun detail(mediaId: String): Media {
             lastMediaId = mediaId
@@ -1996,13 +1991,34 @@ class DetailViewModelTest {
             return addResult
         }
 
-        override suspend fun watchedEpisodes(entryId: String): Set<String> = error("not used here")
+        var removeCalls = 0
+            private set
+        var removeFailure: Throwable? = null
+
+        override suspend fun remove(entryId: String) {
+            removeCalls++
+            removeFailure?.let { throw it }
+        }
+
+        var watched: Set<String> = emptySet()
+
+        override suspend fun watchedEpisodes(entryId: String): Set<String> = watched
+
+        val setWatchedCalls = mutableListOf<Pair<Set<String>, Boolean>>()
+        var setWatchedFailure: Throwable? = null
+        var setWatchedGate: CompletableDeferred<Unit>? = null
+        var setWatchedResult: LibraryEntry? = null
 
         override suspend fun setWatched(
             entryId: String,
             episodeIds: Collection<String>,
             watched: Boolean,
-        ): LibraryEntry = error("not used here")
+        ): LibraryEntry {
+            setWatchedCalls += episodeIds.toSet() to watched
+            setWatchedGate?.await()
+            setWatchedFailure?.let { throw it }
+            return setWatchedResult ?: updateResult
+        }
 
         override suspend fun update(
             entryId: String,

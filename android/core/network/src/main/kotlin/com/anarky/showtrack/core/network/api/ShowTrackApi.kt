@@ -92,6 +92,12 @@ interface ShowTrackApi {
         @Body request: AddLibraryEntryRequest,
     ): LibraryEntryDto
 
+    /** `DELETE /v1/library/{id}`, 204 on success. The shared title row stays; only the entry goes. */
+    @DELETE("v1/library/{id}")
+    suspend fun deleteLibraryEntry(
+        @Path("id") id: String,
+    )
+
     /** `GET /v1/library/{id}/episodes/watched`: the ids of the episodes this entry has ticked. */
     @GET("v1/library/{id}/episodes/watched")
     suspend fun watchedEpisodes(

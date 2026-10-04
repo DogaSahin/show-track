@@ -59,6 +59,13 @@ interface LibraryRepository {
         externalId: String,
     ): LibraryEntry
 
+    /**
+     * Removes a title from the library (its watched episodes and review stay with the server's
+     * rules: watched episodes go with the entry). The cached row goes at once; the list refresh that
+     * follows is best effort. Throws if the removal itself fails.
+     */
+    suspend fun remove(entryId: String)
+
     /** The ids of the episodes this entry has marked watched. Throws on failure. */
     suspend fun watchedEpisodes(entryId: String): Set<String>
 

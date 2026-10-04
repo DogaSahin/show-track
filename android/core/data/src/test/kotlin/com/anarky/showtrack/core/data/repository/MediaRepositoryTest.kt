@@ -283,6 +283,8 @@ class MediaRepositoryTest {
         override suspend fun mediaEpisodes(id: String): EpisodeListDto =
             checkNotNull(episodesAnswer) { "set episodesAnswer first" }
 
+        override suspend fun deleteLibraryEntry(id: String): Unit = error("not used here")
+
         override suspend fun watchedEpisodes(id: String): WatchedEpisodesDto = TODO("not used")
 
         override suspend fun setWatchedEpisodes(

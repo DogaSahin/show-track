@@ -16,10 +16,6 @@
     <string name="detail_edit_error">Couldn\'t save your change. Try again.</string>
 
     <string name="detail_score_clear">Clear score</string>
-    <string name="detail_progress_label">Progress: %1$d</string>
-    <string name="detail_progress_decrease">−</string>
-    <string name="detail_progress_increase">+</string>
-    <string name="detail_favorite_label">Favorite</string>
 
     <!-- The group section (task 9c.6, E-J, design doc §3.5) -->
     <string name="detail_group_section_title">Group</string>
@@ -75,4 +71,72 @@
          claim about where the review can be found. -->
     <string name="detail_review_error_already_reviewed_unresolved">You\'ve already reviewed this title, but this screen can\'t find that review to edit right now.</string>
     <string name="detail_review_error_unknown">Something went wrong. Try again.</string>
+
+    <!-- Top of the screen. -->
+    <string name="detail_back">Back</string>
+    <string name="detail_more">More options</string>
+    <string name="detail_media_status_airing">Airing</string>
+    <string name="detail_media_status_finished">Finished</string>
+    <string name="detail_media_status_upcoming">Upcoming</string>
+    <!-- %1$s is "S2 E7" or "Ep 15". -->
+    <string name="detail_next_episode">Next: %1$s</string>
+
+    <!-- The tracking card. -->
+    <string name="detail_favorite_content_description">Favourite</string>
+    <string name="detail_favorite_on">on</string>
+    <string name="detail_favorite_off">off</string>
+    <string name="detail_episodes_watched_of">%1$d of %2$d episodes watched</string>
+    <plurals name="detail_episodes_watched">
+        <item quantity="one">%d episode watched</item>
+        <item quantity="other">%d episodes watched</item>
+    </plurals>
+
+    <!-- Remove from library, in the top ⋯ menu. -->
+    <string name="detail_remove_from_library">Remove from library</string>
+    <string name="detail_remove_confirm_title">Remove from your library?</string>
+    <string name="detail_remove_confirm_body">Your status, score and watched episodes for this title will be removed.</string>
+    <string name="detail_remove_confirm">Remove</string>
+    <string name="detail_remove_cancel">Cancel</string>
+    <string name="detail_remove_error">Couldn\'t remove this title. Try again.</string>
+
+    <!-- The Episodes section. -->
+    <string name="detail_episodes_heading">Episodes</string>
+    <string name="detail_season_title">Season %1$d</string>
+    <plurals name="detail_season_episodes">
+        <item quantity="one">%d episode</item>
+        <item quantity="other">%d episodes</item>
+    </plurals>
+    <!-- Watched of total in a season header, "6/10". -->
+    <string name="detail_season_count">%1$d/%2$d</string>
+    <string name="detail_episode_fallback_title">Episode %1$d</string>
+    <string name="detail_episode_airs">Airs %1$s</string>
+    <string name="detail_episode_airs_tomorrow">Airs tomorrow</string>
+    <string name="detail_mark_season_watched">Mark season watched</string>
+    <string name="detail_mark_season_unwatched">Mark season unwatched</string>
+    <string name="detail_season_menu">Season %1$d options</string>
+    <string name="detail_catch_up_prompt">Also mark E%1$d–E%2$d as watched?</string>
+    <string name="detail_catch_up_prompt_single">Also mark E%1$d as watched?</string>
+    <string name="detail_catch_up_action">Mark</string>
+    <string name="detail_episodes_not_loaded">The episode list isn\'t available yet. Check back in a few minutes.</string>
+    <string name="detail_episodes_error">Couldn\'t load the episodes.</string>
+    <string name="detail_episodes_retry">Retry</string>
+    <!-- An anime range tab, "1–100". -->
+    <string name="detail_episode_range">%1$d–%2$d</string>
+    <!-- TalkBack for an episode row or tile: "Episode 7, aired 21 Feb, watched". -->
+    <string name="detail_episode_a11y">%1$s, %2$s, %3$s</string>
+    <string name="detail_episode_aired_on">aired %1$s</string>
+    <string name="detail_episode_airs_on">airs %1$s</string>
+    <string name="detail_episode_date_unknown">air date unknown</string>
+    <string name="detail_episode_watched">watched</string>
+    <string name="detail_episode_not_watched">not watched</string>
+
+    <!-- Joins: visual separators and spoken lists, as format strings so a translation can change them. -->
+    <string name="detail_hero_meta">%1$s · %2$s</string>
+    <string name="detail_season_subtitle">%1$s · %2$d</string>
+    <string name="detail_episode_label_titled">%1$s, %2$s</string>
+    <string name="detail_episode_a11y_untracked">%1$s, %2$s</string>
+    <string name="detail_season_count_a11y">%1$d of %2$d watched</string>
+    <string name="detail_season_expanded">expanded</string>
+    <string name="detail_season_collapsed">collapsed</string>
+    <string name="detail_score_button">Score</string>
 </resources>

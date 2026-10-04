@@ -616,6 +616,8 @@ class LibraryViewModelTest {
             externalId: String,
         ): LibraryEntry = error("not exercised by LibraryViewModel")
 
+        override suspend fun remove(entryId: String): Unit = error("not used here")
+
         override suspend fun watchedEpisodes(entryId: String): Set<String> = error("not used here")
 
         override suspend fun setWatched(

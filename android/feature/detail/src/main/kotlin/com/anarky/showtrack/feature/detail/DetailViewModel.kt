@@ -10,6 +10,7 @@ import com.anarky.showtrack.core.data.repository.GroupOperationException
 import com.anarky.showtrack.core.data.repository.GroupRepository
 import com.anarky.showtrack.core.data.repository.LibraryRepository
 import com.anarky.showtrack.core.data.repository.MediaRepository
+import com.anarky.showtrack.core.model.Episode
 import com.anarky.showtrack.core.model.GroupFailure
 import com.anarky.showtrack.core.model.LibraryPatch
 import com.anarky.showtrack.core.model.Review
@@ -181,6 +182,16 @@ class DetailViewModel
             val generation: Int,
         )
 
+        private val episodeController =
+            EpisodeController(
+                scope = viewModelScope,
+                mediaId = mediaId,
+                mediaRepository = mediaRepository,
+                libraryRepository = libraryRepository,
+                read = { mutableState.value as? DetailUiState.Success },
+                update = { transform -> replaceSuccess(transform) },
+            )
+
         init {
             load()
             resolveCurrentUserId()
@@ -199,7 +210,7 @@ class DetailViewModel
         fun addToLibrary() {
             val current = mutableState.value as? DetailUiState.Success ?: return
             if (current.saving) return
-            mutableState.value = current.copy(saving = true, actionError = null)
+            mutableState.value = current.copy(saving = true, changingEntry = true, actionError = null)
             viewModelScope.launch {
                 try {
                     val entry =
@@ -207,7 +218,15 @@ class DetailViewModel
                             source = current.data.media.source,
                             externalId = current.data.media.externalId,
                         )
-                    replaceSuccess { it.copy(data = it.data.copy(entry = entry), saving = false, actionError = null) }
+                    replaceSuccess {
+                        it.copy(
+                            data = it.data.copy(entry = entry),
+                            saving = false,
+                            changingEntry = false,
+                            actionError = null,
+                        )
+                    }
+                    episodeController.onAdded(entry)
                 } catch (cancellation: CancellationException) {
                     throw cancellation
                 } catch (failure: Exception) {
@@ -216,7 +235,9 @@ class DetailViewModel
                     // title may already be in the library, so the copy this maps to must not
                     // claim the add failed outright. A retry is always safe: the endpoint is
                     // idempotent.
-                    replaceSuccess { it.copy(saving = false, actionError = DetailActionError.Add(failure)) }
+                    replaceSuccess {
+                        it.copy(saving = false, changingEntry = false, actionError = DetailActionError.Add(failure))
+                    }
                 }
             }
         }
@@ -227,7 +248,42 @@ class DetailViewModel
         /** Score's third wire state: absent means "leave it", this means "unrate it". */
         fun clearScore() = edit(LibraryPatch(score = ScoreChange.Clear))
 
-        fun setProgress(progress: Int) = edit(LibraryPatch(progress = progress))
+        /** Removes the title from the library; the screen stays, now offering Add again. */
+        @Suppress("TooGenericExceptionCaught")
+        fun removeFromLibrary() {
+            val current = mutableState.value as? DetailUiState.Success ?: return
+            val entryId = current.data.entry?.id ?: return
+            if (current.saving) return
+            mutableState.value = current.copy(saving = true, changingEntry = true, actionError = null)
+            viewModelScope.launch {
+                try {
+                    libraryRepository.remove(entryId)
+                    replaceSuccess { it.copy(data = it.data.copy(entry = null), saving = false, changingEntry = false) }
+                    episodeController.onRemoved()
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (failure: Exception) {
+                    replaceSuccess {
+                        it.copy(saving = false, changingEntry = false, actionError = DetailActionError.Remove(failure))
+                    }
+                }
+            }
+        }
+
+        fun toggleEpisode(episode: Episode) = episodeController.toggle(episode)
+
+        fun acceptCatchUp(shown: CatchUp) = episodeController.acceptCatchUp(shown)
+
+        fun dismissCatchUp(shown: CatchUp) = episodeController.dismissCatchUp(shown)
+
+        fun markSeason(
+            number: Int,
+            watched: Boolean,
+        ) = episodeController.markSeason(number, watched)
+
+        fun toggleSeason(number: Int) = episodeController.toggleSeason(number)
+
+        fun retryEpisodes() = episodeController.load((mutableState.value as? DetailUiState.Success)?.data?.entry)
 
         fun setStatus(status: UserMediaStatus) = edit(LibraryPatch(status = status))
 
@@ -685,6 +741,7 @@ class DetailViewModel
                     mutableState.value =
                         previous?.copy(data = data, groupSection = groupSection)
                             ?: DetailUiState.Success(data = data, groupSection = groupSection)
+                    episodeController.load(data.entry)
                 } catch (cancellation: CancellationException) {
                     throw cancellation
                 } catch (failure: Exception) {
@@ -713,7 +770,15 @@ class DetailViewModel
             viewModelScope.launch {
                 try {
                     val updated = libraryRepository.update(entryId, patch)
-                    replaceSuccess { it.copy(data = it.data.copy(entry = updated), saving = false, actionError = null) }
+                    replaceSuccess {
+                        // Not onto a different (or removed) entry: an answer must not bring one back.
+                        val sameEntry = it.data.entry?.id == entryId
+                        it.copy(
+                            data = if (sameEntry) it.data.copy(entry = updated) else it.data,
+                            saving = false,
+                            actionError = null,
+                        )
+                    }
                 } catch (cancellation: CancellationException) {
                     throw cancellation
                 } catch (failure: Exception) {

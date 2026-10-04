@@ -32,6 +32,10 @@ sealed interface DetailActionError {
     data class Edit(
         val cause: Throwable,
     ) : DetailActionError
+
+    data class Remove(
+        val cause: Throwable,
+    ) : DetailActionError
 }
 
 /**
@@ -202,6 +206,9 @@ sealed interface DetailUiState {
         val proposeError: GroupFailure? = null,
         val justProposedToGroupId: String? = null,
         val reviewEditor: ReviewEditorState = ReviewEditorState.Closed,
+        val episodes: EpisodesState = EpisodesState.Loading,
+        // An add or a remove is running: the entry is about to change, so episode actions wait.
+        val changingEntry: Boolean = false,
     ) : DetailUiState
 
     /** Only the initial load (or a retry of it) ever produces this — see [DetailViewModel]'s KDoc. */

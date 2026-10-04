@@ -216,6 +216,21 @@ class LibraryRepositoryImpl
             return created
         }
 
+        @Suppress("TooGenericExceptionCaught")
+        override suspend fun remove(entryId: String) {
+            api.deleteLibraryEntry(entryId)
+            dao.deleteById(entryId)
+            try {
+                // The paged list is rebuilt so the title leaves it too; the removal already
+                // succeeded, so a failed refresh must not report it as failed.
+                refresh()
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (_: Exception) {
+                // The next refresh catches the list up.
+            }
+        }
+
         override suspend fun watchedEpisodes(entryId: String): Set<String> =
             api.watchedEpisodes(entryId).episodeIds.toSet()
 
