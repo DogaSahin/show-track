@@ -26,3 +26,16 @@ data class EpisodeDto(
     @SerialName("air_date") val airDate: String?,
     val aired: Boolean,
 )
+
+/** `GET /v1/library/{id}/episodes/watched`. */
+@Serializable
+data class WatchedEpisodesDto(
+    @SerialName("episode_ids") val episodeIds: List<String>,
+)
+
+/** `PUT /v1/library/{id}/episodes/watched`: one request per tap, catch-up range or season. */
+@Serializable
+data class SetWatchedRequestDto(
+    @SerialName("episode_ids") val episodeIds: List<String>,
+    val watched: Boolean,
+)

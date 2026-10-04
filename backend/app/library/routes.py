@@ -19,8 +19,10 @@ from app.library.schemas import (
     LibrarySort,
     LibraryStats,
     ReviewRead,
+    SetWatchedRequest,
     UpdateLibraryEntryRequest,
     UpdateReviewRequest,
+    WatchedEpisodes,
 )
 from app.media import service as media_service
 from app.media.models import MediaSource, MediaType
@@ -214,6 +216,50 @@ async def update_library_entry(
     await service.update_entry(session, entry, payload.model_dump(exclude_unset=True))
     await session.commit()
     return service.to_entry(entry, media, datetime.now(tz=UTC))
+
+
+@router.get(
+    "/{entry_id}/episodes/watched",
+    response_model=WatchedEpisodes,
+    responses={404: {"description": _ENTRY_NOT_FOUND}},
+)
+async def read_watched_episodes(
+    entry_id: uuid.UUID, session: SessionDep, current_user: CurrentUserDep
+) -> WatchedEpisodes:
+    found = await service.get_entry(session, entry_id=entry_id, user_id=current_user.id)
+    if found is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_ENTRY_NOT_FOUND)
+    return WatchedEpisodes(episode_ids=await service.watched_episode_ids(session, found[0]))
+
+
+@router.put(
+    "/{entry_id}/episodes/watched",
+    response_model=LibraryEntry,
+    responses={
+        404: {"description": _ENTRY_NOT_FOUND},
+        409: {"description": "episodes not loaded yet"},
+        422: {"description": "an episode of another title, or one not aired yet"},
+    },
+)
+async def set_watched_episodes(
+    entry_id: uuid.UUID, payload: SetWatchedRequest, session: SessionDep, current_user: CurrentUserDep
+) -> LibraryEntry:
+    """Returns the updated entry, so the client has the new progress in the same round trip."""
+    found = await service.get_entry(session, entry_id=entry_id, user_id=current_user.id)
+    if found is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_ENTRY_NOT_FOUND)
+    entry, media = found
+    now = datetime.now(tz=UTC)
+    try:
+        await service.set_watched(session, entry, media, payload.episode_ids, watched=payload.watched, now=now)
+    except service.EpisodesNotLoaded as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="episodes not loaded yet") from exc
+    except service.EpisodesNotOfThisTitle as exc:
+        raise HTTPException(status_code=422, detail="not an episode of this title") from exc
+    except service.EpisodeNotAired as exc:
+        raise HTTPException(status_code=422, detail="episode not aired yet") from exc
+    await session.commit()
+    return service.to_entry(entry, media, now)
 
 
 @router.delete(

@@ -59,6 +59,20 @@ interface LibraryRepository {
         externalId: String,
     ): LibraryEntry
 
+    /** The ids of the episodes this entry has marked watched. Throws on failure. */
+    suspend fun watchedEpisodes(entryId: String): Set<String>
+
+    /**
+     * Marks or unmarks a batch of episodes in one request and returns the entry with its recounted
+     * progress, which also replaces the cached row. Throws on failure, so the caller can undo an
+     * optimistic change.
+     */
+    suspend fun setWatched(
+        entryId: String,
+        episodeIds: Collection<String>,
+        watched: Boolean,
+    ): LibraryEntry
+
     suspend fun update(
         entryId: String,
         patch: LibraryPatch,

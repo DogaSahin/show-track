@@ -23,7 +23,9 @@ import com.anarky.showtrack.core.network.dto.RecommendationPageDto
 import com.anarky.showtrack.core.network.dto.RegisterTargetRequest
 import com.anarky.showtrack.core.network.dto.ResolveMediaRequestDto
 import com.anarky.showtrack.core.network.dto.ReviewDto
+import com.anarky.showtrack.core.network.dto.SetWatchedRequestDto
 import com.anarky.showtrack.core.network.dto.UserDto
+import com.anarky.showtrack.core.network.dto.WatchedEpisodesDto
 import com.anarky.showtrack.core.network.dto.WatchlistItemDto
 import com.anarky.showtrack.core.network.dto.WatchlistPageDto
 import kotlinx.serialization.json.JsonObject
@@ -32,6 +34,7 @@ import retrofit2.http.DELETE
 import retrofit2.http.GET
 import retrofit2.http.PATCH
 import retrofit2.http.POST
+import retrofit2.http.PUT
 import retrofit2.http.Path
 import retrofit2.http.Query
 
@@ -87,6 +90,19 @@ interface ShowTrackApi {
     @POST("v1/library")
     suspend fun addLibraryEntry(
         @Body request: AddLibraryEntryRequest,
+    ): LibraryEntryDto
+
+    /** `GET /v1/library/{id}/episodes/watched`: the ids of the episodes this entry has ticked. */
+    @GET("v1/library/{id}/episodes/watched")
+    suspend fun watchedEpisodes(
+        @Path("id") id: String,
+    ): WatchedEpisodesDto
+
+    /** Returns the updated entry (the same shape as PATCH), carrying the recounted progress. */
+    @PUT("v1/library/{id}/episodes/watched")
+    suspend fun setWatchedEpisodes(
+        @Path("id") id: String,
+        @Body request: SetWatchedRequestDto,
     ): LibraryEntryDto
 
     /**

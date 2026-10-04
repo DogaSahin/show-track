@@ -108,15 +108,25 @@ async def test_storing_upserts_updates_and_drops_what_the_provider_no_longer_lis
     assert refreshed.total_episodes == 2
 
 
-async def test_an_empty_answer_clears_the_list_and_still_counts_as_fetched(db_session):
+async def test_an_empty_answer_keeps_a_stored_list_and_still_counts_as_fetched(db_session):
+    """Watched episodes hang off these rows; a provider glitch must not wipe them."""
     media = await _stored_media(db_session)
-    await media_service.store_episodes(db_session, media.id, [_episode(1, 1)], NOW)
+    await media_service.store_episodes(db_session, media.id, [_episode(1, 1)], NOW - timedelta(days=1))
 
     await media_service.store_episodes(db_session, media.id, [], NOW)
 
-    assert await _episodes_of(db_session, media.id) == []
-    # "x of 0" means nothing: an empty list has an unknown total.
-    assert (await db_session.get(Media, media.id, populate_existing=True)).total_episodes is None
+    assert await _episodes_of(db_session, media.id) == [(1, 1, None)]
+    stored = await db_session.get(Media, media.id, populate_existing=True)
+    assert (stored.episodes_synced_at, stored.total_episodes) == (NOW, 1)
+
+
+async def test_an_empty_first_answer_leaves_the_total_unknown(db_session):
+    media = await _stored_media(db_session)
+
+    await media_service.store_episodes(db_session, media.id, [], NOW)
+
+    stored = await db_session.get(Media, media.id, populate_existing=True)
+    assert (stored.episodes_synced_at, stored.total_episodes) == (NOW, None)
 
 
 async def test_a_long_show_is_stored_in_full(db_session):

@@ -24,7 +24,9 @@ import com.anarky.showtrack.core.network.dto.RecommendationPageDto
 import com.anarky.showtrack.core.network.dto.RegisterTargetRequest
 import com.anarky.showtrack.core.network.dto.ResolveMediaRequestDto
 import com.anarky.showtrack.core.network.dto.ReviewDto
+import com.anarky.showtrack.core.network.dto.SetWatchedRequestDto
 import com.anarky.showtrack.core.network.dto.UserDto
+import com.anarky.showtrack.core.network.dto.WatchedEpisodesDto
 import com.anarky.showtrack.core.network.dto.WatchlistItemDto
 import com.anarky.showtrack.core.network.dto.WatchlistPageDto
 import kotlinx.coroutines.test.runTest
@@ -88,6 +90,13 @@ private class FakeApi : ShowTrackApi {
     override suspend fun resolveMedia(request: ResolveMediaRequestDto): MediaDto = error("not used")
 
     override suspend fun mediaEpisodes(id: String): EpisodeListDto = error("not used")
+
+    override suspend fun watchedEpisodes(id: String): WatchedEpisodesDto = error("not used")
+
+    override suspend fun setWatchedEpisodes(
+        id: String,
+        request: SetWatchedRequestDto,
+    ): LibraryEntryDto = error("not used")
 
     override suspend fun me(): UserDto = error("not used")
 
