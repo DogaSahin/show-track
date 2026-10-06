@@ -31,4 +31,9 @@
         endpoint on first run anyway — so excluding the file costs nothing at all.
     -->
     <exclude domain="file" path="datastore/showtrack_push.preferences_pb" />
+    <!--
+        Recent searches: personal history, cleared at every sign-in anyway, so a cloud copy would
+        only ever be a copy of someone's searches and never something a restore needs.
+    -->
+    <exclude domain="file" path="datastore/showtrack_recent_searches.preferences_pb" />
 </full-backup-content>

@@ -1,6 +1,7 @@
 package com.anarky.showtrack.core.data.repository
 
 import com.anarky.showtrack.core.data.push.PushRepository
+import com.anarky.showtrack.core.data.search.RecentSearchStore
 import com.anarky.showtrack.core.model.AuthFailure
 import com.anarky.showtrack.core.model.CurrentUser
 import com.anarky.showtrack.core.model.PushNotification
@@ -40,6 +41,8 @@ import com.anarky.showtrack.core.network.dto.UserDto
 import com.anarky.showtrack.core.network.dto.WatchedEpisodesDto
 import com.anarky.showtrack.core.network.dto.WatchlistItemDto
 import com.anarky.showtrack.core.network.dto.WatchlistPageDto
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
 import okhttp3.ResponseBody.Companion.toResponseBody
@@ -73,7 +76,7 @@ class AuthRepositoryTest {
         runTest {
             val api = FakeAuthApi()
             val store = FakeTokenStore()
-            val repository = AuthRepositoryImpl(api, FakeShowTrackApi(), store, FakePush())
+            val repository = AuthRepositoryImpl(api, FakeShowTrackApi(), store, FakePush(), recentSearches)
 
             repository.register("someone", "a@example.com", "hunter2hunter2", "CODE")
 
@@ -88,7 +91,7 @@ class AuthRepositoryTest {
             // now answers "email already taken", with nothing left to try.
             val api = FakeAuthApi(loginFailure = IOException("offline"))
             val store = FakeTokenStore()
-            val repository = AuthRepositoryImpl(api, FakeShowTrackApi(), store, FakePush())
+            val repository = AuthRepositoryImpl(api, FakeShowTrackApi(), store, FakePush(), recentSearches)
 
             val failure =
                 runCatching {
@@ -103,7 +106,8 @@ class AuthRepositoryTest {
     fun `login registers this device for push`() =
         runTest {
             val push = FakePush()
-            val repository = AuthRepositoryImpl(FakeAuthApi(), FakeShowTrackApi(), FakeTokenStore(), push)
+            val repository =
+                AuthRepositoryImpl(FakeAuthApi(), FakeShowTrackApi(), FakeTokenStore(), push, recentSearches)
 
             repository.login("a@example.com", "hunter2hunter2")
 
@@ -117,7 +121,13 @@ class AuthRepositoryTest {
             // target could not be created would be a lie about what went wrong.
             val store = FakeTokenStore()
             val repository =
-                AuthRepositoryImpl(FakeAuthApi(), FakeShowTrackApi(), store, FakePush(failure = IOException("offline")))
+                AuthRepositoryImpl(
+                    FakeAuthApi(),
+                    FakeShowTrackApi(),
+                    store,
+                    FakePush(failure = IOException("offline")),
+                    recentSearches,
+                )
 
             repository.login("a@example.com", "hunter2hunter2")
 
@@ -135,7 +145,7 @@ class AuthRepositoryTest {
             val calls = mutableListOf<String>()
             val store = FakeTokenStore(initial = TokenPair("access-1", "refresh-1"), calls = calls)
             val push = FakePush(calls = calls)
-            val repository = AuthRepositoryImpl(FakeAuthApi(), FakeShowTrackApi(), store, push)
+            val repository = AuthRepositoryImpl(FakeAuthApi(), FakeShowTrackApi(), store, push, recentSearches)
 
             repository.logout()
 
@@ -151,7 +161,13 @@ class AuthRepositoryTest {
             // case, where a push failure must not be misreported as a login failure.
             val store = FakeTokenStore(initial = TokenPair("access-1", "refresh-1"))
             val repository =
-                AuthRepositoryImpl(FakeAuthApi(), FakeShowTrackApi(), store, FakePush(failure = IOException("offline")))
+                AuthRepositoryImpl(
+                    FakeAuthApi(),
+                    FakeShowTrackApi(),
+                    store,
+                    FakePush(failure = IOException("offline")),
+                    recentSearches,
+                )
 
             repository.logout()
 
@@ -162,7 +178,7 @@ class AuthRepositoryTest {
     fun `a wrong password surfaces as invalid credentials`() =
         runTest {
             val api = FakeAuthApi(loginFailure = httpError(401))
-            val repository = AuthRepositoryImpl(api, FakeShowTrackApi(), FakeTokenStore(), FakePush())
+            val repository = AuthRepositoryImpl(api, FakeShowTrackApi(), FakeTokenStore(), FakePush(), recentSearches)
 
             val failure = runCatching { repository.login("a@example.com", "wrong") }.exceptionOrNull()
 
@@ -173,7 +189,7 @@ class AuthRepositoryTest {
     fun `being offline during login surfaces as being offline`() =
         runTest {
             val api = FakeAuthApi(loginFailure = IOException("offline"))
-            val repository = AuthRepositoryImpl(api, FakeShowTrackApi(), FakeTokenStore(), FakePush())
+            val repository = AuthRepositoryImpl(api, FakeShowTrackApi(), FakeTokenStore(), FakePush(), recentSearches)
 
             val failure = runCatching { repository.login("a@example.com", "hunter2hunter2") }.exceptionOrNull()
 
@@ -187,7 +203,7 @@ class AuthRepositoryTest {
             // (taken email/username) both arrive as Refused, carrying whichever code the
             // server sent. Telling them apart is :feature:auth's job, done from the code.
             val api = FakeAuthApi(registerFailure = httpError(409))
-            val repository = AuthRepositoryImpl(api, FakeShowTrackApi(), FakeTokenStore(), FakePush())
+            val repository = AuthRepositoryImpl(api, FakeShowTrackApi(), FakeTokenStore(), FakePush(), recentSearches)
 
             val failure =
                 runCatching {
@@ -203,7 +219,8 @@ class AuthRepositoryTest {
         runTest {
             val showTrackApi =
                 FakeShowTrackApi(meResult = UserDto("user-42", "alex", "a@b.test", "2026-09-01T00:00:00Z"))
-            val repository = AuthRepositoryImpl(FakeAuthApi(), showTrackApi, FakeTokenStore(), FakePush())
+            val repository =
+                AuthRepositoryImpl(FakeAuthApi(), showTrackApi, FakeTokenStore(), FakePush(), recentSearches)
 
             val id = repository.currentUserId()
 
@@ -215,7 +232,8 @@ class AuthRepositoryTest {
         runTest {
             val showTrackApi =
                 FakeShowTrackApi(meResult = UserDto("user-42", "alex", "a@b.test", "2025-03-14T10:00:00Z"))
-            val repository = AuthRepositoryImpl(FakeAuthApi(), showTrackApi, FakeTokenStore(), FakePush())
+            val repository =
+                AuthRepositoryImpl(FakeAuthApi(), showTrackApi, FakeTokenStore(), FakePush(), recentSearches)
 
             val user = repository.currentUser()
             repository.currentUserId()
@@ -239,7 +257,8 @@ class AuthRepositoryTest {
         runTest {
             val showTrackApi =
                 FakeShowTrackApi(meResult = UserDto("user-42", "alex", "a@b.test", "2026-09-01T00:00:00Z"))
-            val repository = AuthRepositoryImpl(FakeAuthApi(), showTrackApi, FakeTokenStore(), FakePush())
+            val repository =
+                AuthRepositoryImpl(FakeAuthApi(), showTrackApi, FakeTokenStore(), FakePush(), recentSearches)
 
             repository.currentUserId()
             repository.currentUserId()
@@ -254,7 +273,7 @@ class AuthRepositoryTest {
             val showTrackApi =
                 FakeShowTrackApi(meResult = UserDto("user-42", "alex", "a@b.test", "2026-09-01T00:00:00Z"))
             val store = FakeTokenStore(initial = TokenPair("access-1", "refresh-1"))
-            val repository = AuthRepositoryImpl(FakeAuthApi(), showTrackApi, store, FakePush())
+            val repository = AuthRepositoryImpl(FakeAuthApi(), showTrackApi, store, FakePush(), recentSearches)
             repository.currentUserId()
             assertEquals(1, showTrackApi.meCalls)
 
@@ -279,7 +298,7 @@ class AuthRepositoryTest {
             val showTrackApi =
                 FakeShowTrackApi(meResult = UserDto("user-42", "alex", "a@b.test", "2026-09-01T00:00:00Z"))
             val store = FakeTokenStore(initial = TokenPair("access-1", "refresh-1"))
-            val repository = AuthRepositoryImpl(FakeAuthApi(), showTrackApi, store, FakePush())
+            val repository = AuthRepositoryImpl(FakeAuthApi(), showTrackApi, store, FakePush(), recentSearches)
             assertEquals("user-42", repository.currentUserId())
 
             // TokenRefreshAuthenticator.clearQuietly() on an unrecoverable 401 — not logout().
@@ -294,7 +313,8 @@ class AuthRepositoryTest {
     fun `being offline while resolving currentUserId surfaces as being offline`() =
         runTest {
             val showTrackApi = FakeShowTrackApi(meFailure = IOException("offline"))
-            val repository = AuthRepositoryImpl(FakeAuthApi(), showTrackApi, FakeTokenStore(), FakePush())
+            val repository =
+                AuthRepositoryImpl(FakeAuthApi(), showTrackApi, FakeTokenStore(), FakePush(), recentSearches)
 
             val failure = runCatching { repository.currentUserId() }.exceptionOrNull()
 
@@ -306,7 +326,8 @@ class AuthRepositoryTest {
     fun `an unmapped failure while resolving currentUserId surfaces as Unexpected`() =
         runTest {
             val showTrackApi = FakeShowTrackApi(meFailure = httpError(500))
-            val repository = AuthRepositoryImpl(FakeAuthApi(), showTrackApi, FakeTokenStore(), FakePush())
+            val repository =
+                AuthRepositoryImpl(FakeAuthApi(), showTrackApi, FakeTokenStore(), FakePush(), recentSearches)
 
             val failure = runCatching { repository.currentUserId() }.exceptionOrNull()
 
@@ -317,7 +338,13 @@ class AuthRepositoryTest {
     fun `hasSession is false with nothing stored and true with tokens`() =
         runTest {
             assertFalse(
-                AuthRepositoryImpl(FakeAuthApi(), FakeShowTrackApi(), FakeTokenStore(), FakePush()).hasSession(),
+                AuthRepositoryImpl(
+                    FakeAuthApi(),
+                    FakeShowTrackApi(),
+                    FakeTokenStore(),
+                    FakePush(),
+                    recentSearches,
+                ).hasSession(),
             )
             assertTrue(
                 AuthRepositoryImpl(
@@ -325,6 +352,7 @@ class AuthRepositoryTest {
                     FakeShowTrackApi(),
                     FakeTokenStore(initial = TokenPair("a", "r")),
                     FakePush(),
+                    recentSearches,
                 ).hasSession(),
             )
         }
@@ -523,5 +551,54 @@ class AuthRepositoryTest {
         }
 
         override fun decodeMessage(body: ByteArray): PushNotification? = null
+    }
+
+    private val recentSearches = FakeRecentSearches()
+
+    @Test
+    fun `logout clears this phone's recent searches`() =
+        runTest {
+            val repository =
+                AuthRepositoryImpl(FakeAuthApi(), FakeShowTrackApi(), FakeTokenStore(), FakePush(), recentSearches)
+
+            repository.logout()
+
+            assertEquals(1, recentSearches.clears)
+        }
+
+    @Test
+    fun `a login clears recent searches an expired session left behind`() =
+        runTest {
+            val repository =
+                AuthRepositoryImpl(FakeAuthApi(), FakeShowTrackApi(), FakeTokenStore(), FakePush(), recentSearches)
+
+            repository.login(email = "a@example.com", password = "pw")
+
+            assertEquals(1, recentSearches.clears)
+        }
+
+    @Test
+    fun `a failed clear does not fail the logout`() =
+        runTest {
+            val store = FakeTokenStore(initial = TokenPair("access-1", "refresh-1"))
+            recentSearches.failure = IOException("disk")
+            val repository = AuthRepositoryImpl(FakeAuthApi(), FakeShowTrackApi(), store, FakePush(), recentSearches)
+
+            repository.logout()
+
+            assertEquals(null, store.tokens())
+        }
+
+    private class FakeRecentSearches : RecentSearchStore {
+        var clears = 0
+        var failure: Throwable? = null
+        override val recent: Flow<List<String>> = flowOf(emptyList())
+
+        override suspend fun record(query: String) = Unit
+
+        override suspend fun clear() {
+            failure?.let { throw it }
+            clears++
+        }
     }
 }

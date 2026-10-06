@@ -18,6 +18,8 @@ import com.anarky.showtrack.core.data.repository.MediaRepository
 import com.anarky.showtrack.core.data.repository.MediaRepositoryImpl
 import com.anarky.showtrack.core.data.repository.RecommendationRepository
 import com.anarky.showtrack.core.data.repository.RecommendationRepositoryImpl
+import com.anarky.showtrack.core.data.search.DataStoreRecentSearchStore
+import com.anarky.showtrack.core.data.search.RecentSearchStore
 import dagger.Binds
 import dagger.Module
 import dagger.hilt.InstallIn
@@ -121,4 +123,8 @@ abstract class DataModule {
      */
     @Binds
     abstract fun activeGroupStore(impl: DataStoreActiveGroupStore): ActiveGroupStore
+
+    /** `DataStoreRecentSearchStore` carries the `@Singleton`, for the same DataStore reason. */
+    @Binds
+    abstract fun recentSearchStore(impl: DataStoreRecentSearchStore): RecentSearchStore
 }

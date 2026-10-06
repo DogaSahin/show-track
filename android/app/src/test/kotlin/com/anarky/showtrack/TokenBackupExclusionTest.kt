@@ -1,6 +1,7 @@
 package com.anarky.showtrack
 
 import com.anarky.showtrack.core.data.push.PUSH_DATASTORE_NAME
+import com.anarky.showtrack.core.data.search.RECENT_SEARCH_DATASTORE_NAME
 import com.anarky.showtrack.core.network.auth.TOKEN_DATASTORE_NAME
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -31,6 +32,7 @@ import java.io.File
 class TokenBackupExclusionTest {
     private val tokenPath = "datastore/$TOKEN_DATASTORE_NAME.preferences_pb"
     private val pushPath = "datastore/$PUSH_DATASTORE_NAME.preferences_pb"
+    private val recentSearchPath = "datastore/$RECENT_SEARCH_DATASTORE_NAME.preferences_pb"
 
     @Test
     fun `pre-31 backup rules exclude the token store`() {
@@ -52,6 +54,12 @@ class TokenBackupExclusionTest {
     @Test
     fun `api-31 rules exclude the push registration store from both cloud backup and device transfer`() {
         assertOccurrences("data_extraction_rules.xml", pushPath, expected = 2)
+    }
+
+    @Test
+    fun `recent searches are excluded from every kind of backup`() {
+        assertOccurrences("backup_rules.xml", recentSearchPath, expected = 1)
+        assertOccurrences("data_extraction_rules.xml", recentSearchPath, expected = 2)
     }
 
     private fun assertOccurrences(

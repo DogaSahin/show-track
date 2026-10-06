@@ -53,7 +53,7 @@ class MediaRepositoryImpl
             try {
                 paginator.restart()
             } catch (cancellation: CancellationException) {
-                this.query = previous
+                restoreQuery(failed = query, previous = previous)
                 throw cancellation
             } catch (failure: Exception) {
                 // PagePaginator.restart() mutates nothing when its fetch throws, so the
@@ -62,10 +62,19 @@ class MediaRepositoryImpl
                 // APPEND it onto the old query's page 1 — a search result mixing two queries
                 // with no way for the caller to detect it. `query` must always name the query
                 // the paginator's current contents actually came from.
-                this.query = previous
+                restoreQuery(failed = query, previous = previous)
                 throw failure
             }
             publish()
+        }
+
+        // Only while this call's query is still the current one: a newer search may have started
+        // meanwhile, and rolling back over it would make that search fetch the old query.
+        private fun restoreQuery(
+            failed: String,
+            previous: String,
+        ) {
+            if (this.query == failed) this.query = previous
         }
 
         override suspend fun loadMoreResults() {

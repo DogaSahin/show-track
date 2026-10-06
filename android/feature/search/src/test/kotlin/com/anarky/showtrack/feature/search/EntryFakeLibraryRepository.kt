@@ -22,18 +22,24 @@ import kotlinx.coroutines.flow.Flow
 internal class EntryFakeLibraryRepository(
     var addResult: LibraryEntry,
 ) : LibraryRepository {
-    override fun observeLibrary(): Flow<List<LibraryEntry>> = error("SearchEntryHiltTest only exercises add")
+    override fun observeLibrary(): Flow<List<LibraryEntry>> = error("not exercised by SearchEntryHiltTest")
 
-    override suspend fun refresh(): Unit = error("SearchEntryHiltTest only exercises add")
+    override suspend fun refresh(): Unit = error("not exercised by SearchEntryHiltTest")
 
-    override suspend fun loadMore(): Unit = error("SearchEntryHiltTest only exercises add")
+    override suspend fun loadMore(): Unit = error("not exercised by SearchEntryHiltTest")
 
-    override suspend fun applyFilter(filter: LibraryFilter): Unit = error("SearchEntryHiltTest only exercises add")
+    override suspend fun applyFilter(filter: LibraryFilter): Unit = error("not exercised by SearchEntryHiltTest")
+
+    var addCalls = 0
+        private set
 
     override suspend fun add(
         source: MediaSource,
         externalId: String,
-    ): LibraryEntry = addResult
+    ): LibraryEntry {
+        addCalls++
+        return addResult
+    }
 
     override suspend fun remove(entryId: String): Unit = error("not used here")
 
@@ -48,9 +54,9 @@ internal class EntryFakeLibraryRepository(
     override suspend fun update(
         entryId: String,
         patch: LibraryPatch,
-    ): LibraryEntry = error("SearchEntryHiltTest only exercises add")
+    ): LibraryEntry = error("not exercised by SearchEntryHiltTest")
 
-    override suspend fun entryForMedia(mediaId: String): LibraryEntry? = error("SearchEntryHiltTest only exercises add")
+    override suspend fun entryForMedia(mediaId: String): LibraryEntry? = error("not exercised by SearchEntryHiltTest")
 
     override suspend fun favoritesPage(
         type: MediaType?,
@@ -59,10 +65,9 @@ internal class EntryFakeLibraryRepository(
         limit: Int,
     ): Page<LibraryEntry> = Page(emptyList(), null)
 
-    override suspend fun libraryStats(): LibraryStats = error("SearchEntryHiltTest only exercises add")
+    override suspend fun libraryStats(): LibraryStats = error("not exercised by SearchEntryHiltTest")
 
     override suspend fun upcomingWatching(limit: Int): List<LibraryEntry> = emptyList()
 
-    override suspend fun importAniList(username: String): ImportSummary =
-        error("SearchEntryHiltTest only exercises add")
+    override suspend fun importAniList(username: String): ImportSummary = error("not exercised by SearchEntryHiltTest")
 }

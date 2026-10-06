@@ -2,6 +2,7 @@ package com.anarky.showtrack.core.data.repository
 
 import android.util.Log
 import com.anarky.showtrack.core.data.push.PushRepository
+import com.anarky.showtrack.core.data.search.RecentSearchStore
 import com.anarky.showtrack.core.model.AuthFailure
 import com.anarky.showtrack.core.model.CurrentUser
 import com.anarky.showtrack.core.network.api.AuthApi
@@ -36,6 +37,7 @@ class AuthRepositoryImpl
         private val showTrackApi: ShowTrackApi,
         private val tokenStore: TokenStore,
         private val push: PushRepository,
+        private val recentSearches: RecentSearchStore,
     ) : AuthRepository {
         // In-memory only, per decision at [AuthRepository.currentUserId]'s own KDoc — cleared on
         // [logout], never persisted. A benign, not a correctness, race: two concurrent first callers
@@ -100,6 +102,9 @@ class AuthRepositoryImpl
             } catch (failure: Exception) {
                 throw mapLoginFailure(failure)
             }
+            // On sign-in too, not only sign-out: an expired session drops its tokens without
+            // passing through logout(), and the next account must not inherit these.
+            clearRecentSearches()
             registerForPush()
         }
 
@@ -156,6 +161,19 @@ class AuthRepositoryImpl
             // The session this id belonged to is gone; the next signed-in session (same account
             // signing back in, or a different one) must re-resolve it rather than read a stale cache.
             cachedUserId = null
+            clearRecentSearches()
+        }
+
+        /** Best effort: a failed local write must never fail a sign-in or sign-out. */
+        @Suppress("TooGenericExceptionCaught")
+        private suspend fun clearRecentSearches() {
+            try {
+                recentSearches.clear()
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (failure: Exception) {
+                Log.w(TAG, "clearing recent searches failed: ${failure.javaClass.simpleName}")
+            }
         }
 
         @Suppress("TooGenericExceptionCaught")
