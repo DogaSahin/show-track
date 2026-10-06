@@ -99,14 +99,16 @@ class AuthRepositoryTest {
         }
 
     @Test
-    fun `login asks for this account's episode alerts to be planned`() =
+    fun `login clears earlier alerts, then plans this account's`() =
         runTest {
-            val alerts = FakeAlerts()
+            val calls = mutableListOf<String>()
+            val alerts = FakeAlerts(calls = calls)
             val repository =
                 AuthRepositoryImpl(FakeAuthApi(), FakeShowTrackApi(), FakeTokenStore(), alerts, recentSearches)
 
             repository.login("a@example.com", "hunter2hunter2")
 
+            assertEquals(listOf("alerts.cancelAll"), calls)
             assertEquals(1, alerts.syncRequests)
         }
 

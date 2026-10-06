@@ -10,7 +10,7 @@ package com.anarky.showtrack.core.data.alerts
  * because one could not be scheduled.
  */
 interface EpisodeAlerts {
-    /** Re-plan alerts soon (after sign-in, or after a title was added, removed or changed status). */
+    /** Re-plan alerts soon (after sign-in, or after a library change). */
     suspend fun requestSync()
 
     /** Cancel every scheduled alert and forget which ones already fired (sign-out). */

@@ -105,6 +105,9 @@ class AuthRepositoryImpl
             // On sign-in too, not only sign-out: an expired session drops its tokens without
             // passing through logout(), and the next account must not inherit these.
             clearRecentSearches()
+            // A clean slate first: nothing scheduled before this sign-in (even by a sync that raced
+            // the previous sign-out) can show after it.
+            alerts.cancelAll()
             alerts.requestSync()
         }
 

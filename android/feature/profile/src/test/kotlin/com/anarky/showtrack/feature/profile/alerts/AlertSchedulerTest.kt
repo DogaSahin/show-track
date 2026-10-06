@@ -95,12 +95,26 @@ class AlertSchedulerTest {
         runTest {
             // Under Doze the overdue 24 h alert and the sync can wait for the same window. A plan
             // made then no longer lists the 24 h alert (its time has passed), but it must still show.
-            val day = alert("a", AlertLead.DAY)
-            scheduler.apply(listOf(day, alert("a", AlertLead.SOON)), KEY)
+            val airsAt = Instant.now().plus(Duration.ofHours(30))
+            val day = alert("a", AlertLead.DAY, airsAt = airsAt)
+            scheduler.apply(listOf(day, alert("a", AlertLead.SOON, airsAt = airsAt)), KEY)
 
-            scheduler.apply(listOf(alert("a", AlertLead.SOON, airsIn = Duration.ofHours(23))), KEY)
+            // Same episode, same air time, planned again once the 24 h mark has passed.
+            scheduler.apply(listOf(alert("a", AlertLead.SOON, airsAt = airsAt)), KEY)
 
             assertEquals(1, live(day.name).size)
+        }
+
+    @Test
+    fun `an episode moved earlier loses its now-wrong 24 h alert`() =
+        runTest {
+            val airsAt = Instant.now().plus(Duration.ofHours(30))
+            val day = alert("a", AlertLead.DAY, airsAt = airsAt)
+            scheduler.apply(listOf(day, alert("a", AlertLead.SOON, airsAt = airsAt)), KEY)
+
+            scheduler.apply(listOf(alert("a", AlertLead.SOON, airsIn = Duration.ofHours(20))), KEY)
+
+            assertTrue(live(day.name).isEmpty())
         }
 
     @Test
@@ -160,19 +174,23 @@ class AlertSchedulerTest {
 
     private companion object {
         const val KEY = "key-1"
+
+        // One base for every alert in a test, so two plans for the same episode agree on its air time.
+        val FIXED_AIR_TIME: Instant = Instant.now()
     }
 
     private fun alert(
         mediaId: String,
         lead: AlertLead,
         airsIn: Duration = Duration.ofHours(30),
+        airsAt: Instant = FIXED_AIR_TIME.plus(airsIn),
     ) = PlannedAlert(
         name = AlertRules.name(mediaId, 1, 3, lead),
         mediaId = mediaId,
         title = "Title $mediaId",
         season = 1,
         episode = 3,
-        airsAt = Instant.now().plus(airsIn),
+        airsAt = airsAt,
         lead = lead,
         delay = airsIn - lead.before,
     )

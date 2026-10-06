@@ -38,8 +38,8 @@ interface AlertSwitch {
  *   library change or sign-in re-plan alerts from the server's air dates.
  * - Each alert is its own unique [EpisodeAlertWorker] request, named by [AlertRules.name], so
  *   scheduling the same alert again replaces it (a moved air time moves the alert). Alerts are
- *   cancelled per EPISODE, only once that episode is no longer planned at all: a 24 h alert that is
- *   due but not yet run (Doze) is no longer in a fresh plan, and must still show.
+ *   cancelled per episode and air time, only once that pair is no longer planned: a 24 h alert that
+ *   is due but not yet run (Doze) is no longer in a fresh plan, and must still show.
  * - Every alert carries the current account key ([AlertSettingsStore.alertKey]); sign-out replaces
  *   the key, so an alert scheduled before it can never show for whoever signs in next.
  *
@@ -89,7 +89,8 @@ class AlertScheduler
 
         /**
          * Makes the scheduled alerts match [plan], made for the account [key] belongs to: new and
-         * moved ones (re)scheduled, alerts for episodes no longer planned cancelled.
+         * moved ones (re)scheduled, alerts for episodes no longer planned (or planned at another
+         * air time) cancelled.
          */
         suspend fun apply(
             plan: List<PlannedAlert>,
@@ -151,7 +152,9 @@ class AlertScheduler
         }
     }
 
-private fun PlannedAlert.episodeKey() = "$mediaId-${season ?: 0}-$episode"
+// The episode AND its air time: an alert for an episode whose air time moved is cancelled, while an
+// overdue one for an unchanged episode survives.
+private fun PlannedAlert.episodeKey() = "$mediaId-${season ?: 0}-$episode@${airsAt.toEpochMilli()}"
 
 internal fun PlannedAlert.toInputData(key: String) =
     workDataOf(

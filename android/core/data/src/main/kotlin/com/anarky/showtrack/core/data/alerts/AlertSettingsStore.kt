@@ -79,7 +79,10 @@ class DataStoreAlertSettingsStore(
     }
 
     override suspend fun alertKey(): String {
-        dataStore.data.first()[KEY]?.let { return it }
+        dataStore.data
+            .catch { cause -> if (cause is IOException) emit(emptyPreferences()) else throw cause }
+            .first()[KEY]
+            ?.let { return it }
         var key = ""
         dataStore.edit { prefs -> key = prefs[KEY] ?: UUID.randomUUID().toString().also { prefs[KEY] = it } }
         return key
