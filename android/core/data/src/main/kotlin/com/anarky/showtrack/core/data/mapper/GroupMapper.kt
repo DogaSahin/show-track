@@ -123,6 +123,7 @@ fun FeedItemDto.toDomain(): FeedEntry =
         mediaId = media?.id,
         payload = payload.mapValues { (_, value) -> value.stringify() },
         createdAt = Instant.parse(createdAt),
+        totalEpisodes = media?.totalEpisodes,
     )
 
 /**

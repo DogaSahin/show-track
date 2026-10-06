@@ -93,4 +93,7 @@
          not crash a client built today (GroupMapper's own kindOf() fallback). No title, no
          payload: this client has no idea what either would mean for a kind it doesn't recognise. -->
     <string name="feed_action_unknown">did something in this group</string>
+
+    <!-- Under a progress event, with the title's episode count: "15 of 28". -->
+    <string name="feed_progress_of_total">%1$d of %2$d</string>
 </resources>
