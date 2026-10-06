@@ -1,7 +1,16 @@
 <resources>
     <!-- Notification channel, shown in the system's per-app notification settings. -->
-    <string name="push_channel_airing_name">Airing episodes</string>
-    <string name="push_channel_airing_description">Alerts when an episode you follow is about to air.</string>
+    <string name="alerts_channel_airing_name">Airing episodes</string>
+    <string name="alerts_channel_airing_description">Alerts when an episode you follow is about to air.</string>
+    <!-- An episode alert's line under the show's title. %1$s is the episode, e.g. "S2 E7" or "E12". -->
+    <string name="alerts_episode_code_season">S%1$d E%2$d</string>
+    <string name="alerts_episode_code">E%1$d</string>
+    <string name="alerts_airs_tomorrow">%1$s airs tomorrow</string>
+    <plurals name="alerts_airs_in_hours">
+        <item quantity="one">%1$s airs in %2$d hour</item>
+        <item quantity="other">%1$s airs in %2$d hours</item>
+    </plurals>
+    <string name="alerts_airs_soon">%1$s airs soon</string>
 
     <string name="profile_title">Profile</string>
     <!-- Under the username. %1$s is the month and year the account was created, e.g. March 2025. -->
@@ -12,6 +21,11 @@
          is their names, joined in the layout. -->
     <string name="profile_groups_subtitle_none">Create or join a group</string>
     <string name="profile_import_subtitle">Copy your AniList list into ShowTrack</string>
+    <!-- The Episode alerts row: a switch, with one of the three subtitles below. -->
+    <string name="profile_alerts_title">Episode alerts</string>
+    <string name="profile_alerts_on">On · 24 h and 6 h before</string>
+    <string name="profile_alerts_off">Off</string>
+    <string name="profile_alerts_needs_permission">Allow notifications to turn this on</string>
     <!-- Library total of zero: no stats to draw, so point at the way to get some. -->
     <string name="profile_stats_empty">Add shows to your library to see your stats here.</string>
     <string name="profile_stats_empty_action">Search</string>

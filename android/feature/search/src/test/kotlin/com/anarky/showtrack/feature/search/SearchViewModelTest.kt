@@ -657,6 +657,8 @@ class SearchViewModelTest {
 
         override suspend fun upcomingWatching(limit: Int): List<LibraryEntry> = emptyList()
 
+        override suspend fun allWatching(): List<LibraryEntry> = emptyList()
+
         override suspend fun importAniList(username: String) = error("not exercised by SearchViewModel")
     }
 

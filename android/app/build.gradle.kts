@@ -79,6 +79,10 @@ dependencies {
     // Every :feature:* module gets this from showtrack.android.feature; :app applies
     // showtrack.android.application instead, so it is declared here explicitly.
     implementation(libs.androidx.hilt.navigation.compose)
+    // The Application hands WorkManager Hilt's worker factory, so episode-alert workers get their
+    // dependencies injected (the workers themselves live in :feature:profile).
+    implementation(libs.androidx.work.runtime.ktx)
+    implementation(libs.androidx.hilt.work)
     // collectAsStateWithLifecycle for AppViewModel.start, same reasoning.
     implementation(libs.androidx.lifecycle.runtime.compose)
 

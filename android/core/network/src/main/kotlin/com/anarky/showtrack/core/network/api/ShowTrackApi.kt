@@ -18,9 +18,7 @@ import com.anarky.showtrack.core.network.dto.MediaSearchResponseDto
 import com.anarky.showtrack.core.network.dto.MemberDto
 import com.anarky.showtrack.core.network.dto.ProgressEntryDto
 import com.anarky.showtrack.core.network.dto.ProposeTitleRequestDto
-import com.anarky.showtrack.core.network.dto.PushTargetDto
 import com.anarky.showtrack.core.network.dto.RecommendationPageDto
-import com.anarky.showtrack.core.network.dto.RegisterTargetRequest
 import com.anarky.showtrack.core.network.dto.ResolveMediaRequestDto
 import com.anarky.showtrack.core.network.dto.ReviewDto
 import com.anarky.showtrack.core.network.dto.SetWatchedRequestDto
@@ -45,7 +43,7 @@ import retrofit2.http.Query
  *
  * `@Suppress("TooManyFunctions")`: this interface is the ONE Retrofit surface `:core:data` is
  * allowed to depend on (architecture rule 2's `implementation`-scoped edge exists precisely so
- * nothing else does) — splitting it by domain (library vs. media vs. push vs. groups vs. reviews)
+ * nothing else does) — splitting it by domain (library vs. media vs. groups vs. reviews)
  * would multiply Retrofit service interfaces for a distinction that means nothing to the one
  * caller that ever sees any of them. The cost, stated rather than omitted: a type-level suppression
  * turns detekt's ratchet off permanently for this file, the same trade-off [GroupRepository] and
@@ -172,32 +170,6 @@ interface ShowTrackApi {
     suspend fun mediaDetail(
         @Path("id") id: String,
     ): MediaDto
-
-    /**
-     * `POST /v1/notifications/targets`. Registers this device for push.
-     *
-     * IDEMPOTENT for `unifiedpush` (backend decision A-O), which is why there is no
-     * "have I registered before?" bookkeeping on this side beyond remembering the id to delete:
-     * the distributor re-delivers the endpoint through `onNewEndpoint` on every app start, and
-     * the server answers 201 the first time and 200 every time after, with the same body. Both
-     * are 2xx, so Retrofit returns normally for both and the client does not have to care.
-     */
-    @POST("v1/notifications/targets")
-    suspend fun registerPushTarget(
-        @Body request: RegisterTargetRequest,
-    ): PushTargetDto
-
-    /**
-     * `DELETE /v1/notifications/targets/{id}`, 204 on success.
-     *
-     * 404 when the id is unknown OR belongs to another account — the backend refuses to
-     * distinguish those, so a non-2xx here arrives as an `HttpException` and means only
-     * "not deletable by you".
-     */
-    @DELETE("v1/notifications/targets/{id}")
-    suspend fun deletePushTarget(
-        @Path("id") id: String,
-    )
 
     /**
      * `GET /v1/recommendations`. Cursor-paginated (architecture rule 4): pass the previous page's

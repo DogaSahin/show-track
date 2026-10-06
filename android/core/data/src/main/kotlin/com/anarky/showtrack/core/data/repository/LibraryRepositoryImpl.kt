@@ -1,5 +1,6 @@
 package com.anarky.showtrack.core.data.repository
 
+import com.anarky.showtrack.core.data.alerts.EpisodeAlerts
 import com.anarky.showtrack.core.data.mapper.toDomain
 import com.anarky.showtrack.core.data.mapper.toEntity
 import com.anarky.showtrack.core.data.paging.CursorPaginator
@@ -38,6 +39,9 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 private const val PAGE_SIZE = 20
+
+// The server's largest page; alert planning reads every Watching entry in as few calls as it can.
+private const val ALL_WATCHING_PAGE_SIZE = 100
 private const val HTTP_NOT_FOUND = 404
 private const val HTTP_UNPROCESSABLE_ENTITY = 422
 private const val HTTP_TOO_MANY_REQUESTS = 429
@@ -65,6 +69,7 @@ class LibraryRepositoryImpl
     constructor(
         private val api: ShowTrackApi,
         private val dao: LibraryDao,
+        private val alerts: EpisodeAlerts,
     ) : LibraryRepository {
         // What view the paginator's CURRENT contents belong to. Every read of it inside the
         // `fetch` lambda below must agree with what `paginator` actually holds, which is the
@@ -213,6 +218,7 @@ class LibraryRepositoryImpl
             // does not contain what they just added. A network round trip is acceptable here
             // because `add` is a one-off action, unlike `update`'s per-tap edits below.
             refresh()
+            alerts.requestSync()
             return created
         }
 
@@ -220,6 +226,7 @@ class LibraryRepositoryImpl
         override suspend fun remove(entryId: String) {
             api.deleteLibraryEntry(entryId)
             dao.deleteById(entryId)
+            alerts.requestSync()
             try {
                 // The paged list is rebuilt so the title leaves it too; the removal already
                 // succeeded, so a failed refresh must not report it as failed.
@@ -262,6 +269,8 @@ class LibraryRepositoryImpl
             // page gets ADDED to the cache; `observeAll()` orders by `updated_at DESC` so it sorts
             // to the top, and the next `refresh()` rebuilds the cache to match the server anyway.
             dao.insertAll(listOf(updated.toEntity()))
+            // Only a status change can start or stop alerts (they are for Watching titles).
+            if (patch.status != null) alerts.requestSync()
             return updated
         }
 
@@ -319,6 +328,26 @@ class LibraryRepositoryImpl
                     type = null,
                 ).items
                 .map(LibraryEntryDto::toDomain)
+
+        override suspend fun allWatching(): List<LibraryEntry> {
+            val entries = mutableListOf<LibraryEntry>()
+            var cursor: String? = null
+            do {
+                val page =
+                    api.library(
+                        cursor = cursor,
+                        limit = ALL_WATCHING_PAGE_SIZE,
+                        status = UserMediaStatus.WATCHING.name.lowercase(),
+                        sort = null,
+                        mediaId = null,
+                        favorite = null,
+                        type = null,
+                    )
+                entries += page.items.map(LibraryEntryDto::toDomain)
+                cursor = page.nextCursor
+            } while (cursor != null)
+            return entries
+        }
 
         /**
          * A plain pass-through like [libraryStats] above, plus the one thing [libraryStats] never

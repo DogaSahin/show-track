@@ -40,7 +40,7 @@ import java.time.Instant
  * pinned module-wide in `src/test/resources/robolectric.properties` — Robolectric ships no shadow
  * jar for 36. No `application` override: unlike `:app`, this library module's own manifest names
  * no `Application` class, so the default test application is already enough — the same setup
- * `:feature:profile`'s `PushNotifierTest` uses, and the same reasoning `:core:designsystem`'s
+ * `:feature:profile`'s `EpisodeAlertNotifierTest` uses, and the same reasoning `:core:designsystem`'s
  * `StatusPresentationTest` gives for relying on the properties file alone.
  */
 @RunWith(RobolectricTestRunner::class)

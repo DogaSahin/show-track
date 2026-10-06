@@ -21,9 +21,7 @@ import com.anarky.showtrack.core.network.dto.MediaSearchResponseDto
 import com.anarky.showtrack.core.network.dto.MemberDto
 import com.anarky.showtrack.core.network.dto.ProgressEntryDto
 import com.anarky.showtrack.core.network.dto.ProposeTitleRequestDto
-import com.anarky.showtrack.core.network.dto.PushTargetDto
 import com.anarky.showtrack.core.network.dto.RecommendationPageDto
-import com.anarky.showtrack.core.network.dto.RegisterTargetRequest
 import com.anarky.showtrack.core.network.dto.ResolveMediaRequestDto
 import com.anarky.showtrack.core.network.dto.ReviewDto
 import com.anarky.showtrack.core.network.dto.SearchItemDto
@@ -329,10 +327,6 @@ class MediaRepositoryTest {
         }
 
         override suspend fun me(): UserDto = TODO("not used")
-
-        override suspend fun registerPushTarget(request: RegisterTargetRequest): PushTargetDto = TODO("not used")
-
-        override suspend fun deletePushTarget(id: String): Unit = TODO("not used")
 
         override suspend fun recommendations(
             cursor: String?,

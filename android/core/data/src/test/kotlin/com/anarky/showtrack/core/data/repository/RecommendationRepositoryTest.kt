@@ -20,11 +20,9 @@ import com.anarky.showtrack.core.network.dto.MemberDto
 import com.anarky.showtrack.core.network.dto.PersistedMediaDto
 import com.anarky.showtrack.core.network.dto.ProgressEntryDto
 import com.anarky.showtrack.core.network.dto.ProposeTitleRequestDto
-import com.anarky.showtrack.core.network.dto.PushTargetDto
 import com.anarky.showtrack.core.network.dto.RecommendationDto
 import com.anarky.showtrack.core.network.dto.RecommendationPageDto
 import com.anarky.showtrack.core.network.dto.RecommendationReasonDto
-import com.anarky.showtrack.core.network.dto.RegisterTargetRequest
 import com.anarky.showtrack.core.network.dto.ResolveMediaRequestDto
 import com.anarky.showtrack.core.network.dto.ReviewDto
 import com.anarky.showtrack.core.network.dto.SetWatchedRequestDto
@@ -376,11 +374,6 @@ class RecommendationRepositoryTest {
         ): LibraryEntryDto = error("this fake only serves refresh/loadMore/remove")
 
         override suspend fun me(): UserDto = error("this fake only serves refresh/loadMore/remove")
-
-        override suspend fun registerPushTarget(request: RegisterTargetRequest): PushTargetDto =
-            error("this fake only serves refresh/loadMore/remove")
-
-        override suspend fun deletePushTarget(id: String): Unit = error("this fake only serves refresh/loadMore/remove")
 
         override suspend fun createGroup(request: CreateGroupRequestDto): GroupWithInviteDto =
             error("this fake only serves refresh/loadMore/remove")

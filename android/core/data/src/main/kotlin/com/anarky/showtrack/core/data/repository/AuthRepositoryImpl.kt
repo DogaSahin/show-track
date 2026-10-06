@@ -1,7 +1,7 @@
 package com.anarky.showtrack.core.data.repository
 
 import android.util.Log
-import com.anarky.showtrack.core.data.push.PushRepository
+import com.anarky.showtrack.core.data.alerts.EpisodeAlerts
 import com.anarky.showtrack.core.data.search.RecentSearchStore
 import com.anarky.showtrack.core.model.AuthFailure
 import com.anarky.showtrack.core.model.CurrentUser
@@ -36,7 +36,7 @@ class AuthRepositoryImpl
         private val api: AuthApi,
         private val showTrackApi: ShowTrackApi,
         private val tokenStore: TokenStore,
-        private val push: PushRepository,
+        private val alerts: EpisodeAlerts,
         private val recentSearches: RecentSearchStore,
     ) : AuthRepository {
         // In-memory only, per decision at [AuthRepository.currentUserId]'s own KDoc — cleared on
@@ -88,7 +88,7 @@ class AuthRepositoryImpl
         ) {
             // logout() is not the only way a session ends: TokenRefreshAuthenticator clears the
             // token store directly on an unrecoverable 401 (never calling logout()) and emits
-            // AuthEvent.LoggedOut for AuthGate/PushSessionObserver to react to. Neither of those
+            // AuthEvent.LoggedOut for AuthGate/AlertSessionObserver to react to. Neither of those
             // consumers reaches this cache, so a stale id from the PREVIOUS account would
             // otherwise survive into a new session started this way. Clearing here, at the one
             // place every new session actually begins, covers that path along with the ordinary
@@ -105,7 +105,7 @@ class AuthRepositoryImpl
             // On sign-in too, not only sign-out: an expired session drops its tokens without
             // passing through logout(), and the next account must not inherit these.
             clearRecentSearches()
-            registerForPush()
+            alerts.requestSync()
         }
 
         @Suppress("TooGenericExceptionCaught")
@@ -145,15 +145,8 @@ class AuthRepositoryImpl
 
         override suspend fun logout() {
             val tokens = tokenStore.tokens()
-            // BEFORE the clear: this deletes the server-side push target over an AUTHENTICATED
-            // call. Clearing first would 401 and leave the backend pushing to a signed-out device.
-            // Routed through detachPush() rather than called bare: store.read()/clearTarget() can
-            // still throw even though PushRepositoryImpl swallows its own DELETE failure, and
-            // nothing in the PushRepository interface obliges an implementation to swallow
-            // anything. An unguarded throw here would skip revoke() and tokenStore.clear() below
-            // and leave the user pressing "log out" and staying logged in — worse than login's
-            // symmetric case, where a push failure must not be misreported as a login failure.
-            detachPush()
+            // First, so nothing scheduled for this account can fire once it is signed out.
+            alerts.cancelAll()
             if (tokens != null) {
                 revoke(tokens.refresh)
             }
@@ -173,32 +166,6 @@ class AuthRepositoryImpl
                 throw cancellation
             } catch (failure: Exception) {
                 Log.w(TAG, "clearing recent searches failed: ${failure.javaClass.simpleName}")
-            }
-        }
-
-        @Suppress("TooGenericExceptionCaught")
-        private suspend fun registerForPush() {
-            try {
-                push.onLoggedIn()
-            } catch (cancellation: CancellationException) {
-                throw cancellation
-            } catch (failure: Exception) {
-                // The credentials were right. Reporting a push failure as a login failure would
-                // describe the wrong thing to the one person who cannot act on it.
-                Log.w(TAG, "push registration failed after login: ${failure.javaClass.simpleName}")
-            }
-        }
-
-        @Suppress("TooGenericExceptionCaught")
-        private suspend fun detachPush() {
-            try {
-                push.onLoggedOut()
-            } catch (cancellation: CancellationException) {
-                throw cancellation
-            } catch (failure: Exception) {
-                // A logout must complete locally no matter what the push cleanup does. Failing
-                // here would leave the user unable to log out at all when push cleanup fails.
-                Log.w(TAG, "push cleanup failed on logout: ${failure.javaClass.simpleName}")
             }
         }
 

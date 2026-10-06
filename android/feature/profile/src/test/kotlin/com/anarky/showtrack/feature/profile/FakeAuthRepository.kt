@@ -15,8 +15,9 @@ internal class FakeAuthRepository(
     var currentUserFailure: Throwable? = null,
 ) : AuthRepository {
     var logoutCalled: Boolean = false
+    var signedIn: Boolean = true
 
-    override suspend fun hasSession(): Boolean = true
+    override suspend fun hasSession(): Boolean = signedIn
 
     override suspend fun currentUserId(): String = error("not exercised by ProfileViewModelTest/ProfileResumeTest")
 

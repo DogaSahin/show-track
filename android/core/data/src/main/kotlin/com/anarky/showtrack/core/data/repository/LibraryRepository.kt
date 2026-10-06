@@ -118,6 +118,12 @@ interface LibraryRepository {
     suspend fun upcomingWatching(limit: Int): List<LibraryEntry>
 
     /**
+     * Every Watching entry, all pages, straight from the server (episode alerts are planned from
+     * these). Uncached like [upcomingWatching]; it never touches the paginator or Room.
+     */
+    suspend fun allWatching(): List<LibraryEntry>
+
+    /**
      * `POST /v1/library/import/anilist` (task 9b.6, backend decision 4-H). One-shot, the same
      * shape [libraryStats] has: no cache, no `StateFlow` upstream — the caller (`ImportViewModel`)
      * drives it once per submit and holds the result itself.

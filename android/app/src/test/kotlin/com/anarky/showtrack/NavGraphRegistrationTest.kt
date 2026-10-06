@@ -128,21 +128,21 @@ class NavGraphRegistrationTest {
     /**
      * The graph half of the notification deep link.
      *
-     * `PushNotifier` builds `showtrack://detail/<id>` and hands it to the system; `:app`'s
+     * `EpisodeAlertNotifier` builds `showtrack://detail/<id>` and hands it to the system; `:app`'s
      * manifest lets it in; this asserts the graph then has somewhere to put it. All three must
      * agree, and the failure when they do not is SILENT — the tap opens the launcher screen, no
-     * exception, nothing in logcat. All three are now pinned: [PushNotifierTest] on the URI, this
+     * exception, nothing in logcat. All three are now pinned: `EpisodeAlertNotifierTest` on the URI, this
      * on the graph, and [MergedManifestTest] on the manifest.
      *
      * `hasDeepLink` is asked of the GRAPH, not of a destination looked up by hand, so it
      * exercises the same matching a real `NavController.handleDeepLink` performs.
      */
     @Test
-    fun `the nav graph answers the deep link a push notification opens`() {
+    fun `the nav graph answers the deep link an episode alert opens`() {
         val graph = buildGraph()
 
         assertTrue(
-            "the graph must answer showtrack://detail/<id>; a push notification's tap resolves " +
+            "the graph must answer showtrack://detail/<id>; an episode alert's tap resolves " +
                 "to exactly this URI and would otherwise open the start destination silently",
             graph.hasDeepLink(detailDeepLink("abc-123").toUri()),
         )

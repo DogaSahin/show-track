@@ -29,16 +29,16 @@ import javax.inject.Singleton
 const val ACTIVE_GROUP_DATASTORE_NAME = "showtrack_active_group"
 
 /**
- * Mirrors `PushRegistrationStore`, the existing DataStore-backed store in `:core:data` (design
+ * Mirrors `RecentSearchStore`, another DataStore-backed store in `:core:data` (design
  * decision E-D): the selection must survive a cold start, `:app` may depend on `:core:data`
  * (architecture rule 2 constrains `:feature:*`, not `:app`), and following the existing store's
  * shape means no new persistence pattern enters the codebase. Rejected: Room — the active group is
  * one nullable id, not a queryable relation, and Room would put a migration in the way of a
  * preference.
  *
- * Unlike [com.anarky.showtrack.core.data.push.PushRegistrationStore], this exposes a [Flow]
- * directly rather than a suspend `read()`: the switcher's whole point (E-C) is that every screen
- * scoped to the active group reacts the moment it changes, which a one-shot read cannot express.
+ * It exposes a [Flow] rather than a suspend `read()`: the switcher's whole point (E-C) is that
+ * every screen scoped to the active group reacts the moment it changes, which a one-shot read
+ * cannot express.
  */
 interface ActiveGroupStore {
     val activeGroupId: Flow<String?>
@@ -64,7 +64,7 @@ interface ActiveGroupStore {
 // hand-crafted garbage bytes do not reliably reach `CorruptionException` at all — protobuf-lite's
 // parser is lenient about a leading zero byte and about varint overflow — so there is no
 // inexpensive way to drive this specific handler from a JVM test. It is included on the same
-// belt-and-braces reasoning `PushRegistrationStore`'s copy is: cheap insurance against a real
+// belt-and-braces reasoning `RecentSearchStore`'s copy is: cheap insurance against a real
 // on-disk corruption, not a behaviour this task claims to have proven.
 private val Context.activeGroupDataStore: DataStore<Preferences> by preferencesDataStore(
     name = ACTIVE_GROUP_DATASTORE_NAME,
@@ -77,7 +77,7 @@ class DataStoreActiveGroupStore(
 ) : ActiveGroupStore {
     /**
      * The constructor Hilt uses; the primary one takes the [DataStore] directly, matching
-     * `DataStorePushRegistrationStore`'s own shape and for the same reason: a default argument
+     * `DataStoreRecentSearchStore`'s own shape and for the same reason: a default argument
      * would not do, since Dagger ignores Kotlin defaults and would demand a `DataStore<Preferences>`
      * binding that does not exist.
      */
@@ -97,7 +97,7 @@ class DataStoreActiveGroupStore(
     // group you were last looking at — is the CORRECT behaviour, not a bug to guard against.
     override val activeGroupId: Flow<String?> =
         dataStore.data
-            // The documented DataStore idiom, matching `DataStorePushRegistrationStore.read()`: an
+            // The documented DataStore idiom, matching `DataStoreRecentSearchStore`: an
             // unreadable file means "no active group", not an IOException thrown out of whatever
             // collects this at app start.
             .catch { cause -> if (cause is IOException) emit(emptyPreferences()) else throw cause }
