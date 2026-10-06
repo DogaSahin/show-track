@@ -107,8 +107,16 @@ internal class FakeLibraryRepository(
     override suspend fun upcomingWatching(limit: Int): List<LibraryEntry> = emptyList()
 
     var watching: List<LibraryEntry> = emptyList()
+    var allWatchingFailure: Throwable? = null
 
-    override suspend fun allWatching(): List<LibraryEntry> = watching
+    // Runs inside allWatching(), so a test can change the world mid-fetch (e.g. sign out).
+    var duringAllWatching: () -> Unit = {}
+
+    override suspend fun allWatching(): List<LibraryEntry> {
+        duringAllWatching()
+        allWatchingFailure?.let { throw it }
+        return watching
+    }
 
     override suspend fun importAniList(username: String): ImportSummary {
         importCalls++

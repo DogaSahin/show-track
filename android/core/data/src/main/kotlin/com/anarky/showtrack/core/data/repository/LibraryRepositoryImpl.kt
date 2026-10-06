@@ -359,7 +359,8 @@ class LibraryRepositoryImpl
         @Suppress("TooGenericExceptionCaught")
         override suspend fun importAniList(username: String): ImportSummary =
             try {
-                api.importAniList(ImportAniListRequest(username = username)).toDomain()
+                // An import can add many Watching titles at once: plan their alerts now.
+                api.importAniList(ImportAniListRequest(username = username)).toDomain().also { alerts.requestSync() }
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (failure: Exception) {

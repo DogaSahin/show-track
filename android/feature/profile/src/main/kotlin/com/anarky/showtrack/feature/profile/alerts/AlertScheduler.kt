@@ -1,6 +1,8 @@
 package com.anarky.showtrack.feature.profile.alerts
 
+import android.content.Context
 import android.util.Log
+import androidx.core.app.NotificationManagerCompat
 import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
@@ -12,6 +14,7 @@ import androidx.work.workDataOf
 import com.anarky.showtrack.core.data.alerts.AlertSettingsStore
 import com.anarky.showtrack.core.data.alerts.EpisodeAlerts
 import dagger.Lazy
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -34,8 +37,11 @@ interface AlertSwitch {
  * - A periodic [AlertSyncWorker] (every 6 h, network required) and a one-off run of it after a
  *   library change or sign-in re-plan alerts from the server's air dates.
  * - Each alert is its own unique [EpisodeAlertWorker] request, named by [AlertRules.name], so
- *   scheduling the same alert again replaces it (a moved air time moves the alert) and an alert
- *   that is no longer planned is cancelled by name.
+ *   scheduling the same alert again replaces it (a moved air time moves the alert). Alerts are
+ *   cancelled per EPISODE, only once that episode is no longer planned at all: a 24 h alert that is
+ *   due but not yet run (Doze) is no longer in a fresh plan, and must still show.
+ * - Every alert carries the current account key ([AlertSettingsStore.alertKey]); sign-out replaces
+ *   the key, so an alert scheduled before it can never show for whoever signs in next.
  *
  * [WorkManager] is behind [Lazy] so building this (and the Profile screen) never initialises it.
  */
@@ -43,6 +49,7 @@ interface AlertSwitch {
 class AlertScheduler
     @Inject
     constructor(
+        @param:ApplicationContext private val context: Context,
         private val workManager: Lazy<WorkManager>,
         private val settings: AlertSettingsStore,
     ) : EpisodeAlerts,
@@ -72,32 +79,43 @@ class AlertScheduler
                 )
             }
 
-        override suspend fun cancelAll() =
-            safely {
-                cancelScheduled()
-                settings.clearFired()
-            }
+        // Three separate steps, so one failing never skips the others.
+        override suspend fun cancelAll() {
+            safely { settings.forgetAccount() }
+            safely { cancelScheduled() }
+            // Alerts already in the shade are this account's too.
+            safely { NotificationManagerCompat.from(context).cancelAll() }
+        }
 
-        /** Makes the scheduled alerts match [plan]: new and moved ones (re)scheduled, the rest cancelled. */
-        suspend fun apply(plan: List<PlannedAlert>) {
+        /**
+         * Makes the scheduled alerts match [plan], made for the account [key] belongs to: new and
+         * moved ones (re)scheduled, alerts for episodes no longer planned cancelled.
+         */
+        suspend fun apply(
+            plan: List<PlannedAlert>,
+            key: String,
+        ) {
             val work = workManager.get()
-            val wanted = plan.mapTo(HashSet()) { it.name }
+            val wantedEpisodes = plan.mapTo(HashSet()) { it.episodeKey() }
             work
                 .getWorkInfosByTagFlow(ALERT_TAG)
                 .first()
                 .filterNot { it.state.isFinished }
-                .mapNotNull { info -> info.tags.firstOrNull { it.startsWith(NAME_TAG) }?.removePrefix(NAME_TAG) }
-                .filterNot { it in wanted }
-                .forEach(work::cancelUniqueWork)
+                .filter { info ->
+                    info.tags.none {
+                        it.startsWith(EPISODE_TAG) &&
+                            it.removePrefix(EPISODE_TAG) in wantedEpisodes
+                    }
+                }.forEach { info -> work.cancelWorkById(info.id) }
             plan.forEach { alert ->
                 work.enqueueUniqueWork(
                     alert.name,
                     ExistingWorkPolicy.REPLACE,
                     OneTimeWorkRequestBuilder<EpisodeAlertWorker>()
                         .setInitialDelay(alert.delay.toMillis(), TimeUnit.MILLISECONDS)
-                        .setInputData(alert.toInputData())
+                        .setInputData(alert.toInputData(key))
                         .addTag(ALERT_TAG)
-                        .addTag(NAME_TAG + alert.name)
+                        .addTag(EPISODE_TAG + alert.episodeKey())
                         .build(),
                 )
             }
@@ -126,15 +144,18 @@ class AlertScheduler
             const val ALERT_TAG = "episode-alert"
             const val PERIODIC_SYNC = "episode-alert-sync"
             const val SYNC_NOW = "episode-alert-sync-now"
-            private const val NAME_TAG = "episode-alert-name:"
+            private const val EPISODE_TAG = "episode-alert-episode:"
             private const val SYNC_EVERY_HOURS = 6L
 
             private val online = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
         }
     }
 
-internal fun PlannedAlert.toInputData() =
+private fun PlannedAlert.episodeKey() = "$mediaId-${season ?: 0}-$episode"
+
+internal fun PlannedAlert.toInputData(key: String) =
     workDataOf(
+        EpisodeAlertWorker.KEY_ACCOUNT to key,
         EpisodeAlertWorker.KEY_NAME to name,
         EpisodeAlertWorker.KEY_MEDIA_ID to mediaId,
         EpisodeAlertWorker.KEY_TITLE to title,

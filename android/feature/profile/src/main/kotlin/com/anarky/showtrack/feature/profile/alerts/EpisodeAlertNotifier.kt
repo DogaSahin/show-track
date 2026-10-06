@@ -15,8 +15,8 @@ import androidx.core.net.toUri
 import com.anarky.showtrack.core.navigation.detailDeepLink
 import com.anarky.showtrack.feature.profile.R
 
-/** The channel every airing notification goes to. Public so a settings screen can deep-link it. */
-const val AIRING_CHANNEL_ID: String = "showtrack_airing"
+/** The channel every episode alert goes to. */
+private const val AIRING_CHANNEL_ID: String = "showtrack_airing"
 
 /**
  * Posts an episode alert whose tap opens the title.
@@ -56,6 +56,9 @@ object EpisodeAlertNotifier {
      */
     fun canNotify(context: Context): Boolean =
         NotificationManagerCompat.from(context).areNotificationsEnabled() &&
+            // The user can block just this channel (long-press an alert, "Turn off").
+            NotificationManagerCompat.from(context).getNotificationChannelCompat(AIRING_CHANNEL_ID)?.importance !=
+            NotificationManagerCompat.IMPORTANCE_NONE &&
             (
                 Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
                     ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==

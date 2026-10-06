@@ -39,12 +39,16 @@ class EpisodeAlertWorkerTest {
     fun `an alert shows once, with the episode and how soon it airs`() =
         runTest {
             run(airsIn = Duration.ofHours(6))
-            run(airsIn = Duration.ofHours(6))
-
             val shown = notifications()
             assertEquals(1, shown.size)
             assertEquals("Severance", shown.single().extras.getString("android.title"))
             assertEquals("S2 E7 airs in 6 hours", shown.single().extras.getString("android.text"))
+
+            // Cleared first: a second post would replace the first under the same id and hide a repeat.
+            context.getSystemService(NotificationManager::class.java).cancelAll()
+            run(airsIn = Duration.ofHours(6))
+
+            assertEquals(0, notifications().size)
         }
 
     @Test
@@ -63,6 +67,14 @@ class EpisodeAlertWorkerTest {
         }
 
     @Test
+    fun `an alert scheduled before a sign-out never shows for the next sign-in`() =
+        runTest {
+            run(airsIn = Duration.ofHours(6), key = "earlier-account")
+
+            assertEquals(0, notifications().size)
+        }
+
+    @Test
     fun `nothing shows without notification permission, and the alert is not used up`() =
         runTest {
             shadowOf(context as Application).denyPermissions(Manifest.permission.POST_NOTIFICATIONS)
@@ -73,7 +85,10 @@ class EpisodeAlertWorkerTest {
             assertEquals(emptySet<String>(), settings.fired)
         }
 
-    private suspend fun run(airsIn: Duration) {
+    private suspend fun run(
+        airsIn: Duration,
+        key: String = settings.key,
+    ) {
         val alert =
             PlannedAlert(
                 name = AlertRules.name("media-1", 2, 7, AlertLead.SOON),
@@ -94,7 +109,7 @@ class EpisodeAlertWorkerTest {
                 ): ListenableWorker = EpisodeAlertWorker(appContext, workerParameters, settings, auth)
             }
         TestListenableWorkerBuilder<EpisodeAlertWorker>(context)
-            .setInputData(alert.toInputData())
+            .setInputData(alert.toInputData(key))
             .setWorkerFactory(factory)
             .build()
             .doWork()

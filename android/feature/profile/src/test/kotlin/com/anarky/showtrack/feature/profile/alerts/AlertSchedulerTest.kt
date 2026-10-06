@@ -1,5 +1,8 @@
 package com.anarky.showtrack.feature.profile.alerts
 
+import android.Manifest
+import android.app.Application
+import android.app.NotificationManager
 import android.content.Context
 import android.util.Log
 import androidx.test.core.app.ApplicationProvider
@@ -18,6 +21,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import java.time.Duration
 import java.time.Instant
@@ -46,40 +50,57 @@ class AlertSchedulerTest {
                 .build(),
         )
         workManager = WorkManager.getInstance(context)
-        scheduler = AlertScheduler({ workManager }, settings)
+        shadowOf(context as Application).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
+        scheduler = AlertScheduler(context, { workManager }, settings)
     }
 
     @Test
     fun `each planned alert is scheduled as its own tagged work`() =
         runTest {
-            scheduler.apply(listOf(alert("a", AlertLead.DAY), alert("a", AlertLead.SOON)))
+            val day = alert("a", AlertLead.DAY)
+            scheduler.apply(listOf(day, alert("a", AlertLead.SOON)), KEY)
 
             assertEquals(2, pending(AlertScheduler.ALERT_TAG).size)
-            assertEquals(WorkInfo.State.ENQUEUED, live(AlertRules.name("a", 1, 3, AlertLead.DAY)).single().state)
+            val scheduled = live(day.name).single()
+            assertEquals(WorkInfo.State.ENQUEUED, scheduled.state)
+            assertEquals(day.delay.toMillis(), scheduled.initialDelayMillis)
         }
 
     @Test
     fun `scheduling the same alert again replaces it, so a moved air time moves the alert`() =
         runTest {
             val name = AlertRules.name("a", 1, 3, AlertLead.SOON)
-            scheduler.apply(listOf(alert("a", AlertLead.SOON, airsIn = Duration.ofHours(10))))
+            scheduler.apply(listOf(alert("a", AlertLead.SOON, airsIn = Duration.ofHours(10))), KEY)
             val first = live(name).single()
 
-            scheduler.apply(listOf(alert("a", AlertLead.SOON, airsIn = Duration.ofHours(20))))
+            scheduler.apply(listOf(alert("a", AlertLead.SOON, airsIn = Duration.ofHours(20))), KEY)
 
             assertNotEquals(first.id, live(name).single().id)
             assertEquals(1, pending(AlertScheduler.ALERT_TAG).size)
         }
 
     @Test
-    fun `an alert no longer in the plan is cancelled`() =
+    fun `alerts for an episode no longer in the plan are cancelled`() =
         runTest {
-            scheduler.apply(listOf(alert("a", AlertLead.SOON), alert("b", AlertLead.SOON)))
+            scheduler.apply(listOf(alert("a", AlertLead.SOON), alert("b", AlertLead.SOON)), KEY)
 
-            scheduler.apply(listOf(alert("a", AlertLead.SOON)))
+            scheduler.apply(listOf(alert("a", AlertLead.SOON)), KEY)
 
             assertTrue(live(AlertRules.name("b", 1, 3, AlertLead.SOON)).isEmpty())
             assertEquals(1, live(AlertRules.name("a", 1, 3, AlertLead.SOON)).size)
+        }
+
+    @Test
+    fun `a 24 h alert that is due but has not run yet survives a re-plan`() =
+        runTest {
+            // Under Doze the overdue 24 h alert and the sync can wait for the same window. A plan
+            // made then no longer lists the 24 h alert (its time has passed), but it must still show.
+            val day = alert("a", AlertLead.DAY)
+            scheduler.apply(listOf(day, alert("a", AlertLead.SOON)), KEY)
+
+            scheduler.apply(listOf(alert("a", AlertLead.SOON, airsIn = Duration.ofHours(23))), KEY)
+
+            assertEquals(1, live(day.name).size)
         }
 
     @Test
@@ -89,7 +110,7 @@ class AlertSchedulerTest {
             scheduler.setEnabled(true)
             assertEquals(1, live(AlertScheduler.PERIODIC_SYNC).size)
             assertEquals(1, live(AlertScheduler.SYNC_NOW).size)
-            scheduler.apply(listOf(alert("a", AlertLead.SOON)))
+            scheduler.apply(listOf(alert("a", AlertLead.SOON)), KEY)
 
             scheduler.setEnabled(false)
 
@@ -110,17 +131,23 @@ class AlertSchedulerTest {
         }
 
     @Test
-    fun `signing out cancels every alert and forgets which ones fired`() =
+    fun `signing out cancels every alert, clears the shade and starts a new account key`() =
         runTest {
             scheduler.requestSync()
-            scheduler.apply(listOf(alert("a", AlertLead.SOON)))
-            settings.markFired("old")
+            scheduler.apply(listOf(alert("a", AlertLead.SOON)), KEY)
+            settings.markFired("old", Instant.now(), Instant.now())
+            val keyBefore = settings.alertKey()
+            val notifications = context.getSystemService(NotificationManager::class.java)
+            EpisodeAlertNotifier.show(context, "media-1", "Severance", "S2 E7 airs soon")
 
             scheduler.cancelAll()
 
             assertTrue(pending(AlertScheduler.ALERT_TAG).isEmpty())
             assertTrue(live(AlertScheduler.PERIODIC_SYNC).isEmpty())
+            assertTrue(live(AlertScheduler.SYNC_NOW).isEmpty())
             assertTrue(settings.fired.isEmpty())
+            assertNotEquals(keyBefore, settings.alertKey())
+            assertTrue(shadowOf(notifications).allNotifications.isEmpty())
         }
 
     private suspend fun pending(tag: String) =
@@ -130,6 +157,10 @@ class AlertSchedulerTest {
 
     private suspend fun live(name: String) =
         workManager.getWorkInfosForUniqueWorkFlow(name).first().filterNot { it.state.isFinished }
+
+    private companion object {
+        const val KEY = "key-1"
+    }
 
     private fun alert(
         mediaId: String,

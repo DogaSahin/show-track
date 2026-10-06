@@ -32,6 +32,9 @@ class AlertSyncWorker
         @Suppress("TooGenericExceptionCaught", "ReturnCount")
         override suspend fun doWork(): Result {
             if (!settings.enabled.first() || !auth.hasSession()) return Result.success()
+            // Read before the fetch: a sign-out mid-fetch replaces the key, so whatever this run
+            // schedules afterwards belongs to the old account and never shows.
+            val key = settings.alertKey()
             val watching =
                 try {
                     library.allWatching()
@@ -44,15 +47,15 @@ class AlertSyncWorker
                 }
             // Checked again: alerts may have been turned off, or the user signed out, mid-fetch.
             if (!settings.enabled.first() || !auth.hasSession()) return Result.success()
-            scheduler.apply(AlertRules.plan(watching, Instant.now()))
+            scheduler.apply(AlertRules.plan(watching, Instant.now()), key)
             return Result.success()
         }
     }
 
 /**
  * Shows one alert. Everything it needs travels in its input data, so it works offline. It shows
- * nothing when alerts are off, the user signed out, the episode already aired (the phone was off
- * at the time), or this alert already showed once.
+ * nothing when alerts are off, the user signed out, it belongs to an earlier sign-in, the episode
+ * already aired (the phone was off at the time), or this alert already showed once.
  */
 @HiltWorker
 class EpisodeAlertWorker
@@ -74,8 +77,9 @@ class EpisodeAlertWorker
             val now = Instant.now()
             if (!airsAt.isAfter(now)) return Result.success()
             if (!settings.enabled.first() || !auth.hasSession()) return Result.success()
+            if (input.getString(KEY_ACCOUNT) != settings.alertKey()) return Result.success()
             if (!EpisodeAlertNotifier.canNotify(applicationContext)) return Result.success()
-            if (!settings.markFired(name)) return Result.success()
+            if (!settings.markFired(name, airsAt, now)) return Result.success()
 
             val season = input.getInt(KEY_SEASON, NO_SEASON).takeIf { it != NO_SEASON }
             val episode = input.getInt(KEY_EPISODE, 0)
@@ -89,6 +93,7 @@ class EpisodeAlertWorker
         }
 
         companion object {
+            const val KEY_ACCOUNT = "account_key"
             const val KEY_NAME = "name"
             const val KEY_MEDIA_ID = "media_id"
             const val KEY_TITLE = "title"

@@ -691,6 +691,9 @@ class LibraryRepositoryImplTest {
 
             repository.remove("1")
             assertEquals(3, alerts.syncRequests)
+
+            repository.importAniList("someone")
+            assertEquals(4, alerts.syncRequests)
         }
 
     /** The pass-through half of task 9b.6: a successful import maps every field, `truncated` included. */

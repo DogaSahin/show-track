@@ -1,10 +1,12 @@
 package com.anarky.showtrack.feature.profile
 
 import android.Manifest
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.provider.Settings
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -93,7 +95,13 @@ internal fun rememberAlertsRow(
     val state = alertsRowState(enabled, allowed, denied)
     val openSettings = {
         turnOnWhenAllowed = true
-        context.startActivity(notificationSettings(context))
+        // Standard since API 26, but a tap must never crash on a phone that lacks the screen.
+        try {
+            context.startActivity(notificationSettings(context))
+        } catch (missing: ActivityNotFoundException) {
+            turnOnWhenAllowed = false
+            Log.w("ShowTrackAlerts", "no notification settings screen: ${missing.javaClass.simpleName}")
+        }
     }
     return AlertsRowController(state) {
         when {

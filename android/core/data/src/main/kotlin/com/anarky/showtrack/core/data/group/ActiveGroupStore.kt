@@ -18,10 +18,10 @@ import javax.inject.Singleton
 
 /**
  * The DataStore file for the switcher's own selection (design decision E-D). Separate from every
- * other store's file, mirroring [com.anarky.showtrack.core.data.push.PUSH_DATASTORE_NAME]'s own
+ * other store's file, mirroring [com.anarky.showtrack.core.data.alerts.ALERT_SETTINGS_DATASTORE_NAME]'s own
  * reasoning: different lifetime, different secrecy.
  *
- * PUBLIC for the same reason `PUSH_DATASTORE_NAME` is: it names the file a backup-exclusion test
+ * PUBLIC for the same reason `ALERT_SETTINGS_DATASTORE_NAME` is: it names the file a backup-exclusion test
  * would otherwise have nothing to check by name alone. **This one is deliberately NOT added to
  * `app/src/main/res/xml/backup_rules.xml` / `data_extraction_rules.xml`** — see the KDoc on
  * [DataStoreActiveGroupStore] for why that omission is a decision, not an oversight.
@@ -57,8 +57,8 @@ interface ActiveGroupStore {
 // What this handler alone buys is the WRITE path: `setActiveGroup()`'s `dataStore.edit {}` reads
 // the current value before writing the new one, and without a corruption handler THAT read throws
 // straight out of the suspend function, with nothing in this file to catch it. Losing this file on
-// a write costs one group switch back to "no active group" on next launch — harmless, unlike a lost
-// push target — but only with the handler present.
+// a write costs one group switch back to "no active group" on next launch — harmless — but only with the
+// handler present.
 //
 // Not separately unit-tested: `ActiveGroupStoreTest`'s own corruption test measured that
 // hand-crafted garbage bytes do not reliably reach `CorruptionException` at all — protobuf-lite's
@@ -86,13 +86,13 @@ class DataStoreActiveGroupStore(
         @ApplicationContext context: Context,
     ) : this(context.activeGroupDataStore)
 
-    // NOT excluded from Android auto-backup, unlike the token store and the push store — and that
+    // NOT excluded from Android auto-backup, unlike the token store and the episode alerts store — and that
     // is a decision, not an oversight (the task brief calls this out explicitly, because
     // `TokenBackupExclusionTest` only asserts the two exclusions that already exist and would not
     // catch a wrong choice here in either direction). The token store is excluded because an
     // undecryptable ciphertext survives a restore onto a device whose Keystore never held the key;
-    // the push store is excluded because its target id identifies THIS DEVICE's push registration,
-    // which a restore onto a different device would misrepresent. An active group id is neither: it
+    // the alerts store is excluded because its alert key must be new on every phone (see
+    // `TokenBackupExclusionTest`). An active group id is neither: it
     // is a harmless preference, and restoring it onto a new phone — reopening the app to the same
     // group you were last looking at — is the CORRECT behaviour, not a bug to guard against.
     override val activeGroupId: Flow<String?> =

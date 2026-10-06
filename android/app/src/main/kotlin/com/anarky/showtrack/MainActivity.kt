@@ -145,7 +145,7 @@ fun ShowTrackApp(authEvents: Flow<AuthEvent>) {
     // refresh() on Feed or Groups: a group created or left on one tab is reflected in the switcher
     // the next time either tab is visited, without either feature module knowing this ViewModel
     // exists. Plus a load-once on any OTHER authenticated destination — see activeGroupActionFor's
-    // own KDoc for why Detail (and the push deep link into it) otherwise never loaded at all.
+    // own KDoc for why Detail (and the alert deep link into it) otherwise never loaded at all.
     val activeGroupViewModel: ActiveGroupViewModel = hiltViewModel()
     val currentDestination = currentBackStackEntry?.destination
     ActiveGroupDestinationEffect(destination = currentDestination, viewModel = activeGroupViewModel)
@@ -288,7 +288,7 @@ internal fun ActiveGroupDestinationEffect(
  * group created or left on one tab visible on the other. Everything else that is not [AuthRoute]
  * gets a LOAD-ONCE: the first authenticated destination of the session issues the fetch, and every
  * later one answers `None`. Without it, the ordinary path into Detail — Library, tap a title, or a
- * `showtrack://detail/<id>` push deep link — never issued a groups fetch at all, and Detail's group
+ * `showtrack://detail/<id>` alert deep link — never issued a groups fetch at all, and Detail's group
  * section rendered nothing for the life of the Activity. With a naive `DetailRoute -> Refresh`
  * branch instead, every single Detail open would cost a `GET /v1/groups`, since
  * [ActiveGroupViewModel.refresh] fetches unconditionally.
