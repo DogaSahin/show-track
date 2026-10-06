@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.AlertDialog
@@ -48,6 +49,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.anarky.showtrack.core.designsystem.component.ErrorState
 import com.anarky.showtrack.core.designsystem.component.LoadingState
 import com.anarky.showtrack.core.model.ActiveGroupState
+import com.anarky.showtrack.core.model.EpisodeList
 import com.anarky.showtrack.core.model.Group
 import com.anarky.showtrack.core.model.MediaType
 import com.anarky.showtrack.core.model.UserMediaStatus
@@ -98,7 +100,9 @@ fun DetailScreen(
                 onSaveReview = viewModel::saveReview,
                 onCancelReviewEditor = viewModel::closeReviewEditor,
                 onClearReviewError = viewModel::clearReviewError,
+                onDeleteReview = viewModel::deleteReview,
             ),
+        activeGroupName = groups.firstOrNull { it.id == currentGroupId }?.name,
         modifier = modifier,
     )
 }
@@ -122,8 +126,10 @@ internal data class DetailActions(
     val onSaveReview: (String, Boolean) -> Unit = { _, _ -> },
     val onCancelReviewEditor: () -> Unit = {},
     val onClearReviewError: () -> Unit = {},
+    val onDeleteReview: () -> Unit = {},
 )
 
+@Suppress("LongParameterList")
 @Composable
 internal fun DetailScreen(
     state: DetailUiState,
@@ -131,6 +137,7 @@ internal fun DetailScreen(
     actions: DetailActions,
     modifier: Modifier = Modifier,
     today: LocalDate = remember { LocalDate.now() },
+    activeGroupName: String? = null,
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
     Box(modifier = modifier.fillMaxSize()) {
@@ -146,6 +153,7 @@ internal fun DetailScreen(
                 DetailContent(
                     success = state,
                     groups = groups,
+                    activeGroupName = activeGroupName,
                     actions = actions,
                     today = today,
                     snackbarHostState = snackbarHostState,
@@ -155,10 +163,12 @@ internal fun DetailScreen(
     }
 }
 
+@Suppress("LongParameterList")
 @Composable
 private fun DetailContent(
     success: DetailUiState.Success,
     groups: List<Group>,
+    activeGroupName: String?,
     actions: DetailActions,
     today: LocalDate,
     snackbarHostState: SnackbarHostState,
@@ -168,6 +178,9 @@ private fun DetailContent(
     // Null until the user picks a range: the grid then opens on the next episode's.
     var animeRange by rememberSaveable { mutableStateOf<Int?>(null) }
     val animeColumns = animeColumns()
+    // The episode list, when loaded, gives the race track its length and season ticks.
+    val list = (success.episodes as? EpisodesState.Ready)?.list
+    val total = list?.totalEpisodes ?: media.totalEpisodes
     // Settle the starting range once, so ticking episode 100 does not jump the grid to 101–200.
     val ready = success.episodes as? EpisodesState.Ready
     LaunchedEffect(ready != null) {
@@ -189,30 +202,14 @@ private fun DetailContent(
                 animeColumns = animeColumns,
                 actions = actions.episodes.copy(onAnimeRange = { animeRange = it }),
             )
-            item(key = "group") {
-                Box(modifier = Modifier.padding(16.dp)) {
-                    GroupSection(
-                        groupSection = success.groupSection,
-                        groups = groups,
-                        proposing = success.proposing,
-                        proposeError = success.proposeError,
-                        justProposedToGroupId = success.justProposedToGroupId,
-                        onProposeToGroup = actions.onProposeToGroup,
-                        onRetry = actions.onRetryGroupSection,
-                    )
-                }
-            }
-            item(key = "reviews") {
-                Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                    ReviewEditorSection(
-                        reviewEditor = success.reviewEditor,
-                        onOpen = actions.onOpenReviewEditor,
-                        onSave = actions.onSaveReview,
-                        onCancel = actions.onCancelReviewEditor,
-                        onClearError = actions.onClearReviewError,
-                    )
-                }
-            }
+            groupItems(
+                success = success,
+                groups = groups,
+                activeGroupName = activeGroupName,
+                total = total,
+                list = list,
+                actions = actions,
+            )
         }
         DetailTopBar(
             title = media.title,
@@ -381,5 +378,54 @@ private fun MoreMenu(
                 },
             )
         }
+    }
+}
+
+/** The group (race track and members), reviews, and "Propose to a group", in that order. */
+@Suppress("LongParameterList")
+private fun LazyListScope.groupItems(
+    success: DetailUiState.Success,
+    groups: List<Group>,
+    activeGroupName: String?,
+    total: Int?,
+    list: EpisodeList?,
+    actions: DetailActions,
+) {
+    item(key = "group") {
+        GroupSection(
+            groupSection = success.groupSection,
+            groupName = activeGroupName,
+            meId = success.currentUserId,
+            myEntry = success.data.entry,
+            totalEpisodes = total,
+            episodeList = list,
+            onRetry = actions.onRetryGroupSection,
+            modifier = Modifier.padding(top = 16.dp),
+        )
+    }
+    item(key = "reviews") {
+        ReviewsSection(
+            reviews = (success.groupSection as? GroupSectionState.Loaded)?.reviews.orEmpty(),
+            reviewsKnown =
+                success.groupSection.let {
+                    it is GroupSectionState.Loaded || it is GroupSectionState.Absent
+                },
+            meId = success.currentUserId,
+            reviewEditor = success.reviewEditor,
+            deleting = success.deletingReview,
+            deleteError = success.reviewDeleteError,
+            actions = actions,
+            modifier = Modifier.padding(vertical = 16.dp),
+        )
+    }
+    item(key = "propose") {
+        ProposeSection(
+            groups = groups,
+            proposing = success.proposing,
+            error = success.proposeError,
+            justProposedToGroupId = success.justProposedToGroupId,
+            onPropose = actions.onProposeToGroup,
+            modifier = Modifier.padding(bottom = 24.dp),
+        )
     }
 }

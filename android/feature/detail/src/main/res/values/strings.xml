@@ -18,13 +18,10 @@
     <string name="detail_score_clear">Clear score</string>
 
     <!-- The group section (task 9c.6, E-J, design doc §3.5) -->
-    <string name="detail_group_section_title">Group</string>
     <!-- §9.12's acceptance criterion: a title nobody else tracks is an empty state, not a broken
          section. -->
     <string name="detail_group_section_empty">No one else in the group is tracking this title yet.</string>
     <string name="detail_group_stale_notice">Showing saved group data. Tap Retry to check for updates.</string>
-    <!-- %1$s member username, %2$s status label, %3$d episode/chapter progress. -->
-    <string name="detail_group_progress_row">%1$s: %2$s, episode %3$d</string>
 
     <string name="detail_group_propose_button">Propose to a group</string>
     <string name="detail_group_propose_picker_title">Choose a group</string>
@@ -139,4 +136,47 @@
     <string name="detail_season_expanded">expanded</string>
     <string name="detail_season_collapsed">collapsed</string>
     <string name="detail_score_button">Score</string>
+
+    <!-- The group: race track and member list. -->
+    <!-- The heading when the active group's name is not known yet. -->
+    <string name="detail_group_heading_fallback">Your group</string>
+    <!-- Your own pin: "you · 15". -->
+    <string name="detail_group_you">you · %1$d</string>
+    <string name="detail_group_done">done</string>
+    <plurals name="detail_group_ahead">
+        <item quantity="one">%d ep ahead</item>
+        <item quantity="other">%d eps ahead</item>
+    </plurals>
+    <plurals name="detail_group_behind">
+        <item quantity="one">%d ep behind</item>
+        <item quantity="other">%d eps behind</item>
+    </plurals>
+    <string name="detail_group_finished">Finished</string>
+    <string name="detail_group_level">Same episode</string>
+    <!-- "Watching · S2 E8": status, then where they are. -->
+    <string name="detail_group_member_status">%1$s · %2$s</string>
+    <string name="detail_group_position_season">S%1$d E%2$d</string>
+    <string name="detail_group_position_episode">Ep %1$d</string>
+    <!-- Marks you in the list: "doga (you)". -->
+    <string name="detail_group_you_name">%1$s (you)</string>
+
+    <!-- Reviews. -->
+    <string name="detail_reviews_heading">Reviews</string>
+    <string name="detail_review_edit">Edit</string>
+    <string name="detail_review_delete">Delete</string>
+    <string name="detail_review_delete_confirm_title">Delete your review?</string>
+    <string name="detail_review_delete_confirm_body">It will be gone for everyone in your groups.</string>
+    <string name="detail_review_delete_confirm">Delete review</string>
+    <string name="detail_review_delete_cancel">Cancel</string>
+    <string name="detail_review_delete_error">Couldn\'t delete your review. Try again.</string>
+
+    <!-- Race track labels (decorative; TalkBack reads the member list). -->
+    <string name="detail_group_number">%1$d</string>
+    <!-- TalkBack for a member row: name, status, where they are, how they stand. -->
+    <string name="detail_group_member_a11y">%1$s, %2$s, %3$s</string>
+    <string name="detail_group_member_a11y_standing">%1$s, %2$s, %3$s, %4$s</string>
+    <string name="detail_group_position_season_spoken">season %1$d, episode %2$d</string>
+    <string name="detail_group_position_episode_spoken">episode %1$d</string>
+    <string name="detail_review_edit_description">Edit your review</string>
+    <string name="detail_review_delete_description">Delete your review</string>
 </resources>

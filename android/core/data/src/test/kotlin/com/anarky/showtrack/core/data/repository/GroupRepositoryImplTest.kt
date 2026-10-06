@@ -308,6 +308,19 @@ class GroupRepositoryImplTest {
         }
 
     @Test
+    fun `deleting a review sends its id, and someone else's or a missing one is NoSuchEntry`() =
+        runTest {
+            val api = FakeApi()
+            repository(api).deleteReview("review-1")
+            assertEquals(listOf("review-1"), api.deletedReviews)
+
+            api.deleteReviewFailure = httpError(404)
+            val failure = runCatching { repository(api).deleteReview("review-2") }.exceptionOrNull()
+
+            assertEquals(GroupFailure.NoSuchEntry, (failure as GroupOperationException).failure)
+        }
+
+    @Test
     fun `a request that never reaches the server surfaces Network`() =
         runTest {
             val api = FakeApi()
@@ -724,6 +737,14 @@ class GroupRepositoryImplTest {
         }
 
         var updateReviewFailure: Throwable? = null
+
+        var deleteReviewFailure: Throwable? = null
+        val deletedReviews = mutableListOf<String>()
+
+        override suspend fun deleteReview(id: String) {
+            deleteReviewFailure?.let { throw it }
+            deletedReviews += id
+        }
 
         override suspend fun updateReview(
             id: String,

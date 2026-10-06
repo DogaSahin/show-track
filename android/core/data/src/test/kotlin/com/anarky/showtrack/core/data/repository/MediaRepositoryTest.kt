@@ -359,6 +359,8 @@ class MediaRepositoryTest {
 
         override suspend fun createReview(request: CreateReviewRequestDto): ReviewDto = TODO("not used")
 
+        override suspend fun deleteReview(id: String): Unit = error("not used here")
+
         override suspend fun updateReview(
             id: String,
             patch: JsonObject,
