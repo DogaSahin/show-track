@@ -97,12 +97,22 @@ private fun StatusLine(entry: LibraryEntry) {
     val episode = entry.media.nextEpisodeLabel()
     val days = entry.media.daysUntilNextEpisode
     val primary = MaterialTheme.colorScheme.primary
+    val total = entry.media.totalEpisodes?.takeIf { it > 0 }
     val progress =
         when {
             episode != null && days != null -> null
+            entry.progress > 0 && total != null ->
+                stringResource(
+                    R.string.library_eps_watched_of,
+                    entry.progress,
+                    total,
+                )
             entry.progress > 0 -> pluralStringResource(R.plurals.library_eps_watched, entry.progress, entry.progress)
+            total != null -> pluralStringResource(R.plurals.library_not_started_with_total, total, total)
             else -> stringResource(R.string.library_not_started)
         }
+    // "14/28 · " ahead of an upcoming episode, when the count is known.
+    val countBeforeUpcoming = total?.let { stringResource(R.string.library_eps_count_short, entry.progress, it) }
     val upcoming =
         if (episode != null && days != null) {
             stringResource(R.string.library_episode_when, episode, countdownLabel(days))
@@ -118,9 +128,11 @@ private fun StatusLine(entry: LibraryEntry) {
                         SpanStyle(color = statusColor, fontWeight = FontWeight.Medium),
                     ) { append(entry.status.label()) }
                     append(" · ")
-                    if (upcoming !=
-                        null
-                    ) {
+                    if (upcoming != null) {
+                        countBeforeUpcoming?.let {
+                            append(it)
+                            append(" · ")
+                        }
                         withStyle(SpanStyle(color = primary)) { append(upcoming) }
                     } else {
                         append(progress)

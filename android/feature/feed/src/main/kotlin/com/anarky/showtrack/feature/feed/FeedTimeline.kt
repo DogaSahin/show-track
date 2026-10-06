@@ -7,8 +7,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -38,6 +40,8 @@ import java.time.format.FormatStyle
 
 private val AvatarSize = 32.dp
 private val CoverWidth = 36.dp
+private val ProgressBarWidth = 120.dp
+private val ProgressBarHeight = 4.dp
 
 /**
  * One row of the rendered timeline: either a day heading or an item beneath it.
@@ -137,7 +141,8 @@ internal fun FeedEventRow(
     val sentence = entry.sentence(item)
     val detail = item.detail()
     val time = entry.createdAt.timeLabel(isToday = isToday)
-    val spoken = listOfNotNull(sentence.text, detail?.spokenText(), time).joinToString(separator = ", ")
+    val ofTotal = progressOfTotalText(detail, entry.totalEpisodes)
+    val spoken = listOfNotNull(sentence.text, detail?.spokenText(), ofTotal, time).joinToString(separator = ", ")
     val clickModifier = if (entry.mediaId != null) modifier.clickable(onClick = onClick) else modifier
 
     Row(
@@ -162,6 +167,7 @@ internal fun FeedEventRow(
                 overflow = TextOverflow.Ellipsis,
             )
             detail?.let { DetailChip(detail = it) }
+            ProgressOfTotal(detail = detail, total = entry.totalEpisodes)
             Text(
                 text = time,
                 style = MaterialTheme.typography.labelSmall,
@@ -253,3 +259,35 @@ private fun Instant.timeLabel(isToday: Boolean): String =
     } else {
         atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT))
     }
+
+/** "15 of 28" with a bar, under a progress event when the title's episode count is known. */
+@Composable
+private fun ProgressOfTotal(
+    detail: FeedDetail?,
+    total: Int?,
+) {
+    val progress = detail as? FeedDetail.Progress ?: return
+    val count = total?.takeIf { it > 0 } ?: return
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        LinearProgressIndicator(
+            progress = { (progress.to.toFloat() / count).coerceIn(0f, 1f) },
+            modifier = Modifier.width(ProgressBarWidth).height(ProgressBarHeight),
+            drawStopIndicator = {},
+        )
+        Text(
+            text = stringResource(R.string.feed_progress_of_total, progress.to, count),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun progressOfTotalText(
+    detail: FeedDetail?,
+    total: Int?,
+): String? {
+    val progress = detail as? FeedDetail.Progress ?: return null
+    val count = total?.takeIf { it > 0 } ?: return null
+    return stringResource(R.string.feed_progress_of_total, progress.to, count)
+}
