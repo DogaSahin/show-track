@@ -23,7 +23,7 @@ sealed interface ImportError {
 /**
  * [Form] and [Success], the same two-case shape [com.anarky.showtrack.feature.auth.AuthUiState]
  * uses for an identical reason: this screen is one form with one terminal outcome, not a set of
- * independent concerns the way [ProfileViewModel]'s push/stats/sign-out channels are (decision
+ * independent concerns the way [ProfileViewModel]'s alerts/stats/sign-out channels are (decision
  * C-S does not apply to a single sequential action).
  */
 sealed interface ImportUiState {

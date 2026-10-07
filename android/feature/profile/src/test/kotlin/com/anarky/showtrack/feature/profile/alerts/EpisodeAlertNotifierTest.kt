@@ -1,4 +1,4 @@
-package com.anarky.showtrack.feature.profile.push
+package com.anarky.showtrack.feature.profile.alerts
 
 import android.content.Context
 import android.content.Intent
@@ -20,12 +20,12 @@ import org.robolectric.RobolectricTestRunner
  * untestable: Robolectric loads `:app`'s MERGED manifest, so a real PackageManager can be asked.
  */
 @RunWith(RobolectricTestRunner::class)
-class PushNotifierTest {
+class EpisodeAlertNotifierTest {
     private val context = ApplicationProvider.getApplicationContext<Context>()
 
     @Test
     fun `the tap intent addresses the title the notification is about`() {
-        val intent = PushNotifier.deepLinkIntent(context, "abc-123")
+        val intent = EpisodeAlertNotifier.deepLinkIntent(context, "abc-123")
 
         assertEquals(Intent.ACTION_VIEW, intent.action)
         // The literal, spelled out on purpose. detailDeepLink() builds it from constants, so
@@ -39,14 +39,14 @@ class PushNotifierTest {
         // A custom scheme is unverifiable — any installed app may register an intent filter for
         // `showtrack://`. Constraining the intent to our own package is what stops a notification
         // tap from opening someone else's activity.
-        val intent = PushNotifier.deepLinkIntent(context, "abc-123")
+        val intent = EpisodeAlertNotifier.deepLinkIntent(context, "abc-123")
 
         assertEquals(context.packageName, intent.getPackage())
     }
 
     @Test
     fun `the tap does not stack a second copy of the same screen`() {
-        val flags = PushNotifier.deepLinkIntent(context, "abc-123").flags
+        val flags = EpisodeAlertNotifier.deepLinkIntent(context, "abc-123").flags
 
         assertEquals(Intent.FLAG_ACTIVITY_NEW_TASK, flags and Intent.FLAG_ACTIVITY_NEW_TASK)
         assertEquals(Intent.FLAG_ACTIVITY_CLEAR_TOP, flags and Intent.FLAG_ACTIVITY_CLEAR_TOP)

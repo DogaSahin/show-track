@@ -1,11 +1,13 @@
 package com.anarky.showtrack
 
 import android.app.Application
+import androidx.hilt.work.HiltWorkerFactory
+import androidx.work.Configuration
 import coil3.ImageLoader
 import coil3.PlatformContext
 import coil3.SingletonImageLoader
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
-import com.anarky.showtrack.core.data.push.PushSessionObserver
+import com.anarky.showtrack.core.data.alerts.AlertSessionObserver
 import com.anarky.showtrack.core.network.di.PlainClient
 import dagger.Lazy
 import dagger.hilt.android.HiltAndroidApp
@@ -26,7 +28,8 @@ import javax.inject.Inject
 @HiltAndroidApp
 class ShowTrackApplication :
     Application(),
-    SingletonImageLoader.Factory {
+    SingletonImageLoader.Factory,
+    Configuration.Provider {
     /**
      * `@PlainClient`, and this is a security constraint rather than a preference.
      *
@@ -54,7 +57,10 @@ class ShowTrackApplication :
      * event, so deferring construction to first use would defeat it.
      */
     @Inject
-    lateinit var pushSessionObserver: PushSessionObserver
+    lateinit var alertSessionObserver: AlertSessionObserver
+
+    @Inject
+    lateinit var workerFactory: HiltWorkerFactory
 
     /**
      * Process-lifetime, never cancelled — which is correct for exactly one subscriber that must
@@ -66,8 +72,13 @@ class ShowTrackApplication :
 
     override fun onCreate() {
         super.onCreate()
-        pushSessionObserver.start(applicationScope)
+        alertSessionObserver.start(applicationScope)
     }
+
+    // Episode-alert workers take injected repositories; the manifest removes WorkManager's own
+    // initializer so this configuration is the one it starts with (MergedManifestTest pins that).
+    override val workManagerConfiguration: Configuration
+        get() = Configuration.Builder().setWorkerFactory(workerFactory).build()
 
     /**
      * Reusing the app's OkHttp rather than letting Coil build its own means ONE connection pool

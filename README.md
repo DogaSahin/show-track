@@ -13,9 +13,9 @@ Self-hosted. It runs on your own machine and is reached over Tailscale.
 ## What it does
 
 - **Track** anime and TV in one library — status, 1–10 score, episode progress, favourites.
-- **Know when the next episode airs.** A background job refreshes airing dates and queues a
-  notification before an episode airs; a second job drains that queue to your phone. Push is
-  delivered by a self-hosted [ntfy](https://ntfy.sh) server over UnifiedPush — not Firebase.
+- **Know when the next episode airs.** The server refreshes airing dates; the phone schedules its
+  own alerts from them, 24 hours and 6 hours before each episode of a show you're watching. No
+  second app, no Google services, and an alert shows even if the phone is offline at the time.
 - **Import** an existing AniList list by username. The profile must be public (the import sends no
   credentials). Read-only and one-way — ShowTrack never writes back.
 - **Share with a group** — an activity feed, reviews, a shared watchlist, and side-by-side progress.
@@ -232,34 +232,20 @@ and the same disk is not a backup.
 
 ## Notifications
 
-Two things are easy to get wrong, and both fail silently.
+Episode alerts are scheduled **on the phone**, with WorkManager, from the next-episode air dates
+the library already carries. Turn them on in Profile → Episode alerts; Android 13+ asks for
+notification permission at that point. Only shows you're **Watching** get alerts: one 24 hours
+before and one 6 hours before (just one if the episode is first seen less than 6 hours out).
 
-**Push needs a second app on the phone.** ShowTrack delivers over UnifiedPush, which requires a
-distributor app — install ntfy from F-Droid or Google Play. Without one, registration simply reports
-that push is unavailable; nothing is broken.
+- **Refreshing needs the server, showing does not.** Every 6 hours, and after any library change,
+  the app re-reads your Watching titles and moves or cancels alerts to match. That refresh needs
+  the tailnet; an alert that is already scheduled shows offline.
+- **Doze can make an alert a few minutes late.** There are no exact alarms. The wording ("airs in
+  3 hours") is worked out when the alert shows, so a late one is still accurate.
+- **Signing out cancels everything**, including alerts already in the notification shade. An
+  alert scheduled before a sign-out never shows, for a signed-out phone or for whoever signs in next.
 
-**The phone must be on the VPN.** ntfy runs on your server, so off the tailnet, notifications queue
-server-side until the phone can reach it. This is the accepted cost of self-hosting over FCM.
-
-The compose service runs `NTFY_AUTH_DEFAULT_ACCESS=deny-all`, so nobody — including the backend —
-can publish until you mint credentials:
-
-```bash
-docker compose exec ntfy ntfy user add showtrack
-docker compose exec ntfy ntfy access showtrack '*' wo
-docker compose exec ntfy ntfy token add showtrack     # prints tk_… — this is NTFY_TOKEN
-
-docker compose exec ntfy ntfy user add phone          # prompts for a password
-docker compose exec ntfy ntfy access phone <topic> ro
-```
-
-`NTFY_BASE_URL` is where the **backend** reaches ntfy. `NTFY_PUBLIC_URL` is ntfy's own idea of its
-public address, stamped into link targets — set it to the address the **phone** uses, which behind
-`tailscale serve` is the `https://<machine>.ts.net:8443` URL. Left at localhost, a phone following a
-link is sent to its own localhost. Affects link targets only, never delivery.
-
-Exempt both Tailscale and ntfy from battery optimisation on every device. Doze killing the VPN stops
-notifications with no error.
+The server's ntfy service is no longer used by the app.
 
 ## Contributing
 
@@ -307,7 +293,7 @@ both get worse the longer they wait.
 |---|---|---|
 | 0–7.5b | Backend — foundations, auth, providers, library, AniList import, sync, notifications, recommendations, groups | done |
 | 8 | Android foundations — 16 modules, build-enforced rules, design system, HTTP + token store, Room cache, navigation, Hilt | done |
-| 8.9 | Push over UnifiedPush | code complete, unverified on device |
+| 8.9 | Episode alerts, scheduled on the phone | code complete, unverified on device |
 | 9a–9c | Nine feature screens, end to end | code complete, unverified on device |
 | 9.5 | Visual redesign — palette, nav icons, auth, discover, feed, profile, favourites, groups, search | done |
 | 10 | Polish and deployment | in progress |

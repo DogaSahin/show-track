@@ -81,6 +81,8 @@ fun ProfileScreen(
     val signOutError by viewModel.signOutError.collectAsStateWithLifecycle()
     val statsState by viewModel.statsState.collectAsStateWithLifecycle()
     val groups by activeGroup.collectAsStateWithLifecycle()
+    val alertsEnabled by viewModel.alertsEnabled.collectAsStateWithLifecycle()
+    val alerts = rememberAlertsRow(enabled = alertsEnabled, onSetEnabled = viewModel::setAlertsEnabled)
     LaunchedEffect(signedOut) {
         if (signedOut) onSignedOut()
     }
@@ -95,6 +97,8 @@ fun ProfileScreen(
         groupNames = (groups as? ActiveGroupState.Success)?.groups?.map { it.name },
         statsState = statsState,
         signOutError = signOutError,
+        alerts = alerts.state,
+        onAlertsClick = alerts.onClick,
         onStatsRetry = viewModel::refreshStats,
         onSignOut = viewModel::signOut,
         onGroupsClick = onGroupsClick,
@@ -112,7 +116,8 @@ fun ProfileScreen(
  * grouped rows. [groupNames] is null while the groups are unknown (loading or failed), which leaves
  * the Groups row without a subtitle rather than wrongly saying you have none.
  *
- * Episode alerts are not here yet: they will be scheduled on the phone and get their own row then.
+ * [alerts] is worked out by the stateful overload (it needs the permission APIs); a tap on the
+ * row is [onAlertsClick], whatever it then has to do.
  */
 @Suppress("LongParameterList")
 @Composable
@@ -121,6 +126,8 @@ internal fun ProfileScreen(
     groupNames: List<String>?,
     statsState: LibraryStatsUiState,
     signOutError: Boolean,
+    alerts: AlertsRowState,
+    onAlertsClick: () -> Unit,
     onStatsRetry: () -> Unit,
     onSignOut: () -> Unit,
     onGroupsClick: () -> Unit,
@@ -145,6 +152,8 @@ internal fun ProfileScreen(
             AppSection(
                 groupNames = groupNames,
                 signOutError = signOutError,
+                alerts = alerts,
+                onAlertsClick = onAlertsClick,
                 onGroupsClick = onGroupsClick,
                 onImportClick = onImportClick,
                 onSignOutClick = { showSignOutConfirmation = true },
@@ -164,10 +173,13 @@ internal fun ProfileScreen(
 }
 
 /** The rarely visited part: doors to Groups and Import, then Sign out on its own card. */
+@Suppress("LongParameterList")
 @Composable
 private fun AppSection(
     groupNames: List<String>?,
     signOutError: Boolean,
+    alerts: AlertsRowState,
+    onAlertsClick: () -> Unit,
     onGroupsClick: () -> Unit,
     onImportClick: () -> Unit,
     onSignOutClick: () -> Unit,
@@ -188,6 +200,8 @@ private fun AppSection(
                 subtitle = stringResource(R.string.profile_import_subtitle),
                 onClick = onImportClick,
             )
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            AlertsRow(state = alerts, onClick = onAlertsClick, iconTile = RowIconTile)
         }
         SettingsCard {
             Text(

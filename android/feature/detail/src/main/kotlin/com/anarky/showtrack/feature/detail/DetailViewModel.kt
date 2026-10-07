@@ -35,7 +35,7 @@ private const val REVIEW_BODY_MAX_LENGTH = 4000
 
 /**
  * One title, with or without a library entry (decision C-D). Reachable three ways — a library
- * row (an entry is guaranteed), a search result, and a push deep-link (neither guarantees one) —
+ * row (an entry is guaranteed), a search result, and an alert deep-link (neither guarantees one) —
  * so `entry == null` is read here as "not in your library", never folded into [DetailUiState.Error].
  *
  * **Three operations, three blast radii — carried forward from task 9a.8's shipped bug.** A

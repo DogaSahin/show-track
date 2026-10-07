@@ -69,5 +69,7 @@ internal class EntryFakeLibraryRepository(
 
     override suspend fun upcomingWatching(limit: Int): List<LibraryEntry> = emptyList()
 
+    override suspend fun allWatching(): List<LibraryEntry> = emptyList()
+
     override suspend fun importAniList(username: String): ImportSummary = error("not exercised by SearchEntryHiltTest")
 }
