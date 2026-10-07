@@ -36,36 +36,6 @@ services:
       timeout: 3s
       retries: 10
 
-  ntfy:
-    image: binwiederhier/ntfy:latest
-    restart: unless-stopped
-    command: serve
-    environment:
-      # Topics are unguessable secrets generated server-side (6-L), but defence in depth:
-      # deny-all means a leaked topic is still useless without a token. The consequence is that
-      # the BACKEND cannot publish without one either — mint a user and a token before setting
-      # NTFY_TOKEN. The README's Notifications section has the two commands.
-      NTFY_AUTH_DEFAULT_ACCESS: deny-all
-      # Where the user/token database lives. Named explicitly because deny-all without an
-      # auth-file leaves a server nobody, including the backend, can publish to.
-      NTFY_AUTH_FILE: /var/lib/ntfy/user.db
-      # NTFY'S OWN idea of its public address, which is a different question from where the
-      # BACKEND reaches it: ntfy stamps this into click actions and attachment links, so a phone
-      # following one resolves whatever is written here. Left at localhost, a phone on the VPN is
-      # sent to ITS OWN localhost. Set NTFY_PUBLIC_URL (in .env — Compose reads that file for
-      # interpolation) to the address the PHONE reaches this server on, which behind
-      # `tailscale serve` is an https://<machine>.ts.net URL. Wrong values break link targets
-      # only, never delivery. Deliberately a separate variable from the backend's NTFY_BASE_URL:
-      # the two can legitimately differ.
-      NTFY_BASE_URL: ${NTFY_PUBLIC_URL:-http://localhost:8080}
-    volumes:
-      - ntfy-data:/var/lib/ntfy
-    # Loopback only. `tailscale serve` runs on the host and proxies to 127.0.0.1, so binding
-    # anywhere wider would publish ntfy to the LAN as plaintext HTTP alongside the TLS endpoint
-    # that is supposed to be the only way in.
-    ports:
-      - "127.0.0.1:8080:80"
-
   api:
     build:
       context: .
@@ -82,12 +52,6 @@ services:
       SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env — openssl rand -hex 32}
       REGISTRATION_CODE: ${REGISTRATION_CODE:?set REGISTRATION_CODE in .env — openssl rand -hex 32}
       TMDB_API_KEY: ${TMDB_API_KEY:-}
-      # Empty means no transport, so the dispatch job is never registered and tasks queue as
-      # `pending` — the intended posture for anyone who has not set ntfy up. From INSIDE this
-      # network the ntfy service is `http://ntfy`, not `http://localhost:8080`; the latter is
-      # only correct for uvicorn running on the host, which is the documented dev flow.
-      NTFY_BASE_URL: ${NTFY_BASE_URL:-}
-      NTFY_TOKEN: ${NTFY_TOKEN:-}
     # Migrations run here rather than in a separate one-shot service, and the reason is reboots.
     # `depends_on` orders `docker compose up`; it does NOT order the restart policy, so after a
     # host reboot the api container can start before Postgres is accepting connections. Inline,
@@ -99,8 +63,8 @@ services:
     # This is also why there is exactly one api replica: two would race here (architecture rule 6
     # already pins the app to one for the in-process scheduler).
     command: sh -c "alembic upgrade head && exec uvicorn main:app --host 0.0.0.0 --port 8000"
-    # Loopback only, same reasoning as ntfy: `tailscale serve` terminates TLS on the host and
-    # proxies here. Android blocks cleartext by default and this app ships no exemption, so the
+    # Loopback only: `tailscale serve` terminates TLS on the host and proxies here, so binding
+    # anywhere wider would publish plaintext HTTP to the LAN alongside the TLS endpoint. Android blocks cleartext by default and this app ships no exemption, so the
     # TLS endpoint is not optional and this port must not be a second way in around it.
     ports:
       - "127.0.0.1:8000:8000"
@@ -110,4 +74,3 @@ services:
 
 volumes:
   showtrack-pgdata:
-  ntfy-data:

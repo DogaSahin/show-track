@@ -101,8 +101,7 @@ async def test_every_non_auth_route_requires_a_token(
     routes: those are precisely the routes `test_a_user_cannot_delete_another_users_target`-style
     feature tests exercise with a real id and a real token, so they can never observe an
     unauthenticated request and can never catch this regression either. Before this split,
-    `DELETE /v1/library/{id}` and `DELETE /v1/notifications/targets/{id}` — the two routes in the
-    whole API that destroy data — had no automated guard at all against losing
+    `DELETE /v1/library/{id}` — a route that destroys data — had no automated guard at all against losing
     `dependencies=[Depends(get_current_user)]` from the mount.
 
     The second assertion is skipped for `{param}` routes because it genuinely does need a real

@@ -9,8 +9,8 @@ READ_TIMEOUT_SECONDS = 5.0
 # that trickles a byte every four seconds resets it forever, so the request never returns and no
 # httpx timeout ever fires. follow_redirects=True can compound the same effect across up to 20
 # hops. The client cannot enforce this itself — every caller must wrap its request in
-# asyncio.timeout(TOTAL_TIMEOUT_SECONDS); ProviderHTTPClient.request and NtfyTransport.send both
-# do, and a future caller that forgets inherits the hang.
+# asyncio.timeout(TOTAL_TIMEOUT_SECONDS); ProviderHTTPClient.request does, and a
+# future caller that forgets inherits the hang.
 TOTAL_TIMEOUT_SECONDS = 8.0
 
 _client: httpx.AsyncClient | None = None
@@ -23,10 +23,9 @@ def get_http_client() -> httpx.AsyncClient:
     binds to the running event loop. Not per request either — a fresh client discards
     connection pooling and TLS session reuse.
 
-    Lives here rather than in app/media/providers/ because it has two unrelated consumers now:
-    the provider clients and the notification transport. A primitive that lives inside its first
-    caller is a primitive the second caller copies — the same reasoning that extracted
-    app/sync/locks.py in Phase 5.
+    Lives here rather than in app/media/providers/ because it is plumbing, not provider logic: a
+    primitive that lives inside its first caller is a primitive the second caller copies — the
+    same reasoning that extracted app/sync/locks.py in Phase 5.
     """
     global _client
     if _client is None:
