@@ -11,6 +11,7 @@ import com.anarky.showtrack.core.network.dto.RecommendationDto
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -31,6 +32,11 @@ class RecommendationRepositoryImpl
         UserData {
         // A page still in flight at sign-out is dropped, never published.
         private val session = SessionGuard()
+
+        // Which sign-in each optimistically removed row belongs to. [restore] runs when an add
+        // fails, which can be after a sign-out; the old account's row must not come back then.
+        @Volatile private var epoch = 0L
+        private val removedIn = ConcurrentHashMap<String, Long>()
 
         // `restart()` drops the cursor; there is no filter/query field on this repository whose
         // agreement with the paginator [applyFilter]-style code elsewhere has to preserve across a
@@ -94,12 +100,15 @@ class RecommendationRepositoryImpl
         /** Sign-out: recommendations are made from this account's library. */
         override suspend fun clearUserData() {
             session.end {
+                epoch++
+                removedIn.clear()
                 paginator.reset()
                 mutableFeed.value = emptyList()
             }
         }
 
         override fun remove(mediaId: String) {
+            removedIn[mediaId] = epoch
             mutableFeed.value = mutableFeed.value.filterNot { it.media.id == mediaId }
         }
 
@@ -122,6 +131,7 @@ class RecommendationRepositoryImpl
             index: Int,
             recommendation: Recommendation,
         ) {
+            if (removedIn.remove(recommendation.media.id) != epoch) return
             mutableFeed.value =
                 mutableFeed.value.toMutableList().apply {
                     add(index.coerceIn(0, size), recommendation)

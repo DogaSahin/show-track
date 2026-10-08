@@ -46,7 +46,7 @@ import java.time.LocalDate
 
 class MediaRepositoryTest {
     @Test
-    fun `sign-out empties search results, and a search in flight then is dropped`() =
+    fun `sign-out empties search results, even with a search in flight`() =
         runTest {
             val api = FakeApi(response(sources = mapOf("anilist" to "ok")))
             val repository = MediaRepositoryImpl(api)

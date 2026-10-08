@@ -16,6 +16,7 @@ import com.anarky.showtrack.core.navigation.LibraryRoute
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -93,6 +94,29 @@ class AuthNavigationTest {
 
         assertEquals(FavoritesRoute::class.qualifiedName, controller.backStackRoutes().last())
         assertNotEquals(before, controller.currentBackStackEntry!!.id)
+    }
+
+    /**
+     * Home's saved stack is the screens ABOVE Home (Home itself stays live under every tab), so
+     * clearing it restores those screens before popping. They must not be left on top of Auth.
+     */
+    @Test
+    fun `a screen opened from Home before switching tabs does not come back over the login screen`() {
+        val controller = controllerWith { defaultGraph() }
+        controller.navigate(DetailRoute(mediaId = "abc"))
+        val detail = controller.currentBackStackEntry!!.id
+        controller.navigateToTopLevelDestination(FavoritesRoute)
+
+        controller.navigateToAuthClearingStack()
+
+        assertEquals(listOf(null, AuthRoute::class.qualifiedName), controller.backStackRoutes())
+        controller.navigateToLibraryClearingAuth()
+        // Tapping Home right away is the tap that would restore a saved Home stack.
+        controller.navigateToTopLevelDestination(LibraryRoute)
+        assertTrue(controller.currentBackStack.value.none { it.id == detail })
+        controller.navigateToTopLevelDestination(FavoritesRoute)
+        controller.navigateToTopLevelDestination(LibraryRoute)
+        assertTrue(controller.currentBackStack.value.none { it.id == detail })
     }
 
     @Test

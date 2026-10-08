@@ -698,6 +698,30 @@ class LibraryRepositoryImplTest {
             assertEquals(emptyList<String>(), repository.observeLibrary().first().map { it.id })
         }
 
+    // The end state only. The guard on the rollback matters when the failed request resumes on
+    // another thread after the clear has finished, an interleaving one test thread cannot force.
+    @Test
+    fun `a filter change failing during sign-out leaves the next account on the default filter`() =
+        runTest {
+            val completed = LibraryFilter(status = UserMediaStatus.COMPLETED)
+            repository.applyFilter(completed)
+            val gate = CompletableDeferred<Unit>()
+            api.libraryGate = gate
+            val change = launch { runCatching { repository.applyFilter(LibraryFilter()) } }
+            runCurrent()
+
+            val clear = launch { (repository as UserData).clearUserData() }
+            runCurrent()
+            api.failNext()
+            gate.complete(Unit)
+            change.join()
+            clear.join()
+            api.libraryGate = null
+
+            repository.refresh()
+            assertEquals(null, api.requestedStatuses.last())
+        }
+
     @Test
     fun `allWatching reads every page of Watching titles`() =
         runTest {

@@ -43,7 +43,7 @@ import java.io.IOException
 
 class RecommendationRepositoryTest {
     @Test
-    fun `sign-out empties the feed, and a page in flight then is dropped`() =
+    fun `sign-out empties the feed, even with a page in flight`() =
         runTest {
             val api = FakeApi(mapOf(null to page(titles = listOf("Frieren"), nextCursor = null)))
             val repository = RecommendationRepositoryImpl(api)
@@ -59,6 +59,35 @@ class RecommendationRepositoryTest {
             clear.join()
 
             assertEquals(emptyList<Recommendation>(), repository.feed.value)
+        }
+
+    @Test
+    fun `an add that fails after sign-out does not bring the old account's row back`() =
+        runTest {
+            val api = FakeApi(mapOf(null to page(titles = listOf("Frieren"), nextCursor = null)))
+            val repository = RecommendationRepositoryImpl(api)
+            repository.refresh()
+            val row = repository.feed.value.single()
+            repository.remove(row.media.id)
+
+            repository.clearUserData()
+            repository.restore(0, row)
+
+            assertEquals(emptyList<Recommendation>(), repository.feed.value)
+        }
+
+    @Test
+    fun `an add that fails in the same session puts the row back`() =
+        runTest {
+            val api = FakeApi(mapOf(null to page(titles = listOf("Frieren"), nextCursor = null)))
+            val repository = RecommendationRepositoryImpl(api)
+            repository.refresh()
+            val row = repository.feed.value.single()
+            repository.remove(row.media.id)
+
+            repository.restore(0, row)
+
+            assertEquals(listOf(row), repository.feed.value)
         }
 
     @Test

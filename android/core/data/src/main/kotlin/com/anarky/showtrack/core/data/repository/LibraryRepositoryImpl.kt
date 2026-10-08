@@ -26,11 +26,13 @@ import com.anarky.showtrack.core.network.dto.ImportAniListRequest
 import com.anarky.showtrack.core.network.dto.LibraryEntryDto
 import com.anarky.showtrack.core.network.dto.SetWatchedRequestDto
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -198,17 +200,30 @@ class LibraryRepositoryImpl
          */
         @Suppress("TooGenericExceptionCaught")
         override suspend fun applyFilter(filter: LibraryFilter) {
+            val startedIn = session.current()
             val previous = this.filter.value
             this.filter.value = filter
             try {
                 refresh()
             } catch (cancellation: CancellationException) {
-                rollBackFilter(from = filter, to = previous)
+                // NonCancellable: the rollback takes the session lock, and a cancelled coroutine
+                // could not acquire it.
+                withContext(NonCancellable) { rollBackIfStill(startedIn, from = filter, to = previous) }
                 throw cancellation
             } catch (failure: Exception) {
-                rollBackFilter(from = filter, to = previous)
+                rollBackIfStill(startedIn, from = filter, to = previous)
                 throw failure
             }
+        }
+
+        // A sign-out during the refresh reset the filter for the next account; the old one's
+        // filter must not be written back over it.
+        private suspend fun rollBackIfStill(
+            startedIn: Long,
+            from: LibraryFilter,
+            to: LibraryFilter,
+        ) {
+            session.ifStill(startedIn) { rollBackFilter(from = from, to = to) }
         }
 
         /** [applyFilter]'s rollback — see its KDoc for why this is conditional. */
