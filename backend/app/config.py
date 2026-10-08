@@ -43,21 +43,6 @@ class Settings(BaseSettings):
     # tightest tier in SYNC_TIERS silently widens every tier to this value — the job cannot
     # refresh a title it is not awake to look at.
     sync_interval_hours: int = Field(default=1, ge=1)
-    threshold_scan_minutes: int = Field(default=15, ge=1)
-    # The lead time for the AIRING_SOON notification threshold. le=24 is not decoration: the
-    # threshold scan's SQL prefilter is a hard 24-hour window, so a larger lead time would
-    # silently drop candidates the threshold should have caught — the same "never enqueued and
-    # indistinguishable from a healthy quiet scan" failure the lead-time rule replaced.
-    notify_soon_hours: int = Field(default=6, ge=1, le=24)
-    # Optional, like TMDB_API_KEY and for the same recorded reason: a required setting breaks
-    # backend-ci on every subsequent PR. Absent means no transport is registered, the dispatch
-    # job is never scheduled, and tasks queue harmlessly.
-    ntfy_base_url: str | None = None
-    # A CREDENTIAL. Same category as SECRET_KEY: never logged, never echoed in an error body.
-    ntfy_token: str | None = None
-    # The dispatcher is a single indexed query when the queue is empty, which is almost always,
-    # and its latency sits directly on top of the threshold scan's 15-minute granularity.
-    notification_dispatch_minutes: int = Field(default=1, ge=1)
     # How long a group's invite code stays usable. Defaulted, never required — CLAUDE.md records
     # that Phase 2 added two REQUIRED settings and broke backend-ci on every subsequent PR.
     # 168 = seven days: a household joins within days, and since the code can create an account

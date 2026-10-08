@@ -44,7 +44,7 @@ def test_include_router_mounts_domain_routers_under_v1_prefix() -> None:
         importlib.reload(main)
 
 
-def test_domain_routers_cover_all_eight_domains_with_expected_prefixes() -> None:
+def test_domain_routers_cover_all_seven_domains_with_expected_prefixes() -> None:
     """Catches a forgotten or misnamed domain router in main.DOMAIN_ROUTERS."""
     expected_prefixes = {
         "/users",
@@ -52,14 +52,13 @@ def test_domain_routers_cover_all_eight_domains_with_expected_prefixes() -> None
         "/library",
         "/reviews",
         "/sync",
-        "/notifications",
         "/recommendations",
         "/groups",
     }
 
     actual_prefixes = {router.prefix for router in main.DOMAIN_ROUTERS}
 
-    assert len(main.DOMAIN_ROUTERS) == 8
+    assert len(main.DOMAIN_ROUTERS) == 7
     assert actual_prefixes == expected_prefixes
 
 
@@ -75,3 +74,15 @@ async def test_openapi_lists_only_versioned_routes(client: AsyncClient) -> None:
 
     non_versioned = [p for p in paths if not p.startswith("/v1") and p != "/health"]
     assert non_versioned == []
+
+
+async def test_the_retired_push_endpoints_are_gone(auth_client: AsyncClient) -> None:
+    """Episode alerts are scheduled on the phone; the server no longer registers devices."""
+    for method, path in (
+        ("GET", "/v1/notifications/targets"),
+        ("POST", "/v1/notifications/targets"),
+        ("GET", "/v1/notifications/prefs"),
+    ):
+        response = await auth_client.request(method, path)
+
+        assert response.status_code == 404, f"{method} {path}"

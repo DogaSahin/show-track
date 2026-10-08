@@ -14,7 +14,6 @@ from app.logging import setup_logging
 from app.media import routes as media_routes
 from app.media.providers import get_providers, reset_providers
 from app.middleware import REQUEST_ID_HEADER, RequestIDMiddleware
-from app.notifications import routes as notifications_routes
 from app.recommendations import routes as recommendations_routes
 from app.sync import routes as sync_routes
 from app.sync import scheduler as scheduler_module
@@ -28,7 +27,6 @@ DOMAIN_ROUTERS = (
     library_routes.router,
     library_routes.reviews_router,
     sync_routes.router,
-    notifications_routes.router,
     recommendations_routes.router,
     groups_routes.router,
 )

@@ -5,11 +5,9 @@ from collections.abc import Collection, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import DateTime, and_, case, exists, func, literal, or_, select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import get_settings
-from app.db import BULK_INSERT_CHUNK_SIZE, chunked, get_sessionmaker
+from app.db import get_sessionmaker
 from app.library.models import UserMedia
 
 # A module reference, not `from ... import`: app.media.service imports this module too, and a
@@ -18,21 +16,14 @@ from app.media import service as media_service
 from app.media.models import Media, MediaSource, MediaStatus
 from app.media.providers.base import MediaProvider, ProviderEpisode, ProviderMedia
 from app.media.providers.errors import ProviderError, ProviderRateLimited
-from app.notifications.models import (
-    NotificationPrefs,
-    NotificationTask,
-    NotificationThreshold,
-    PushTarget,
-    airs_on_for,
-)
-from app.sync.locks import SYNC_LOCK_KEY, THRESHOLD_LOCK_KEY, advisory_lock
-from app.sync.schemas import SyncSummary, ThresholdScanSummary
+from app.sync.locks import SYNC_LOCK_KEY, advisory_lock
+from app.sync.schemas import SyncSummary
 
 logger = logging.getLogger(__name__)
 
 # FINISHED is the only status never polled. Phase 3's TMDB mapper carries a note making this
 # explicit: "In Production" maps to NOT_YET_AIRED, so polling only AIRING would mean a
-# pre-premiere show never starts syncing and its first episode never notifies.
+# pre-premiere show never gets an air date, and the phone never schedules its first alert.
 SYNCABLE_STATUSES = (MediaStatus.AIRING, MediaStatus.NOT_YET_AIRED)
 
 # How often to re-ask the provider about a title, by how close its next episode is:
@@ -40,8 +31,8 @@ SYNCABLE_STATUSES = (MediaStatus.AIRING, MediaStatus.NOT_YET_AIRED)
 # stay ordered tightest-first.
 #
 # Deliberately a constant rather than four settings. The numbers interact — the scheduler interval
-# has to be <= the tightest tier here, and the tightest tier is what bounds how wrong a
-# notification can be — so four independently-settable env vars can be put into a combination that
+# has to be <= the tightest tier here, and the tightest tier is what bounds how stale the air
+# date behind a phone's alert can be — so four independently-settable env vars can be put into a combination that
 # is incoherent and fails silently. config.py already carries that lesson twice.
 #
 # The tiers cut BOTH ways against a flat interval: the long tail drops from four provider requests
@@ -85,10 +76,10 @@ def _due_cutoff(now: datetime):
     DEFAULT_SYNC_INTERVAL, and that branch is load-bearing. `_apply` writes NULL for both the
     number and the date whenever the provider reports no next episode, and AniList returns
     `nextAiringEpisode: null` TRANSIENTLY — a mid-season break, a delay announcement — not only
-    at a finale. `scan_thresholds` cannot enqueue while the date is NULL, so a title that blips
-    null 23 hours before an airing and is not re-polled for 24 loses BOTH notifications for that
-    episode with no trace in any summary: the row was never `considered`, so nothing counts it.
-    Six hours bounds that window to the same width the flat pre-tiering interval had.
+    at a finale. The phone cannot schedule an alert while the date is NULL, so a title that blips
+    null 23 hours before an airing and is not re-polled for 24 loses BOTH alerts for that episode
+    with no trace anywhere. Six hours bounds that window to the same width the flat pre-tiering
+    interval had.
 
     "We lost the pointer on an airing show" and "airs in three weeks" are not the same
     confidence and must not share a cadence. No status condition is needed in the CASE: the
@@ -137,9 +128,8 @@ async def collect_worklist(session: AsyncSession, *, now: datetime) -> Worklist:
     Only (id, source, external_id) crosses the boundary — carrying ORM objects across the
     caller's rollback would hit the attribute-expiry hazard Phase 4 documented at length.
 
-    `now` is a parameter rather than a clock read for the same reason scan_thresholds takes one:
-    a test whose expected worklist depends on the wall clock fails on a slow runner and nowhere
-    else.
+    `now` is a parameter rather than a clock read because a test whose expected worklist depends
+    on the wall clock fails on a slow runner and nowhere else.
     """
     tracked = (
         select(Media.id, Media.source, Media.external_id)
@@ -273,8 +263,7 @@ async def fetch_all(
         except ProviderRateLimited as exc:
             # Abandon this source for the cycle rather than sleeping. The next cycle is hours
             # away, the data is not urgent, and a job that sleeps inside a scheduler is harder to
-            # reason about than one that gives up and comes back. retry_after stays available to
-            # Phase 6's dispatcher, where sleeping IS the right behaviour.
+            # reason about than one that gives up and comes back.
             logger.warning("%s rate limited; retry_after=%s; skipping this cycle", source, exc.retry_after)
             failed_sources.add(source)
             continue
@@ -404,124 +393,3 @@ async def run_sync(providers: Mapping[MediaSource, MediaProvider], *, now: datet
             return summary.model_copy(
                 update={"episodes_refreshed": refreshed, "episodes_failed": failed + store_failed}
             )
-
-
-# The SQL prefilter's window. One horizon covers both thresholds because notify_soon_hours is
-# bounded at 24 by its `le=` — without that bound a larger lead time would silently start dropping
-# candidates the AIRING_SOON threshold should have caught.
-NOTIFY_HORIZON = timedelta(hours=24)
-
-
-def _crossed(airs_at: datetime, now: datetime, *, soon_hours: int) -> tuple[NotificationThreshold, ...]:
-    """Which thresholds `now` has crossed for this air time.
-
-    Both are LEAD TIMES. The earlier calendar rule for the second threshold fired only between UTC
-    midnight and the air time, so an episode airing at 00:05 UTC had a five-minute window against
-    a fifteen-minute scan — never late, simply never enqueued, and indistinguishable in the summary
-    from a healthy quiet scan. A lead time has no midnight cliff: the window is the same width
-    whatever the air time.
-    """
-    remaining = airs_at - now
-    thresholds: list[NotificationThreshold] = []
-    if timedelta(0) < remaining <= NOTIFY_HORIZON:
-        thresholds.append(NotificationThreshold.TWENTY_FOUR_HOURS)
-    if timedelta(0) < remaining <= timedelta(hours=soon_hours):
-        thresholds.append(NotificationThreshold.AIRING_SOON)
-    return tuple(thresholds)
-
-
-async def scan_thresholds(session: AsyncSession, *, now: datetime, soon_hours: int) -> ThresholdScanSummary:
-    """Enqueue notifications for approaching episodes. Makes NO provider calls.
-
-    That is the whole point of splitting the jobs: evaluating "airs within 24h" never needed
-    provider data, so this can run far more often than the provider sync at zero upstream cost —
-    and it keeps working through a provider outage, when dates go stale but the dates already
-    known are still worth notifying about.
-
-    `soon_hours` is a parameter rather than a settings read, so no test depends on the developer's
-    .env for its expected counts.
-    """
-    candidates = (
-        select(
-            UserMedia.user_id,
-            Media.id.label("media_id"),
-            Media.next_episode_number,
-            Media.next_episode_date,
-        )
-        .join(Media, UserMedia.media_id == Media.id)
-        # Inner join: no prefs row means push was never configured, and defaulting it on here
-        # would send pushes nobody asked for.
-        .join(NotificationPrefs, NotificationPrefs.user_id == UserMedia.user_id)
-        .where(NotificationPrefs.push_enabled.is_(True))
-        # Same class of fact as the inner join above, and for a harder reason. Enqueuing is
-        # IRREVERSIBLE: the dedup upsert is on_conflict_do_nothing regardless of status, so once
-        # a row exists in any terminal state that (user, media, episode, threshold, airs_on) can
-        # never be enqueued again. A task with nowhere to send is burned to `skipped` by the
-        # next dispatch — within a minute — and a target registered two minutes later gets
-        # nothing for those episodes, permanently. That is the DEFAULT first-run path: the
-        # README has the user enable prefs, then register a device.
-        .where(exists().where(PushTarget.user_id == UserMedia.user_id))
-        .where(Media.next_episode_date.is_not(None))
-        # NotificationTask.episode_number is NOT NULL, so a date without a number would raise at
-        # insert time. Excluding it here is cheaper than a 500 in a background job.
-        .where(Media.next_episode_number.is_not(None))
-        # An episode that has already aired is never a notification.
-        .where(Media.next_episode_date > now)
-        .where(Media.next_episode_date <= now + NOTIFY_HORIZON)
-    )
-    rows = (await session.execute(candidates)).all()
-    if not rows:
-        return ThresholdScanSummary(ran=True)
-
-    wanted = [
-        {
-            "user_id": row.user_id,
-            "media_id": row.media_id,
-            "episode_number": row.next_episode_number,
-            "threshold": threshold,
-            "airs_on": airs_on_for(row.next_episode_date),
-        }
-        for row in rows
-        for threshold in _crossed(row.next_episode_date, now, soon_hours=soon_hours)
-    ]
-    if not wanted:
-        return ThresholdScanSummary(ran=True, considered=len(rows))
-
-    enqueued = 0
-    for chunk in chunked(wanted, BULK_INSERT_CHUNK_SIZE):
-        statement = (
-            pg_insert(NotificationTask)
-            .values(list(chunk))
-            # Dedup is the constraint, never application logic. Every scan between a threshold
-            # crossing and the airing re-derives the same rows; being refused is the steady state,
-            # not an error.
-            .on_conflict_do_nothing(constraint="uq_notification_tasks_dedup")
-            .returning(NotificationTask.id)
-        )
-        enqueued += len((await session.execute(statement)).all())
-
-    await session.flush()
-    return ThresholdScanSummary(
-        ran=True, considered=len(rows), enqueued=enqueued, already_queued=len(wanted) - enqueued
-    )
-
-
-async def run_threshold_scan(*, now: datetime | None = None) -> ThresholdScanSummary:
-    """The locked, session-owning entry point, mirroring run_sync.
-
-    A separate lock key from the provider sync, so a slow six-hourly job never stalls the
-    fifteen-minute one.
-    """
-    async with advisory_lock(THRESHOLD_LOCK_KEY) as acquired:
-        if not acquired:
-            return ThresholdScanSummary(ran=False)
-        async with get_sessionmaker()() as session:
-            summary = await scan_thresholds(
-                session,
-                now=now or datetime.now(tz=UTC),
-                # Resolved HERE, not inside scan_thresholds: a settings read buried in the service
-                # makes every threshold test depend on the developer's .env.
-                soon_hours=get_settings().notify_soon_hours,
-            )
-            await session.commit()
-            return summary

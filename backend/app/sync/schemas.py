@@ -20,13 +20,3 @@ class SyncSummary(BaseModel):
     # The episode-list phase, counted per title.
     episodes_refreshed: int = 0
     episodes_failed: int = 0
-
-
-class ThresholdScanSummary(BaseModel):
-    ran: bool
-    considered: int = 0
-    enqueued: int = 0
-    # Rows the unique constraint refused — the normal steady state, since every scan between a
-    # threshold crossing and the episode airing re-derives the same task. A scan that enqueues
-    # nothing is healthy, not idle.
-    already_queued: int = 0

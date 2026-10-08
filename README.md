@@ -48,7 +48,7 @@ One repo, because backend and client share one API contract: a change to an endp
 that calls it lands as a single reviewable unit.
 
 **Backend** — each domain is four files (`models.py`, `schemas.py`, `service.py`, `routes.py`)
-across `users`, `media`, `library`, `sync`, `notifications`, `recommendations`, `groups`. Routes
+across `users`, `media`, `library`, `sync`, `recommendations`, `groups`. Routes
 mount under `/v1`; `/health` stays unversioned because it's an infra probe, not client contract.
 
 **Android** — 16 Gradle modules: `:app`, six `:core:*` (`model`, `designsystem`, `navigation`,
@@ -204,12 +204,11 @@ database is up.
 
 ### TLS, and why it is not optional
 
-Neither service publishes beyond `127.0.0.1`. `tailscale serve` runs on the host, terminates TLS
+Nothing publishes beyond `127.0.0.1`. `tailscale serve` runs on the host, terminates TLS
 with a real Let's Encrypt certificate for the machine's `*.ts.net` name, and proxies to loopback:
 
 ```bash
 sudo tailscale serve --bg 8000                  # https://<machine>.ts.net      -> the API
-sudo tailscale serve --bg --https=8443 8080     # https://<machine>.ts.net:8443 -> ntfy
 sudo tailscale serve status
 ```
 
@@ -218,8 +217,9 @@ so the TLS endpoint is the only way the client can reach the server at all.
 
 ### The host must never sleep
 
-APScheduler runs in-process, so a suspended machine silently stops episode sync and notification
-dispatch. There is no error to notice — you find out by not being told about an episode.
+APScheduler runs in-process, so a suspended machine silently stops the episode sync, and the
+phones' alerts drift from the real air dates. There is no error to notice — you find out by an
+alert for an episode that moved.
 
 ```bash
 sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target
@@ -245,8 +245,6 @@ before and one 6 hours before (just one if the episode is first seen less than 6
 - **Signing out cancels everything**, including alerts already in the notification shade. An
   alert scheduled before a sign-out never shows, for a signed-out phone or for whoever signs in next.
 
-The server's ntfy service is no longer used by the app.
-
 ## Contributing
 
 Work on a local branch off `dev`, get the gate green, conventional-commit, PR into `dev`,
@@ -269,8 +267,6 @@ A few things that will otherwise cost you an afternoon:
   DB-side mutation, re-read with `populate_existing=True`. Any `SELECT … FOR UPDATE` must carry it
   too, or the lock serialises the transactions and then acts on a stale value. This has been
   rediscovered three times in three disguises.
-- **Notifications are never sent from the sync job.** Sync inserts a `NotificationTask`; the
-  dispatcher sends. Dedup is a unique constraint, not application logic.
 - **Always read a generated Alembic migration against the model before committing it.**
   Autogenerate is a starting point, not a trustworthy output.
 
@@ -291,7 +287,7 @@ both get worse the longer they wait.
 
 | Phase | | |
 |---|---|---|
-| 0–7.5b | Backend — foundations, auth, providers, library, AniList import, sync, notifications, recommendations, groups | done |
+| 0–7.5b | Backend — foundations, auth, providers, library, AniList import, sync, recommendations, groups | done |
 | 8 | Android foundations — 16 modules, build-enforced rules, design system, HTTP + token store, Room cache, navigation, Hilt | done |
 | 8.9 | Episode alerts, scheduled on the phone | code complete, unverified on device |
 | 9a–9c | Nine feature screens, end to end | code complete, unverified on device |
