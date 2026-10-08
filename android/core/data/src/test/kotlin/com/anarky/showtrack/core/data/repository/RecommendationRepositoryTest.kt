@@ -485,6 +485,8 @@ class RecommendationRepositoryTest {
         override suspend fun createReview(request: CreateReviewRequestDto): ReviewDto =
             error("this fake only serves refresh/loadMore/remove")
 
+        override suspend fun deleteReview(id: String): Unit = error("not used here")
+
         override suspend fun updateReview(
             id: String,
             patch: JsonObject,

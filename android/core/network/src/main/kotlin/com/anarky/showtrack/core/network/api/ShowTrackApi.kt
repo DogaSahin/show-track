@@ -308,4 +308,10 @@ interface ShowTrackApi {
         @Path("id") id: String,
         @Body patch: JsonObject,
     ): ReviewDto
+
+    /** `DELETE /v1/reviews/{id}`, 204 on success; 404 when it is not this account's own review. */
+    @DELETE("v1/reviews/{id}")
+    suspend fun deleteReview(
+        @Path("id") id: String,
+    )
 }

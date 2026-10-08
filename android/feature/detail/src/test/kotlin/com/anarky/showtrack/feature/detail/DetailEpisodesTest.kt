@@ -3,6 +3,8 @@ package com.anarky.showtrack.feature.detail
 import androidx.lifecycle.SavedStateHandle
 import com.anarky.showtrack.core.model.Episode
 import com.anarky.showtrack.core.model.EpisodeList
+import com.anarky.showtrack.core.model.GroupFailure
+import com.anarky.showtrack.core.model.Review
 import com.anarky.showtrack.core.model.Season
 import com.anarky.showtrack.feature.detail.DetailViewModelTest.Companion.ENTRY
 import kotlinx.coroutines.CompletableDeferred
@@ -255,6 +257,83 @@ class DetailEpisodesTest {
 
             assertEquals(newer, viewModel.ready.catchUp)
         }
+
+    @Test
+    fun `deleting your review removes it at once, before the group list reloads`() =
+        runTest(dispatcher) {
+            val key = DetailViewModelTest.GROUP_ID to "media-1"
+            val groups = FakeGroupRepository().also { it.reviewsResults[key] = listOf(DetailViewModelTest.MY_REVIEW) }
+            val viewModel = groupViewModel(groups)
+            viewModel.setActiveGroup(DetailViewModelTest.GROUP_ID)
+            advanceUntilIdle()
+            // The reload after the delete is held, and would still answer with the old review.
+            val gate = CompletableDeferred<Unit>()
+            groups.reviewsGates[key] = gate
+
+            viewModel.deleteReview()
+            advanceUntilIdle()
+
+            assertEquals(listOf(DetailViewModelTest.MY_REVIEW.id), groups.deletedReviews)
+            val section = (viewModel.state.value as DetailUiState.Success).groupSection as GroupSectionState.Loaded
+            assertEquals(emptyList<Review>(), section.reviews)
+            gate.complete(Unit)
+        }
+
+    @Test
+    fun `a failed delete keeps the review and says so`() =
+        runTest(dispatcher) {
+            val key = DetailViewModelTest.GROUP_ID to "media-1"
+            val groups =
+                FakeGroupRepository().also {
+                    it.reviewsResults[key] = listOf(DetailViewModelTest.MY_REVIEW)
+                    it.deleteReviewFailure = GroupFailure.Network
+                }
+            val viewModel = groupViewModel(groups)
+            viewModel.setActiveGroup(DetailViewModelTest.GROUP_ID)
+            advanceUntilIdle()
+
+            viewModel.deleteReview()
+            advanceUntilIdle()
+
+            val success = viewModel.state.value as DetailUiState.Success
+            assertEquals(
+                listOf(DetailViewModelTest.MY_REVIEW),
+                (success.groupSection as GroupSectionState.Loaded).reviews,
+            )
+            assertEquals(GroupFailure.Network, success.reviewDeleteError)
+            assertEquals(false, success.deletingReview)
+        }
+
+    @Test
+    fun `a review already deleted elsewhere counts as deleted`() =
+        runTest(dispatcher) {
+            val key = DetailViewModelTest.GROUP_ID to "media-1"
+            val groups =
+                FakeGroupRepository().also {
+                    it.reviewsResults[key] = listOf(DetailViewModelTest.MY_REVIEW)
+                    it.deleteReviewFailure = GroupFailure.NoSuchEntry
+                }
+            val viewModel = groupViewModel(groups)
+            viewModel.setActiveGroup(DetailViewModelTest.GROUP_ID)
+            advanceUntilIdle()
+            groups.reviewsResults[key] = emptyList()
+
+            viewModel.deleteReview()
+            advanceUntilIdle()
+
+            val success = viewModel.state.value as DetailUiState.Success
+            assertEquals(null, success.reviewDeleteError)
+            assertEquals(emptyList<Review>(), (success.groupSection as GroupSectionState.Loaded).reviews)
+        }
+
+    private fun groupViewModel(groups: FakeGroupRepository) =
+        DetailViewModel(
+            SavedStateHandle(mapOf("mediaId" to "media-1")),
+            DetailViewModelTest.FakeMedia(),
+            DetailViewModelTest.FakeLibrary(entry = ENTRY),
+            groups,
+            FakeAuthRepository(),
+        )
 
     private companion object {
         val EP1 = Episode(id = "e1", number = 1, title = "Pilot", airDate = null, aired = true)

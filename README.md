@@ -292,7 +292,7 @@ both get worse the longer they wait.
 | 8 | Android foundations — 16 modules, build-enforced rules, design system, HTTP + token store, Room cache, navigation, Hilt | done |
 | 8.9 | Episode alerts, scheduled on the phone | code complete, unverified on device |
 | 9a–9c | Nine feature screens, end to end | code complete, unverified on device |
-| 9.5 | Visual redesign — palette, nav icons, auth, discover, feed, profile, favourites, groups, search | done |
+| 9.5 | Visual redesign — palette, nav icons, auth, library, discover, feed, profile, favourites, groups, search, show details | done |
 | 10 | Polish and deployment | in progress |
 
 **Nothing has been run on a physical device by this repository's own tooling** — there is no device

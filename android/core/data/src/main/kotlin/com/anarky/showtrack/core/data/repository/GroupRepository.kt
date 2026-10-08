@@ -157,4 +157,7 @@ interface GroupRepository {
         body: String?,
         containsSpoilers: Boolean?,
     ): Review
+
+    /** `DELETE /v1/reviews/{id}`. [GroupFailure.NoSuchEntry] when it is not this account's own review. */
+    suspend fun deleteReview(reviewId: String)
 }

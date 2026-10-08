@@ -238,6 +238,8 @@ internal class FakeGroupRepository(
         containsSpoilers: Boolean,
     ): Review = error("not exercised by GroupsViewModel")
 
+    override suspend fun deleteReview(reviewId: String): Unit = error("not used here")
+
     override suspend fun updateReview(
         reviewId: String,
         body: String?,

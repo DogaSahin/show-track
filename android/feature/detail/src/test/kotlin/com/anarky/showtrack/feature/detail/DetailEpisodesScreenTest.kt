@@ -14,10 +14,14 @@ import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ApplicationProvider
 import com.anarky.showtrack.core.model.Episode
 import com.anarky.showtrack.core.model.EpisodeList
+import com.anarky.showtrack.core.model.GroupActor
 import com.anarky.showtrack.core.model.LibraryEntry
 import com.anarky.showtrack.core.model.MediaSource
 import com.anarky.showtrack.core.model.MediaType
+import com.anarky.showtrack.core.model.MemberProgress
+import com.anarky.showtrack.core.model.Review
 import com.anarky.showtrack.core.model.Season
+import com.anarky.showtrack.core.model.UserMediaStatus
 import com.anarky.showtrack.feature.detail.DetailViewModelTest.Companion.ENTRY
 import com.anarky.showtrack.feature.detail.DetailViewModelTest.Companion.MEDIA
 import org.junit.Assert.assertEquals
@@ -188,6 +192,78 @@ class DetailEpisodesScreenTest {
         // Episode 121 is next, so the second range is open.
         composeRule.onNodeWithContentDescription("Episode 121", substring = true).assertExists()
         composeRule.onNodeWithContentDescription("Episode 5,", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun `a member row reads as one sentence, with how far ahead they are`() {
+        composeRule.setContent {
+            DetailScreen(
+                state =
+                    DetailUiState.Success(
+                        data = DetailData(media = MEDIA, entry = ENTRY),
+                        episodes = EpisodesState.NotAvailable,
+                        currentUserId = "me",
+                        groupSection =
+                            GroupSectionState.Loaded(
+                                progress =
+                                    listOf(
+                                        MemberProgress(
+                                            GroupActor("bob", "bob"),
+                                            UserMediaStatus.WATCHING,
+                                            progress = 5,
+                                        ),
+                                        MemberProgress(
+                                            GroupActor("me", "doga"),
+                                            UserMediaStatus.WATCHING,
+                                            progress = 3,
+                                        ),
+                                    ),
+                                reviews = emptyList(),
+                            ),
+                    ),
+                groups = emptyList(),
+                actions = DetailActions(),
+                today = TODAY,
+                activeGroupName = "Home",
+            )
+        }
+
+        composeRule.onNodeWithText("Home").assertExists()
+        composeRule.onNodeWithContentDescription("bob, Watching, episode 5, 2 eps ahead").assertExists()
+        composeRule.onNodeWithContentDescription("doga (you), Watching, episode 3").assertExists()
+        // The race track is a drawing: its labels are not in the accessibility tree.
+        composeRule.onNodeWithText("you · 3").assertDoesNotExist()
+    }
+
+    @Test
+    fun `your own review can be deleted, after a confirmation`() {
+        var deletes = 0
+        val mine = Review("r1", GroupActor("me", "doga"), "media-1", "Loved it.", false, Instant.EPOCH, Instant.EPOCH)
+        composeRule.setContent {
+            DetailScreen(
+                state =
+                    DetailUiState.Success(
+                        data = DetailData(media = MEDIA, entry = ENTRY),
+                        episodes = EpisodesState.NotAvailable,
+                        currentUserId = "me",
+                        groupSection = GroupSectionState.Loaded(progress = emptyList(), reviews = listOf(mine)),
+                    ),
+                groups = emptyList(),
+                actions = DetailActions(onDeleteReview = { deletes++ }),
+                today = TODAY,
+            )
+        }
+
+        // Your own review offers Edit and Delete instead of "Write a review".
+        composeRule.onNodeWithText(context.getString(R.string.detail_review_write_button)).assertDoesNotExist()
+        composeRule.onNodeWithText(context.getString(R.string.detail_review_delete)).performClick()
+        assertEquals(0, deletes)
+        composeRule.onNodeWithText(context.getString(R.string.detail_review_delete_confirm_title)).assertExists()
+        composeRule
+            .onNodeWithText(context.getString(R.string.detail_review_delete_confirm), useUnmergedTree = true)
+            .performClick()
+
+        assertEquals(1, deletes)
     }
 
     private companion object {

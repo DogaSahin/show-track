@@ -1064,6 +1064,8 @@ private class FakeShowTrackApi(
     override suspend fun createReview(request: CreateReviewRequestDto): ReviewDto =
         error("the library repository must not touch groups")
 
+    override suspend fun deleteReview(id: String): Unit = error("not used here")
+
     override suspend fun updateReview(
         id: String,
         patch: JsonObject,

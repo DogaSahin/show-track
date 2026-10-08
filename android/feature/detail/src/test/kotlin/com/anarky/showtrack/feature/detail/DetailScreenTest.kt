@@ -124,7 +124,7 @@ class DetailScreenTest {
         }
 
         val context = ApplicationProvider.getApplicationContext<Context>()
-        composeRule.onNodeWithText(context.getString(R.string.detail_group_section_title)).assertDoesNotExist()
+        composeRule.onNodeWithText(context.getString(R.string.detail_group_heading_fallback)).assertDoesNotExist()
         composeRule.onNodeWithText(context.getString(R.string.detail_group_propose_button)).assertDoesNotExist()
     }
 
@@ -166,9 +166,9 @@ class DetailScreenTest {
         // here; asserting each member's username (unique per row) is present is what actually
         // proves three DISTINCT rows rendered, without coupling this test to that mapping's exact
         // wording.
-        composeRule.onNodeWithText("alice", substring = true).assertExists()
-        composeRule.onNodeWithText("bob", substring = true).assertExists()
-        composeRule.onNodeWithText("cara", substring = true).assertExists()
+        composeRule.onNodeWithContentDescription("alice", substring = true).assertExists()
+        composeRule.onNodeWithContentDescription("bob", substring = true).assertExists()
+        composeRule.onNodeWithContentDescription("cara", substring = true).assertExists()
     }
 
     /** E-K's own "a picker over one option is noise" precedent, extended to the propose control. */
@@ -441,16 +441,16 @@ class DetailScreenTest {
     }
 
     /**
-     * Fix round 1, coordinator finding 2: `GroupSectionContent` renders reviews in a plain
+     * Fix round 1, coordinator finding 2: `ReviewsSection` renders reviews in a plain
      * `Column.forEach` — not a `LazyColumn` — so a reload that swaps in a DIFFERENT review at the
      * SAME list position risks the new review inheriting whatever composition state (SpoilerReview's
-     * own `revealed`) the old occupant of that slot left behind. Drives [GroupSection] directly,
+     * own `revealed`) the old occupant of that slot left behind. Drives [ReviewsSection] directly,
      * through ONE composition (a single `setContent`, `reviews` mutated afterward) rather than two
      * independent `setContent` calls — two calls would each start a brand-new composition and could
      * never observe a slot-reuse bug at all.
      *
      * **Measured, not assumed, for THIS test's own path — recomposition, not process death.**
-     * `GroupSection.kt`'s `key(review.id)` wrapper and `SpoilerReview.kt`'s own
+     * `ReviewsSection`'s `key(review.id)` wrapper and `SpoilerReview.kt`'s own
      * `rememberSaveable(review.id)` each individually held this test green when mutated alone —
      * either one on its own already prevents a recomposition leak. Only removing BOTH at once
      * reddens it, confirmed by mutating both together before writing this KDoc's claim.
@@ -467,18 +467,18 @@ class DetailScreenTest {
     fun `a new review replacing an old one at the same position starts collapsed, not still revealed`() {
         var reviews by mutableStateOf(listOf(SPOILER_A))
         composeRule.setContent {
-            GroupSection(
-                groupSection = GroupSectionState.Loaded(progress = emptyList(), reviews = reviews),
-                groups = listOf(ALPHA),
-                proposing = false,
-                proposeError = null,
-                justProposedToGroupId = null,
-                onProposeToGroup = {},
-                onRetry = {},
+            ReviewsSection(
+                reviews = reviews,
+                reviewsKnown = true,
+                meId = null,
+                reviewEditor = ReviewEditorState.Closed,
+                deleting = false,
+                deleteError = null,
+                actions = DetailActions(),
             )
         }
         val context = ApplicationProvider.getApplicationContext<Context>()
-        // No performScrollTo() here — unlike DetailScreen's own tests, GroupSection is driven
+        // No performScrollTo() here — unlike DetailScreen's own tests, ReviewsSection is driven
         // directly with no surrounding DetailContent scroll container, and this small a tree fits
         // the viewport outright.
         composeRule

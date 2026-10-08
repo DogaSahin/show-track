@@ -377,6 +377,7 @@ class DetailViewModel
             val own = findOwnReview()
             mutableState.value =
                 current.copy(
+                    reviewDeleteError = null,
                     reviewEditor =
                         ReviewEditorState.Open(
                             reviewId = own?.id,
@@ -386,7 +387,42 @@ class DetailViewModel
                 )
         }
 
+        /**
+         * Deletes your own review. It leaves the list at once; the group section then reloads so
+         * the list matches the server. A failure puts nothing back that was not already there.
+         */
+        fun deleteReview() {
+            val current = mutableState.value as? DetailUiState.Success ?: return
+            if (current.deletingReview) return
+            val own = findOwnReview() ?: return
+            mutableState.value = current.copy(deletingReview = true, reviewDeleteError = null)
+            viewModelScope.launch {
+                try {
+                    try {
+                        groupRepository.deleteReview(own.id)
+                    } catch (gone: GroupOperationException) {
+                        // Already deleted (on another device, say): the goal is met, so carry on.
+                        if (gone.failure != GroupFailure.NoSuchEntry) throw gone
+                    }
+                    cacheOwnReview(null)
+                    (groupSection as? GroupSectionState.Loaded)?.let { loaded ->
+                        applyGroupSection(loaded.copy(reviews = loaded.reviews.filterNot { it.id == own.id }))
+                    }
+                    replaceSuccess { it.copy(deletingReview = false) }
+                    if (groupId != null) {
+                        groupSectionGeneration++
+                        reloadGroupSection()
+                    }
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (failure: GroupOperationException) {
+                    replaceSuccess { it.copy(deletingReview = false, reviewDeleteError = failure.failure) }
+                }
+            }
+        }
+
         /** Discards whatever draft is on screen, unsaved — the editor's own Cancel action. */
+
         fun closeReviewEditor() {
             replaceSuccess { it.copy(reviewEditor = ReviewEditorState.Closed) }
         }
@@ -687,7 +723,9 @@ class DetailViewModel
         private fun resolveCurrentUserId() {
             viewModelScope.launch {
                 try {
-                    currentUserId = authRepository.currentUserId()
+                    val id = authRepository.currentUserId()
+                    currentUserId = id
+                    replaceSuccess { it.copy(currentUserId = id) }
                 } catch (cancellation: CancellationException) {
                     throw cancellation
                 } catch (failure: Exception) {
@@ -739,8 +777,12 @@ class DetailViewModel
                     // function's own KDoc for why that case is unreachable today but not free to
                     // get wrong.
                     mutableState.value =
-                        previous?.copy(data = data, groupSection = groupSection)
-                            ?: DetailUiState.Success(data = data, groupSection = groupSection)
+                        previous?.copy(data = data, groupSection = groupSection, currentUserId = currentUserId)
+                            ?: DetailUiState.Success(
+                                data = data,
+                                groupSection = groupSection,
+                                currentUserId = currentUserId,
+                            )
                     episodeController.load(data.entry)
                 } catch (cancellation: CancellationException) {
                     throw cancellation

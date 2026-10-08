@@ -169,6 +169,11 @@ class GroupRepositoryImpl
                     }
                 api.updateReview(reviewId, patch).toDomain()
             }
+
+        override suspend fun deleteReview(reviewId: String) =
+            guarded(notFound = GroupFailure.NoSuchEntry) {
+                api.deleteReview(reviewId)
+            }
     }
 
 /**

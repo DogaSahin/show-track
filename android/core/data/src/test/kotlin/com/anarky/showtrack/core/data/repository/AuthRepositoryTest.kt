@@ -453,6 +453,8 @@ class AuthRepositoryTest {
 
         override suspend fun createReview(request: CreateReviewRequestDto): ReviewDto = error("not used")
 
+        override suspend fun deleteReview(id: String): Unit = error("not used here")
+
         override suspend fun updateReview(
             id: String,
             patch: JsonObject,

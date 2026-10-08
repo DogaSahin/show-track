@@ -141,6 +141,14 @@ internal class FakeGroupRepository(
         return createReviewResult ?: error("no createReviewResult configured")
     }
 
+    val deletedReviews = mutableListOf<String>()
+    var deleteReviewFailure: GroupFailure? = null
+
+    override suspend fun deleteReview(reviewId: String) {
+        deleteReviewFailure?.let { throw GroupOperationException(it) }
+        deletedReviews += reviewId
+    }
+
     override suspend fun updateReview(
         reviewId: String,
         body: String?,

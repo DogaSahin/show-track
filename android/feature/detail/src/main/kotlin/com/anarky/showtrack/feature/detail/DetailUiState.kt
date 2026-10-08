@@ -209,6 +209,10 @@ sealed interface DetailUiState {
         val episodes: EpisodesState = EpisodesState.Loading,
         // An add or a remove is running: the entry is about to change, so episode actions wait.
         val changingEntry: Boolean = false,
+        // The signed-in account, once known: places "you" on the race track and finds your review.
+        val currentUserId: String? = null,
+        val deletingReview: Boolean = false,
+        val reviewDeleteError: GroupFailure? = null,
     ) : DetailUiState
 
     /** Only the initial load (or a retry of it) ever produces this — see [DetailViewModel]'s KDoc. */
