@@ -220,9 +220,8 @@ class ProfileViewModel
          * That is not the same as "nothing happened", and this KDoc used to imply it was. By the
          * time `clear()` can even run, `AuthRepository.logout()` has already cancelled the alerts
          * and called `revoke()`, swallowing its failures (see its KDoc) — so a `clear()` failure
-         * specifically leaves the user signed in locally with no alerts scheduled and the refresh
-         * token possibly already revoked. Both recover on their own without more code here: the
-         * switch itself stays on, so the next library change schedules alerts again, and a revoked
+         * specifically leaves the user signed in locally with alerts switched off and the refresh
+         * token possibly already revoked. Turning alerts back on is one tap, and a revoked
          * refresh token simply fails its next use, which is
          * exactly the terminal-refresh path `AuthEventBus`/`AuthGate` already handle. Worth
          * knowing when reading this failure, not worth guarding against — retrying [signOut] is

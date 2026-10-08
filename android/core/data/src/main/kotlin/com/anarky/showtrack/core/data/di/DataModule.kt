@@ -18,17 +18,23 @@ import com.anarky.showtrack.core.data.repository.RecommendationRepository
 import com.anarky.showtrack.core.data.repository.RecommendationRepositoryImpl
 import com.anarky.showtrack.core.data.search.DataStoreRecentSearchStore
 import com.anarky.showtrack.core.data.search.RecentSearchStore
+import com.anarky.showtrack.core.data.session.UserData
 import dagger.Binds
 import dagger.Module
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
+import dagger.multibindings.IntoSet
 
 /**
  * The edge that makes architecture rule 2 usable rather than merely enforced: everything upstream
  * of here binds concrete types, and this is where the graph starts handing out an interface. A
  * `:feature:*` ViewModel asks for [LibraryRepository] and never learns that Retrofit or Room were
  * involved.
+ *
+ * One `@Binds` per binding is the whole content of a Hilt module, hence the function count:
+ * splitting it would only scatter that edge.
  */
+@Suppress("TooManyFunctions")
 @Module
 @InstallIn(SingletonComponent::class)
 abstract class DataModule {
@@ -110,4 +116,27 @@ abstract class DataModule {
     /** `DataStoreAlertSettingsStore` carries the `@Singleton`, for the same DataStore reason. */
     @Binds
     abstract fun alertSettingsStore(impl: DataStoreAlertSettingsStore): AlertSettingsStore
+
+    // Everything that holds one account's data, cleared together by UserDataCleaner at sign-in,
+    // sign-out and session expiry. Each binds the class itself, which carries the @Singleton, so
+    // the set holds the very instances the screens use.
+    @Binds
+    @IntoSet
+    abstract fun libraryUserData(impl: LibraryRepositoryImpl): UserData
+
+    @Binds
+    @IntoSet
+    abstract fun searchUserData(impl: MediaRepositoryImpl): UserData
+
+    @Binds
+    @IntoSet
+    abstract fun recommendationUserData(impl: RecommendationRepositoryImpl): UserData
+
+    @Binds
+    @IntoSet
+    abstract fun recentSearchUserData(impl: DataStoreRecentSearchStore): UserData
+
+    @Binds
+    @IntoSet
+    abstract fun activeGroupUserData(impl: DataStoreActiveGroupStore): UserData
 }

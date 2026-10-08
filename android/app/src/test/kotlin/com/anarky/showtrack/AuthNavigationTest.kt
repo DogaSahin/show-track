@@ -10,11 +10,13 @@ import androidx.test.core.app.ApplicationProvider
 import com.anarky.showtrack.core.model.ActiveGroupState
 import com.anarky.showtrack.core.navigation.AuthRoute
 import com.anarky.showtrack.core.navigation.DetailRoute
+import com.anarky.showtrack.core.navigation.DiscoverRoute
 import com.anarky.showtrack.core.navigation.FavoritesRoute
 import com.anarky.showtrack.core.navigation.LibraryRoute
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -71,6 +73,65 @@ class AuthNavigationTest {
             listOf(ROOT_GRAPH_ROUTE, AuthRoute::class.qualifiedName),
             controller.backStackRoutes(),
         )
+    }
+
+    /**
+     * Switching tabs saves each tab's stack, ViewModels included, for `restoreState`. Without
+     * clearing those, the next account to sign in taps Favorites and gets the previous account's
+     * Favorites screen back (the same entry, so the same ViewModel and list). Session expiry
+     * reaches the same function through AuthGate, so this covers both ways a session ends.
+     */
+    @Test
+    fun `after sign-out and a new sign-in, a tab starts fresh rather than restoring the old one`() {
+        val controller = controllerWith { defaultGraph() }
+        controller.navigateToTopLevelDestination(FavoritesRoute)
+        val before = controller.currentBackStackEntry!!.id
+        controller.navigateToTopLevelDestination(LibraryRoute)
+
+        controller.navigateToAuthClearingStack()
+        controller.navigateToLibraryClearingAuth()
+        controller.navigateToTopLevelDestination(FavoritesRoute)
+
+        assertEquals(FavoritesRoute::class.qualifiedName, controller.backStackRoutes().last())
+        assertNotEquals(before, controller.currentBackStackEntry!!.id)
+    }
+
+    /**
+     * Home's saved stack is the screens ABOVE Home (Home itself stays live under every tab), so
+     * clearing it restores those screens before popping. They must not be left on top of Auth.
+     */
+    @Test
+    fun `a screen opened from Home before switching tabs does not come back over the login screen`() {
+        val controller = controllerWith { defaultGraph() }
+        controller.navigate(DetailRoute(mediaId = "abc"))
+        val detail = controller.currentBackStackEntry!!.id
+        controller.navigateToTopLevelDestination(FavoritesRoute)
+
+        controller.navigateToAuthClearingStack()
+
+        assertEquals(listOf(null, AuthRoute::class.qualifiedName), controller.backStackRoutes())
+        controller.navigateToLibraryClearingAuth()
+        // Tapping Home right away is the tap that would restore a saved Home stack.
+        controller.navigateToTopLevelDestination(LibraryRoute)
+        assertTrue(controller.currentBackStack.value.none { it.id == detail })
+        controller.navigateToTopLevelDestination(FavoritesRoute)
+        controller.navigateToTopLevelDestination(LibraryRoute)
+        assertTrue(controller.currentBackStack.value.none { it.id == detail })
+    }
+
+    @Test
+    fun `signing out from a tab other than Home leaves no saved tab behind either`() {
+        val controller = controllerWith { defaultGraph() }
+        controller.navigateToTopLevelDestination(DiscoverRoute)
+        val discover = controller.currentBackStackEntry!!.id
+        // Leaving Discover for Favorites saves Discover; sign-out then happens on Favorites.
+        controller.navigateToTopLevelDestination(FavoritesRoute)
+
+        controller.navigateToAuthClearingStack()
+        controller.navigateToLibraryClearingAuth()
+        controller.navigateToTopLevelDestination(DiscoverRoute)
+
+        assertNotEquals(discover, controller.currentBackStackEntry!!.id)
     }
 
     private fun controllerWith(graph: NavHostController.() -> NavGraph): NavHostController =

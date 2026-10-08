@@ -15,6 +15,7 @@ import com.anarky.showtrack.feature.profile.FakeAlertSettingsStore
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -161,6 +162,8 @@ class AlertSchedulerTest {
             assertTrue(live(AlertScheduler.SYNC_NOW).isEmpty())
             assertTrue(settings.fired.isEmpty())
             assertNotEquals(keyBefore, settings.alertKey())
+            // Alerts are opted into per sign-in.
+            assertFalse(settings.enabled.value)
             assertTrue(shadowOf(notifications).allNotifications.isEmpty())
         }
 

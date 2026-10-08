@@ -81,6 +81,8 @@ class AlertScheduler
 
         // Three separate steps, so one failing never skips the others.
         override suspend fun cancelAll() {
+            // Off first: alerts are opted into per sign-in, so whoever signs in next chooses.
+            safely { settings.setEnabled(false) }
             safely { settings.forgetAccount() }
             safely { cancelScheduled() }
             // Alerts already in the shade are this account's too.

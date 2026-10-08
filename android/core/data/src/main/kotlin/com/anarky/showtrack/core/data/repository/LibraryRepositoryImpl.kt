@@ -5,6 +5,8 @@ import com.anarky.showtrack.core.data.mapper.toDomain
 import com.anarky.showtrack.core.data.mapper.toEntity
 import com.anarky.showtrack.core.data.paging.CursorPaginator
 import com.anarky.showtrack.core.data.paging.Page
+import com.anarky.showtrack.core.data.session.SessionGuard
+import com.anarky.showtrack.core.data.session.UserData
 import com.anarky.showtrack.core.database.LibraryDao
 import com.anarky.showtrack.core.database.LibraryEntryEntity
 import com.anarky.showtrack.core.model.ImportFailure
@@ -24,11 +26,13 @@ import com.anarky.showtrack.core.network.dto.ImportAniListRequest
 import com.anarky.showtrack.core.network.dto.LibraryEntryDto
 import com.anarky.showtrack.core.network.dto.SetWatchedRequestDto
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -70,7 +74,11 @@ class LibraryRepositoryImpl
         private val api: ShowTrackApi,
         private val dao: LibraryDao,
         private val alerts: EpisodeAlerts,
-    ) : LibraryRepository {
+    ) : LibraryRepository,
+        UserData {
+        // A cache write from a request that was in flight at sign-out is dropped, never landed.
+        private val session = SessionGuard()
+
         // What view the paginator's CURRENT contents belong to. Every read of it inside the
         // `fetch` lambda below must agree with what `paginator` actually holds, which is the
         // invariant `applyFilter` has to preserve across a throw — see its comment.
@@ -127,6 +135,7 @@ class LibraryRepositoryImpl
             }.distinctUntilChanged()
 
         override suspend fun refresh() {
+            val startedIn = session.current()
             // The RETURNED page, never a re-read of `paginator.items.value`: CursorPaginator.restart
             // fetches before it mutates, so a failed refresh leaves the paginator's state — and the
             // on-screen list — exactly as it was.
@@ -135,7 +144,16 @@ class LibraryRepositoryImpl
             // Room a queryable mirror of fifteen (status x sort) combinations, which is the
             // source-of-truth inversion architecture rule 2 forbids.
             if (filter.value.isDefault) {
-                dao.replaceAll(firstPage.map(LibraryEntry::toEntity))
+                session.ifStill(startedIn) { dao.replaceAll(firstPage.map(LibraryEntry::toEntity)) }
+            }
+        }
+
+        /** Sign-out: the cache, the loaded pages and the filter all go. */
+        override suspend fun clearUserData() {
+            session.end {
+                dao.clear()
+                paginator.reset()
+                filter.value = LibraryFilter()
             }
         }
 
@@ -182,17 +200,30 @@ class LibraryRepositoryImpl
          */
         @Suppress("TooGenericExceptionCaught")
         override suspend fun applyFilter(filter: LibraryFilter) {
+            val startedIn = session.current()
             val previous = this.filter.value
             this.filter.value = filter
             try {
                 refresh()
             } catch (cancellation: CancellationException) {
-                rollBackFilter(from = filter, to = previous)
+                // NonCancellable: the rollback takes the session lock, and a cancelled coroutine
+                // could not acquire it.
+                withContext(NonCancellable) { rollBackIfStill(startedIn, from = filter, to = previous) }
                 throw cancellation
             } catch (failure: Exception) {
-                rollBackFilter(from = filter, to = previous)
+                rollBackIfStill(startedIn, from = filter, to = previous)
                 throw failure
             }
+        }
+
+        // A sign-out during the refresh reset the filter for the next account; the old one's
+        // filter must not be written back over it.
+        private suspend fun rollBackIfStill(
+            startedIn: Long,
+            from: LibraryFilter,
+            to: LibraryFilter,
+        ) {
+            session.ifStill(startedIn) { rollBackFilter(from = from, to = to) }
         }
 
         /** [applyFilter]'s rollback — see its KDoc for why this is conditional. */
@@ -246,6 +277,7 @@ class LibraryRepositoryImpl
             episodeIds: Collection<String>,
             watched: Boolean,
         ): LibraryEntry {
+            val startedIn = session.current()
             val updated =
                 api
                     .setWatchedEpisodes(
@@ -253,7 +285,7 @@ class LibraryRepositoryImpl
                         SetWatchedRequestDto(episodeIds = episodeIds.toList(), watched = watched),
                     ).toDomain()
             // Same single-row upsert as update(): the new progress shows in the Library list at once.
-            dao.insertAll(listOf(updated.toEntity()))
+            session.ifStill(startedIn) { dao.insertAll(listOf(updated.toEntity())) }
             return updated
         }
 
@@ -261,6 +293,7 @@ class LibraryRepositoryImpl
             entryId: String,
             patch: LibraryPatch,
         ): LibraryEntry {
+            val startedIn = session.current()
             val updated = api.updateLibraryEntry(entryId, patch.toJson()).toDomain()
             // A single-row upsert rather than a full refresh: an edit is one known row, and a
             // network round trip per progress tap would be felt. `insertAll` is REPLACE-on-conflict
@@ -268,7 +301,7 @@ class LibraryRepositoryImpl
             // dedicated DAO method. Accepted consequence: an edited entry outside the cached first
             // page gets ADDED to the cache; `observeAll()` orders by `updated_at DESC` so it sorts
             // to the top, and the next `refresh()` rebuilds the cache to match the server anyway.
-            dao.insertAll(listOf(updated.toEntity()))
+            session.ifStill(startedIn) { dao.insertAll(listOf(updated.toEntity())) }
             // Only a status change can start or stop alerts (they are for Watching titles).
             if (patch.status != null) alerts.requestSync()
             return updated

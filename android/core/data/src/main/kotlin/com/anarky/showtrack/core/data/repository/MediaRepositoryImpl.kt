@@ -3,6 +3,8 @@ package com.anarky.showtrack.core.data.repository
 import com.anarky.showtrack.core.data.mapper.toDomain
 import com.anarky.showtrack.core.data.paging.NumberedPage
 import com.anarky.showtrack.core.data.paging.PagePaginator
+import com.anarky.showtrack.core.data.session.SessionGuard
+import com.anarky.showtrack.core.data.session.UserData
 import com.anarky.showtrack.core.model.EpisodeList
 import com.anarky.showtrack.core.model.Media
 import com.anarky.showtrack.core.model.MediaSource
@@ -29,7 +31,11 @@ class MediaRepositoryImpl
     @Inject
     constructor(
         private val api: ShowTrackApi,
-    ) : MediaRepository {
+    ) : MediaRepository,
+        UserData {
+        // Results from a search still in flight at sign-out are dropped, never published.
+        private val session = SessionGuard()
+
         private val mutableResults = MutableStateFlow(SearchResults.EMPTY)
         override val searchResults: StateFlow<SearchResults> = mutableResults.asStateFlow()
 
@@ -48,6 +54,7 @@ class MediaRepositoryImpl
 
         @Suppress("TooGenericExceptionCaught")
         override suspend fun search(query: String) {
+            val startedIn = session.current()
             val previous = this.query
             this.query = query
             try {
@@ -65,7 +72,7 @@ class MediaRepositoryImpl
                 restoreQuery(failed = query, previous = previous)
                 throw failure
             }
-            publish()
+            publish(startedIn)
         }
 
         // Only while this call's query is still the current one: a newer search may have started
@@ -78,8 +85,19 @@ class MediaRepositoryImpl
         }
 
         override suspend fun loadMoreResults() {
+            val startedIn = session.current()
             paginator.loadMore()
-            publish()
+            publish(startedIn)
+        }
+
+        /** Sign-out: the last search and its results go (they carry this account's library state). */
+        override suspend fun clearUserData() {
+            session.end {
+                paginator.reset()
+                query = ""
+                latest = SearchResults.EMPTY
+                mutableResults.value = SearchResults.EMPTY
+            }
         }
 
         override suspend fun detail(mediaId: String): Media = api.mediaDetail(mediaId).toDomain()
@@ -95,7 +113,7 @@ class MediaRepositoryImpl
                     ResolveMediaRequestDto(source = source.name.lowercase(), externalId = externalId),
                 ).toDomain()
 
-        private fun publish() {
-            mutableResults.value = latest.copy(items = paginator.items.value)
+        private suspend fun publish(startedIn: Long) {
+            session.ifStill(startedIn) { mutableResults.value = latest.copy(items = paginator.items.value) }
         }
     }
