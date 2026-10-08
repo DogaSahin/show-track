@@ -99,6 +99,8 @@ internal class FakeGroupRepository(
 
     override suspend fun rotateInvite(groupId: String): GroupWithInvite = error("not exercised by FeedViewModel")
 
+    override suspend fun invite(groupId: String): GroupWithInvite = error("not exercised by FeedViewModel")
+
     override suspend fun removeMember(
         groupId: String,
         userId: String,

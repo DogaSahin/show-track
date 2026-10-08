@@ -1,8 +1,10 @@
 package com.anarky.showtrack.core.data.repository
 
 import android.util.Log
-import com.anarky.showtrack.core.data.push.PushRepository
+import com.anarky.showtrack.core.data.alerts.EpisodeAlerts
+import com.anarky.showtrack.core.data.session.UserDataCleaner
 import com.anarky.showtrack.core.model.AuthFailure
+import com.anarky.showtrack.core.model.CurrentUser
 import com.anarky.showtrack.core.network.api.AuthApi
 import com.anarky.showtrack.core.network.api.ShowTrackApi
 import com.anarky.showtrack.core.network.auth.TokenStore
@@ -12,6 +14,7 @@ import com.anarky.showtrack.core.network.dto.RegisterRequest
 import kotlinx.coroutines.CancellationException
 import retrofit2.HttpException
 import java.io.IOException
+import java.time.Instant
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -33,7 +36,8 @@ class AuthRepositoryImpl
         private val api: AuthApi,
         private val showTrackApi: ShowTrackApi,
         private val tokenStore: TokenStore,
-        private val push: PushRepository,
+        private val alerts: EpisodeAlerts,
+        private val userData: UserDataCleaner,
     ) : AuthRepository {
         // In-memory only, per decision at [AuthRepository.currentUserId]'s own KDoc — cleared on
         // [logout], never persisted. A benign, not a correctness, race: two concurrent first callers
@@ -61,18 +65,39 @@ class AuthRepositoryImpl
         }
 
         @Suppress("TooGenericExceptionCaught")
+        override suspend fun currentUser(): CurrentUser =
+            try {
+                val dto = showTrackApi.me()
+                cachedUserId = dto.id
+                CurrentUser(
+                    id = dto.id,
+                    username = dto.username,
+                    email = dto.email,
+                    createdAt = Instant.parse(dto.createdAt),
+                )
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (failure: Exception) {
+                throw mapCurrentUserIdFailure(failure)
+            }
+
+        @Suppress("TooGenericExceptionCaught")
         override suspend fun login(
             email: String,
             password: String,
         ) {
             // logout() is not the only way a session ends: TokenRefreshAuthenticator clears the
             // token store directly on an unrecoverable 401 (never calling logout()) and emits
-            // AuthEvent.LoggedOut for AuthGate/PushSessionObserver to react to. Neither of those
+            // AuthEvent.LoggedOut for AuthGate/SessionEndObserver to react to. Neither of those
             // consumers reaches this cache, so a stale id from the PREVIOUS account would
             // otherwise survive into a new session started this way. Clearing here, at the one
             // place every new session actually begins, covers that path along with the ordinary
             // logout-then-login one logout() already covers.
             cachedUserId = null
+            // Before the new tokens exist, so nothing the next account loads can be swept away:
+            // a sign-out interrupted half way (the process killed) must still not hand the
+            // previous account's cache, lists or choices to this one.
+            userData.clear()
             try {
                 val tokens = api.login(LoginRequest(email = email, password = password))
                 tokenStore.save(access = tokens.accessToken, refresh = tokens.refreshToken)
@@ -81,7 +106,10 @@ class AuthRepositoryImpl
             } catch (failure: Exception) {
                 throw mapLoginFailure(failure)
             }
-            registerForPush()
+            // A clean slate first: nothing scheduled before this sign-in (even by a sync that raced
+            // the previous sign-out) can show after it.
+            alerts.cancelAll()
+            alerts.requestSync()
         }
 
         @Suppress("TooGenericExceptionCaught")
@@ -121,15 +149,8 @@ class AuthRepositoryImpl
 
         override suspend fun logout() {
             val tokens = tokenStore.tokens()
-            // BEFORE the clear: this deletes the server-side push target over an AUTHENTICATED
-            // call. Clearing first would 401 and leave the backend pushing to a signed-out device.
-            // Routed through detachPush() rather than called bare: store.read()/clearTarget() can
-            // still throw even though PushRepositoryImpl swallows its own DELETE failure, and
-            // nothing in the PushRepository interface obliges an implementation to swallow
-            // anything. An unguarded throw here would skip revoke() and tokenStore.clear() below
-            // and leave the user pressing "log out" and staying logged in — worse than login's
-            // symmetric case, where a push failure must not be misreported as a login failure.
-            detachPush()
+            // First, so nothing scheduled for this account can fire once it is signed out.
+            alerts.cancelAll()
             if (tokens != null) {
                 revoke(tokens.refresh)
             }
@@ -137,32 +158,8 @@ class AuthRepositoryImpl
             // The session this id belonged to is gone; the next signed-in session (same account
             // signing back in, or a different one) must re-resolve it rather than read a stale cache.
             cachedUserId = null
-        }
-
-        @Suppress("TooGenericExceptionCaught")
-        private suspend fun registerForPush() {
-            try {
-                push.onLoggedIn()
-            } catch (cancellation: CancellationException) {
-                throw cancellation
-            } catch (failure: Exception) {
-                // The credentials were right. Reporting a push failure as a login failure would
-                // describe the wrong thing to the one person who cannot act on it.
-                Log.w(TAG, "push registration failed after login: ${failure.javaClass.simpleName}")
-            }
-        }
-
-        @Suppress("TooGenericExceptionCaught")
-        private suspend fun detachPush() {
-            try {
-                push.onLoggedOut()
-            } catch (cancellation: CancellationException) {
-                throw cancellation
-            } catch (failure: Exception) {
-                // A logout must complete locally no matter what the push cleanup does. Failing
-                // here would leave the user unable to log out at all when push cleanup fails.
-                Log.w(TAG, "push cleanup failed on logout: ${failure.javaClass.simpleName}")
-            }
+            // After the tokens are gone, so nothing can load this account's data back in.
+            userData.clear()
         }
 
         @Suppress("TooGenericExceptionCaught")

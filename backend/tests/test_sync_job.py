@@ -9,9 +9,9 @@ from app.sync import service
 from tests.factories import make_media, make_user, make_user_media
 
 FRESH_AIR_DATE = datetime(2026, 12, 1, 15, 0, tzinfo=UTC)
-# A fixed "now" for the cadence tests. Passed in rather than read from the clock, for the same
-# reason scan_thresholds takes one: a test whose expected counts depend on the wall clock is a
-# test that fails on a slow CI runner and nowhere else.
+# A fixed "now" for the cadence tests. Passed in rather than read from the clock: a test whose
+# expected counts depend on the wall clock is a test that fails on a slow CI runner and nowhere
+# else.
 NOW = datetime(2026, 8, 21, 12, 0, tzinfo=UTC)
 
 
@@ -46,6 +46,9 @@ class BatchProvider(MediaProvider):
 
     async def get_by_id(self, external_id: str):
         raise AssertionError("the sync job must use get_many, not get_by_id")
+
+    async def get_episodes(self, external_id: str):
+        return ()
 
     async def fetch_similar(self, external_id: str):
         raise AssertionError("not used in these tests")
@@ -167,7 +170,7 @@ async def test_one_provider_failing_does_not_stop_the_other(db_session):
 
 async def test_a_rate_limited_provider_is_counted_not_slept_on(db_session):
     """The job abandons that source for the cycle rather than sleeping: the next cycle is six
-    hours away, the data is not urgent, and the threshold scan is unaffected either way.
+    hours away, and the data is not urgent.
     """
     await _tracked_media(db_session, external_id="1", status=MediaStatus.AIRING)
 
@@ -237,7 +240,7 @@ async def test_a_title_airing_soon_is_due_sooner_than_a_distant_one(db_session):
 
     A flat interval polls these two at the same rate, which is wrong in both directions at once —
     it wastes provider budget on the distant title and under-samples the one whose date is about
-    to drive a notification.
+    to drive a phone's episode alert.
     """
     await _tracked_media(
         db_session,
@@ -304,9 +307,9 @@ async def test_a_title_with_no_air_date_is_polled_at_the_lost_pointer_cadence(db
     """A NULL next_episode_date on an AIRING title gets its own 6h tier, not the 24h default.
 
     AniList returns `nextAiringEpisode: null` transiently — a mid-season break, a delay
-    announcement — so a NULL is not proof the season ended. While it is NULL, scan_thresholds
-    cannot enqueue anything, so a title that blips null 23 hours before an airing and is not
-    re-polled for 24 loses BOTH notifications for that episode, and the summary never counts it.
+    announcement — so a NULL is not proof the season ended. While it is NULL, the phone
+    cannot schedule an alert, so a title that blips null 23 hours before an airing and is not
+    re-polled for 24 loses BOTH alerts for that episode.
     """
     await _tracked_media(
         db_session,

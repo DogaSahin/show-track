@@ -3,9 +3,14 @@ package com.anarky.showtrack.core.data.repository
 import com.anarky.showtrack.core.data.mapper.toDomain
 import com.anarky.showtrack.core.data.paging.NumberedPage
 import com.anarky.showtrack.core.data.paging.PagePaginator
+import com.anarky.showtrack.core.data.session.SessionGuard
+import com.anarky.showtrack.core.data.session.UserData
+import com.anarky.showtrack.core.model.EpisodeList
 import com.anarky.showtrack.core.model.Media
+import com.anarky.showtrack.core.model.MediaSource
 import com.anarky.showtrack.core.model.SearchResults
 import com.anarky.showtrack.core.network.api.ShowTrackApi
+import com.anarky.showtrack.core.network.dto.ResolveMediaRequestDto
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -26,7 +31,11 @@ class MediaRepositoryImpl
     @Inject
     constructor(
         private val api: ShowTrackApi,
-    ) : MediaRepository {
+    ) : MediaRepository,
+        UserData {
+        // Results from a search still in flight at sign-out are dropped, never published.
+        private val session = SessionGuard()
+
         private val mutableResults = MutableStateFlow(SearchResults.EMPTY)
         override val searchResults: StateFlow<SearchResults> = mutableResults.asStateFlow()
 
@@ -45,12 +54,13 @@ class MediaRepositoryImpl
 
         @Suppress("TooGenericExceptionCaught")
         override suspend fun search(query: String) {
+            val startedIn = session.current()
             val previous = this.query
             this.query = query
             try {
                 paginator.restart()
             } catch (cancellation: CancellationException) {
-                this.query = previous
+                restoreQuery(failed = query, previous = previous)
                 throw cancellation
             } catch (failure: Exception) {
                 // PagePaginator.restart() mutates nothing when its fetch throws, so the
@@ -59,20 +69,51 @@ class MediaRepositoryImpl
                 // APPEND it onto the old query's page 1 — a search result mixing two queries
                 // with no way for the caller to detect it. `query` must always name the query
                 // the paginator's current contents actually came from.
-                this.query = previous
+                restoreQuery(failed = query, previous = previous)
                 throw failure
             }
-            publish()
+            publish(startedIn)
+        }
+
+        // Only while this call's query is still the current one: a newer search may have started
+        // meanwhile, and rolling back over it would make that search fetch the old query.
+        private fun restoreQuery(
+            failed: String,
+            previous: String,
+        ) {
+            if (this.query == failed) this.query = previous
         }
 
         override suspend fun loadMoreResults() {
+            val startedIn = session.current()
             paginator.loadMore()
-            publish()
+            publish(startedIn)
+        }
+
+        /** Sign-out: the last search and its results go (they carry this account's library state). */
+        override suspend fun clearUserData() {
+            session.end {
+                paginator.reset()
+                query = ""
+                latest = SearchResults.EMPTY
+                mutableResults.value = SearchResults.EMPTY
+            }
         }
 
         override suspend fun detail(mediaId: String): Media = api.mediaDetail(mediaId).toDomain()
 
-        private fun publish() {
-            mutableResults.value = latest.copy(items = paginator.items.value)
+        override suspend fun episodes(mediaId: String): EpisodeList = api.mediaEpisodes(mediaId).toDomain()
+
+        override suspend fun resolve(
+            source: MediaSource,
+            externalId: String,
+        ): Media =
+            api
+                .resolveMedia(
+                    ResolveMediaRequestDto(source = source.name.lowercase(), externalId = externalId),
+                ).toDomain()
+
+        private suspend fun publish(startedIn: Long) {
+            session.ifStill(startedIn) { mutableResults.value = latest.copy(items = paginator.items.value) }
         }
     }

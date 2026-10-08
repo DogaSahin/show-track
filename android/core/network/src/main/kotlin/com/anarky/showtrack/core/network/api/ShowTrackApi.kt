@@ -3,6 +3,7 @@ package com.anarky.showtrack.core.network.api
 import com.anarky.showtrack.core.network.dto.AddLibraryEntryRequest
 import com.anarky.showtrack.core.network.dto.CreateGroupRequestDto
 import com.anarky.showtrack.core.network.dto.CreateReviewRequestDto
+import com.anarky.showtrack.core.network.dto.EpisodeListDto
 import com.anarky.showtrack.core.network.dto.FeedPageDto
 import com.anarky.showtrack.core.network.dto.GroupDto
 import com.anarky.showtrack.core.network.dto.GroupWithInviteDto
@@ -17,11 +18,12 @@ import com.anarky.showtrack.core.network.dto.MediaSearchResponseDto
 import com.anarky.showtrack.core.network.dto.MemberDto
 import com.anarky.showtrack.core.network.dto.ProgressEntryDto
 import com.anarky.showtrack.core.network.dto.ProposeTitleRequestDto
-import com.anarky.showtrack.core.network.dto.PushTargetDto
 import com.anarky.showtrack.core.network.dto.RecommendationPageDto
-import com.anarky.showtrack.core.network.dto.RegisterTargetRequest
+import com.anarky.showtrack.core.network.dto.ResolveMediaRequestDto
 import com.anarky.showtrack.core.network.dto.ReviewDto
+import com.anarky.showtrack.core.network.dto.SetWatchedRequestDto
 import com.anarky.showtrack.core.network.dto.UserDto
+import com.anarky.showtrack.core.network.dto.WatchedEpisodesDto
 import com.anarky.showtrack.core.network.dto.WatchlistItemDto
 import com.anarky.showtrack.core.network.dto.WatchlistPageDto
 import kotlinx.serialization.json.JsonObject
@@ -30,6 +32,7 @@ import retrofit2.http.DELETE
 import retrofit2.http.GET
 import retrofit2.http.PATCH
 import retrofit2.http.POST
+import retrofit2.http.PUT
 import retrofit2.http.Path
 import retrofit2.http.Query
 
@@ -40,7 +43,7 @@ import retrofit2.http.Query
  *
  * `@Suppress("TooManyFunctions")`: this interface is the ONE Retrofit surface `:core:data` is
  * allowed to depend on (architecture rule 2's `implementation`-scoped edge exists precisely so
- * nothing else does) — splitting it by domain (library vs. media vs. push vs. groups vs. reviews)
+ * nothing else does) — splitting it by domain (library vs. media vs. groups vs. reviews)
  * would multiply Retrofit service interfaces for a distinction that means nothing to the one
  * caller that ever sees any of them. The cost, stated rather than omitted: a type-level suppression
  * turns detekt's ratchet off permanently for this file, the same trade-off [GroupRepository] and
@@ -79,11 +82,31 @@ interface ShowTrackApi {
         @Query("sort") sort: String?,
         @Query("media_id") mediaId: String?,
         @Query("favorite") favorite: Boolean?,
+        @Query("type") type: String?,
     ): LibraryPageDto
 
     @POST("v1/library")
     suspend fun addLibraryEntry(
         @Body request: AddLibraryEntryRequest,
+    ): LibraryEntryDto
+
+    /** `DELETE /v1/library/{id}`, 204 on success. The shared title row stays; only the entry goes. */
+    @DELETE("v1/library/{id}")
+    suspend fun deleteLibraryEntry(
+        @Path("id") id: String,
+    )
+
+    /** `GET /v1/library/{id}/episodes/watched`: the ids of the episodes this entry has ticked. */
+    @GET("v1/library/{id}/episodes/watched")
+    suspend fun watchedEpisodes(
+        @Path("id") id: String,
+    ): WatchedEpisodesDto
+
+    /** Returns the updated entry (the same shape as PATCH), carrying the recounted progress. */
+    @PUT("v1/library/{id}/episodes/watched")
+    suspend fun setWatchedEpisodes(
+        @Path("id") id: String,
+        @Body request: SetWatchedRequestDto,
     ): LibraryEntryDto
 
     /**
@@ -127,37 +150,26 @@ interface ShowTrackApi {
         @Query("page") page: Int,
     ): MediaSearchResponseDto
 
+    /**
+     * `POST /v1/media/resolve`: a search result's stored row (created if need be), so it can be
+     * opened without adding it. Errors as for `POST /v1/library`.
+     */
+    @POST("v1/media/resolve")
+    suspend fun resolveMedia(
+        @Body request: ResolveMediaRequestDto,
+    ): MediaDto
+
+    /** `GET /v1/media/{id}/episodes`: seasons and episodes, from the server's database only. */
+    @GET("v1/media/{id}/episodes")
+    suspend fun mediaEpisodes(
+        @Path("id") id: String,
+    ): EpisodeListDto
+
     /** `GET /v1/media/{id}`, a MediaDetail — the same shape [LibraryEntryDto] embeds. */
     @GET("v1/media/{id}")
     suspend fun mediaDetail(
         @Path("id") id: String,
     ): MediaDto
-
-    /**
-     * `POST /v1/notifications/targets`. Registers this device for push.
-     *
-     * IDEMPOTENT for `unifiedpush` (backend decision A-O), which is why there is no
-     * "have I registered before?" bookkeeping on this side beyond remembering the id to delete:
-     * the distributor re-delivers the endpoint through `onNewEndpoint` on every app start, and
-     * the server answers 201 the first time and 200 every time after, with the same body. Both
-     * are 2xx, so Retrofit returns normally for both and the client does not have to care.
-     */
-    @POST("v1/notifications/targets")
-    suspend fun registerPushTarget(
-        @Body request: RegisterTargetRequest,
-    ): PushTargetDto
-
-    /**
-     * `DELETE /v1/notifications/targets/{id}`, 204 on success.
-     *
-     * 404 when the id is unknown OR belongs to another account — the backend refuses to
-     * distinguish those, so a non-2xx here arrives as an `HttpException` and means only
-     * "not deletable by you".
-     */
-    @DELETE("v1/notifications/targets/{id}")
-    suspend fun deletePushTarget(
-        @Path("id") id: String,
-    )
 
     /**
      * `GET /v1/recommendations`. Cursor-paginated (architecture rule 4): pass the previous page's
@@ -207,6 +219,15 @@ interface ShowTrackApi {
     suspend fun groupMembers(
         @Path("id") groupId: String,
     ): List<MemberDto>
+
+    /**
+     * `GET /v1/groups/{id}/invite`: the current code and expiry, read-only (never rotates; an
+     * expired code comes back as it is). Owner only — a non-owner gets a 403.
+     */
+    @GET("v1/groups/{id}/invite")
+    suspend fun groupInvite(
+        @Path("id") groupId: String,
+    ): GroupWithInviteDto
 
     /** `POST /v1/groups/{id}/invite/rotate`. Owner only — a non-owner gets a 403. */
     @POST("v1/groups/{id}/invite/rotate")

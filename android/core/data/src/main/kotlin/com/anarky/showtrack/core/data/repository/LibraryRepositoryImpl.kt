@@ -1,9 +1,12 @@
 package com.anarky.showtrack.core.data.repository
 
+import com.anarky.showtrack.core.data.alerts.EpisodeAlerts
 import com.anarky.showtrack.core.data.mapper.toDomain
 import com.anarky.showtrack.core.data.mapper.toEntity
 import com.anarky.showtrack.core.data.paging.CursorPaginator
 import com.anarky.showtrack.core.data.paging.Page
+import com.anarky.showtrack.core.data.session.SessionGuard
+import com.anarky.showtrack.core.data.session.UserData
 import com.anarky.showtrack.core.database.LibraryDao
 import com.anarky.showtrack.core.database.LibraryEntryEntity
 import com.anarky.showtrack.core.model.ImportFailure
@@ -11,21 +14,25 @@ import com.anarky.showtrack.core.model.ImportSummary
 import com.anarky.showtrack.core.model.LibraryEntry
 import com.anarky.showtrack.core.model.LibraryFilter
 import com.anarky.showtrack.core.model.LibraryPatch
+import com.anarky.showtrack.core.model.LibrarySort
 import com.anarky.showtrack.core.model.LibraryStats
 import com.anarky.showtrack.core.model.MediaSource
+import com.anarky.showtrack.core.model.MediaType
 import com.anarky.showtrack.core.model.ScoreChange
+import com.anarky.showtrack.core.model.UserMediaStatus
 import com.anarky.showtrack.core.network.api.ShowTrackApi
 import com.anarky.showtrack.core.network.dto.AddLibraryEntryRequest
 import com.anarky.showtrack.core.network.dto.ImportAniListRequest
 import com.anarky.showtrack.core.network.dto.LibraryEntryDto
+import com.anarky.showtrack.core.network.dto.SetWatchedRequestDto
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -36,6 +43,9 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 private const val PAGE_SIZE = 20
+
+// The server's largest page; alert planning reads every Watching entry in as few calls as it can.
+private const val ALL_WATCHING_PAGE_SIZE = 100
 private const val HTTP_NOT_FOUND = 404
 private const val HTTP_UNPROCESSABLE_ENTITY = 422
 private const val HTTP_TOO_MANY_REQUESTS = 429
@@ -63,7 +73,12 @@ class LibraryRepositoryImpl
     constructor(
         private val api: ShowTrackApi,
         private val dao: LibraryDao,
-    ) : LibraryRepository {
+        private val alerts: EpisodeAlerts,
+    ) : LibraryRepository,
+        UserData {
+        // A cache write from a request that was in flight at sign-out is dropped, never landed.
+        private val session = SessionGuard()
+
         // What view the paginator's CURRENT contents belong to. Every read of it inside the
         // `fetch` lambda below must agree with what `paginator` actually holds, which is the
         // invariant `applyFilter` has to preserve across a throw — see its comment.
@@ -85,37 +100,10 @@ class LibraryRepositoryImpl
                         sort = current.sort.wire,
                         mediaId = null,
                         favorite = null,
+                        type = null,
                     )
                 Page(page.items.map(LibraryEntryDto::toDomain), page.nextCursor)
             }
-
-        // A SEPARATE CursorPaginator from [paginator] above (this class's own KDoc / task 9b.4,
-        // decision D-H): Library and Favorites are both `TopLevelDestination`s with saved state
-        // and can be open at once, so sharing one paginator would make switching tabs reset the
-        // OTHER screen's scroll position and page counter. `favorite = true` is the only filter
-        // this fetch ever sends — status/sort/mediaId stay null/default because Favorites has no
-        // tabs or sort control (decision D-H's "layout is duplicated, the trap is not").
-        private val favoritesPaginator =
-            CursorPaginator<LibraryEntry> { cursor ->
-                val page =
-                    api.library(
-                        cursor = cursor,
-                        limit = PAGE_SIZE,
-                        status = null,
-                        sort = null,
-                        mediaId = null,
-                        favorite = true,
-                    )
-                Page(page.items.map(LibraryEntryDto::toDomain), page.nextCursor)
-            }
-
-        // A SEPARATE published list from `favoritesPaginator.items`, deliberately — not a
-        // passthrough the way an earlier version of this class had. `refreshFavorites`/
-        // `loadMoreFavorites` set this explicitly from the page `restart()`/`loadMore()` actually
-        // RETURNED, never by re-reading `favoritesPaginator.items` after the fact — `items` can
-        // have grown by the time the caller looks at it (`CursorPaginator.restart`'s own KDoc).
-        private val mutableFavoriteEntries = MutableStateFlow<List<LibraryEntry>>(emptyList())
-        override val favoriteEntries: StateFlow<List<LibraryEntry>> = mutableFavoriteEntries.asStateFlow()
 
         /**
          * The cache wins only before the first network page arrives, and only for the default
@@ -147,6 +135,7 @@ class LibraryRepositoryImpl
             }.distinctUntilChanged()
 
         override suspend fun refresh() {
+            val startedIn = session.current()
             // The RETURNED page, never a re-read of `paginator.items.value`: CursorPaginator.restart
             // fetches before it mutates, so a failed refresh leaves the paginator's state — and the
             // on-screen list — exactly as it was.
@@ -155,7 +144,16 @@ class LibraryRepositoryImpl
             // Room a queryable mirror of fifteen (status x sort) combinations, which is the
             // source-of-truth inversion architecture rule 2 forbids.
             if (filter.value.isDefault) {
-                dao.replaceAll(firstPage.map(LibraryEntry::toEntity))
+                session.ifStill(startedIn) { dao.replaceAll(firstPage.map(LibraryEntry::toEntity)) }
+            }
+        }
+
+        /** Sign-out: the cache, the loaded pages and the filter all go. */
+        override suspend fun clearUserData() {
+            session.end {
+                dao.clear()
+                paginator.reset()
+                filter.value = LibraryFilter()
             }
         }
 
@@ -202,17 +200,30 @@ class LibraryRepositoryImpl
          */
         @Suppress("TooGenericExceptionCaught")
         override suspend fun applyFilter(filter: LibraryFilter) {
+            val startedIn = session.current()
             val previous = this.filter.value
             this.filter.value = filter
             try {
                 refresh()
             } catch (cancellation: CancellationException) {
-                rollBackFilter(from = filter, to = previous)
+                // NonCancellable: the rollback takes the session lock, and a cancelled coroutine
+                // could not acquire it.
+                withContext(NonCancellable) { rollBackIfStill(startedIn, from = filter, to = previous) }
                 throw cancellation
             } catch (failure: Exception) {
-                rollBackFilter(from = filter, to = previous)
+                rollBackIfStill(startedIn, from = filter, to = previous)
                 throw failure
             }
+        }
+
+        // A sign-out during the refresh reset the filter for the next account; the old one's
+        // filter must not be written back over it.
+        private suspend fun rollBackIfStill(
+            startedIn: Long,
+            from: LibraryFilter,
+            to: LibraryFilter,
+        ) {
+            session.ifStill(startedIn) { rollBackFilter(from = from, to = to) }
         }
 
         /** [applyFilter]'s rollback — see its KDoc for why this is conditional. */
@@ -238,13 +249,51 @@ class LibraryRepositoryImpl
             // does not contain what they just added. A network round trip is acceptable here
             // because `add` is a one-off action, unlike `update`'s per-tap edits below.
             refresh()
+            alerts.requestSync()
             return created
+        }
+
+        @Suppress("TooGenericExceptionCaught")
+        override suspend fun remove(entryId: String) {
+            api.deleteLibraryEntry(entryId)
+            dao.deleteById(entryId)
+            alerts.requestSync()
+            try {
+                // The paged list is rebuilt so the title leaves it too; the removal already
+                // succeeded, so a failed refresh must not report it as failed.
+                refresh()
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (_: Exception) {
+                // The next refresh catches the list up.
+            }
+        }
+
+        override suspend fun watchedEpisodes(entryId: String): Set<String> =
+            api.watchedEpisodes(entryId).episodeIds.toSet()
+
+        override suspend fun setWatched(
+            entryId: String,
+            episodeIds: Collection<String>,
+            watched: Boolean,
+        ): LibraryEntry {
+            val startedIn = session.current()
+            val updated =
+                api
+                    .setWatchedEpisodes(
+                        entryId,
+                        SetWatchedRequestDto(episodeIds = episodeIds.toList(), watched = watched),
+                    ).toDomain()
+            // Same single-row upsert as update(): the new progress shows in the Library list at once.
+            session.ifStill(startedIn) { dao.insertAll(listOf(updated.toEntity())) }
+            return updated
         }
 
         override suspend fun update(
             entryId: String,
             patch: LibraryPatch,
         ): LibraryEntry {
+            val startedIn = session.current()
             val updated = api.updateLibraryEntry(entryId, patch.toJson()).toDomain()
             // A single-row upsert rather than a full refresh: an edit is one known row, and a
             // network round trip per progress tap would be felt. `insertAll` is REPLACE-on-conflict
@@ -252,7 +301,9 @@ class LibraryRepositoryImpl
             // dedicated DAO method. Accepted consequence: an edited entry outside the cached first
             // page gets ADDED to the cache; `observeAll()` orders by `updated_at DESC` so it sorts
             // to the top, and the next `refresh()` rebuilds the cache to match the server anyway.
-            dao.insertAll(listOf(updated.toEntity()))
+            session.ifStill(startedIn) { dao.insertAll(listOf(updated.toEntity())) }
+            // Only a status change can start or stop alerts (they are for Watching titles).
+            if (patch.status != null) alerts.requestSync()
             return updated
         }
 
@@ -264,53 +315,72 @@ class LibraryRepositoryImpl
          */
         override suspend fun entryForMedia(mediaId: String): LibraryEntry? =
             api
-                .library(cursor = null, limit = 1, status = null, sort = null, mediaId = mediaId, favorite = null)
-                .items
+                .library(
+                    cursor = null,
+                    limit = 1,
+                    status = null,
+                    sort = null,
+                    mediaId = mediaId,
+                    favorite = null,
+                    type = null,
+                ).items
                 .firstOrNull()
                 ?.toDomain()
 
-        /**
-         * `favoritesPaginator.restart()`'s RETURNED page, not a re-read of [favoriteEntries] or
-         * `favoritesPaginator.items.value` — the same "fetch before mutate, use what it handed
-         * back" discipline [refresh] above and `RecommendationRepositoryImpl.refresh` both follow,
-         * and for the identical reason: a failed restart leaves [mutableFavoriteEntries] exactly
-         * as it was (this line is never reached when the fetch throws), and a caller that instead
-         * re-read the paginator's own list after the fact would be exposed to whatever a
-         * concurrently-racing [loadMoreFavorites] had appended in the meantime — see
-         * [loadMoreFavorites]'s KDoc, where `loadMore()` returns the page it fetched rather than
-         * leaving it in a field that outlives the call.
-         */
-        override suspend fun refreshFavorites() {
-            val firstPage = favoritesPaginator.restart()
-            mutableFavoriteEntries.value = firstPage
-        }
-
-        /**
-         * Appends the page `loadMore()` actually fetched onto [mutableFavoriteEntries] — never
-         * re-publishes the whole of `favoritesPaginator.items.value`, mirroring
-         * `RecommendationRepositoryImpl.loadMore`'s own KDoc for why.
-         *
-         * **Whole-branch fix round, BLOCKING 4.** This used to guard on
-         * `favoritesPaginator.hasMore.value` and then append a `lastFetchedFavoritesPage` field
-         * written inside the fetch lambda. Both halves were wrong together: the flag was read
-         * BEFORE `loadMore()` suspended on the paginator's mutex, and the field was read AFTER it
-         * returned — so a concurrent `refreshFavorites()` that came back exhausted while this call
-         * was queued on that mutex left `loadMore()` fetching nothing and this line appending the
-         * REFRESH's page a second time. Every id twice, and `FavoritesList` keys its `LazyColumn`
-         * by `LibraryEntry::id`: `IllegalArgumentException: Key "…" was already used`, a
-         * composition crash. `CursorPaginator`'s own KDoc names the rule this broke — "checking a
-         * flag is not atomic across a suspension point; taking a lock is".
-         *
-         * `loadMore()` now answers `null` when it fetched nothing, decided inside the lock, so
-         * there is no flag to read early and no field to read late.
-         */
-        override suspend fun loadMoreFavorites() {
-            val page = favoritesPaginator.loadMore() ?: return
-            mutableFavoriteEntries.value = mutableFavoriteEntries.value + page
+        override suspend fun favoritesPage(
+            type: MediaType?,
+            sort: LibrarySort,
+            cursor: String?,
+            limit: Int,
+        ): Page<LibraryEntry> {
+            val page =
+                api.library(
+                    cursor = cursor,
+                    limit = limit,
+                    status = null,
+                    sort = sort.wire,
+                    mediaId = null,
+                    favorite = true,
+                    type = type?.name?.lowercase(),
+                )
+            return Page(page.items.map(LibraryEntryDto::toDomain), page.nextCursor)
         }
 
         /** A plain pass-through — no cache, no paginator, nothing to sequence. */
         override suspend fun libraryStats(): LibraryStats = api.libraryStats().toDomain()
+
+        override suspend fun upcomingWatching(limit: Int): List<LibraryEntry> =
+            api
+                .library(
+                    cursor = null,
+                    limit = limit,
+                    status = UserMediaStatus.WATCHING.name.lowercase(),
+                    sort = LibrarySort.NEXT_EPISODE_DATE.wire,
+                    mediaId = null,
+                    favorite = null,
+                    type = null,
+                ).items
+                .map(LibraryEntryDto::toDomain)
+
+        override suspend fun allWatching(): List<LibraryEntry> {
+            val entries = mutableListOf<LibraryEntry>()
+            var cursor: String? = null
+            do {
+                val page =
+                    api.library(
+                        cursor = cursor,
+                        limit = ALL_WATCHING_PAGE_SIZE,
+                        status = UserMediaStatus.WATCHING.name.lowercase(),
+                        sort = null,
+                        mediaId = null,
+                        favorite = null,
+                        type = null,
+                    )
+                entries += page.items.map(LibraryEntryDto::toDomain)
+                cursor = page.nextCursor
+            } while (cursor != null)
+            return entries
+        }
 
         /**
          * A plain pass-through like [libraryStats] above, plus the one thing [libraryStats] never
@@ -322,7 +392,8 @@ class LibraryRepositoryImpl
         @Suppress("TooGenericExceptionCaught")
         override suspend fun importAniList(username: String): ImportSummary =
             try {
-                api.importAniList(ImportAniListRequest(username = username)).toDomain()
+                // An import can add many Watching titles at once: plan their alerts now.
+                api.importAniList(ImportAniListRequest(username = username)).toDomain().also { alerts.requestSync() }
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (failure: Exception) {

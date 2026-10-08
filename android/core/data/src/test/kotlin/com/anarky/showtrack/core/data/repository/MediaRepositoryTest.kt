@@ -1,10 +1,13 @@
 package com.anarky.showtrack.core.data.repository
 
 import com.anarky.showtrack.core.model.MediaSource
+import com.anarky.showtrack.core.model.SearchResults
 import com.anarky.showtrack.core.network.api.ShowTrackApi
 import com.anarky.showtrack.core.network.dto.AddLibraryEntryRequest
 import com.anarky.showtrack.core.network.dto.CreateGroupRequestDto
 import com.anarky.showtrack.core.network.dto.CreateReviewRequestDto
+import com.anarky.showtrack.core.network.dto.EpisodeDto
+import com.anarky.showtrack.core.network.dto.EpisodeListDto
 import com.anarky.showtrack.core.network.dto.FeedPageDto
 import com.anarky.showtrack.core.network.dto.GroupDto
 import com.anarky.showtrack.core.network.dto.GroupWithInviteDto
@@ -16,17 +19,22 @@ import com.anarky.showtrack.core.network.dto.LibraryPageDto
 import com.anarky.showtrack.core.network.dto.LibraryStatsDto
 import com.anarky.showtrack.core.network.dto.MediaDto
 import com.anarky.showtrack.core.network.dto.MediaSearchResponseDto
-import com.anarky.showtrack.core.network.dto.MediaSummaryDto
 import com.anarky.showtrack.core.network.dto.MemberDto
 import com.anarky.showtrack.core.network.dto.ProgressEntryDto
 import com.anarky.showtrack.core.network.dto.ProposeTitleRequestDto
-import com.anarky.showtrack.core.network.dto.PushTargetDto
 import com.anarky.showtrack.core.network.dto.RecommendationPageDto
-import com.anarky.showtrack.core.network.dto.RegisterTargetRequest
+import com.anarky.showtrack.core.network.dto.ResolveMediaRequestDto
 import com.anarky.showtrack.core.network.dto.ReviewDto
+import com.anarky.showtrack.core.network.dto.SearchItemDto
+import com.anarky.showtrack.core.network.dto.SeasonDto
+import com.anarky.showtrack.core.network.dto.SetWatchedRequestDto
 import com.anarky.showtrack.core.network.dto.UserDto
+import com.anarky.showtrack.core.network.dto.WatchedEpisodesDto
 import com.anarky.showtrack.core.network.dto.WatchlistItemDto
 import com.anarky.showtrack.core.network.dto.WatchlistPageDto
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
 import org.junit.Assert.assertEquals
@@ -34,8 +42,29 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
+import java.time.LocalDate
 
 class MediaRepositoryTest {
+    @Test
+    fun `sign-out empties search results, even with a search in flight`() =
+        runTest {
+            val api = FakeApi(response(sources = mapOf("anilist" to "ok")))
+            val repository = MediaRepositoryImpl(api)
+            repository.search("bebop")
+            val gate = CompletableDeferred<Unit>()
+            api.gates = mapOf("frieren" to gate)
+            val search = launch { repository.search("frieren") }
+            runCurrent()
+
+            val clear = launch { repository.clearUserData() }
+            runCurrent()
+            gate.complete(Unit)
+            search.join()
+            clear.join()
+
+            assertEquals(SearchResults.EMPTY, repository.searchResults.value)
+        }
+
     @Test
     fun `a provider that did not answer is reported as degraded`() =
         runTest {
@@ -89,7 +118,7 @@ class MediaRepositoryTest {
             assertEquals(
                 listOf("Bebop"),
                 repository.searchResults.value.items
-                    .map { it.title },
+                    .map { it.media.title },
             )
             // The half the previous version of this test never pinned: that the new query was
             // actually the one sent to the API, not merely that the displayed items changed.
@@ -121,7 +150,7 @@ class MediaRepositoryTest {
             assertEquals(
                 listOf("Frieren", "Frieren 2"),
                 repository.searchResults.value.items
-                    .map { it.title },
+                    .map { it.media.title },
             )
             // The page fetched by loadMoreResults() must have been requested as a continuation
             // of "frieren", not "bebop" — the failed search must not have won the race to name
@@ -142,7 +171,7 @@ class MediaRepositoryTest {
             repository.loadMoreResults()
 
             val results = repository.searchResults.value
-            assertEquals(listOf("Frieren", "Bebop"), results.items.map { it.title })
+            assertEquals(listOf("Frieren", "Bebop"), results.items.map { it.media.title })
             assertFalse(results.hasMore)
             assertEquals("frieren", api.lastQuery)
             assertEquals(2, api.lastPage)
@@ -155,7 +184,7 @@ class MediaRepositoryTest {
     ) = MediaSearchResponseDto(
         items =
             titles.map { title ->
-                MediaSummaryDto(
+                SearchItemDto(
                     source = "anilist",
                     externalId = "1",
                     type = "anime",
@@ -170,6 +199,82 @@ class MediaRepositoryTest {
         sources = sources,
     )
 
+    @Test
+    fun `a failing older search does not roll back a newer one`() =
+        runTest {
+            val api = FakeApi(response(hasMore = true))
+            val olderGate = CompletableDeferred<Unit>()
+            api.gates = mapOf("y" to olderGate)
+            api.failingQueries = setOf("y")
+            val repository = MediaRepositoryImpl(api)
+
+            val older = launch { runCatching { repository.search("y") } }
+            runCurrent()
+            val newer = launch { repository.search("x") }
+            runCurrent()
+            olderGate.complete(Unit)
+            older.join()
+            newer.join()
+
+            // Page 2 must belong to the query on screen, not to whatever preceded the failed one.
+            repository.loadMoreResults()
+            assertEquals("x", api.lastQuery)
+        }
+
+    @Test
+    fun `an episode list maps seasons, dates and an unfetched list`() =
+        runTest {
+            val api = FakeApi(response())
+            api.episodesAnswer =
+                EpisodeListDto(
+                    syncedAt = "2026-10-01T08:00:00Z",
+                    totalEpisodes = 2,
+                    seasons =
+                        listOf(
+                            SeasonDto(
+                                number = 1,
+                                episodeCount = 2,
+                                episodes =
+                                    listOf(
+                                        EpisodeDto(
+                                            id = "e1",
+                                            number = 1,
+                                            title = "Pilot",
+                                            airDate = "2022-02-18",
+                                            aired = true,
+                                        ),
+                                        EpisodeDto(id = "e2", number = 2, title = null, airDate = null, aired = false),
+                                    ),
+                            ),
+                        ),
+                )
+            val repository = MediaRepositoryImpl(api)
+
+            val list = repository.episodes("m-1")
+
+            assertTrue(list.isAvailable)
+            assertEquals(2, list.totalEpisodes)
+            assertEquals(
+                LocalDate.of(2022, 2, 18),
+                list.seasons
+                    .single()
+                    .episodes
+                    .first()
+                    .airDate,
+            )
+            assertEquals(
+                null,
+                list.seasons
+                    .single()
+                    .episodes
+                    .last()
+                    .airDate,
+            )
+
+            api.episodesAnswer = EpisodeListDto(syncedAt = null, totalEpisodes = null, seasons = emptyList())
+            assertFalse(repository.episodes("m-1").isAvailable)
+        }
+
     /**
      * Every method but `searchMedia`/`mediaDetail` is unused by [MediaRepositoryImpl] and would
      * signal a repository that has started reaching outside its own concern if it were ever hit.
@@ -181,6 +286,10 @@ class MediaRepositoryTest {
         var lastPage: Int? = null
         var nextFailure: Throwable? = null
 
+        // Per-query hooks for interleaving two searches.
+        var gates: Map<String, CompletableDeferred<Unit>> = emptyMap()
+        var failingQueries: Set<String> = emptySet()
+
         override suspend fun library(
             cursor: String?,
             limit: Int,
@@ -188,6 +297,7 @@ class MediaRepositoryTest {
             sort: String?,
             mediaId: String?,
             favorite: Boolean?,
+            type: String?,
         ): LibraryPageDto = TODO("not used")
 
         override suspend fun addLibraryEntry(request: AddLibraryEntryRequest): LibraryEntryDto = TODO("not used")
@@ -207,17 +317,37 @@ class MediaRepositoryTest {
         ): MediaSearchResponseDto {
             lastQuery = query
             lastPage = page
+            gates[query]?.await()
+            if (query in failingQueries) throw IOException("offline")
             nextFailure?.let { throw it }
             return next
         }
 
         override suspend fun mediaDetail(id: String): MediaDto = TODO("not used")
 
+        var lastResolve: ResolveMediaRequestDto? = null
+        var resolveAnswer: MediaDto? = null
+
+        var episodesAnswer: EpisodeListDto? = null
+
+        override suspend fun mediaEpisodes(id: String): EpisodeListDto =
+            checkNotNull(episodesAnswer) { "set episodesAnswer first" }
+
+        override suspend fun deleteLibraryEntry(id: String): Unit = error("not used here")
+
+        override suspend fun watchedEpisodes(id: String): WatchedEpisodesDto = TODO("not used")
+
+        override suspend fun setWatchedEpisodes(
+            id: String,
+            request: SetWatchedRequestDto,
+        ): LibraryEntryDto = TODO("not used")
+
+        override suspend fun resolveMedia(request: ResolveMediaRequestDto): MediaDto {
+            lastResolve = request
+            return checkNotNull(resolveAnswer) { "set resolveAnswer first" }
+        }
+
         override suspend fun me(): UserDto = TODO("not used")
-
-        override suspend fun registerPushTarget(request: RegisterTargetRequest): PushTargetDto = TODO("not used")
-
-        override suspend fun deletePushTarget(id: String): Unit = TODO("not used")
 
         override suspend fun recommendations(
             cursor: String?,
@@ -231,6 +361,8 @@ class MediaRepositoryTest {
         override suspend fun joinGroup(request: JoinGroupRequestDto): GroupWithInviteDto = TODO("not used")
 
         override suspend fun groupMembers(groupId: String): List<MemberDto> = TODO("not used")
+
+        override suspend fun groupInvite(groupId: String): GroupWithInviteDto = error("not used")
 
         override suspend fun rotateGroupInvite(groupId: String): GroupWithInviteDto = TODO("not used")
 
@@ -278,4 +410,31 @@ class MediaRepositoryTest {
             patch: JsonObject,
         ): ReviewDto = TODO("not used")
     }
+
+    @Test
+    fun `resolving sends the wire source and returns the stored title`() =
+        runTest {
+            val api = FakeApi(response())
+            api.resolveAnswer =
+                MediaDto(
+                    id = "m-1",
+                    source = "tmdb",
+                    externalId = "95396",
+                    type = "tv",
+                    title = "Severance",
+                    year = 2022,
+                    genres = emptyList(),
+                    coverImageUrl = null,
+                    status = "airing",
+                    nextEpisodeSeason = null,
+                    nextEpisodeNumber = null,
+                    nextEpisodeDate = null,
+                    daysUntilNextEpisode = null,
+                )
+
+            val media = MediaRepositoryImpl(api).resolve(MediaSource.TMDB, "95396")
+
+            assertEquals(ResolveMediaRequestDto(source = "tmdb", externalId = "95396"), api.lastResolve)
+            assertEquals("m-1", media.id)
+        }
 }

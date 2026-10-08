@@ -8,7 +8,7 @@ import com.anarky.showtrack.core.model.Review
 
 /**
  * [entry] null means "not in your library" — a normal state, not an error. It is what makes the
- * primary action Add rather than Edit, and it is reachable from search and from a push deep-link
+ * primary action Add rather than Edit, and it is reachable from search and from an alert deep-link
  * where no entry can exist yet (decision C-D).
  */
 data class DetailData(
@@ -30,6 +30,10 @@ sealed interface DetailActionError {
     ) : DetailActionError
 
     data class Edit(
+        val cause: Throwable,
+    ) : DetailActionError
+
+    data class Remove(
         val cause: Throwable,
     ) : DetailActionError
 }
@@ -202,6 +206,9 @@ sealed interface DetailUiState {
         val proposeError: GroupFailure? = null,
         val justProposedToGroupId: String? = null,
         val reviewEditor: ReviewEditorState = ReviewEditorState.Closed,
+        val episodes: EpisodesState = EpisodesState.Loading,
+        // An add or a remove is running: the entry is about to change, so episode actions wait.
+        val changingEntry: Boolean = false,
     ) : DetailUiState
 
     /** Only the initial load (or a retry of it) ever produces this — see [DetailViewModel]'s KDoc. */

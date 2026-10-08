@@ -57,6 +57,18 @@ class PagePaginator<T>(
             page.items
         }
 
+    /**
+     * Back to "nothing loaded" (sign-out). Under the lock, so a fetch already in flight lands
+     * first and is then cleared, never after.
+     */
+    suspend fun reset() {
+        mutex.withLock {
+            nextPage = FIRST_PAGE
+            _hasMore.value = true
+            _items.value = emptyList()
+        }
+    }
+
     private companion object {
         // The backend's search pagination is 1-based, not 0-based.
         const val FIRST_PAGE = 1

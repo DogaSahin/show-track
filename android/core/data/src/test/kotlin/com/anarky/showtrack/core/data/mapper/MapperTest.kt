@@ -8,11 +8,13 @@ import com.anarky.showtrack.core.model.MediaType
 import com.anarky.showtrack.core.model.UserMediaStatus
 import com.anarky.showtrack.core.network.dto.GenreCountDto
 import com.anarky.showtrack.core.network.dto.LibraryEntryDto
+import com.anarky.showtrack.core.network.dto.LibraryEntryRefDto
 import com.anarky.showtrack.core.network.dto.LibraryStatsDto
 import com.anarky.showtrack.core.network.dto.MediaDto
 import com.anarky.showtrack.core.network.dto.PersistedMediaDto
 import com.anarky.showtrack.core.network.dto.RecommendationDto
 import com.anarky.showtrack.core.network.dto.RecommendationReasonDto
+import com.anarky.showtrack.core.network.dto.SearchItemDto
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -111,11 +113,13 @@ class MapperTest {
         assertEquals("Cached Title", entry.media.title)
         assertEquals("https://example.com/cached.jpg", entry.media.coverImageUrl)
         assertEquals(5, entry.media.daysUntilNextEpisode)
+        assertEquals(28, entry.media.totalEpisodes)
     }
 
     @Test
     fun `the domain maps onto the cache row a list needs and nothing more`() {
         val entity = cachedEntity().toDomain().toEntity()
+        assertEquals(28, entity.totalEpisodes)
 
         assertEquals("cached", entity.id)
         // `status.name`, not the wire spelling — which is why the entity mapper reads it back
@@ -308,5 +312,56 @@ class MapperTest {
             title = "Cached Title",
             coverUrl = "https://example.com/cached.jpg",
             daysUntilNextEpisode = 5,
+            totalEpisodes = 28,
         )
+
+    @Test
+    fun `a search item maps its stored id and library status`() {
+        val result =
+            searchItemDto(
+                mediaId = "m-1",
+                entry = LibraryEntryRefDto(id = "e-1", status = "watching"),
+            ).toDomain()
+
+        assertEquals("Frieren", result.media.title)
+        assertEquals(MediaSource.ANILIST, result.media.source)
+        assertEquals("m-1", result.mediaId)
+        assertEquals(UserMediaStatus.WATCHING, result.libraryStatus)
+    }
+
+    @Test
+    fun `an untracked search item has no library status`() {
+        val result = searchItemDto(mediaId = null, entry = null).toDomain()
+
+        assertNull(result.mediaId)
+        assertNull(result.libraryStatus)
+    }
+
+    /** A status a newer server added is not guessed at: the row offers Add, which is idempotent. */
+    @Test
+    fun `an unknown library status maps to null rather than failing`() {
+        val result =
+            searchItemDto(
+                mediaId = "m-1",
+                entry = LibraryEntryRefDto(id = "e-1", status = "rewatching"),
+            ).toDomain()
+
+        assertEquals("m-1", result.mediaId)
+        assertNull(result.libraryStatus)
+    }
+
+    private fun searchItemDto(
+        mediaId: String?,
+        entry: LibraryEntryRefDto?,
+    ) = SearchItemDto(
+        source = "anilist",
+        externalId = "154587",
+        type = "anime",
+        title = "Frieren",
+        year = 2023,
+        genres = listOf("drama"),
+        coverImageUrl = null,
+        mediaId = mediaId,
+        libraryEntry = entry,
+    )
 }

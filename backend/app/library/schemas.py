@@ -237,3 +237,15 @@ class ReviewRead(BaseModel):
     contains_spoilers: bool
     created_at: datetime
     updated_at: datetime
+
+
+class WatchedEpisodes(BaseModel):
+    episode_ids: list[uuid.UUID]
+
+
+class SetWatchedRequest(BaseModel):
+    """One request per action: a tapped episode, a catch-up range, or a whole season."""
+
+    # Capped well above any real season or anime run, so one body can never be unbounded.
+    episode_ids: list[uuid.UUID] = Field(min_length=1, max_length=3000)
+    watched: bool

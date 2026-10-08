@@ -1,34 +1,35 @@
 package com.anarky.showtrack.feature.feed
 
+import android.text.format.DateFormat
 import android.text.format.DateUtils
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
+import com.anarky.showtrack.core.designsystem.component.MediaCover
+import com.anarky.showtrack.core.designsystem.component.UserAvatar
 import com.anarky.showtrack.core.model.ActivityKind
 import com.anarky.showtrack.core.model.FeedEntry
 import java.time.Instant
@@ -37,14 +38,15 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 
-private val GutterWidth = 28.dp
-private val DotSize = 9.dp
-private val RuleWidth = 2.dp
+private val AvatarSize = 32.dp
+private val CoverWidth = 36.dp
+private val ProgressBarWidth = 120.dp
+private val ProgressBarHeight = 4.dp
 
 /**
- * One row of the rendered timeline: either a day heading or an entry beneath it.
+ * One row of the rendered timeline: either a day heading or an item beneath it.
  *
- * A flat, pre-computed list rather than a nested `Map<LocalDate, List<FeedEntry>>` because
+ * A flat, pre-computed list rather than a nested `Map<LocalDate, List<FeedItem>>` because
  * `LazyColumn` wants a flat index space — a nested structure would have to be flattened at every
  * `items` call anyway, and doing it once here keeps the day boundaries out of the rendering code.
  */
@@ -54,12 +56,12 @@ internal sealed interface FeedRow {
     ) : FeedRow
 
     data class Entry(
-        val entry: FeedEntry,
+        val item: FeedItem,
     ) : FeedRow
 }
 
 /**
- * Splits a paged, newest-first feed into day-headed sections.
+ * Folds progress runs ([mergeProgress]) and splits the result into day-headed sections.
  *
  * [zone] is a parameter rather than `ZoneId.systemDefault()` read inside, so a test can pin the
  * boundary. Which day an entry falls on is a LOCAL question — an event at 23:30 UTC is tomorrow for
@@ -73,21 +75,21 @@ internal sealed interface FeedRow {
 internal fun List<FeedEntry>.toTimeline(zone: ZoneId): List<FeedRow> {
     val rows = mutableListOf<FeedRow>()
     var currentDay: LocalDate? = null
-    forEach { entry ->
-        val day = entry.createdAt.atZone(zone).toLocalDate()
+    mergeProgress(zone).forEach { item ->
+        val day =
+            item.entry.createdAt
+                .atZone(zone)
+                .toLocalDate()
         if (day != currentDay) {
             rows += FeedRow.Day(day)
             currentDay = day
         }
-        rows += FeedRow.Entry(entry)
+        rows += FeedRow.Entry(item)
     }
     return rows
 }
 
-/**
- * A day heading. Indented to the same gutter the entries use, so the rule below it reads as
- * starting under the heading rather than beside it.
- */
+/** "TODAY", "YESTERDAY", then "MON 28 SEP". */
 @Composable
 internal fun FeedDayHeader(
     date: LocalDate,
@@ -95,161 +97,135 @@ internal fun FeedDayHeader(
     modifier: Modifier = Modifier,
 ) {
     Text(
-        text = date.headingText(today = today),
-        style = MaterialTheme.typography.labelLarge,
+        text = date.headingText(today = today).uppercase(),
+        style = MaterialTheme.typography.labelMedium,
+        letterSpacing = 0.04.em,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = modifier.fillMaxWidth().padding(start = GutterWidth, top = 20.dp, bottom = 8.dp),
+        modifier = modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp),
     )
 }
 
 /**
- * "Today"/"Yesterday" for the two days a reader can place without reading a date, and a localised
- * date for everything older. Anything beyond yesterday gets the real date rather than "3 days ago":
- * a relative span is easy to read and hard to *locate*, and a day heading's job is locating.
+ * "Today"/"Yesterday" for the two days a reader can place without reading a date, and a short
+ * weekday-and-date for everything older, in the order the reader's locale writes it.
  */
 @Composable
-private fun LocalDate.headingText(today: LocalDate): String =
-    when (this) {
+private fun LocalDate.headingText(today: LocalDate): String {
+    val locale = LocalConfiguration.current.locales[0]
+    return when (this) {
         today -> stringResource(R.string.feed_day_today)
         today.minusDays(1) -> stringResource(R.string.feed_day_yesterday)
-        else -> format(DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM))
+        else -> format(DateTimeFormatter.ofPattern(DateFormat.getBestDateTimePattern(locale, "EEEdMMM"), locale))
     }
+}
 
 /**
- * One entry on the timeline.
+ * One event: who, what exactly happened, the numbers behind it, when, and the show's cover.
  *
- * The row is `IntrinsicSize.Min` so the gutter's rule can `fillMaxHeight` — inside a `LazyColumn` a
- * `Row`'s children are measured against unbounded height, and `fillMaxHeight` there resolves to
- * nothing. Measuring the row's intrinsic minimum first gives the rule a real height to fill.
+ * Tappable if and only if [FeedEntry.mediaId] is non-null: `Modifier.clickable` is ADDED rather
+ * than made conditional, so a row with no title to open registers no click action at all — a
+ * screen reader does not offer one and `performClick()` in a test cannot silently succeed against
+ * a no-op.
  *
- * The rule is drawn for EVERY entry including the last of a day, deliberately: it runs into the
- * gap and the next day's heading picks it up, which is what makes the column read as one continuous
- * timeline rather than as a stack of separate day cards.
- *
- * Tappable if and only if [FeedEntry.mediaId] is non-null, unchanged from the card version and for
- * the unchanged reason: `Modifier.clickable` is ADDED rather than made conditional, so a row with
- * no title to open registers no clickable semantics node at all — a screen reader does not announce
- * it and `performClick()` in a test cannot silently succeed against a no-op.
+ * The row is ONE spoken sentence ("deniz is 15 episodes into Frieren, episodes 13 to 15, 1 hour
+ * ago"): the chip's spoken form is words, where its visual form is "Ep 13 → 15".
  */
 @Composable
-internal fun FeedTimelineRow(
-    entry: FeedEntry,
+internal fun FeedEventRow(
+    item: FeedItem,
     isToday: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val rowModifier =
-        if (entry.mediaId != null) modifier.clickable(onClick = onClick) else modifier
-    Row(modifier = rowModifier.fillMaxWidth().height(IntrinsicSize.Min)) {
-        TimelineGutter(kind = entry.kind)
+    val entry = item.entry
+    val sentence = entry.sentence(item)
+    val detail = item.detail()
+    val time = entry.createdAt.timeLabel(isToday = isToday)
+    val ofTotal = progressOfTotalText(detail, entry.totalEpisodes)
+    val spoken = listOfNotNull(sentence.text, detail?.spokenText(), ofTotal, time).joinToString(separator = ", ")
+    val clickModifier = if (entry.mediaId != null) modifier.clickable(onClick = onClick) else modifier
+
+    Row(
+        verticalAlignment = Alignment.Top,
+        horizontalArrangement = Arrangement.spacedBy(space = 12.dp),
+        modifier =
+            clickModifier
+                .fillMaxWidth()
+                .clearAndSetSemantics { contentDescription = spoken }
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+    ) {
+        UserAvatar(userId = entry.actor.id, name = entry.actor.username, size = AvatarSize)
         Column(
-            modifier = Modifier.padding(end = 16.dp, bottom = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(space = 3.dp),
+            verticalArrangement = Arrangement.spacedBy(space = 4.dp),
+            modifier = Modifier.weight(1f),
         ) {
             Text(
-                text = entry.actorAndAction(),
+                text = sentence,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 3,
                 overflow = TextOverflow.Ellipsis,
             )
+            detail?.let { DetailChip(detail = it) }
+            ProgressOfTotal(detail = detail, total = entry.totalEpisodes)
             Text(
-                text = entry.createdAt.timeLabel(isToday = isToday),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.outline,
+                text = time,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-    }
-}
-
-/**
- * The rule and the dot. The dot sits on a [MaterialTheme.colorScheme.background] ring so the rule
- * appears to pass behind it rather than through it — the ring is what turns a line with a blob on
- * it into a marked point.
- */
-@Composable
-private fun TimelineGutter(kind: ActivityKind) {
-    Box(modifier = Modifier.width(GutterWidth).fillMaxHeight(), contentAlignment = Alignment.TopCenter) {
-        Box(
-            modifier =
-                Modifier
-                    .width(RuleWidth)
-                    .fillMaxHeight()
-                    .background(MaterialTheme.colorScheme.outlineVariant),
-        )
-        Box(
-            modifier =
-                Modifier
-                    .padding(top = 5.dp)
-                    .size(DotSize + 6.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.background),
-            contentAlignment = Alignment.Center,
-        ) {
-            Box(modifier = Modifier.size(DotSize).clip(CircleShape).background(kind.dotColor()))
+        entry.media?.let { media ->
+            MediaCover(coverImageUrl = media.coverImageUrl, modifier = Modifier.width(CoverWidth))
         }
     }
 }
 
 /**
- * The kind's own colour, chosen to line up with [com.anarky.showtrack.core.model.UserMediaStatus]'s
- * marks where the two mean the same thing: a COMPLETED activity is the same teal as a COMPLETED
- * library row, a DROPPED one the same red. ADDED and PROGRESSED take the two active hues; IMPORTED
- * and UNKNOWN stay neutral, because neither is an opinion about a title.
+ * "**deniz** is 15 episodes into **Frieren**": the person and the title emphasised, the verb not.
  *
- * Local to this module rather than shared out of `:core:designsystem`: the feed is the only screen
- * that renders an [ActivityKind] at all, and a shared mapping with one consumer is generality
- * bought before it is needed. It moves the moment a second screen wants it.
+ * The actor is a separate span from the action, a deliberate localisation compromise (it fixes the
+ * subject ahead of the verb) made so a reader scanning the column sees WHO at a glance. The title
+ * is found inside the formatted action rather than split into its own string, so a translator
+ * still gets the whole verb phrase in one piece.
  */
 @Composable
-private fun ActivityKind.dotColor(): Color =
-    when (this) {
-        ActivityKind.ADDED -> MaterialTheme.colorScheme.secondary
-        ActivityKind.PROGRESSED -> MaterialTheme.colorScheme.primary
-        ActivityKind.RATED -> MaterialTheme.colorScheme.primary
-        ActivityKind.COMPLETED -> MaterialTheme.colorScheme.tertiary
-        ActivityKind.DROPPED -> MaterialTheme.colorScheme.error
-        ActivityKind.IMPORTED, ActivityKind.UNKNOWN -> MaterialTheme.colorScheme.outline
-    }
-
-/**
- * "**dogasahin** rated Frieren" — the actor emphasised, the action not.
- *
- * The actor is a separate string from the action, where the card version had one sentence per kind
- * with `%1$s` for the actor. That split is a real localisation compromise — it fixes the subject
- * ahead of the verb — and it is made deliberately: the whole point of the timeline is that a reader
- * scanning it sees WHO at a glance, which needs the actor styled differently from the rest, and
- * that cannot be done inside a single formatted string without matching the actor's name back out
- * of the result (which breaks the moment a username also appears in a title).
- *
- * The verb and its object stay together in one string, so only the subject is separated.
- *
- * `entry.media?.title` rather than a non-null assertion for the five kinds the backend always pairs
- * with a title: [FeedEntry]'s `init` guarantees `media`/`mediaId` are null TOGETHER, not that only
- * IMPORTED can be the null one — nothing in the type system ties "null media" to a specific kind.
- */
-@Composable
-private fun FeedEntry.actorAndAction() =
+private fun FeedEntry.sentence(item: FeedItem) =
     buildAnnotatedString {
-        withStyle(
-            SpanStyle(
-                color = MaterialTheme.colorScheme.onSurface,
-                fontWeight = FontWeight.SemiBold,
-            ),
-        ) {
-            append(actor.username)
-        }
+        val emphasis = SpanStyle(color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
+        withStyle(emphasis) { append(actor.username) }
         append(" ")
-        append(actionText())
+        val action = actionText(item)
+        val title = media?.title
+        val start = if (title.isNullOrEmpty()) -1 else action.indexOf(title)
+        if (title == null || start < 0) {
+            append(action)
+        } else {
+            append(action.substring(0, start))
+            withStyle(emphasis) { append(title) }
+            append(action.substring(start + title.length))
+        }
     }
 
+/**
+ * `media?.title` rather than a non-null assertion for the five kinds the backend always pairs with
+ * a title: [FeedEntry]'s `init` guarantees `media`/`mediaId` are null TOGETHER, not that only
+ * IMPORTED can be the null one.
+ */
 @Composable
-private fun FeedEntry.actionText(): String {
+private fun FeedEntry.actionText(item: FeedItem): String {
     val title = media?.title ?: stringResource(R.string.feed_unknown_title)
     return when (kind) {
         ActivityKind.ADDED -> stringResource(R.string.feed_action_added, title)
-        ActivityKind.PROGRESSED -> stringResource(R.string.feed_action_progressed, title)
-        ActivityKind.RATED -> stringResource(R.string.feed_action_rated, title)
+        ActivityKind.PROGRESSED ->
+            item.entry.progressOrNull()?.let { progress ->
+                pluralStringResource(R.plurals.feed_action_progressed_count, progress, progress, title)
+            } ?: stringResource(R.string.feed_action_progressed, title)
+        ActivityKind.RATED ->
+            if (scoreChange() == ScoreChange.Cleared) {
+                stringResource(R.string.feed_action_unrated, title)
+            } else {
+                stringResource(R.string.feed_action_rated, title)
+            }
         ActivityKind.COMPLETED -> stringResource(R.string.feed_action_completed, title)
         ActivityKind.DROPPED -> stringResource(R.string.feed_action_dropped, title)
         ActivityKind.IMPORTED -> {
@@ -263,23 +239,13 @@ private fun FeedEntry.actionText(): String {
 /**
  * A relative span under TODAY's heading, a clock time under every other one.
  *
- * The split exists because the two halves were saying the same thing. A day heading already
- * locates the entry, so under "Yesterday" a relative span renders the literal word "Yesterday" a
- * second line down — `DateUtils` returns exactly that for anything 24-48 hours old — and under a
- * dated heading "2 days ago" merely restates the date above it. A clock time adds the one thing
- * the heading cannot carry.
+ * A day heading already locates the entry, so under "Yesterday" a relative span would render the
+ * literal word "Yesterday" a second time, and under a dated heading "2 days ago" merely restates
+ * the date above it. A clock time adds the one thing the heading cannot carry. Today is the
+ * exception: "2 hours ago" is easier to place than "14:32" when the heading only says "Today".
  *
- * Today is the exception worth making: "2 hours ago" is genuinely easier to place than "14:32"
- * when the heading is only ever going to say "Today".
- *
- * `DateUtils.getRelativeTimeSpanString` rather than hand-rolled bucketing of elapsed millis: it is
- * localised, knows every plural rule, and is what the rest of the platform uses — so "2 hours ago"
- * reads the same here as in every other app on the device.
- *
- * Neither form ticks. Both are computed at composition, so a row that says "2 minutes ago" still
- * says so an hour later unless something recomposes it. That is the right trade for a feed the
- * user refreshes — a per-row clock would recompose the whole visible list on a timer to update
- * text nobody is watching.
+ * Neither form ticks. Both are computed at composition — the right trade for a feed the user
+ * refreshes; a per-row clock would recompose the visible list on a timer for text nobody watches.
  */
 @Composable
 private fun Instant.timeLabel(isToday: Boolean): String =
@@ -293,3 +259,35 @@ private fun Instant.timeLabel(isToday: Boolean): String =
     } else {
         atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT))
     }
+
+/** "15 of 28" with a bar, under a progress event when the title's episode count is known. */
+@Composable
+private fun ProgressOfTotal(
+    detail: FeedDetail?,
+    total: Int?,
+) {
+    val progress = detail as? FeedDetail.Progress ?: return
+    val count = total?.takeIf { it > 0 } ?: return
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        LinearProgressIndicator(
+            progress = { (progress.to.toFloat() / count).coerceIn(0f, 1f) },
+            modifier = Modifier.width(ProgressBarWidth).height(ProgressBarHeight),
+            drawStopIndicator = {},
+        )
+        Text(
+            text = stringResource(R.string.feed_progress_of_total, progress.to, count),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun progressOfTotalText(
+    detail: FeedDetail?,
+    total: Int?,
+): String? {
+    val progress = detail as? FeedDetail.Progress ?: return null
+    val count = total?.takeIf { it > 0 } ?: return null
+    return stringResource(R.string.feed_progress_of_total, progress.to, count)
+}

@@ -1,8 +1,10 @@
 package com.anarky.showtrack.core.data.repository
 
-import com.anarky.showtrack.core.data.push.PushRepository
+import com.anarky.showtrack.core.data.alerts.EpisodeAlerts
+import com.anarky.showtrack.core.data.session.UserData
+import com.anarky.showtrack.core.data.session.UserDataCleaner
 import com.anarky.showtrack.core.model.AuthFailure
-import com.anarky.showtrack.core.model.PushNotification
+import com.anarky.showtrack.core.model.CurrentUser
 import com.anarky.showtrack.core.network.api.AuthApi
 import com.anarky.showtrack.core.network.api.ShowTrackApi
 import com.anarky.showtrack.core.network.auth.TokenPair
@@ -10,6 +12,7 @@ import com.anarky.showtrack.core.network.auth.TokenStore
 import com.anarky.showtrack.core.network.dto.AddLibraryEntryRequest
 import com.anarky.showtrack.core.network.dto.CreateGroupRequestDto
 import com.anarky.showtrack.core.network.dto.CreateReviewRequestDto
+import com.anarky.showtrack.core.network.dto.EpisodeListDto
 import com.anarky.showtrack.core.network.dto.FeedPageDto
 import com.anarky.showtrack.core.network.dto.GroupDto
 import com.anarky.showtrack.core.network.dto.GroupWithInviteDto
@@ -25,14 +28,15 @@ import com.anarky.showtrack.core.network.dto.MediaSearchResponseDto
 import com.anarky.showtrack.core.network.dto.MemberDto
 import com.anarky.showtrack.core.network.dto.ProgressEntryDto
 import com.anarky.showtrack.core.network.dto.ProposeTitleRequestDto
-import com.anarky.showtrack.core.network.dto.PushTargetDto
 import com.anarky.showtrack.core.network.dto.RecommendationPageDto
 import com.anarky.showtrack.core.network.dto.RefreshRequest
 import com.anarky.showtrack.core.network.dto.RegisterRequest
-import com.anarky.showtrack.core.network.dto.RegisterTargetRequest
+import com.anarky.showtrack.core.network.dto.ResolveMediaRequestDto
 import com.anarky.showtrack.core.network.dto.ReviewDto
+import com.anarky.showtrack.core.network.dto.SetWatchedRequestDto
 import com.anarky.showtrack.core.network.dto.TokenPairDto
 import com.anarky.showtrack.core.network.dto.UserDto
+import com.anarky.showtrack.core.network.dto.WatchedEpisodesDto
 import com.anarky.showtrack.core.network.dto.WatchlistItemDto
 import com.anarky.showtrack.core.network.dto.WatchlistPageDto
 import kotlinx.coroutines.test.runTest
@@ -49,15 +53,15 @@ import org.robolectric.annotation.Config
 import retrofit2.HttpException
 import retrofit2.Response
 import java.io.IOException
+import java.time.Instant
 
 /** Builds an `HttpException` the way Retrofit itself does, for a non-2xx response. */
 private fun httpError(code: Int): HttpException = HttpException(Response.error<Any>(code, "".toResponseBody(null)))
 
 /**
- * Robolectric for the same reason as [com.anarky.showtrack.core.data.push.PushRepositoryImplTest]:
- * a caught push/revoke failure is logged through `android.util.Log`, which a plain JVM test
- * answers with "not mocked" — and THROWS, which would fail `a push failure does not fail the
- * login` for the opposite of the reason it exists.
+ * Robolectric because a caught revoke failure is logged through `android.util.Log`, which a
+ * plain JVM test answers with "not mocked" — and THROWS, which would fail the very tests that
+ * check a failure is swallowed.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
@@ -67,7 +71,7 @@ class AuthRepositoryTest {
         runTest {
             val api = FakeAuthApi()
             val store = FakeTokenStore()
-            val repository = AuthRepositoryImpl(api, FakeShowTrackApi(), store, FakePush())
+            val repository = AuthRepositoryImpl(api, FakeShowTrackApi(), store, FakeAlerts(), userData)
 
             repository.register("someone", "a@example.com", "hunter2hunter2", "CODE")
 
@@ -82,7 +86,7 @@ class AuthRepositoryTest {
             // now answers "email already taken", with nothing left to try.
             val api = FakeAuthApi(loginFailure = IOException("offline"))
             val store = FakeTokenStore()
-            val repository = AuthRepositoryImpl(api, FakeShowTrackApi(), store, FakePush())
+            val repository = AuthRepositoryImpl(api, FakeShowTrackApi(), store, FakeAlerts(), userData)
 
             val failure =
                 runCatching {
@@ -94,61 +98,35 @@ class AuthRepositoryTest {
         }
 
     @Test
-    fun `login registers this device for push`() =
+    fun `login clears earlier alerts, then plans this account's`() =
         runTest {
-            val push = FakePush()
-            val repository = AuthRepositoryImpl(FakeAuthApi(), FakeShowTrackApi(), FakeTokenStore(), push)
-
-            repository.login("a@example.com", "hunter2hunter2")
-
-            assertTrue(push.loggedIn)
-        }
-
-    @Test
-    fun `a push failure does not fail the login`() =
-        runTest {
-            // The user typed the right password. Failing the whole login because a notification
-            // target could not be created would be a lie about what went wrong.
-            val store = FakeTokenStore()
+            val calls = mutableListOf<String>()
+            val alerts = FakeAlerts(calls = calls)
             val repository =
-                AuthRepositoryImpl(FakeAuthApi(), FakeShowTrackApi(), store, FakePush(failure = IOException("offline")))
+                AuthRepositoryImpl(FakeAuthApi(), FakeShowTrackApi(), FakeTokenStore(), alerts, userData)
 
             repository.login("a@example.com", "hunter2hunter2")
 
-            assertEquals(TokenPair("access-1", "refresh-1"), store.saved)
+            assertEquals(listOf("alerts.cancelAll"), calls)
+            assertEquals(1, alerts.syncRequests)
         }
 
     @Test
-    fun `logout deletes the push target before it clears the tokens`() =
+    fun `logout cancels episode alerts before it clears the tokens`() =
         runTest {
-            // deletePushTarget is an AUTHENTICATED call. Clear first and it 401s, leaving the
-            // server pushing episodes to a signed-out device. Order, not just outcome.
+            // Nothing scheduled for this account may fire once it is signed out. Order, not just
+            // outcome.
             // ONE shared recorder, not one list per fake: concatenating two separate lists
             // yields their declaration order, not the call order, and would pass or fail
             // regardless of what the code does.
             val calls = mutableListOf<String>()
             val store = FakeTokenStore(initial = TokenPair("access-1", "refresh-1"), calls = calls)
-            val push = FakePush(calls = calls)
-            val repository = AuthRepositoryImpl(FakeAuthApi(), FakeShowTrackApi(), store, push)
+            val alerts = FakeAlerts(calls = calls)
+            val repository = AuthRepositoryImpl(FakeAuthApi(), FakeShowTrackApi(), store, alerts, userData)
 
             repository.logout()
 
-            assertEquals(listOf("push.onLoggedOut", "store.clear"), calls)
-            assertFalse(repository.hasSession())
-        }
-
-    @Test
-    fun `logout clears the tokens even when the push cleanup fails`() =
-        runTest {
-            // Unguarded, a throw here would skip revoke() and tokenStore.clear() below and leave
-            // the user pressing "log out" and staying logged in — worse than login's symmetric
-            // case, where a push failure must not be misreported as a login failure.
-            val store = FakeTokenStore(initial = TokenPair("access-1", "refresh-1"))
-            val repository =
-                AuthRepositoryImpl(FakeAuthApi(), FakeShowTrackApi(), store, FakePush(failure = IOException("offline")))
-
-            repository.logout()
-
+            assertEquals(listOf("alerts.cancelAll", "store.clear"), calls)
             assertFalse(repository.hasSession())
         }
 
@@ -156,7 +134,7 @@ class AuthRepositoryTest {
     fun `a wrong password surfaces as invalid credentials`() =
         runTest {
             val api = FakeAuthApi(loginFailure = httpError(401))
-            val repository = AuthRepositoryImpl(api, FakeShowTrackApi(), FakeTokenStore(), FakePush())
+            val repository = AuthRepositoryImpl(api, FakeShowTrackApi(), FakeTokenStore(), FakeAlerts(), userData)
 
             val failure = runCatching { repository.login("a@example.com", "wrong") }.exceptionOrNull()
 
@@ -167,7 +145,7 @@ class AuthRepositoryTest {
     fun `being offline during login surfaces as being offline`() =
         runTest {
             val api = FakeAuthApi(loginFailure = IOException("offline"))
-            val repository = AuthRepositoryImpl(api, FakeShowTrackApi(), FakeTokenStore(), FakePush())
+            val repository = AuthRepositoryImpl(api, FakeShowTrackApi(), FakeTokenStore(), FakeAlerts(), userData)
 
             val failure = runCatching { repository.login("a@example.com", "hunter2hunter2") }.exceptionOrNull()
 
@@ -181,7 +159,7 @@ class AuthRepositoryTest {
             // (taken email/username) both arrive as Refused, carrying whichever code the
             // server sent. Telling them apart is :feature:auth's job, done from the code.
             val api = FakeAuthApi(registerFailure = httpError(409))
-            val repository = AuthRepositoryImpl(api, FakeShowTrackApi(), FakeTokenStore(), FakePush())
+            val repository = AuthRepositoryImpl(api, FakeShowTrackApi(), FakeTokenStore(), FakeAlerts(), userData)
 
             val failure =
                 runCatching {
@@ -197,11 +175,30 @@ class AuthRepositoryTest {
         runTest {
             val showTrackApi =
                 FakeShowTrackApi(meResult = UserDto("user-42", "alex", "a@b.test", "2026-09-01T00:00:00Z"))
-            val repository = AuthRepositoryImpl(FakeAuthApi(), showTrackApi, FakeTokenStore(), FakePush())
+            val repository =
+                AuthRepositoryImpl(FakeAuthApi(), showTrackApi, FakeTokenStore(), FakeAlerts(), userData)
 
             val id = repository.currentUserId()
 
             assertEquals("user-42", id)
+        }
+
+    @Test
+    fun `currentUser maps the whole account and refreshes the cached id`() =
+        runTest {
+            val showTrackApi =
+                FakeShowTrackApi(meResult = UserDto("user-42", "alex", "a@b.test", "2025-03-14T10:00:00Z"))
+            val repository =
+                AuthRepositoryImpl(FakeAuthApi(), showTrackApi, FakeTokenStore(), FakeAlerts(), userData)
+
+            val user = repository.currentUser()
+            repository.currentUserId()
+
+            assertEquals(
+                CurrentUser("user-42", "alex", "a@b.test", Instant.parse("2025-03-14T10:00:00Z")),
+                user,
+            )
+            assertEquals("currentUserId reuses what currentUser fetched", 1, showTrackApi.meCalls)
         }
 
     /**
@@ -216,7 +213,8 @@ class AuthRepositoryTest {
         runTest {
             val showTrackApi =
                 FakeShowTrackApi(meResult = UserDto("user-42", "alex", "a@b.test", "2026-09-01T00:00:00Z"))
-            val repository = AuthRepositoryImpl(FakeAuthApi(), showTrackApi, FakeTokenStore(), FakePush())
+            val repository =
+                AuthRepositoryImpl(FakeAuthApi(), showTrackApi, FakeTokenStore(), FakeAlerts(), userData)
 
             repository.currentUserId()
             repository.currentUserId()
@@ -231,7 +229,7 @@ class AuthRepositoryTest {
             val showTrackApi =
                 FakeShowTrackApi(meResult = UserDto("user-42", "alex", "a@b.test", "2026-09-01T00:00:00Z"))
             val store = FakeTokenStore(initial = TokenPair("access-1", "refresh-1"))
-            val repository = AuthRepositoryImpl(FakeAuthApi(), showTrackApi, store, FakePush())
+            val repository = AuthRepositoryImpl(FakeAuthApi(), showTrackApi, store, FakeAlerts(), userData)
             repository.currentUserId()
             assertEquals(1, showTrackApi.meCalls)
 
@@ -256,7 +254,7 @@ class AuthRepositoryTest {
             val showTrackApi =
                 FakeShowTrackApi(meResult = UserDto("user-42", "alex", "a@b.test", "2026-09-01T00:00:00Z"))
             val store = FakeTokenStore(initial = TokenPair("access-1", "refresh-1"))
-            val repository = AuthRepositoryImpl(FakeAuthApi(), showTrackApi, store, FakePush())
+            val repository = AuthRepositoryImpl(FakeAuthApi(), showTrackApi, store, FakeAlerts(), userData)
             assertEquals("user-42", repository.currentUserId())
 
             // TokenRefreshAuthenticator.clearQuietly() on an unrecoverable 401 — not logout().
@@ -271,7 +269,8 @@ class AuthRepositoryTest {
     fun `being offline while resolving currentUserId surfaces as being offline`() =
         runTest {
             val showTrackApi = FakeShowTrackApi(meFailure = IOException("offline"))
-            val repository = AuthRepositoryImpl(FakeAuthApi(), showTrackApi, FakeTokenStore(), FakePush())
+            val repository =
+                AuthRepositoryImpl(FakeAuthApi(), showTrackApi, FakeTokenStore(), FakeAlerts(), userData)
 
             val failure = runCatching { repository.currentUserId() }.exceptionOrNull()
 
@@ -283,7 +282,8 @@ class AuthRepositoryTest {
     fun `an unmapped failure while resolving currentUserId surfaces as Unexpected`() =
         runTest {
             val showTrackApi = FakeShowTrackApi(meFailure = httpError(500))
-            val repository = AuthRepositoryImpl(FakeAuthApi(), showTrackApi, FakeTokenStore(), FakePush())
+            val repository =
+                AuthRepositoryImpl(FakeAuthApi(), showTrackApi, FakeTokenStore(), FakeAlerts(), userData)
 
             val failure = runCatching { repository.currentUserId() }.exceptionOrNull()
 
@@ -294,14 +294,21 @@ class AuthRepositoryTest {
     fun `hasSession is false with nothing stored and true with tokens`() =
         runTest {
             assertFalse(
-                AuthRepositoryImpl(FakeAuthApi(), FakeShowTrackApi(), FakeTokenStore(), FakePush()).hasSession(),
+                AuthRepositoryImpl(
+                    FakeAuthApi(),
+                    FakeShowTrackApi(),
+                    FakeTokenStore(),
+                    FakeAlerts(),
+                    userData,
+                ).hasSession(),
             )
             assertTrue(
                 AuthRepositoryImpl(
                     FakeAuthApi(),
                     FakeShowTrackApi(),
                     FakeTokenStore(initial = TokenPair("a", "r")),
-                    FakePush(),
+                    FakeAlerts(),
+                    userData,
                 ).hasSession(),
             )
         }
@@ -356,6 +363,7 @@ class AuthRepositoryTest {
             sort: String?,
             mediaId: String?,
             favorite: Boolean?,
+            type: String?,
         ): LibraryPageDto = error("not used")
 
         override suspend fun addLibraryEntry(request: AddLibraryEntryRequest): LibraryEntryDto = error("not used")
@@ -376,9 +384,18 @@ class AuthRepositoryTest {
 
         override suspend fun mediaDetail(id: String): MediaDto = error("not used")
 
-        override suspend fun registerPushTarget(request: RegisterTargetRequest): PushTargetDto = error("not used")
+        override suspend fun resolveMedia(request: ResolveMediaRequestDto): MediaDto = error("not used")
 
-        override suspend fun deletePushTarget(id: String): Unit = error("not used")
+        override suspend fun mediaEpisodes(id: String): EpisodeListDto = error("not used")
+
+        override suspend fun deleteLibraryEntry(id: String): Unit = error("not used here")
+
+        override suspend fun watchedEpisodes(id: String): WatchedEpisodesDto = error("not used")
+
+        override suspend fun setWatchedEpisodes(
+            id: String,
+            request: SetWatchedRequestDto,
+        ): LibraryEntryDto = error("not used")
 
         override suspend fun recommendations(
             cursor: String?,
@@ -392,6 +409,8 @@ class AuthRepositoryTest {
         override suspend fun joinGroup(request: JoinGroupRequestDto): GroupWithInviteDto = error("not used")
 
         override suspend fun groupMembers(groupId: String): List<MemberDto> = error("not used")
+
+        override suspend fun groupInvite(groupId: String): GroupWithInviteDto = error("not used")
 
         override suspend fun rotateGroupInvite(groupId: String): GroupWithInviteDto = error("not used")
 
@@ -463,26 +482,57 @@ class AuthRepositoryTest {
         }
     }
 
-    private class FakePush(
-        private val failure: Throwable? = null,
+    private class FakeAlerts(
         private val calls: MutableList<String> = mutableListOf(),
-    ) : PushRepository {
-        var loggedIn = false
+    ) : EpisodeAlerts {
+        var syncRequests = 0
 
-        override suspend fun register(endpoint: String) = Unit
-
-        override suspend fun unregister() = Unit
-
-        override suspend fun onLoggedIn() {
-            failure?.let { throw it }
-            loggedIn = true
+        override suspend fun requestSync() {
+            syncRequests++
         }
 
-        override suspend fun onLoggedOut() {
-            calls += "push.onLoggedOut"
-            failure?.let { throw it }
+        override suspend fun cancelAll() {
+            calls += "alerts.cancelAll"
         }
-
-        override fun decodeMessage(body: ByteArray): PushNotification? = null
     }
+
+    private val cleared = mutableListOf<TokenPair?>()
+    private var clearStore: FakeTokenStore? = null
+
+    // Records, at each clear, whether tokens were still stored: the order is the point.
+    private val userData =
+        UserDataCleaner(
+            setOf(
+                object : UserData {
+                    override suspend fun clearUserData() {
+                        cleared += clearStore?.tokens()
+                    }
+                },
+            ),
+        )
+
+    @Test
+    fun `logout clears this account's data only after its tokens are gone`() =
+        runTest {
+            val store = FakeTokenStore(initial = TokenPair("access-1", "refresh-1"))
+            clearStore = store
+            val repository = AuthRepositoryImpl(FakeAuthApi(), FakeShowTrackApi(), store, FakeAlerts(), userData)
+
+            repository.logout()
+
+            assertEquals(listOf<TokenPair?>(null), cleared)
+        }
+
+    @Test
+    fun `a login clears what an interrupted sign-out left, before the new tokens exist`() =
+        runTest {
+            val store = FakeTokenStore()
+            clearStore = store
+            val repository = AuthRepositoryImpl(FakeAuthApi(), FakeShowTrackApi(), store, FakeAlerts(), userData)
+
+            repository.login(email = "a@example.com", password = "pw")
+
+            assertEquals(listOf<TokenPair?>(null), cleared)
+            assertEquals(TokenPair("access-1", "refresh-1"), store.saved)
+        }
 }

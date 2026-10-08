@@ -3,12 +3,15 @@ package com.anarky.showtrack.core.data.repository
 import com.anarky.showtrack.core.data.mapper.toDomain
 import com.anarky.showtrack.core.data.paging.CursorPaginator
 import com.anarky.showtrack.core.data.paging.Page
+import com.anarky.showtrack.core.data.session.SessionGuard
+import com.anarky.showtrack.core.data.session.UserData
 import com.anarky.showtrack.core.model.Recommendation
 import com.anarky.showtrack.core.network.api.ShowTrackApi
 import com.anarky.showtrack.core.network.dto.RecommendationDto
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -25,7 +28,16 @@ class RecommendationRepositoryImpl
     @Inject
     constructor(
         private val api: ShowTrackApi,
-    ) : RecommendationRepository {
+    ) : RecommendationRepository,
+        UserData {
+        // A page still in flight at sign-out is dropped, never published.
+        private val session = SessionGuard()
+
+        // Which sign-in each optimistically removed row belongs to. [restore] runs when an add
+        // fails, which can be after a sign-out; the old account's row must not come back then.
+        @Volatile private var epoch = 0L
+        private val removedIn = ConcurrentHashMap<String, Long>()
+
         // `restart()` drops the cursor; there is no filter/query field on this repository whose
         // agreement with the paginator [applyFilter]-style code elsewhere has to preserve across a
         // throw — recommendations take no client-chosen parameter to go stale.
@@ -60,8 +72,9 @@ class RecommendationRepositoryImpl
          * from the fetch's own result).
          */
         override suspend fun refresh() {
+            val startedIn = session.current()
             val firstPage = paginator.restart()
-            mutableFeed.value = firstPage
+            session.ifStill(startedIn) { mutableFeed.value = firstPage }
         }
 
         /**
@@ -79,11 +92,23 @@ class RecommendationRepositoryImpl
          * lock and answers `null` when it fetched nothing.
          */
         override suspend fun loadMore() {
+            val startedIn = session.current()
             val page = paginator.loadMore() ?: return
-            mutableFeed.value = mutableFeed.value + page
+            session.ifStill(startedIn) { mutableFeed.value = mutableFeed.value + page }
+        }
+
+        /** Sign-out: recommendations are made from this account's library. */
+        override suspend fun clearUserData() {
+            session.end {
+                epoch++
+                removedIn.clear()
+                paginator.reset()
+                mutableFeed.value = emptyList()
+            }
         }
 
         override fun remove(mediaId: String) {
+            removedIn[mediaId] = epoch
             mutableFeed.value = mutableFeed.value.filterNot { it.media.id == mediaId }
         }
 
@@ -106,6 +131,7 @@ class RecommendationRepositoryImpl
             index: Int,
             recommendation: Recommendation,
         ) {
+            if (removedIn.remove(recommendation.media.id) != epoch) return
             mutableFeed.value =
                 mutableFeed.value.toMutableList().apply {
                     add(index.coerceIn(0, size), recommendation)

@@ -73,6 +73,19 @@ query MediaById($id: Int) {
 # ScoreFormat is exactly {POINT_100, POINT_10_DECIMAL, POINT_10, POINT_5, POINT_3}. Without the
 # argument the value arrives in whichever scale the profile happens to use, which is a
 # factor-of-ten error in every imported score.
+# Separate from MEDIA_QUERY: only the episode list needs the schedule, and it pages on its own.
+EPISODES_QUERY = """
+query Episodes($id: Int, $page: Int, $perPage: Int) {
+  Media(id: $id, type: ANIME) {
+    episodes
+    airingSchedule(page: $page, perPage: $perPage) {
+      pageInfo { hasNextPage }
+      nodes { episode airingAt }
+    }
+  }
+}
+"""
+
 USER_LIST_QUERY = (
     """
 query UserList($name: String, $chunk: Int, $perChunk: Int) {

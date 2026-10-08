@@ -33,17 +33,17 @@ import com.anarky.showtrack.core.designsystem.R as DesignSystemR
  * `createComposeRule`, not `createAndroidComposeRule`: no Activity is needed to render the
  * stateless overload in isolation — `LibraryScreenTest`'s own reasoning.
  *
- * `@Config(qualifiers = ...)` widens Robolectric's virtual display, and it is a consequence of the
- * shelf layout rather than a stylistic pick. `createComposeRule()`'s default root measures a fixed
- * 320x470px in this project — it does NOT auto-size to content — and a shelf (header, then a 108dp
- * poster at 2:3, then title and year) is roughly twice the height of the flat row it replaced. Two
- * shelves no longer fit, so the second one's titles measure to zero height and are neither
- * displayed nor clickable: Compose cannot route a synthetic tap to a zero-area node, so
- * `performClick()` silently finds nothing rather than throwing. `ProfileScreenTest` records the
- * same finding, for the same reason, one screen over.
+ * `@Config(qualifiers = ...)` enlarges Robolectric's virtual display, and it is a consequence of the
+ * layout rather than a stylistic pick. `createComposeRule()`'s default root measures a fixed
+ * 320x470px in this project — it does NOT auto-size to content — and the large title, the top pick
+ * card and a shelf (header, poster, title, caption) already fill a phone-sized screen. A second
+ * shelf below them would measure to zero height and be neither displayed nor clickable: Compose
+ * cannot route a synthetic tap to a zero-area node, so `performClick()` silently finds nothing
+ * rather than throwing. Hence a display taller than any phone. `ProfileScreenTest` records the same
+ * finding, for the same reason, one screen over.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(qualifiers = "w411dp-h891dp")
+@Config(qualifiers = "w411dp-h1400dp")
 class DiscoverScreenTest {
     @get:Rule
     val composeRule = createComposeRule()
@@ -55,11 +55,12 @@ class DiscoverScreenTest {
 
         composeRule.setContent {
             DiscoverScreen(
-                state = DiscoverUiState.Success(items = listOf(FRIEREN, BEBOP)),
+                state = DiscoverUiState.Success(items = listOf(TOP, FRIEREN, BEBOP)),
                 onRetry = {},
                 onLoadMore = {},
                 onAdd = { added = it },
                 onRowClick = { rowClicked = true },
+                onSearch = {},
             )
         }
 
@@ -80,11 +81,12 @@ class DiscoverScreenTest {
 
         composeRule.setContent {
             DiscoverScreen(
-                state = DiscoverUiState.Success(items = listOf(FRIEREN, BEBOP)),
+                state = DiscoverUiState.Success(items = listOf(TOP, FRIEREN, BEBOP)),
                 onRetry = {},
                 onLoadMore = {},
                 onAdd = { added = it },
                 onRowClick = { clicked = it },
+                onSearch = {},
             )
         }
 
@@ -119,12 +121,13 @@ class DiscoverScreenTest {
                 onLoadMore = {},
                 onAdd = {},
                 onRowClick = {},
+                onSearch = {},
             )
         }
 
         composeRule.onNodeWithText(FRIEREN.reason.seedTitle).assertIsDisplayed()
         composeRule.onNodeWithText(BEBOP.reason.seedTitle).assertIsDisplayed()
-        composeRule.onNodeWithText(FRIEREN.media.title).assertIsDisplayed()
+        composeRule.onNode(hasTitle(FRIEREN.media.title)).assertIsDisplayed()
         composeRule.onNodeWithText(alsoFromAbyss.media.title).assertIsDisplayed()
     }
 
@@ -155,6 +158,7 @@ class DiscoverScreenTest {
                 onLoadMore = {},
                 onAdd = {},
                 onRowClick = {},
+                onSearch = {},
             )
         }
 
@@ -183,10 +187,11 @@ class DiscoverScreenTest {
                 onLoadMore = {},
                 onAdd = {},
                 onRowClick = {},
+                onSearch = {},
             )
         }
 
-        composeRule.onNodeWithText(FRIEREN.media.title).assertIsDisplayed()
+        composeRule.onNode(hasTitle(FRIEREN.media.title)).assertIsDisplayed()
 
         val context = ApplicationProvider.getApplicationContext<Context>()
         composeRule
@@ -208,6 +213,7 @@ class DiscoverScreenTest {
                 onLoadMore = {},
                 onAdd = {},
                 onRowClick = {},
+                onSearch = {},
             )
         }
 
@@ -215,6 +221,128 @@ class DiscoverScreenTest {
         composeRule
             .onNodeWithText(context.getString(DesignSystemR.string.stale_data_notice))
             .assertDoesNotExist()
+    }
+
+    @Test
+    fun `the first recommendation is the top pick and is not repeated in its shelf`() {
+        val alsoFromAbyss = FRIEREN.copy(media = FRIEREN.media.copy(id = "media-other", title = "Sousou"))
+
+        composeRule.setContent {
+            DiscoverScreen(
+                state = DiscoverUiState.Success(items = listOf(FRIEREN, alsoFromAbyss)),
+                onRetry = {},
+                onLoadMore = {},
+                onAdd = {},
+                onRowClick = {},
+                onSearch = {},
+            )
+        }
+
+        composeRule.onNodeWithContentDescription(FRIEREN.media.title, substring = true).assertIsDisplayed()
+        composeRule.onNodeWithText(FRIEREN.media.title).assertDoesNotExist()
+        composeRule.onNodeWithText(alsoFromAbyss.media.title).assertIsDisplayed()
+    }
+
+    @Test
+    fun `the top pick's buttons add it and open it`() {
+        var added: Recommendation? = null
+        var opened: Recommendation? = null
+
+        composeRule.setContent {
+            DiscoverScreen(
+                state = DiscoverUiState.Success(items = listOf(FRIEREN, BEBOP)),
+                onRetry = {},
+                onLoadMore = {},
+                onAdd = { added = it },
+                onRowClick = { opened = it },
+                onSearch = {},
+            )
+        }
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule.onNodeWithText(context.getString(R.string.discover_add_button)).performClick()
+        assertEquals(FRIEREN, added)
+        assertEquals(null, opened)
+
+        composeRule.onNodeWithText(context.getString(R.string.discover_details_button)).performClick()
+        assertEquals(FRIEREN, opened)
+    }
+
+    @Test
+    fun `a failed add of the top pick shows the error on the card`() {
+        composeRule.setContent {
+            DiscoverScreen(
+                state =
+                    DiscoverUiState.Success(
+                        items = listOf(FRIEREN, BEBOP),
+                        addError = AddFailure(FRIEREN.media.id, IllegalStateException("offline")),
+                    ),
+                onRetry = {},
+                onLoadMore = {},
+                onAdd = {},
+                onRowClick = {},
+                onSearch = {},
+            )
+        }
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule
+            .onNodeWithContentDescription(context.getString(R.string.discover_add_error), substring = true)
+            .assertIsDisplayed()
+    }
+
+    @Test
+    fun `no recommendations offers a way to search`() {
+        var searched = false
+
+        composeRule.setContent {
+            DiscoverScreen(
+                state = DiscoverUiState.Success(items = emptyList()),
+                onRetry = {},
+                onLoadMore = {},
+                onAdd = {},
+                onRowClick = {},
+                onSearch = { searched = true },
+            )
+        }
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule.onNodeWithText(context.getString(R.string.discover_empty_search_button)).performClick()
+
+        assertTrue(searched)
+    }
+
+    @Test
+    fun `genre chips put matched genres first and stop at four`() {
+        val pick =
+            FRIEREN.copy(
+                media = FRIEREN.media.copy(genres = listOf("Drama", "Comedy", "Fantasy", "Romance", "Adventure")),
+                reason = FRIEREN.reason.copy(matchedGenres = listOf("adventure", "fantasy")),
+            )
+
+        val chips = pick.genreChips()
+
+        assertEquals(listOf("Fantasy", "Adventure", "Drama", "Comedy"), chips.map { it.name })
+        assertEquals(listOf(true, true, false, false), chips.map { it.matched })
+    }
+
+    @Test
+    fun `a shelf names the two genres its items share most`() {
+        fun rec(
+            id: String,
+            genres: List<String>,
+        ) = FRIEREN.copy(
+            media = FRIEREN.media.copy(id = id),
+            reason = FRIEREN.reason.copy(matchedGenres = genres),
+        )
+        val shelf =
+            listOf(
+                rec("a", listOf("Drama", "Fantasy")),
+                rec("b", listOf("Fantasy", "Adventure")),
+                rec("c", listOf("Adventure", "Fantasy")),
+            ).toShelves().single()
+
+        assertEquals(listOf("Fantasy", "Adventure"), shelf.sharedGenres())
     }
 
     private companion object {
@@ -245,6 +373,17 @@ class DiscoverScreenTest {
                     RecommendationReason(
                         seedMediaId = "seed-1",
                         seedTitle = "Made in Abyss",
+                        matchedGenres = listOf("fantasy"),
+                    ),
+            )
+
+        val TOP =
+            Recommendation(
+                media = media(id = "media-top", title = "Mushoku Tensei", externalId = "108465"),
+                reason =
+                    RecommendationReason(
+                        seedMediaId = "seed-9",
+                        seedTitle = "Re:Zero",
                         matchedGenres = listOf("fantasy"),
                     ),
             )

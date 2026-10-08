@@ -10,11 +10,11 @@
          group's own invite code, which also joins the new account to that group (decision C-M). -->
     <string name="auth_invite_code_help">The code you were given. It may also add you to a group.</string>
 
-    <!-- The wordmark and its one-line statement of what the app is. Set in caps in the layout
-         via WordmarkStyle's tracking, not spelled in caps here: an all-caps string is read out
-         letter-by-letter by TalkBack. -->
+    <!-- The wordmark, uppercased in the layout rather than spelled in caps here: an all-caps
+         string is read out letter-by-letter by TalkBack. -->
     <string name="auth_wordmark">ShowTrack</string>
-    <string name="auth_tagline">Track what you watch.</string>
+    <!-- Sign up's only heading. Log in has none: its button already says "Log in". -->
+    <string name="auth_register_title">New account</string>
 
     <!-- The mode switch, moved below the form (it is a way out of this form, not a filter on it).
          Prompt and action are separate strings so only the action is emphasised and clickable. -->

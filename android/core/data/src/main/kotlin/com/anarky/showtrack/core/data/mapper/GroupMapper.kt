@@ -12,6 +12,7 @@ import com.anarky.showtrack.core.model.MediaSummary
 import com.anarky.showtrack.core.model.MediaType
 import com.anarky.showtrack.core.model.MemberProgress
 import com.anarky.showtrack.core.model.UserMediaStatus
+import com.anarky.showtrack.core.model.WatchlistCover
 import com.anarky.showtrack.core.model.WatchlistEntry
 import com.anarky.showtrack.core.network.dto.FeedItemDto
 import com.anarky.showtrack.core.network.dto.GroupActorDto
@@ -25,7 +26,27 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 import java.time.Instant
 
-fun GroupDto.toDomain(): Group = Group(id = id, name = name, createdAt = Instant.parse(createdAt))
+/**
+ * A role this client does not know decodes to null ("not known"), never to MEMBER or OWNER: a
+ * wrong guess would show or hide owner-only actions (RT-21's tolerant-enum rule).
+ */
+fun GroupDto.toDomain(): Group =
+    Group(
+        id = id,
+        name = name,
+        createdAt = Instant.parse(createdAt),
+        myRole = myRole?.let { raw -> GroupRole.entries.find { it.name.equals(raw, ignoreCase = true) } },
+        memberCount = memberCount,
+        memberPreview = memberPreview.map { it.toDomain() },
+        watchlistCount = watchlistCount,
+        watchlistPreview =
+            watchlistPreview.map {
+                WatchlistCover(
+                    mediaId = it.mediaId,
+                    coverImageUrl = it.coverImageUrl,
+                )
+            },
+    )
 
 fun GroupWithInviteDto.toDomain(): GroupWithInvite =
     GroupWithInvite(
@@ -102,6 +123,7 @@ fun FeedItemDto.toDomain(): FeedEntry =
         mediaId = media?.id,
         payload = payload.mapValues { (_, value) -> value.stringify() },
         createdAt = Instant.parse(createdAt),
+        totalEpisodes = media?.totalEpisodes,
     )
 
 /**

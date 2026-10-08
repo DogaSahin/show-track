@@ -89,6 +89,12 @@ interface GroupRepository {
     suspend fun rotateInvite(groupId: String): GroupWithInvite
 
     /**
+     * The current invite code and its expiry, without rotating it (an expired one comes back as it
+     * is, for the screen to say so). Owner only: a member gets [GroupFailure.NotPermitted].
+     */
+    suspend fun invite(groupId: String): GroupWithInvite
+
+    /**
      * `DELETE /v1/groups/{id}/members/{userId}`. Any member may remove themselves; only the owner
      * may remove anyone else — [GroupFailure.NotPermitted] on that second case for a non-owner.
      */

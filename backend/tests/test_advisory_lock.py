@@ -3,7 +3,7 @@ import contextlib
 from sqlalchemy import text
 
 from app.db import get_engine
-from app.sync.locks import SYNC_LOCK_KEY, THRESHOLD_LOCK_KEY, advisory_lock
+from app.sync.locks import SEED_LOCK_KEY, SYNC_LOCK_KEY, advisory_lock
 
 
 async def _locks_held(key: int) -> int:
@@ -97,8 +97,8 @@ async def test_the_lock_connection_does_not_sit_idle_in_transaction():
 
 
 async def test_the_two_jobs_do_not_block_each_other():
-    """Distinct keys, so a slow provider sync never stalls the threshold scan."""
+    """Distinct keys, so a slow airing sync never stalls the recommendation seed."""
     async with advisory_lock(SYNC_LOCK_KEY) as sync_held:
-        async with advisory_lock(THRESHOLD_LOCK_KEY) as scan_held:
+        async with advisory_lock(SEED_LOCK_KEY) as seed_held:
             assert sync_held is True
-            assert scan_held is True
+            assert seed_held is True

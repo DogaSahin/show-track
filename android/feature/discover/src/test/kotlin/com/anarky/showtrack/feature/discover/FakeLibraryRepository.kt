@@ -1,9 +1,11 @@
 package com.anarky.showtrack.feature.discover
 
+import com.anarky.showtrack.core.data.paging.Page
 import com.anarky.showtrack.core.data.repository.LibraryRepository
 import com.anarky.showtrack.core.model.LibraryEntry
 import com.anarky.showtrack.core.model.LibraryFilter
 import com.anarky.showtrack.core.model.LibraryPatch
+import com.anarky.showtrack.core.model.LibrarySort
 import com.anarky.showtrack.core.model.Media
 import com.anarky.showtrack.core.model.MediaSource
 import com.anarky.showtrack.core.model.MediaStatus
@@ -11,8 +13,6 @@ import com.anarky.showtrack.core.model.MediaType
 import com.anarky.showtrack.core.model.UserMediaStatus
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
 import java.time.Instant
 
 /**
@@ -51,6 +51,16 @@ internal class FakeLibraryRepository(
         return DUMMY_ENTRY
     }
 
+    override suspend fun remove(entryId: String): Unit = error("not used here")
+
+    override suspend fun watchedEpisodes(entryId: String): Set<String> = error("not used here")
+
+    override suspend fun setWatched(
+        entryId: String,
+        episodeIds: Collection<String>,
+        watched: Boolean,
+    ): LibraryEntry = error("not used here")
+
     override suspend fun update(
         entryId: String,
         patch: LibraryPatch,
@@ -58,13 +68,18 @@ internal class FakeLibraryRepository(
 
     override suspend fun entryForMedia(mediaId: String): LibraryEntry? = error("not exercised by DiscoverViewModel")
 
-    override val favoriteEntries: StateFlow<List<LibraryEntry>> = MutableStateFlow(emptyList())
-
-    override suspend fun refreshFavorites(): Unit = error("not exercised by DiscoverViewModel")
-
-    override suspend fun loadMoreFavorites(): Unit = error("not exercised by DiscoverViewModel")
+    override suspend fun favoritesPage(
+        type: MediaType?,
+        sort: LibrarySort,
+        cursor: String?,
+        limit: Int,
+    ): Page<LibraryEntry> = Page(emptyList(), null)
 
     override suspend fun libraryStats() = error("not exercised by DiscoverViewModel")
+
+    override suspend fun upcomingWatching(limit: Int): List<LibraryEntry> = emptyList()
+
+    override suspend fun allWatching(): List<LibraryEntry> = emptyList()
 
     override suspend fun importAniList(username: String) = error("not exercised by DiscoverViewModel")
 

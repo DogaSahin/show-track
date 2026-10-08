@@ -1,9 +1,10 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from enum import StrEnum
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from app.library.models import UserMediaStatus
 from app.media.models import MediaSource, MediaStatus, MediaType
 
 
@@ -58,6 +59,28 @@ class MediaDetail(PersistedMedia):
     next_episode_number: int | None
     next_episode_date: datetime | None
     days_until_next_episode: int | None
+    # Regular episodes stored for this title (specials excluded); null until its list is fetched.
+    total_episodes: int | None = None
+
+
+class LibraryEntryRef(BaseModel):
+    id: uuid.UUID
+    status: UserMediaStatus
+
+
+class SearchItem(MediaSummary):
+    """A search result, plus what the caller already has of it. Both extras are null for a title
+    nobody has stored; `library_entry` is null unless THIS caller tracks it.
+    """
+
+    # Set when a media row exists, so the client can open the title without resolving it first.
+    media_id: uuid.UUID | None = None
+    library_entry: LibraryEntryRef | None = None
+
+
+class ResolveMediaRequest(BaseModel):
+    source: MediaSource
+    external_id: str = Field(min_length=1, max_length=64)
 
 
 class MediaSearchResponse(BaseModel):
@@ -66,7 +89,7 @@ class MediaSearchResponse(BaseModel):
     without materialising both result sets first.
     """
 
-    items: list[MediaSummary]
+    items: list[SearchItem]
     page: int
     # True if any provider that ANSWERED reports more. A provider that timed out or errored
     # contributes nothing here, so `has_more: false` alongside a non-ok entry in `sources` means
@@ -74,3 +97,28 @@ class MediaSearchResponse(BaseModel):
     # whether to retry should read `sources`, which is why that field is not merely diagnostic.
     has_more: bool
     sources: dict[MediaSource, SourceStatus]
+
+
+class EpisodeItem(BaseModel):
+    id: uuid.UUID
+    number: int
+    title: str | None
+    air_date: date | None
+    # Computed at read time against the server's date, so it never goes stale between syncs.
+    aired: bool
+
+
+class SeasonEpisodes(BaseModel):
+    number: int
+    episode_count: int
+    episodes: list[EpisodeItem]
+
+
+class EpisodeList(BaseModel):
+    """`synced_at: null` with no seasons means the list has not been fetched yet, which a client
+    shows as "not available yet" rather than as a show with no episodes.
+    """
+
+    synced_at: datetime | None
+    total_episodes: int | None
+    seasons: list[SeasonEpisodes]

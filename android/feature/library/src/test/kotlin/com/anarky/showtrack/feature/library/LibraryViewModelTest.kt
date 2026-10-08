@@ -1,11 +1,13 @@
 package com.anarky.showtrack.feature.library
 
 import app.cash.turbine.test
+import com.anarky.showtrack.core.data.paging.Page
 import com.anarky.showtrack.core.data.repository.LibraryRepository
 import com.anarky.showtrack.core.model.LibraryEntry
 import com.anarky.showtrack.core.model.LibraryFilter
 import com.anarky.showtrack.core.model.LibraryPatch
 import com.anarky.showtrack.core.model.LibrarySort
+import com.anarky.showtrack.core.model.LibraryStats
 import com.anarky.showtrack.core.model.Media
 import com.anarky.showtrack.core.model.MediaSource
 import com.anarky.showtrack.core.model.MediaStatus
@@ -16,7 +18,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -26,6 +27,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -614,6 +616,16 @@ class LibraryViewModelTest {
             externalId: String,
         ): LibraryEntry = error("not exercised by LibraryViewModel")
 
+        override suspend fun remove(entryId: String): Unit = error("not used here")
+
+        override suspend fun watchedEpisodes(entryId: String): Set<String> = error("not used here")
+
+        override suspend fun setWatched(
+            entryId: String,
+            episodeIds: Collection<String>,
+            watched: Boolean,
+        ): LibraryEntry = error("not used here")
+
         override suspend fun update(
             entryId: String,
             patch: LibraryPatch,
@@ -621,18 +633,70 @@ class LibraryViewModelTest {
 
         override suspend fun entryForMedia(mediaId: String): LibraryEntry? = error("not exercised by LibraryViewModel")
 
-        override val favoriteEntries: StateFlow<List<LibraryEntry>> = MutableStateFlow(emptyList())
+        override suspend fun favoritesPage(
+            type: MediaType?,
+            sort: LibrarySort,
+            cursor: String?,
+            limit: Int,
+        ): Page<LibraryEntry> = Page(emptyList(), null)
 
-        override suspend fun refreshFavorites(): Unit = error("not exercised by LibraryViewModel")
+        var stats: LibraryStats? = null
+        var upcoming: List<LibraryEntry> = emptyList()
 
-        override suspend fun loadMoreFavorites(): Unit = error("not exercised by LibraryViewModel")
+        override suspend fun libraryStats(): LibraryStats = stats ?: throw IOException("stats offline")
 
-        override suspend fun libraryStats() = error("not exercised by LibraryViewModel")
+        override suspend fun upcomingWatching(limit: Int): List<LibraryEntry> = upcoming
+
+        override suspend fun allWatching(): List<LibraryEntry> = emptyList()
 
         override suspend fun importAniList(username: String) = error("not exercised by LibraryViewModel")
     }
 
+    @Test
+    fun `refreshOverview loads the counts and keeps only titles with a next episode`() =
+        runTest(dispatcher) {
+            val repository = FakeLibraryRepository()
+            val noNextEpisode =
+                ENTRY.copy(id = "entry-2", media = ENTRY.media.copy(id = "media-2", nextEpisodeDate = null))
+            repository.stats = STATS
+            repository.upcoming = listOf(ENTRY, noNextEpisode)
+            val viewModel = LibraryViewModel(repository)
+
+            viewModel.refreshOverview()
+            advanceUntilIdle()
+
+            assertEquals(STATS, viewModel.stats.value)
+            assertEquals(listOf(ENTRY), viewModel.airingSoon.value)
+        }
+
+    @Test
+    fun `a failed overview leaves no count and no airing row, and the list unaffected`() =
+        runTest(dispatcher) {
+            val repository = FakeLibraryRepository()
+            val viewModel = LibraryViewModel(repository)
+            backgroundScope.launch { viewModel.state.collect {} }
+
+            viewModel.refreshOverview()
+            advanceUntilIdle()
+
+            assertNull(viewModel.stats.value)
+            assertEquals(emptyList<LibraryEntry>(), viewModel.airingSoon.value)
+            assertTrue(viewModel.state.value is LibraryUiState.Success)
+        }
+
     private companion object {
+        val STATS =
+            LibraryStats(
+                total = 9,
+                byStatus = mapOf(UserMediaStatus.WATCHING to 9),
+                averageScore = null,
+                ratedCount = 0,
+                episodesWatched = 0,
+                topGenres = emptyList(),
+                addedThisMonth = 0,
+                favorites = 0,
+            )
+
         val ENTRY =
             LibraryEntry(
                 id = "entry-1",

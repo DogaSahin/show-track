@@ -5,6 +5,7 @@ import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ApplicationProvider
@@ -60,7 +61,7 @@ class FeedScreenTest {
                 onEntryClick = {},
                 onSwitchGroup = {},
                 onRetryGroups = {},
-                onCreateOrJoinGroup = {},
+                onOpenGroups = {},
             )
         }
 
@@ -70,7 +71,7 @@ class FeedScreenTest {
 
     /**
      * The brief's own named test, verbatim, and BLOCKING B2's fix: the empty state is a real
-     * create-or-join DOOR, not just a sentence — tapping its action must reach [onCreateOrJoinGroup].
+     * create-or-join DOOR, not just a sentence — tapping its action must reach [onOpenGroups].
      */
     @Test
     fun `a user in no groups reaches create-or-join, not an empty feed`() {
@@ -82,7 +83,7 @@ class FeedScreenTest {
                 onLoadMore = {},
                 onRetry = {},
                 onEntryClick = {},
-                onCreateOrJoinGroup = { reachedCreateOrJoin = true },
+                onOpenGroups = { reachedCreateOrJoin = true },
                 onSwitchGroup = {},
                 onRetryGroups = {},
             )
@@ -109,7 +110,7 @@ class FeedScreenTest {
                 onEntryClick = {},
                 onSwitchGroup = {},
                 onRetryGroups = {},
-                onCreateOrJoinGroup = {},
+                onOpenGroups = {},
             )
         }
 
@@ -136,7 +137,7 @@ class FeedScreenTest {
                 onEntryClick = {},
                 onRetryGroups = { retriedGroups = true },
                 onSwitchGroup = {},
-                onCreateOrJoinGroup = {},
+                onOpenGroups = {},
             )
         }
 
@@ -160,7 +161,7 @@ class FeedScreenTest {
                 onEntryClick = {},
                 onSwitchGroup = {},
                 onRetryGroups = {},
-                onCreateOrJoinGroup = {},
+                onOpenGroups = {},
             )
         }
 
@@ -188,18 +189,18 @@ class FeedScreenTest {
                 onEntryClick = { clicked = it },
                 onSwitchGroup = {},
                 onRetryGroups = {},
-                onCreateOrJoinGroup = {},
+                onOpenGroups = {},
             )
         }
 
         val expected = actorLine(context, R.string.feed_action_imported, "5")
-        composeRule.onNodeWithText(expected).assertIsDisplayed()
+        composeRule.onNodeWithContentDescription(expected, substring = true).assertIsDisplayed()
         composeRule.onNodeWithText(context.getString(R.string.feed_unknown_title)).assertDoesNotExist()
 
         // assertHasNoClickAction, not performClick: a node with no click semantics action makes
         // performClick() itself throw (Compose UI testing asserts the action exists before firing
         // it), which would fail this test for the CORRECT behaviour rather than pinning it.
-        composeRule.onNodeWithText(expected).assertHasNoClickAction()
+        composeRule.onNodeWithContentDescription(expected, substring = true).assertHasNoClickAction()
         assertEquals(null, clicked)
     }
 
@@ -216,28 +217,38 @@ class FeedScreenTest {
                 onEntryClick = {},
                 onSwitchGroup = {},
                 onRetryGroups = {},
-                onCreateOrJoinGroup = {},
+                onOpenGroups = {},
             )
         }
 
         composeRule
-            .onNodeWithText(actorLine(context, R.string.feed_action_added, TITLE))
+            .onNodeWithContentDescription(
+                substring = true,
+                label = actorLine(context, R.string.feed_action_added, TITLE),
+            ).assertIsDisplayed()
+        composeRule
+            .onNodeWithContentDescription(
+                substring = true,
+                label = actorLine(context, R.string.feed_action_imported, "5"),
+            ).assertIsDisplayed()
+        composeRule
+            .onNodeWithContentDescription(substring = true, label = progressLine(context, progress = 5))
             .assertIsDisplayed()
         composeRule
-            .onNodeWithText(actorLine(context, R.string.feed_action_imported, "5"))
-            .assertIsDisplayed()
+            .onNodeWithContentDescription(
+                substring = true,
+                label = actorLine(context, R.string.feed_action_rated, TITLE),
+            ).assertIsDisplayed()
         composeRule
-            .onNodeWithText(actorLine(context, R.string.feed_action_progressed, TITLE))
-            .assertIsDisplayed()
+            .onNodeWithContentDescription(
+                substring = true,
+                label = actorLine(context, R.string.feed_action_completed, TITLE),
+            ).assertIsDisplayed()
         composeRule
-            .onNodeWithText(actorLine(context, R.string.feed_action_rated, TITLE))
-            .assertIsDisplayed()
-        composeRule
-            .onNodeWithText(actorLine(context, R.string.feed_action_completed, TITLE))
-            .assertIsDisplayed()
-        composeRule
-            .onNodeWithText(actorLine(context, R.string.feed_action_dropped, TITLE))
-            .assertIsDisplayed()
+            .onNodeWithContentDescription(
+                substring = true,
+                label = actorLine(context, R.string.feed_action_dropped, TITLE),
+            ).assertIsDisplayed()
     }
 
     /** The brief's own named test, verbatim. */
@@ -252,12 +263,16 @@ class FeedScreenTest {
                 onEntryClick = {},
                 onSwitchGroup = {},
                 onRetryGroups = {},
-                onCreateOrJoinGroup = {},
+                onOpenGroups = {},
             )
         }
 
         val context = ApplicationProvider.getApplicationContext<Context>()
-        val row = composeRule.onNodeWithText(actorLine(context, R.string.feed_action_unknown))
+        val row =
+            composeRule.onNodeWithContentDescription(
+                substring = true,
+                label = actorLine(context, R.string.feed_action_unknown),
+            )
         row.assertIsDisplayed()
         // Round 1, small item 2: FeedEntryRow's KDoc claims UNKNOWN is handled "with no code
         // change" via the mediaId != null check — this is what actually pins that claim rather
@@ -284,11 +299,15 @@ class FeedScreenTest {
                 onEntryClick = { clicked = it },
                 onSwitchGroup = {},
                 onRetryGroups = {},
-                onCreateOrJoinGroup = {},
+                onOpenGroups = {},
             )
         }
 
-        val ratedRow = composeRule.onNodeWithText(actorLine(context, R.string.feed_action_rated, TITLE))
+        val ratedRow =
+            composeRule.onNodeWithContentDescription(
+                substring = true,
+                label = actorLine(context, R.string.feed_action_rated, TITLE),
+            )
         ratedRow.assertHasClickAction()
         ratedRow.performClick()
 
@@ -308,12 +327,16 @@ class FeedScreenTest {
                 onEntryClick = {},
                 onSwitchGroup = {},
                 onRetryGroups = {},
-                onCreateOrJoinGroup = {},
+                onOpenGroups = {},
             )
         }
 
         val banner = composeRule.onNodeWithText(context.getString(R.string.feed_stale_notice))
-        val row = composeRule.onNodeWithText(actorLine(context, R.string.feed_action_added, TITLE))
+        val row =
+            composeRule.onNodeWithContentDescription(
+                substring = true,
+                label = actorLine(context, R.string.feed_action_added, TITLE),
+            )
         banner.assertIsDisplayed()
         row.assertIsDisplayed()
 
@@ -338,7 +361,7 @@ class FeedScreenTest {
                 onEntryClick = {},
                 onSwitchGroup = {},
                 onRetryGroups = {},
-                onCreateOrJoinGroup = {},
+                onOpenGroups = {},
             )
         }
 
@@ -350,13 +373,11 @@ class FeedScreenTest {
     }
 
     /**
-     * The switcher's own gating/selection behaviour is [GroupSwitcherTest]'s job
-     * (`:core:designsystem`) — this is only the WIRING check: [FeedScreen] actually plugs
-     * [com.anarky.showtrack.core.designsystem.component.GroupSwitcher] into its own [groups]/
+     * The WIRING check: [FeedScreen] actually plugs [FeedGroupSwitcher] into its own groups and
      * [onSwitchGroup] parameters, rather than, say, swapping them or dropping the callback.
      */
     @Test
-    fun `tapping a group in the switcher invokes onSwitchGroup with that group's id`() {
+    fun `picking a group from the switcher menu invokes onSwitchGroup with that group's id`() {
         var selected: String? = null
         composeRule.setContent {
             FeedScreen(
@@ -368,18 +389,24 @@ class FeedScreenTest {
                 onRetry = {},
                 onEntryClick = {},
                 onRetryGroups = {},
-                onCreateOrJoinGroup = {},
+                onOpenGroups = {},
             )
         }
 
+        openSwitcher()
+        composeRule.onNodeWithContentDescription("7 members").assertIsDisplayed()
         composeRule.onNodeWithText(OTHER_GROUP.name).performClick()
 
         assertEquals(OTHER_GROUP.id, selected)
     }
 
-    /** The negative control: a single active group renders no switcher at all (E-K). */
+    /**
+     * The pill shows with a single group too: it names the group this feed is for, and its menu is
+     * the way to Groups.
+     */
     @Test
-    fun `a single active group shows no switcher`() {
+    fun `manage groups in the switcher menu opens groups, even with a single group`() {
+        var openedGroups = false
         composeRule.setContent {
             FeedScreen(
                 activeGroupState = ActiveGroupState.Success(groups = listOf(GROUP), activeGroupId = GROUP_ID),
@@ -389,11 +416,51 @@ class FeedScreenTest {
                 onRetry = {},
                 onEntryClick = {},
                 onRetryGroups = {},
-                onCreateOrJoinGroup = {},
+                onOpenGroups = { openedGroups = true },
             )
         }
 
-        composeRule.onNodeWithText(GROUP.name).assertDoesNotExist()
+        openSwitcher()
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule.onNodeWithText(context.getString(R.string.feed_manage_groups)).performClick()
+
+        assertTrue(openedGroups)
+    }
+
+    @Test
+    fun `a merged run of progress updates shows the episode range`() {
+        val older = PROGRESSED.copy(id = "entry-progressed-older", payload = mapOf("progress" to "3"))
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule.setContent {
+            FeedScreen(
+                activeGroupState = ActiveGroupState.Success(groups = emptyList(), activeGroupId = GROUP_ID),
+                state = FeedUiState.Success(entries = listOf(PROGRESSED, older)),
+                onLoadMore = {},
+                onRetry = {},
+                onEntryClick = {},
+                onSwitchGroup = {},
+                onRetryGroups = {},
+                onOpenGroups = {},
+            )
+        }
+
+        composeRule
+            .onNodeWithText(
+                context.getString(R.string.feed_progress_range, 3, 5),
+                useUnmergedTree = true,
+            ).assertExists()
+        composeRule
+            .onNodeWithContentDescription(
+                context.getString(R.string.feed_progress_range_spoken, 3, 5),
+                substring = true,
+            ).assertIsDisplayed()
+    }
+
+    private fun openSwitcher() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule
+            .onNodeWithContentDescription(context.getString(R.string.feed_switch_group, GROUP.name))
+            .performClick()
     }
 
     @Test
@@ -408,7 +475,7 @@ class FeedScreenTest {
                 onEntryClick = {},
                 onSwitchGroup = {},
                 onRetryGroups = {},
-                onCreateOrJoinGroup = {},
+                onOpenGroups = {},
             )
         }
 
@@ -419,18 +486,45 @@ class FeedScreenTest {
     }
 
     /**
-     * The visible text of one timeline row.
+     * The sentence one timeline row speaks (the start of its content description).
      *
      * The row renders the actor as its own styled span and the action as a separate string, so a
-     * test matching on rendered text has to join them exactly as the row does. Built from the actor
+     * test matching on it has to join them exactly as the row does. Built from the actor
      * rather than matching on the action alone deliberately: an assertion on "rated Frieren" would
      * still pass if the row stopped rendering who did it.
      */
+    private fun progressLine(
+        context: Context,
+        progress: Int,
+    ): String =
+        "${ACTOR.username} " +
+            context.resources.getQuantityString(R.plurals.feed_action_progressed_count, progress, progress, TITLE)
+
     private fun actorLine(
         context: Context,
         actionRes: Int,
         vararg args: Any,
     ): String = "${ACTOR.username} " + context.getString(actionRes, *args)
+
+    @Test
+    fun `a progress event shows how far through the show it is, when the count is known`() {
+        composeRule.setContent {
+            FeedScreen(
+                activeGroupState = ActiveGroupState.Success(groups = emptyList(), activeGroupId = GROUP_ID),
+                state = FeedUiState.Success(entries = listOf(PROGRESSED.copy(totalEpisodes = 28))),
+                onLoadMore = {},
+                onRetry = {},
+                onEntryClick = {},
+                onSwitchGroup = {},
+                onRetryGroups = {},
+                onOpenGroups = {},
+            )
+        }
+
+        val shown = "${PROGRESSED.payload.getValue("progress")} of 28"
+        composeRule.onNodeWithText(shown, useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithContentDescription(shown, substring = true).assertExists()
+    }
 
     private companion object {
         const val GROUP_ID = "group-1"
@@ -438,7 +532,12 @@ class FeedScreenTest {
         val ACTOR = GroupActor(id = "user-1", username = "alex")
         val GROUP = Group(id = GROUP_ID, name = "Alpha Watchers", createdAt = Instant.parse("2026-08-28T09:00:00Z"))
         val OTHER_GROUP =
-            Group(id = "group-2", name = "Beta Watchers", createdAt = Instant.parse("2026-08-29T09:00:00Z"))
+            Group(
+                id = "group-2",
+                name = "Beta Watchers",
+                createdAt = Instant.parse("2026-08-29T09:00:00Z"),
+                memberCount = 7,
+            )
         val MEDIA =
             MediaSummary(
                 source = MediaSource.ANILIST,

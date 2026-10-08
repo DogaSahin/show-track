@@ -3,10 +3,10 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db import get_session
+from app.db import get_session, get_session_factory
 from app.library import import_service, service
 from app.library.models import UserMediaStatus
 from app.library.schemas import (
@@ -19,11 +19,13 @@ from app.library.schemas import (
     LibrarySort,
     LibraryStats,
     ReviewRead,
+    SetWatchedRequest,
     UpdateLibraryEntryRequest,
     UpdateReviewRequest,
+    WatchedEpisodes,
 )
 from app.media import service as media_service
-from app.media.models import MediaSource
+from app.media.models import MediaSource, MediaType
 from app.media.providers import get_providers
 from app.media.providers.base import MediaProvider, MediaRef
 from app.pagination import InvalidCursor, decode_cursor
@@ -37,6 +39,7 @@ router = APIRouter(prefix="/library", tags=["library"])
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 ProvidersDep = Annotated[Mapping[MediaSource, MediaProvider], Depends(get_providers)]
 CurrentUserDep = Annotated[User, Depends(get_current_user)]
+SessionFactoryDep = Annotated[media_service.SessionFactory, Depends(get_session_factory)]
 
 # Declared for OpenAPI rather than handled here. app/errors.py owns the mapping; documenting the
 # statuses on the route is what keeps that mapping discoverable from the call site.
@@ -61,6 +64,8 @@ async def add_to_library(
     providers: ProvidersDep,
     current_user: CurrentUserDep,
     response: Response,
+    background_tasks: BackgroundTasks,
+    session_factory: SessionFactoryDep,
 ) -> LibraryEntry:
     """Idempotent (decision 4-D): adding a title already tracked returns it untouched with 200.
 
@@ -84,6 +89,16 @@ async def add_to_library(
     entry, created = await service.add_entry(session, user_id=user_id, media_id=media.id)
     await session.commit()
 
+    if media.episodes_synced_at is None:
+        # After the response, in a session of its own: the episode list is there when the user
+        # opens the title, rather than after the next sync cycle.
+        background_tasks.add_task(
+            media_service.fetch_and_store_episodes,
+            session_factory,
+            providers,
+            media.id,
+            MediaRef(source=media.source, external_id=media.external_id),
+        )
     if not created:
         response.status_code = status.HTTP_200_OK
     return service.to_entry(entry, media, datetime.now(tz=UTC))
@@ -104,6 +119,9 @@ async def list_library(
     # cursor, same sorts. `bool | None`, so absent means "no filter" and `false` means
     # "non-favourites", which a plain `bool = False` default would collapse.
     favorite: bool | None = None,
+    # Anime or TV only, for Favorites' two shelves. Aliased because `type` shadows the builtin;
+    # an unknown value is a 422 from the enum, the same as `status`.
+    media_type: Annotated[MediaType | None, Query(alias="type")] = None,
     sort: LibrarySort = LibrarySort.TITLE,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     # Capped: decode_cursor contains RecursionError, but not paying for a megabyte of nesting in
@@ -131,6 +149,7 @@ async def list_library(
         now=datetime.now(tz=UTC),
         media_id=media_id,
         favorite=favorite,
+        media_type=media_type,
     )
     return LibraryPage(items=items, next_cursor=next_cursor)
 
@@ -197,6 +216,50 @@ async def update_library_entry(
     await service.update_entry(session, entry, payload.model_dump(exclude_unset=True))
     await session.commit()
     return service.to_entry(entry, media, datetime.now(tz=UTC))
+
+
+@router.get(
+    "/{entry_id}/episodes/watched",
+    response_model=WatchedEpisodes,
+    responses={404: {"description": _ENTRY_NOT_FOUND}},
+)
+async def read_watched_episodes(
+    entry_id: uuid.UUID, session: SessionDep, current_user: CurrentUserDep
+) -> WatchedEpisodes:
+    found = await service.get_entry(session, entry_id=entry_id, user_id=current_user.id)
+    if found is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_ENTRY_NOT_FOUND)
+    return WatchedEpisodes(episode_ids=await service.watched_episode_ids(session, found[0]))
+
+
+@router.put(
+    "/{entry_id}/episodes/watched",
+    response_model=LibraryEntry,
+    responses={
+        404: {"description": _ENTRY_NOT_FOUND},
+        409: {"description": "episodes not loaded yet"},
+        422: {"description": "an episode of another title, or one not aired yet"},
+    },
+)
+async def set_watched_episodes(
+    entry_id: uuid.UUID, payload: SetWatchedRequest, session: SessionDep, current_user: CurrentUserDep
+) -> LibraryEntry:
+    """Returns the updated entry, so the client has the new progress in the same round trip."""
+    found = await service.get_entry(session, entry_id=entry_id, user_id=current_user.id)
+    if found is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_ENTRY_NOT_FOUND)
+    entry, media = found
+    now = datetime.now(tz=UTC)
+    try:
+        await service.set_watched(session, entry, media, payload.episode_ids, watched=payload.watched, now=now)
+    except service.EpisodesNotLoaded as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="episodes not loaded yet") from exc
+    except service.EpisodesNotOfThisTitle as exc:
+        raise HTTPException(status_code=422, detail="not an episode of this title") from exc
+    except service.EpisodeNotAired as exc:
+        raise HTTPException(status_code=422, detail="episode not aired yet") from exc
+    await session.commit()
+    return service.to_entry(entry, media, now)
 
 
 @router.delete(

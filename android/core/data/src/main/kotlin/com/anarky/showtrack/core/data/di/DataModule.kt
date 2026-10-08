@@ -1,13 +1,11 @@
 package com.anarky.showtrack.core.data.di
 
+import com.anarky.showtrack.core.data.alerts.AlertSettingsStore
+import com.anarky.showtrack.core.data.alerts.DataStoreAlertSettingsStore
 import com.anarky.showtrack.core.data.auth.AuthEventSource
 import com.anarky.showtrack.core.data.auth.AuthEventSourceImpl
 import com.anarky.showtrack.core.data.group.ActiveGroupStore
 import com.anarky.showtrack.core.data.group.DataStoreActiveGroupStore
-import com.anarky.showtrack.core.data.push.DataStorePushRegistrationStore
-import com.anarky.showtrack.core.data.push.PushRegistrationStore
-import com.anarky.showtrack.core.data.push.PushRepository
-import com.anarky.showtrack.core.data.push.PushRepositoryImpl
 import com.anarky.showtrack.core.data.repository.AuthRepository
 import com.anarky.showtrack.core.data.repository.AuthRepositoryImpl
 import com.anarky.showtrack.core.data.repository.GroupRepository
@@ -18,17 +16,25 @@ import com.anarky.showtrack.core.data.repository.MediaRepository
 import com.anarky.showtrack.core.data.repository.MediaRepositoryImpl
 import com.anarky.showtrack.core.data.repository.RecommendationRepository
 import com.anarky.showtrack.core.data.repository.RecommendationRepositoryImpl
+import com.anarky.showtrack.core.data.search.DataStoreRecentSearchStore
+import com.anarky.showtrack.core.data.search.RecentSearchStore
+import com.anarky.showtrack.core.data.session.UserData
 import dagger.Binds
 import dagger.Module
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
+import dagger.multibindings.IntoSet
 
 /**
  * The edge that makes architecture rule 2 usable rather than merely enforced: everything upstream
  * of here binds concrete types, and this is where the graph starts handing out an interface. A
  * `:feature:*` ViewModel asks for [LibraryRepository] and never learns that Retrofit or Room were
  * involved.
+ *
+ * One `@Binds` per binding is the whole content of a Hilt module, hence the function count:
+ * splitting it would only scatter that edge.
  */
+@Suppress("TooManyFunctions")
 @Module
 @InstallIn(SingletonComponent::class)
 abstract class DataModule {
@@ -66,25 +72,6 @@ abstract class DataModule {
     abstract fun authEventSource(impl: AuthEventSourceImpl): AuthEventSource
 
     /**
-     * No `@Singleton` on the method for the third time, and the same reasoning:
-     * [PushRepositoryImpl] carries the scope. It matters here because the impl holds a
-     * `PushRegistrationStore`, and DataStore THROWS if two instances are constructed over the
-     * same file in one process — an unscoped binding plus one direct injection of the concrete
-     * type would be exactly that crash. (`PushRegistrationStore` is itself `@Singleton`, so this
-     * is belt and braces rather than the only guard.)
-     */
-    @Binds
-    abstract fun pushRepository(impl: PushRepositoryImpl): PushRepository
-
-    /**
-     * `DataStorePushRegistrationStore` carries the `@Singleton`, and here that is not a style
-     * preference: DataStore THROWS if two instances are constructed over the same file in one
-     * process, so a second instance is a crash rather than a duplicated cache.
-     */
-    @Binds
-    abstract fun pushRegistrationStore(impl: DataStorePushRegistrationStore): PushRegistrationStore
-
-    /**
      * No `@Singleton` on the method, same reasoning as the others above: the scope sits on
      * [AuthRepositoryImpl].
      */
@@ -116,9 +103,40 @@ abstract class DataModule {
 
     /**
      * `DataStoreActiveGroupStore` carries the `@Singleton`, same reasoning as
-     * [pushRegistrationStore] above: DataStore throws if two instances are constructed over the
+     * the other DataStore-backed stores: DataStore throws if two instances are constructed over the
      * same file in one process.
      */
     @Binds
     abstract fun activeGroupStore(impl: DataStoreActiveGroupStore): ActiveGroupStore
+
+    /** `DataStoreRecentSearchStore` carries the `@Singleton`, for the same DataStore reason. */
+    @Binds
+    abstract fun recentSearchStore(impl: DataStoreRecentSearchStore): RecentSearchStore
+
+    /** `DataStoreAlertSettingsStore` carries the `@Singleton`, for the same DataStore reason. */
+    @Binds
+    abstract fun alertSettingsStore(impl: DataStoreAlertSettingsStore): AlertSettingsStore
+
+    // Everything that holds one account's data, cleared together by UserDataCleaner at sign-in,
+    // sign-out and session expiry. Each binds the class itself, which carries the @Singleton, so
+    // the set holds the very instances the screens use.
+    @Binds
+    @IntoSet
+    abstract fun libraryUserData(impl: LibraryRepositoryImpl): UserData
+
+    @Binds
+    @IntoSet
+    abstract fun searchUserData(impl: MediaRepositoryImpl): UserData
+
+    @Binds
+    @IntoSet
+    abstract fun recommendationUserData(impl: RecommendationRepositoryImpl): UserData
+
+    @Binds
+    @IntoSet
+    abstract fun recentSearchUserData(impl: DataStoreRecentSearchStore): UserData
+
+    @Binds
+    @IntoSet
+    abstract fun activeGroupUserData(impl: DataStoreActiveGroupStore): UserData
 }

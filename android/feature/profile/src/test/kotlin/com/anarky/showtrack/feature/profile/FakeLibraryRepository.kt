@@ -1,17 +1,17 @@
 package com.anarky.showtrack.feature.profile
 
+import com.anarky.showtrack.core.data.paging.Page
 import com.anarky.showtrack.core.data.repository.LibraryRepository
 import com.anarky.showtrack.core.model.ImportSummary
 import com.anarky.showtrack.core.model.LibraryEntry
 import com.anarky.showtrack.core.model.LibraryFilter
 import com.anarky.showtrack.core.model.LibraryPatch
+import com.anarky.showtrack.core.model.LibrarySort
 import com.anarky.showtrack.core.model.LibraryStats
 import com.anarky.showtrack.core.model.MediaSource
+import com.anarky.showtrack.core.model.MediaType
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * Shared by [ProfileViewModelTest] and [ProfileResumeTest] (round 2) — both exercise
@@ -51,7 +51,7 @@ internal class FakeLibraryRepository(
     var lastUsername: String? = null
         private set
 
-    // Round 1's own regression guard: proves `init`/push toggles reach `libraryStats()` zero
+    // Round 1's own regression guard: proves `init`/alerts toggles reach `libraryStats()` zero
     // times, which a state-only assertion (`statsState.value`, still `Loading`) cannot — a
     // ViewModel that fetched and then discarded the result would look identical to one that
     // never fetched at all if only the resulting state were checked. Round 2's `ProfileResumeTest`
@@ -73,6 +73,16 @@ internal class FakeLibraryRepository(
         externalId: String,
     ): LibraryEntry = error("not exercised by ProfileViewModel")
 
+    override suspend fun remove(entryId: String): Unit = error("not used here")
+
+    override suspend fun watchedEpisodes(entryId: String): Set<String> = error("not used here")
+
+    override suspend fun setWatched(
+        entryId: String,
+        episodeIds: Collection<String>,
+        watched: Boolean,
+    ): LibraryEntry = error("not used here")
+
     override suspend fun update(
         entryId: String,
         patch: LibraryPatch,
@@ -80,18 +90,32 @@ internal class FakeLibraryRepository(
 
     override suspend fun entryForMedia(mediaId: String): LibraryEntry? = error("not exercised by ProfileViewModel")
 
-    override val favoriteEntries: StateFlow<List<LibraryEntry>> =
-        MutableStateFlow(emptyList<LibraryEntry>()).asStateFlow()
-
-    override suspend fun refreshFavorites(): Unit = error("not exercised by ProfileViewModel")
-
-    override suspend fun loadMoreFavorites(): Unit = error("not exercised by ProfileViewModel")
+    override suspend fun favoritesPage(
+        type: MediaType?,
+        sort: LibrarySort,
+        cursor: String?,
+        limit: Int,
+    ): Page<LibraryEntry> = Page(emptyList(), null)
 
     override suspend fun libraryStats(): LibraryStats {
         statsCalls++
         statsGate?.await()
         statsFailure?.let { throw it }
         return statsResult
+    }
+
+    override suspend fun upcomingWatching(limit: Int): List<LibraryEntry> = emptyList()
+
+    var watching: List<LibraryEntry> = emptyList()
+    var allWatchingFailure: Throwable? = null
+
+    // Runs inside allWatching(), so a test can change the world mid-fetch (e.g. sign out).
+    var duringAllWatching: () -> Unit = {}
+
+    override suspend fun allWatching(): List<LibraryEntry> {
+        duringAllWatching()
+        allWatchingFailure?.let { throw it }
+        return watching
     }
 
     override suspend fun importAniList(username: String): ImportSummary {

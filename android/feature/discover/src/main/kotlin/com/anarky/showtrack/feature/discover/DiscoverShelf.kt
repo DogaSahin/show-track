@@ -17,17 +17,21 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.anarky.showtrack.core.designsystem.component.MediaCover
+import com.anarky.showtrack.core.designsystem.component.typeAndYear
 import com.anarky.showtrack.core.model.Recommendation
 
-private val PosterWidth = 108.dp
-private val AddButtonSize = 30.dp
+private val PosterWidth = 96.dp
+private val AddButtonSize = 28.dp
+private const val MAX_SHARED_GENRES = 2
 
 /**
  * One seed's worth of recommendations, grouped for rendering.
@@ -71,6 +75,20 @@ internal fun List<Recommendation>.toShelves(): List<DiscoverShelf> =
         }
 
 /**
+ * The genres this shelf has in common: the most frequent `matchedGenres` across its items, at most
+ * [MAX_SHARED_GENRES], ties going to the one seen first (the server's ranking).
+ */
+internal fun DiscoverShelf.sharedGenres(): List<String> =
+    items
+        .flatMap { it.reason.matchedGenres }
+        .groupingBy { it }
+        .eachCount()
+        .entries
+        .sortedByDescending { it.value }
+        .take(MAX_SHARED_GENRES)
+        .map { it.key }
+
+/**
  * A shelf: the seed named once in a header, then its titles as posters in a [LazyRow].
  *
  * The reason moves from a line under every row into the header, which is what buys the poster
@@ -78,9 +96,8 @@ internal fun List<Recommendation>.toShelves(): List<DiscoverShelf> =
  * single least informative thing on the old screen, since a strong seed produces a long run of
  * consecutive rows that all say it.
  *
- * `matchedGenres` is deliberately dropped in the move. The header can only carry one line, and
- * five stacked genre lists is noise, not context — the genres remain on the detail screen, one tap
- * away, attached to the title they actually describe.
+ * Under the seed, the one or two genres the whole row shares ("Adventure · Fantasy"), not every
+ * item's own list: five stacked genre lists is noise, one shared line is the reason in brief.
  */
 @Composable
 internal fun DiscoverShelfRow(
@@ -90,24 +107,33 @@ internal fun DiscoverShelfRow(
     addErrorMediaId: String?,
     modifier: Modifier = Modifier,
 ) {
+    val sharedGenres = remember(shelf) { shelf.sharedGenres() }
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(space = 10.dp)) {
         Column(modifier = Modifier.padding(horizontal = 16.dp)) {
             Text(
-                text = stringResource(R.string.discover_shelf_eyebrow),
-                style = MaterialTheme.typography.labelMedium,
+                text = stringResource(R.string.discover_shelf_eyebrow).uppercase(),
+                style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(
                 text = shelf.seedTitle,
                 style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            if (sharedGenres.isNotEmpty()) {
+                Text(
+                    text = sharedGenres.joinToString(separator = " · "),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
         LazyRow(
             contentPadding = PaddingValues(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(space = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(space = 10.dp),
         ) {
             // Keyed by media id for the same reason the old LazyColumn was: a recommendation's
             // media IS persisted and carries a stable id (decision C-N), and the optimistic
@@ -152,12 +178,12 @@ private fun DiscoverPoster(
             Surface(
                 onClick = onAdd,
                 shape = CircleShape,
-                color = MaterialTheme.colorScheme.surface,
-                contentColor = MaterialTheme.colorScheme.primary,
+                color = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary,
                 modifier =
                     Modifier
                         .align(Alignment.BottomEnd)
-                        .padding(all = 6.dp)
+                        .padding(all = 5.dp)
                         .size(AddButtonSize),
             ) {
                 Box(contentAlignment = Alignment.Center) {
@@ -171,24 +197,23 @@ private fun DiscoverPoster(
             }
         }
         // minLines AND maxLines both 2: the title block is a fixed two lines tall whether or not
-        // the title needs them, so the year below it lands on the same baseline for every card in
+        // the title needs them, so the caption below it lands on the same baseline for every card in
         // a shelf. Without the floor, one wrapping title pushes its own year down and the row's
         // metadata stops reading as a row.
         Text(
             text = media.title,
-            style = MaterialTheme.typography.bodyMedium,
+            style = MaterialTheme.typography.bodySmall,
+            fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onSurface,
             minLines = 2,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
-        media.year?.let { year ->
-            Text(
-                text = year.toString(),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+        Text(
+            text = media.typeAndYear(),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         if (showAddError) {
             Text(
                 text = stringResource(R.string.discover_add_error),

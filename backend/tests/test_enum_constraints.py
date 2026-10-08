@@ -13,7 +13,6 @@ from app.db import Base
 # is the backstop that turns that omission into a failure instead of a gap.
 from app.library import models as _library_models  # noqa: F401
 from app.media import models as _media_models  # noqa: F401
-from app.notifications import models as _notifications_models  # noqa: F401
 from app.recommendations import models as _recommendations_models  # noqa: F401
 from app.sync import models as _sync_models  # noqa: F401
 from app.users import models as _users_models  # noqa: F401
@@ -24,8 +23,8 @@ _QUOTED = re.compile(r"'([^']*)'")
 
 # The shapes that same CHECK can take, used to find these constraints from the database side.
 # An `Enum(create_constraint=True)` with two or more members renders as `x = ANY (ARRAY[...])`.
-# One member — `PushTransport`, so far — collapses under Postgres's own IN-list simplification
-# into a plain `x = 'value'`: no ANY, no ARRAY. Measured directly against `push_targets`. Both
+# A one-member enum collapses under Postgres's own IN-list simplification into a plain
+# `x = 'value'`: no ANY, no ARRAY (measured against a since-dropped table). Both
 # shapes are covered below; the one hand-written CHECK in the schema
 # (`ck_user_media_score_range`) matches neither.
 _ENUM_CHECK_SQL_SHAPES = ("%= ANY ((ARRAY[%", "%::text = '%'::text)%")
@@ -94,8 +93,8 @@ async def test_every_enum_check_constraint_in_the_database_is_covered(db_session
     It compares `_DERIVED_AT_IMPORT`, the snapshot taken when this module was imported, rather
     than re-deriving here. Re-deriving is vacuous: by the time any test *runs*, pytest has
     imported every other test module, and `tests/factories.py` imports
-    `app.notifications.models`, so the fresh set is complete even when this file's imports are
-    not. Measured with the `app.notifications` import below deleted — re-deriving gave
+    most model modules, so the fresh set is complete even when this file's imports are
+    not. Measured with one domain's model import below deleted — re-deriving gave
     `1 failed, 4 passed` for this module alone but a green `51 passed` under the full `pytest`,
     the two dropped cases vanishing in silence; against the snapshot the same deletion gives
     `1 failed, 50 passed` under the full `pytest`.
@@ -105,7 +104,7 @@ async def test_every_enum_check_constraint_in_the_database_is_covered(db_session
     the database and from the snapshot alike and the two still agree. And the snapshot only
     leads the rest of the suite while this file's imports are what register these models first
     — `conftest.py` does `from main import app`, whose route modules are still stubs. Measured:
-    make `app/notifications/routes.py` import its models and delete the import below, and the
+    make a domain's routes module import its models and delete its import below, and the
     full suite is green at `53 passed`, parametrisation complete and this assertion proving
     nothing. What it does catch is the realistic omission today: a module `migrations/env.py`
     imports, so its CHECK constraints reach the database, that this file forgot.

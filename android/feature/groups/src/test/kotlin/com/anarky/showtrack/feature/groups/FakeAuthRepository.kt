@@ -2,6 +2,7 @@ package com.anarky.showtrack.feature.groups
 
 import com.anarky.showtrack.core.data.repository.AuthRepository
 import com.anarky.showtrack.core.model.AuthFailure
+import com.anarky.showtrack.core.model.CurrentUser
 import kotlinx.coroutines.CompletableDeferred
 
 /**
@@ -23,6 +24,8 @@ internal class FakeAuthRepository(
 
     var currentUserIdCalls = 0
         private set
+
+    override suspend fun currentUser(): CurrentUser = error("not exercised by groups tests")
 
     override suspend fun currentUserId(): String {
         currentUserIdCalls++

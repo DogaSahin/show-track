@@ -120,6 +120,7 @@ fun LibraryEntryEntity.toDomain(): LibraryEntry =
                 nextEpisodeNumber = null,
                 nextEpisodeDate = null,
                 daysUntilNextEpisode = daysUntilNextEpisode,
+                totalEpisodes = totalEpisodes,
             ),
     )
 
@@ -140,4 +141,5 @@ fun LibraryEntry.toEntity(): LibraryEntryEntity =
         title = media.title,
         coverUrl = media.coverImageUrl,
         daysUntilNextEpisode = media.daysUntilNextEpisode,
+        totalEpisodes = media.totalEpisodes,
     )

@@ -12,7 +12,7 @@ from app.groups.models import Group
 from app.groups.schemas import (
     CreateGroupRequest,
     FeedPage,
-    GroupRead,
+    GroupSummary,
     GroupWithInvite,
     JoinGroupRequest,
     MemberRead,
@@ -46,14 +46,15 @@ async def create_group(
     return GroupWithInvite.model_validate(group, from_attributes=True)
 
 
-@router.get("", response_model=list[GroupRead])
-async def list_my_groups(session: SessionDep, current_user: CurrentUserDep) -> list[GroupRead]:
-    """A plain list, not {items, next_cursor} — decision G-H. Architecture rule 4 governs
-    collections that grow without bound; the number of groups one person belongs to does not,
-    and the design doc's §8 API table already types this endpoint as `list`.
+@router.get("", response_model=list[GroupSummary])
+async def list_my_groups(session: SessionDep, current_user: CurrentUserDep) -> list[GroupSummary]:
+    """A plain list, not {items, next_cursor} (decision G-H). Architecture rule 4 governs
+    collections that grow without bound; the number of groups one person belongs to does not.
+
+    Each item is a GroupSummary (role, counts, previews), so the groups list draws its cards
+    without a request per group.
     """
-    groups = await service.list_groups(session, user_id=current_user.id)
-    return [GroupRead.model_validate(g, from_attributes=True) for g in groups]
+    return await service.list_group_summaries(session, user_id=current_user.id)
 
 
 @router.post("/join", response_model=GroupWithInvite)
@@ -72,6 +73,19 @@ async def join_group(payload: JoinGroupRequest, session: SessionDep, current_use
 async def list_members(group_id: uuid.UUID, session: SessionDep, member: GroupMemberDep) -> list[MemberRead]:
     rows = await service.list_members(session, group_id=group_id)
     return [MemberRead(user_id=m.user_id, username=u.username, role=m.role, joined_at=m.joined_at) for m, u in rows]
+
+
+@router.get("/{group_id}/invite", response_model=GroupWithInvite)
+async def current_invite(group_id: uuid.UUID, session: SessionDep, owner: GroupOwnerDep) -> GroupWithInvite:
+    """The current code and its expiry, for the owner to share again. Read-only: it never
+    rotates and never extends the expiry, and an expired code comes back as it is, so the
+    client can say so and offer rotation. The same owner gate as rotate (members 403, others
+    404), and the same re-check, since the group can vanish after the dependency ran.
+    """
+    group = await session.get(Group, group_id)
+    if group is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no such group")
+    return GroupWithInvite.model_validate(group, from_attributes=True)
 
 
 @router.post("/{group_id}/invite/rotate", response_model=GroupWithInvite)

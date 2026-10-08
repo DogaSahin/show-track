@@ -52,6 +52,9 @@ class FakeProvider(MediaProvider):
     async def get_by_id(self, external_id: str) -> ProviderMedia | None:
         return None
 
+    async def get_episodes(self, external_id: str):
+        raise AssertionError("not used in these tests")
+
     async def fetch_similar(self, external_id: str):
         raise AssertionError("not used in these tests")
 

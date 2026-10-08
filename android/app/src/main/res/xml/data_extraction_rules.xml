@@ -9,17 +9,16 @@
         <!-- See backup_rules.xml: the Keystore key never leaves the device, so a restored copy of
              this file is permanently undecryptable. -->
         <exclude domain="file" path="datastore/showtrack_tokens.preferences_pb" />
-        <!-- The UnifiedPush endpoint is a bearer secret and the target id belongs to the device
-             that registered it — see backup_rules.xml for both halves. -->
-        <exclude domain="file" path="datastore/showtrack_push.preferences_pb" />
+        <!-- Episode alerts belong to this phone (see backup_rules.xml). -->
+        <exclude domain="file" path="datastore/showtrack_episode_alerts.preferences_pb" />
+        <!-- Recent searches: personal history with no use after a restore (backup_rules.xml). -->
+        <exclude domain="file" path="datastore/showtrack_recent_searches.preferences_pb" />
     </cloud-backup>
     <device-transfer>
         <!-- Excluded here too. A device-to-device transfer moves app data but not another
              device's hardware-backed Keystore entry, so the same reasoning applies unchanged. -->
         <exclude domain="file" path="datastore/showtrack_tokens.preferences_pb" />
-        <!-- And the push registration, where a device transfer is the WORST case rather than an
-             equivalent one: both phones then hold the same target id, and whichever unregisters
-             first deletes the other's row. -->
-        <exclude domain="file" path="datastore/showtrack_push.preferences_pb" />
+        <exclude domain="file" path="datastore/showtrack_episode_alerts.preferences_pb" />
+        <exclude domain="file" path="datastore/showtrack_recent_searches.preferences_pb" />
     </device-transfer>
 </data-extraction-rules>

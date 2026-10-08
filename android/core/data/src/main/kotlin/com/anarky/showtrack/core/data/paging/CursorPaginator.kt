@@ -102,4 +102,17 @@ class CursorPaginator<T>(
             _items.value = page.items
             page.items
         }
+
+    /**
+     * Back to "not begun" (sign-out). Under the lock, so a fetch already in flight lands first
+     * and is then cleared, never after.
+     */
+    suspend fun reset() {
+        mutex.withLock {
+            cursor = null
+            started = false
+            _hasMore.value = true
+            _items.value = emptyList()
+        }
+    }
 }

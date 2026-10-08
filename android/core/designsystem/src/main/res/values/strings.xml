@@ -20,6 +20,17 @@
         <item quantity="other">%d days</item>
     </plurals>
 
+    <!-- When an episode airs, as a headline ("in 3 days") rather than a bare span ("3 days"). -->
+    <plurals name="countdown_in_days">
+        <item quantity="one">in %d day</item>
+        <item quantity="other">in %d days</item>
+    </plurals>
+
+    <!-- An episode's short label: season and episode when the title numbers its seasons,
+         otherwise just the episode (most anime). -->
+    <string name="episode_label_season">S%1$d E%2$d</string>
+    <string name="episode_label">Ep %1$d</string>
+
     <string name="action_retry">Retry</string>
 
     <!-- StaleDataBanner: sits above a list rendered from a local cache while the network fetch it
@@ -32,6 +43,10 @@
          reach the user — the search screen's degraded-provider banner is the current caller. -->
     <string name="media_source_anilist">AniList</string>
     <string name="media_source_tmdb">TMDB</string>
+
+    <!-- MediaType display names, for the "Anime · 2021" caption cards share. -->
+    <string name="media_type_anime">Anime</string>
+    <string name="media_type_tv">TV</string>
 
     <!-- ScoreChip's fallback when the user has not scored a title — an em dash, never a raw
          null or empty string. -->

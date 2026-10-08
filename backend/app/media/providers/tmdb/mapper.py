@@ -1,11 +1,12 @@
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 from app.media.models import MediaSource, MediaStatus, MediaType
 from app.media.providers.base import (
     MediaRef,
     NextEpisode,
+    ProviderEpisode,
     ProviderMedia,
     ProviderMediaSummary,
     ProviderSearchPage,
@@ -114,3 +115,37 @@ def to_media(raw: dict[str, Any]) -> ProviderMedia:
         status=_status(raw.get("status")),
         next_episode=_next_episode(raw.get("next_episode_to_air")),
     )
+
+
+def season_numbers(raw_show: dict[str, Any]) -> tuple[int, ...]:
+    """The regular seasons of a show, in order. Season 0 is TMDB's "Specials": often incomplete and
+    out of order, so it is left out rather than shown as a season.
+    """
+    numbers = {
+        entry["season_number"]
+        for entry in raw_show.get("seasons") or []
+        if isinstance(entry, dict) and isinstance(entry.get("season_number"), int) and entry["season_number"] > 0
+    }
+    return tuple(sorted(numbers))
+
+
+def _air_date(raw: str | None) -> date | None:
+    airs_at = _airs_at(raw)
+    return airs_at.date() if airs_at is not None else None
+
+
+def to_episodes(season_number: int, raw_season: dict[str, Any]) -> tuple[ProviderEpisode, ...]:
+    """One season's episodes. An episode with no number is skipped, never guessed at."""
+    episodes = []
+    for entry in raw_season.get("episodes") or []:
+        if not isinstance(entry, dict) or not isinstance(entry.get("episode_number"), int):
+            continue
+        episodes.append(
+            ProviderEpisode(
+                season_number=season_number,
+                number=entry["episode_number"],
+                title=entry.get("name") or None,
+                air_date=_air_date(entry.get("air_date")),
+            )
+        )
+    return tuple(episodes)

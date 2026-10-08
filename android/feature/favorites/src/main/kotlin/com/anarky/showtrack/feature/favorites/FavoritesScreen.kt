@@ -5,62 +5,61 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.anarky.showtrack.core.designsystem.component.CountdownBadge
-import com.anarky.showtrack.core.designsystem.component.EmptyState
 import com.anarky.showtrack.core.designsystem.component.EndOfListTrigger
 import com.anarky.showtrack.core.designsystem.component.ErrorState
+import com.anarky.showtrack.core.designsystem.component.LargeTitleScaffold
 import com.anarky.showtrack.core.designsystem.component.LoadingState
-import com.anarky.showtrack.core.designsystem.component.MediaCard
+import com.anarky.showtrack.core.designsystem.component.SkeletonBlock
 import com.anarky.showtrack.core.designsystem.component.StaleDataBanner
+import com.anarky.showtrack.core.designsystem.theme.FavoriteHeart
 import com.anarky.showtrack.core.model.LibraryEntry
+import com.anarky.showtrack.core.model.MediaType
+import kotlinx.coroutines.flow.Flow
+
+private val ShelfPosterWidth = 100.dp
+private const val SKELETON_POSTERS = 3
+private const val PODIUM_CENTRE_WEIGHT = 1.25f
 
 /**
- * The stateful entry point. `hiltViewModel()` is the only line here that touches DI — the same
- * shape `LibraryScreen`/`DiscoverScreen` use.
- *
- * [onEntryClick] hands the whole [LibraryEntry] to the caller rather than a raw id, exactly
- * `LibraryScreen`'s own parameter: a [LibraryEntry]'s own id identifies the user's library ROW,
- * while the detail screen's route needs `entry.media.id` — two different primary keys, and the
- * translation belongs at the module's graph boundary (`FavoritesNavigation.kt`), not here.
- *
- * [LifecycleResumeEffect] is not decoration — it is the ENTIRE mechanism by which this screen ever
- * learns about a favourite/unfavourite made elsewhere, AND the only place [FavoritesViewModel]
- * ever loads at all — it has no `init` of its own (see that class's own KDoc for why one would be
- * a redundant network call, not a gap this effect happens to also cover). Every mutation this
- * screen's content depends on happens on Detail or Library, never here (this screen has no
- * add/remove of its own — task 9b.4's brief), and [FavoritesViewModel] is scoped to this
- * destination's `NavBackStackEntry`: navigating to Detail and back, or switching tabs and back
- * (`ShowTrackNavHost` uses `saveState`/`restoreState`, which retains the `ViewModelStore`), leaves
- * the SAME ViewModel instance alive with no code path of its own that re-fetches. Without this
- * effect, the exact round trip the acceptance criterion names — Favorites -> tap a row -> Detail
- * -> unfavourite -> Back — would leave the unfavourited row on screen indefinitely, since nothing
- * else re-collects
- * [com.anarky.showtrack.core.data.repository.LibraryRepository.favoriteEntries]. `ProfileScreen`'s
- * own `LifecycleResumeEffect` KDoc documents the identical failure mode for the identical reason
- * (a ViewModel surviving a round trip its own `init` cannot see, where `ProfileViewModel` DOES
- * still keep one — its own `refresh()` is a synchronous read, so a redundant call costs nothing,
- * unlike here); this is that fix applied to the same class of bug.
+ * The stateful entry point. Refreshes on every resume ([FavoritesViewModel]'s own KDoc says why)
+ * and turns the ViewModel's removal events into snackbars, with Undo on a removal.
  */
 @Composable
 fun FavoritesScreen(
     onEntryClick: (LibraryEntry) -> Unit,
+    onSeeAll: (MediaType) -> Unit,
     modifier: Modifier = Modifier,
     viewModel: FavoritesViewModel = hiltViewModel(),
 ) {
@@ -69,40 +68,45 @@ fun FavoritesScreen(
         onPauseOrDispose { }
     }
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val snackbarHostState = remember { SnackbarHostState() }
+    RemovalSnackbars(events = viewModel.events, snackbarHostState = snackbarHostState, onUndo = viewModel::undo)
     FavoritesScreen(
         state = state,
         onRetry = viewModel::refresh,
         onLoadMore = viewModel::loadMore,
-        onEntryClick = onEntryClick,
+        onOpen = onEntryClick,
+        onRemove = viewModel::remove,
+        onSeeAll = onSeeAll,
+        snackbarHostState = snackbarHostState,
         modifier = modifier,
     )
 }
 
 /**
- * The stateless half, split out so it can be previewed and driven by a test without a graph or a
- * ViewModel — `LibraryScreen`/`DiscoverScreen`'s pattern.
- *
- * No status tabs, no sort control — decision D-H: Favorites' layout is a deliberately simpler
- * duplicate of Library's, not a shared component, because the two screens legitimately diverge
- * here and will keep diverging.
+ * The stateless half: podium, then the Anime and TV shelves, each hidden when empty. A failed
+ * refresh over a populated screen keeps it and shows the stale banner; a failed shelf page is a
+ * footer at the end of that shelf.
  */
+@Suppress("LongParameterList")
 @Composable
 internal fun FavoritesScreen(
     state: FavoritesUiState,
     onRetry: () -> Unit,
-    onLoadMore: () -> Unit,
-    onEntryClick: (LibraryEntry) -> Unit,
+    onLoadMore: (MediaType) -> Unit,
+    onOpen: (LibraryEntry) -> Unit,
+    onRemove: (LibraryEntry) -> Unit,
+    onSeeAll: (MediaType) -> Unit,
     modifier: Modifier = Modifier,
+    snackbarHostState: SnackbarHostState = remember { SnackbarHostState() },
 ) {
-    Column(modifier = modifier.fillMaxSize()) {
-        Text(
-            text = stringResource(R.string.favorites_title),
-            style = MaterialTheme.typography.titleLarge,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-        )
-        Box(modifier = Modifier.weight(weight = 1f).fillMaxWidth()) {
+    LargeTitleScaffold(
+        title = stringResource(R.string.favorites_title),
+        snackbarHostState = snackbarHostState,
+        modifier = modifier.fillMaxSize(),
+    ) { padding ->
+        Box(modifier = Modifier.padding(padding).fillMaxSize()) {
             when (state) {
-                is FavoritesUiState.Loading -> LoadingState(modifier = Modifier.fillMaxSize())
+                is FavoritesUiState.Loading -> FavoritesSkeleton()
                 is FavoritesUiState.Error ->
                     ErrorState(
                         message = stringResource(R.string.favorites_error_message),
@@ -110,22 +114,34 @@ internal fun FavoritesScreen(
                         modifier = Modifier.fillMaxSize(),
                     )
                 is FavoritesUiState.Success ->
-                    // `isStale` (decision C-B made real, review finding round 3): the banner sits
-                    // ABOVE the content rather than replacing it — a resume's failed background
-                    // re-fetch leaves rows that are still worth showing, just not guaranteed
-                    // current, which is exactly what the banner says — mirroring `LibraryScreen`.
-                    Column(modifier = Modifier.fillMaxSize()) {
-                        if (state.isStale) {
-                            StaleDataBanner(onRetry = onRetry)
-                        }
-                        Box(modifier = Modifier.weight(weight = 1f).fillMaxWidth()) {
-                            if (state.entries.isEmpty()) {
-                                EmptyState(
-                                    message = stringResource(R.string.favorites_empty_message),
-                                    modifier = Modifier.fillMaxSize(),
-                                )
-                            } else {
-                                FavoritesList(success = state, onLoadMore = onLoadMore, onEntryClick = onEntryClick)
+                    if (state.isEmpty && !state.isStale) {
+                        FavoritesEmpty()
+                    } else {
+                        LazyColumn(
+                            contentPadding = PaddingValues(bottom = 16.dp),
+                            verticalArrangement = Arrangement.spacedBy(space = 12.dp),
+                            modifier = Modifier.fillMaxSize(),
+                        ) {
+                            if (state.isStale) item(key = "stale") { StaleDataBanner(onRetry = onRetry) }
+                            if (state.podium.isNotEmpty()) {
+                                item(
+                                    key = "podium",
+                                ) { FavoritesPodium(ranked = state.podium, onOpen = onOpen, onRemove = onRemove) }
+                            }
+                            MediaType.entries.forEach { type ->
+                                val shelf = state.shelf(type)
+                                if (shelf.entries.isNotEmpty()) {
+                                    item(key = "shelf-${type.wire()}") {
+                                        FavoriteShelfRow(
+                                            type = type,
+                                            shelf = shelf,
+                                            onLoadMore = { onLoadMore(type) },
+                                            onOpen = onOpen,
+                                            onRemove = onRemove,
+                                            onSeeAll = { onSeeAll(type) },
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -134,58 +150,142 @@ internal fun FavoritesScreen(
     }
 }
 
-/**
- * The list itself, plus paging via [EndOfListTrigger] (decision D-H — shared with
- * `LibraryScreen.LibraryList`/`DiscoverScreen.DiscoverList`, extracted in task 9b.3).
- * [FavoritesUiState.Success.pageError] renders as a small footer row rather than replacing the
- * list; tapping it retries by calling [onLoadMore] again — mirroring `LibraryList`/`DiscoverList`.
- */
+/** "Anime" / "TV" with See all, then posters best first, loading more as you scroll sideways. */
+@Suppress("LongParameterList")
 @Composable
-private fun FavoritesList(
-    success: FavoritesUiState.Success,
+private fun FavoriteShelfRow(
+    type: MediaType,
+    shelf: FavoriteShelf,
     onLoadMore: () -> Unit,
-    onEntryClick: (LibraryEntry) -> Unit,
-    modifier: Modifier = Modifier,
+    onOpen: (LibraryEntry) -> Unit,
+    onRemove: (LibraryEntry) -> Unit,
+    onSeeAll: () -> Unit,
 ) {
-    val entries = success.entries
-    val listState = rememberLazyListState()
-
-    EndOfListTrigger(listState = listState, itemCount = entries.size, onTriggered = onLoadMore)
-
-    LazyColumn(
-        state = listState,
-        modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(all = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(space = 8.dp),
-    ) {
-        // Keyed by entry id: without a key, LazyColumn identifies items by index and a refresh
-        // that reorders the list re-uses the wrong composable state for every row.
-        items(items = entries, key = LibraryEntry::id) { entry ->
-            Column(verticalArrangement = Arrangement.spacedBy(space = 4.dp)) {
-                MediaCard(
-                    media = entry.media,
-                    status = entry.status,
-                    score = entry.score,
-                    onClick = { onEntryClick(entry) },
+    val rowState = rememberLazyListState()
+    EndOfListTrigger(listState = rowState, itemCount = shelf.entries.size, onTriggered = onLoadMore)
+    Column(verticalArrangement = Arrangement.spacedBy(space = 8.dp)) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 12.dp),
+        ) {
+            Text(
+                text = stringResource(type.rowTitleRes()),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = onSeeAll) { Text(text = stringResource(R.string.favorites_see_all)) }
+        }
+        LazyRow(
+            state = rowState,
+            contentPadding = PaddingValues(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(space = 10.dp),
+        ) {
+            items(items = shelf.entries, key = LibraryEntry::id) { entry ->
+                FavoritePoster(
+                    entry = entry,
+                    onOpen = { onOpen(entry) },
+                    onRemove = { onRemove(entry) },
+                    modifier = Modifier.width(ShelfPosterWidth),
                 )
-                CountdownBadge(daysUntil = entry.media.daysUntilNextEpisode)
+            }
+            if (shelf.loadingMore) {
+                item { LoadingState(modifier = Modifier.width(ShelfPosterWidth)) }
+            } else if (shelf.pageError != null) {
+                item {
+                    Text(
+                        text = stringResource(R.string.favorites_page_error),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.width(ShelfPosterWidth).clickable(onClick = onLoadMore).padding(all = 8.dp),
+                    )
+                }
             }
         }
-        if (success.loadingMore) {
-            item { LoadingState() }
-        } else if (success.pageError != null) {
-            item {
-                Text(
-                    text = stringResource(R.string.favorites_page_error),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                    textAlign = TextAlign.Center,
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .clickable(onClick = onLoadMore)
-                            .padding(all = 12.dp),
-                )
+    }
+}
+
+private fun MediaType.rowTitleRes(): Int =
+    when (this) {
+        MediaType.ANIME -> R.string.favorites_row_anime
+        MediaType.TV -> R.string.favorites_row_tv
+    }
+
+@Composable
+private fun FavoritesEmpty() {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(space = 10.dp, alignment = Alignment.CenterVertically),
+        modifier = Modifier.fillMaxSize().padding(horizontal = 32.dp),
+    ) {
+        Icon(
+            painter = painterResource(R.drawable.ic_heart),
+            contentDescription = null,
+            tint = FavoriteHeart,
+            modifier = Modifier.size(40.dp),
+        )
+        Text(
+            text = stringResource(R.string.favorites_empty_message),
+            style = MaterialTheme.typography.titleMedium,
+            textAlign = TextAlign.Center,
+        )
+        Text(
+            text = stringResource(R.string.favorites_empty_hint),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+        )
+    }
+}
+
+/** A skeleton podium and one skeleton shelf. */
+@Composable
+private fun FavoritesSkeleton() {
+    Column(
+        verticalArrangement = Arrangement.spacedBy(space = 16.dp),
+        modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(space = 8.dp), verticalAlignment = Alignment.Bottom) {
+            SkeletonBlock(modifier = Modifier.weight(1f).height(150.dp))
+            SkeletonBlock(modifier = Modifier.weight(PODIUM_CENTRE_WEIGHT).height(190.dp))
+            SkeletonBlock(modifier = Modifier.weight(1f).height(150.dp))
+        }
+        SkeletonBlock(modifier = Modifier.width(80.dp).height(14.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(space = 10.dp)) {
+            repeat(
+                SKELETON_POSTERS,
+            ) { SkeletonBlock(modifier = Modifier.size(width = ShelfPosterWidth, height = 150.dp)) }
+        }
+    }
+}
+
+/**
+ * Removal outcomes as snackbars: "Removed X from favorites" with Undo, or the edit error when the
+ * server refused (the poster is already back by then). Shared by the tab and the See all grid.
+ */
+@Composable
+internal fun RemovalSnackbars(
+    events: Flow<FavoritesEvent>,
+    snackbarHostState: SnackbarHostState,
+    onUndo: (LibraryEntry) -> Unit,
+) {
+    val resources = LocalResources.current
+    LaunchedEffect(events) {
+        events.collect { event ->
+            when (event) {
+                is FavoritesEvent.Removed -> {
+                    val result =
+                        snackbarHostState.showSnackbar(
+                            message = resources.getString(R.string.favorites_removed_snackbar, event.entry.media.title),
+                            actionLabel = resources.getString(R.string.favorites_removed_undo),
+                        )
+                    if (result == SnackbarResult.ActionPerformed) onUndo(event.entry)
+                }
+                FavoritesEvent.EditFailed ->
+                    snackbarHostState.showSnackbar(
+                        resources.getString(R.string.favorites_edit_error),
+                    )
             }
         }
     }

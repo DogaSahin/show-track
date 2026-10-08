@@ -1,13 +1,10 @@
 package com.anarky.showtrack.feature.favorites
 
 import app.cash.turbine.test
-import com.anarky.showtrack.core.data.repository.LibraryRepository
-import com.anarky.showtrack.core.model.LibraryEntry
-import com.anarky.showtrack.core.model.Media
-import com.anarky.showtrack.core.model.MediaSource
-import com.anarky.showtrack.core.model.MediaStatus
+import com.anarky.showtrack.core.data.paging.Page
+import com.anarky.showtrack.core.model.LibraryPatch
+import com.anarky.showtrack.core.model.LibrarySort
 import com.anarky.showtrack.core.model.MediaType
-import com.anarky.showtrack.core.model.UserMediaStatus
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -18,22 +15,14 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.io.IOException
-import java.time.Instant
 
 /**
- * The ViewModel is exercised against a FAKE `LibraryRepository` — nothing here knows Retrofit
- * exists, mirroring `DiscoverViewModelTest`'s shape (the ViewModel this one is closest to: a
- * plain `MutableStateFlow`, no Room-backed upstream, one-shot suspend calls the ViewModel drives
- * itself).
- *
- * [FavoritesViewModel] has no `init { refresh() }` (review finding, round 2 — see that class's own
- * KDoc for why): `FavoritesScreen`'s `LifecycleResumeEffect` is the only thing that ever calls
- * [FavoritesViewModel.refresh] in production, and there is no Composable here to fire it. Every
- * test below calls it explicitly, once, right after construction — standing in for that first
- * resume.
+ * The tab's behaviour: what each read asks for, how the three parts are assembled, paging that
+ * cannot double up, and removal that puts a poster back exactly where it was.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class FavoritesViewModelTest {
@@ -45,417 +34,219 @@ class FavoritesViewModelTest {
     @After
     fun tearDown() = Dispatchers.resetMain()
 
-    /**
-     * The fake's `observeLibrary()`/`refresh()` — the GENERAL-purpose surface — both `error(...)`.
-     * A [FavoritesViewModel] that accidentally called through the general library view instead of
-     * [LibraryRepository.favoriteEntries]/[LibraryRepository.refreshFavorites] would therefore fail
-     * this test LOUDLY, with that error message, rather than silently returning the wrong list —
-     * the "fake that ignores its argument makes the test vacuous" trap the brief warns about,
-     * adapted to this repository's shape: `favorite = true` is baked into
-     * [LibraryRepositoryImplTest]'s own dedicated paginator (asserted there, at the layer that
-     * actually issues the query), so what THIS test must pin is that the ViewModel reaches that
-     * paginator's surface at all, and never the general one.
-     */
+    private fun repository() =
+        FakeLibraryRepository(
+            mutableMapOf(
+                (null to null) to Page(listOf(FRIEREN, SEVERANCE, UNSCORED), null),
+                (MediaType.ANIME to null) to Page(listOf(FRIEREN, UNSCORED), "anime-2"),
+                (MediaType.TV to null) to Page(listOf(SEVERANCE), null),
+                (MediaType.ANIME to "anime-2") to Page(listOf(MADE_IN_ABYSS, FRIEREN), null),
+            ),
+        )
+
+    private fun FavoritesViewModel.success() = state.value as FavoritesUiState.Success
+
     @Test
-    fun `the feed reads the favourites surface, never the general library one`() =
+    fun `refresh builds a scored podium and one shelf per type, all by score`() =
         runTest(dispatcher) {
-            val repository = FakeLibraryRepository(refreshResult = listOf(FRIEREN, BEBOP))
+            val repository = repository()
             val viewModel = FavoritesViewModel(repository)
-            viewModel.refresh() // stands in for LifecycleResumeEffect's first call — see class KDoc
-            advanceUntilIdle()
 
-            assertEquals(
-                FavoritesUiState.Success(entries = listOf(FRIEREN, BEBOP)),
-                viewModel.state.value,
-            )
-        }
-
-    /**
-     * [FavoritesViewModel.refresh]'s own data-shape half of the acceptance criterion:
-     * favouriting/unfavouriting happens on Detail or Library, never on this screen, so a fresh
-     * `refresh()` re-reading `favorite=true` from the server must drop a title the response no
-     * longer includes. This is a WHITE-BOX unit test of `refresh()` in isolation — calling it
-     * directly is not something a user can do. The other half — that a user's actual round trip
-     * (Favorites -> Detail -> unfavourite -> Back) ever CALLS `refresh()` at all — is
-     * [FavoritesResumeTest], which drives it through a real `Lifecycle` resume rather than this
-     * shortcut (review finding: a ViewModel-only test cannot see whether anything in the
-     * Composable layer actually triggers it).
-     */
-    @Test
-    fun `refresh drops an entry the server no longer returns, once called`() =
-        runTest(dispatcher) {
-            val repository = FakeLibraryRepository(refreshResult = listOf(FRIEREN, BEBOP))
-            val viewModel = FavoritesViewModel(repository)
-            viewModel.refresh() // stands in for LifecycleResumeEffect's first call — see class KDoc
-            advanceUntilIdle()
-            assertEquals(listOf(FRIEREN, BEBOP), (viewModel.state.value as FavoritesUiState.Success).entries)
-
-            // FRIEREN was unfavourited from Detail/Library in the meantime; the server no longer
-            // includes it in favorite=true.
-            repository.refreshResult = listOf(BEBOP)
             viewModel.refresh()
             advanceUntilIdle()
 
-            assertEquals(
-                FavoritesUiState.Success(entries = listOf(BEBOP)),
-                viewModel.state.value,
-            )
-        }
-
-    /**
-     * "You haven't favourited anything yet" — never a copy that reads as an empty LIBRARY, which
-     * is a different and false claim (decision, this task's brief; same distinction C-B forced on
-     * `LibraryUiState`). This ViewModel test can only pin the DATA shape an empty favourites list
-     * produces; `FavoritesScreenTest` is what pins the actual string rendered for it.
-     */
-    @Test
-    fun `an empty favourites list says so, and does not claim an empty library`() =
-        runTest(dispatcher) {
-            val repository = FakeLibraryRepository(refreshResult = emptyList())
-            val viewModel = FavoritesViewModel(repository)
-            viewModel.refresh() // stands in for LifecycleResumeEffect's first call — see class KDoc
-            advanceUntilIdle()
-
-            assertEquals(
-                FavoritesUiState.Success(entries = emptyList()),
-                viewModel.state.value,
-            )
+            val success = viewModel.success()
+            assertEquals(listOf(FRIEREN, SEVERANCE), success.podium)
+            assertEquals(listOf(FRIEREN, UNSCORED), success.anime.entries)
+            assertEquals("anime-2", success.anime.nextCursor)
+            assertEquals(listOf(SEVERANCE), success.tv.entries)
+            assertTrue(repository.pageRequests.all { it.sort == LibrarySort.SCORE })
+            assertEquals(PODIUM_SIZE + 1, repository.pageRequests.single { it.type == null }.limit)
         }
 
     @Test
-    fun `a failing initial load is captured instead of escaping the coroutine`() =
+    fun `a failed first load is an error, a failed refresh over rows keeps them as stale`() =
         runTest(dispatcher) {
-            val failure = IOException("offline")
-            val repository = FakeLibraryRepository(refreshFailure = failure)
+            val repository = repository()
             val viewModel = FavoritesViewModel(repository)
-            viewModel.refresh() // stands in for LifecycleResumeEffect's first call — see class KDoc
+            repository.pageFailure = IOException("offline")
+            viewModel.refresh()
             advanceUntilIdle()
+            assertTrue(viewModel.state.value is FavoritesUiState.Error)
 
-            assertEquals(FavoritesUiState.Error(failure), viewModel.state.value)
-        }
-
-    /**
-     * The Important finding this round exists to close: an earlier version of [FavoritesViewModel.refresh]
-     * wrote [FavoritesUiState.Loading] UNCONDITIONALLY, so every resume over an already-populated
-     * screen — the exact path [FavoritesResumeTest] drives — blanked the list to a full-screen
-     * spinner for the round trip's duration and, at the Compose layer, reset scroll position and
-     * dropped pages 2..n: the identical failure class this screen's own dedicated paginator exists
-     * to avoid, reintroduced here by a different route. `repository.refreshGate` is what makes
-     * this observable at all — every fake before this round resolved synchronously, so `Loading`
-     * was never actually visible mid-flight, which is exactly why this shipped unnoticed the first
-     * time.
-     */
-    @Test
-    fun `a resume over an already-populated screen keeps the stale list, not a spinner, mid-fetch`() =
-        runTest(dispatcher) {
-            val repository = FakeLibraryRepository(refreshResult = listOf(FRIEREN))
-            val viewModel = FavoritesViewModel(repository)
-            viewModel.refresh() // stands in for LifecycleResumeEffect's first call — see class KDoc
+            repository.pageFailure = null
+            viewModel.refresh()
             advanceUntilIdle()
-            assertEquals(FavoritesUiState.Success(entries = listOf(FRIEREN)), viewModel.state.value)
-
-            repository.refreshResult = listOf(FRIEREN, BEBOP)
-            repository.refreshGate = CompletableDeferred()
+            repository.pageFailure = IOException("offline")
             viewModel.refresh()
             advanceUntilIdle()
 
-            // Still the OLD entries, and still Success — never FavoritesUiState.Loading — while the
-            // network round trip this resume triggered is genuinely still in flight.
-            assertEquals(FavoritesUiState.Success(entries = listOf(FRIEREN)), viewModel.state.value)
-
-            repository.refreshGate?.complete(Unit)
-            advanceUntilIdle()
-
-            assertEquals(FavoritesUiState.Success(entries = listOf(FRIEREN, BEBOP)), viewModel.state.value)
+            assertTrue(viewModel.success().isStale)
+            assertEquals(listOf(FRIEREN, UNSCORED), viewModel.success().anime.entries)
         }
 
-    /**
-     * The Important finding round 3 exists to close: a resume's FAILED background re-fetch used
-     * to replace a working, populated screen with [FavoritesUiState.Error] wholesale — a train
-     * entering a tunnel while the user is reading 40 rows would blank them to a centred error and
-     * a Retry button, for a request the user never asked for. Decision C-B's objection was never
-     * to showing older rows — only to showing them UNMARKED — and this fix had already accepted
-     * showing possibly-stale rows with no marker at all (the round-2 fix's own in-flight window),
-     * so a bare `Error` on failure was the wrong direction on both axes: it REMOVES information
-     * instead of adding the marker that was missing. `isStale = true` is that marker.
-     */
     @Test
-    fun `a failed resume over an already-populated screen marks it stale instead of replacing it`() =
+    fun `loadMore appends the next page of that shelf only, without repeating an id`() =
         runTest(dispatcher) {
-            val repository = FakeLibraryRepository(refreshResult = listOf(FRIEREN))
-            val viewModel = FavoritesViewModel(repository)
-            viewModel.refresh() // stands in for LifecycleResumeEffect's first call — see class KDoc
-            advanceUntilIdle()
-            assertEquals(FavoritesUiState.Success(entries = listOf(FRIEREN)), viewModel.state.value)
-
-            val failure = IOException("offline")
-            repository.refreshGate = CompletableDeferred()
-            repository.refreshFailure = failure
+            val viewModel = FavoritesViewModel(repository())
             viewModel.refresh()
             advanceUntilIdle()
 
-            // Still the OLD entries, and still Success — never FavoritesUiState.Error — while the
-            // failing round trip is genuinely still in flight.
-            assertEquals(FavoritesUiState.Success(entries = listOf(FRIEREN)), viewModel.state.value)
-
-            repository.refreshGate?.complete(Unit)
+            viewModel.loadMore(MediaType.ANIME)
+            advanceUntilIdle()
+            viewModel.loadMore(MediaType.ANIME) // exhausted: no cursor, no request
             advanceUntilIdle()
 
-            assertEquals(
-                FavoritesUiState.Success(entries = listOf(FRIEREN), isStale = true),
-                viewModel.state.value,
-            )
+            assertEquals(listOf(FRIEREN, UNSCORED, MADE_IN_ABYSS), viewModel.success().anime.entries)
+            assertEquals(null, viewModel.success().anime.nextCursor)
+            assertEquals(listOf(SEVERANCE), viewModel.success().tv.entries)
         }
 
+    /** The page belonged to the rows a newer refresh replaced; appending it would mix two loads. */
     @Test
-    fun `a successful resume clears a previous stale mark`() =
+    fun `a page that lands after a newer refresh started is dropped`() =
         runTest(dispatcher) {
-            val repository = FakeLibraryRepository(refreshResult = listOf(FRIEREN))
+            val repository = repository()
             val viewModel = FavoritesViewModel(repository)
-            viewModel.refresh() // stands in for LifecycleResumeEffect's first call — see class KDoc
-            advanceUntilIdle()
-
-            repository.refreshFailure = IOException("offline")
-            viewModel.refresh()
-            advanceUntilIdle()
-            assertEquals(
-                FavoritesUiState.Success(entries = listOf(FRIEREN), isStale = true),
-                viewModel.state.value,
-            )
-
-            repository.refreshFailure = null
-            repository.refreshResult = listOf(FRIEREN, BEBOP)
             viewModel.refresh()
             advanceUntilIdle()
 
-            assertEquals(
-                FavoritesUiState.Success(entries = listOf(FRIEREN, BEBOP), isStale = false),
-                viewModel.state.value,
-            )
-        }
-
-    /**
-     * The re-entrancy guard task 9c.8 (E-M) adds: `FavoritesScreen` wires the SAME [FavoritesViewModel.refresh]
-     * to both `LifecycleResumeEffect` and `StaleDataBanner`/[FavoritesUiState.Error]'s retry
-     * action, so a manual retry can land while a resume-triggered fetch is still in flight. Asserts
-     * the repository call COUNT, not the resulting state — a count on a fake cannot pass when the
-     * call never happens, which is what makes it discriminate.
-     */
-    @Test
-    fun `a retry landing inside an in-flight resume fetch does not double-fetch`() =
-        runTest(dispatcher) {
-            val repository = FakeLibraryRepository(refreshResult = listOf(FRIEREN))
-            val viewModel = FavoritesViewModel(repository)
-            viewModel.refresh() // stands in for LifecycleResumeEffect's first call — see class KDoc
+            val gate = CompletableDeferred<Unit>()
+            repository.pageGate = gate
+            viewModel.loadMore(MediaType.ANIME)
             advanceUntilIdle()
-            assertEquals(1, repository.refreshCalls)
-
-            repository.refreshGate = CompletableDeferred()
-            viewModel.refresh() // the resume-triggered fetch
-            viewModel.refresh() // a manual retry landing while it is still in flight
+            repository.pages[MediaType.ANIME to null] = Page(listOf(UNSCORED), null)
+            viewModel.refresh() // starts while the load-more request is still parked on the gate
+            gate.complete(Unit)
             advanceUntilIdle()
 
-            // Only the resume's own call — the retry that landed inside it must be dropped, not
-            // queued behind it.
-            assertEquals(2, repository.refreshCalls)
-
-            repository.refreshGate?.complete(Unit)
-            advanceUntilIdle()
-
-            assertEquals(2, repository.refreshCalls)
+            assertEquals(listOf(UNSCORED), viewModel.success().anime.entries)
         }
 
     @Test
-    fun `retrying after a failed load shows loading immediately, not the stale error`() =
+    fun `removing takes the poster off the podium and its shelf at once, then offers undo`() =
         runTest(dispatcher) {
-            val failure = IOException("offline")
-            val repository = FakeLibraryRepository(refreshFailure = failure)
+            val repository = repository()
             val viewModel = FavoritesViewModel(repository)
-            viewModel.refresh() // stands in for LifecycleResumeEffect's first call — see class KDoc
+            viewModel.refresh()
             advanceUntilIdle()
-            assertEquals(FavoritesUiState.Error(failure), viewModel.state.value)
 
-            repository.refreshFailure = null
-            repository.refreshResult = listOf(FRIEREN)
-            viewModel.state.test {
-                assertEquals(FavoritesUiState.Error(failure), awaitItem())
-                viewModel.refresh()
-                assertEquals(FavoritesUiState.Loading, awaitItem())
+            viewModel.events.test {
+                viewModel.remove(FRIEREN)
+                assertEquals(listOf(SEVERANCE), viewModel.success().podium)
+                assertEquals(listOf(UNSCORED), viewModel.success().anime.entries)
                 advanceUntilIdle()
-                assertEquals(FavoritesUiState.Success(entries = listOf(FRIEREN)), awaitItem())
-                cancelAndIgnoreRemainingEvents()
+
+                assertEquals(FavoritesEvent.Removed(FRIEREN), awaitItem())
+                assertEquals(listOf(FRIEREN.id to LibraryPatch(favorite = false)), repository.updates)
             }
         }
 
-    /**
-     * BLOCKING 4's ViewModel half (whole-branch fix round). `refreshInFlight` existed here and
-     * guarded [FavoritesViewModel.refresh] only; [FavoritesViewModel.loadMore] — driving the same
-     * repository shape `DiscoverViewModel.loadMore` drives, which HAS this half — did not use it,
-     * so a resume-driven refresh and a scroll-driven page fetch were free to overlap.
-     *
-     * Two assertions, and both are needed. The first pins the DEFER: no `loadMoreFavorites()` while
-     * the refresh is in flight. The second pins the RE-ISSUE, which is what makes the drop legal
-     * under the project's dropped-call rule — `EndOfListTrigger` fires only on its own false->true
-     * edge, and a dropped `loadMore()` changes neither the item count nor the scroll position, so
-     * nothing in the Compose layer would ever ask again. A bare `if (refreshInFlight) return`
-     * passes the first assertion and fails the second.
-     */
     @Test
-    fun `a loadMore during an in-flight refresh is deferred, then re-issued`() =
+    fun `a refused removal puts the poster back in the same place and says so`() =
         runTest(dispatcher) {
-            val repository = FakeLibraryRepository(refreshResult = listOf(FRIEREN))
+            val repository = repository()
             val viewModel = FavoritesViewModel(repository)
-            viewModel.refresh() // stands in for LifecycleResumeEffect's first call — see class KDoc
-            advanceUntilIdle()
-
-            repository.refreshGate = CompletableDeferred()
             viewModel.refresh()
-            viewModel.loadMore()
+            advanceUntilIdle()
+            repository.updateFailure = IOException("offline")
+
+            viewModel.events.test {
+                viewModel.remove(FRIEREN)
+                advanceUntilIdle()
+
+                assertEquals(FavoritesEvent.EditFailed, awaitItem())
+                assertEquals(listOf(FRIEREN, SEVERANCE), viewModel.success().podium)
+                assertEquals(listOf(FRIEREN, UNSCORED), viewModel.success().anime.entries)
+            }
+        }
+
+    @Test
+    fun `undo restores the poster in the same place and favourites it again`() =
+        runTest(dispatcher) {
+            val repository = repository()
+            val viewModel = FavoritesViewModel(repository)
+            viewModel.refresh()
+            advanceUntilIdle()
+            viewModel.remove(FRIEREN)
             advanceUntilIdle()
 
-            assertEquals(0, repository.loadMoreCalls)
-
-            repository.refreshGate?.complete(Unit)
+            viewModel.undo(FRIEREN)
             advanceUntilIdle()
 
-            assertEquals(1, repository.loadMoreCalls)
+            assertEquals(listOf(FRIEREN, SEVERANCE), viewModel.success().podium)
+            assertEquals(listOf(FRIEREN, UNSCORED), viewModel.success().anime.entries)
+            assertEquals(LibraryPatch(favorite = true), repository.updates.last().second)
         }
 
     /**
-     * SF3 (whole-branch fix round). `refresh()` used to write a fresh
-     * `FavoritesUiState.Success(entries = ...)`, resetting the other three fields to their
-     * defaults. `loadingMore` is the damaging one: it is [FavoritesViewModel.loadMore]'s own
-     * re-entrancy guard, so clearing it mid-fetch made the footer spinner vanish while the page was
-     * still loading AND let a scroll edge admit a second, concurrent `loadMoreFavorites()` — the
-     * two-overlapping-callers window `LibraryRepositoryImpl` documents and BLOCKING 4 closes at the
-     * other end.
-     *
-     * `pageError = null` and `isStale = false` are asserted alongside it because a `.copy()` that
-     * forgot to name them would carry a stale error forward over an authoritative newer read, which
-     * is the opposite mistake.
+     * A refresh fetched while the removal was in flight still lists the title; it must stay
+     * hidden. A refresh started after the server confirmed it shows the server's truth, so a title
+     * re-favourited elsewhere comes back.
      */
     @Test
-    fun `a refresh landing during a loadMore preserves the loading-more flag`() =
+    fun `a refresh racing a removal keeps it hidden, a later one shows the server's answer`() =
         runTest(dispatcher) {
-            val repository = FakeLibraryRepository(refreshResult = listOf(FRIEREN))
+            val repository = repository()
             val viewModel = FavoritesViewModel(repository)
-            viewModel.refresh() // stands in for LifecycleResumeEffect's first call — see class KDoc
-            advanceUntilIdle()
-
-            repository.loadMoreGate = CompletableDeferred()
-            viewModel.loadMore()
-            advanceUntilIdle()
-            assertEquals(true, (viewModel.state.value as FavoritesUiState.Success).loadingMore)
-
-            // The resume-driven refresh resolves first, while the page fetch is still suspended.
             viewModel.refresh()
             advanceUntilIdle()
 
-            assertEquals(
-                FavoritesUiState.Success(entries = listOf(FRIEREN), loadingMore = true),
-                viewModel.state.value,
-            )
+            val updateGate = CompletableDeferred<Unit>()
+            repository.updateGate = updateGate
+            viewModel.remove(FRIEREN)
+            viewModel.refresh() // the server still lists FRIEREN
+            advanceUntilIdle()
+            assertEquals(listOf(UNSCORED), viewModel.success().anime.entries)
 
-            // ...and the page fetch, still the only one in flight, finishes normally and clears its
-            // own flag — the guard was never reopened, so no second call ever raced it.
-            repository.loadMoreGate?.complete(Unit)
+            updateGate.complete(Unit)
+            advanceUntilIdle()
+            viewModel.refresh() // started after the removal was confirmed; FRIEREN was re-added
+            advanceUntilIdle()
+            assertEquals(listOf(FRIEREN, UNSCORED), viewModel.success().anime.entries)
+        }
+
+    /** The shelf would otherwise show a spinner forever and never page again. */
+    @Test
+    fun `a refresh that fails while a page is loading clears that shelf's spinner`() =
+        runTest(dispatcher) {
+            val repository = repository()
+            val viewModel = FavoritesViewModel(repository)
+            viewModel.refresh()
             advanceUntilIdle()
 
-            assertEquals(1, repository.loadMoreCalls)
-            assertEquals(false, (viewModel.state.value as FavoritesUiState.Success).loadingMore)
+            val gate = CompletableDeferred<Unit>()
+            repository.pageGate = gate
+            viewModel.loadMore(MediaType.ANIME)
+            advanceUntilIdle()
+            repository.pageFailure = IOException("offline")
+            viewModel.refresh()
+            gate.complete(Unit)
+            advanceUntilIdle()
+
+            assertEquals(false, viewModel.success().anime.loadingMore)
+            assertTrue(viewModel.success().isStale)
         }
 
     @Test
-    fun `loadMore is not fired again while one is in flight`() =
+    fun `removing a podium title moves the next scored favourite up`() =
         runTest(dispatcher) {
-            val repository = FakeLibraryRepository(refreshResult = listOf(FRIEREN))
+            val repository = repository()
+            repository.pages[null to null] = Page(listOf(FRIEREN, SEVERANCE, MADE_IN_ABYSS, FOURTH), null)
             val viewModel = FavoritesViewModel(repository)
-            viewModel.refresh() // stands in for LifecycleResumeEffect's first call — see class KDoc
+            viewModel.refresh()
             advanceUntilIdle()
 
-            viewModel.loadMore()
-            viewModel.loadMore()
-            viewModel.loadMore()
-            advanceUntilIdle()
+            viewModel.remove(FRIEREN)
 
-            assertEquals(1, repository.loadMoreCalls)
-        }
-
-    @Test
-    fun `a failed loadMore leaves entries standing with a page error`() =
-        runTest(dispatcher) {
-            val failure = IOException("offline")
-            val repository = FakeLibraryRepository(refreshResult = listOf(FRIEREN), loadMoreFailure = failure)
-            val viewModel = FavoritesViewModel(repository)
-            viewModel.refresh() // stands in for LifecycleResumeEffect's first call — see class KDoc
-            advanceUntilIdle()
-
-            viewModel.loadMore()
-            advanceUntilIdle()
-
-            assertEquals(
-                FavoritesUiState.Success(entries = listOf(FRIEREN), loadingMore = false, pageError = failure),
-                viewModel.state.value,
-            )
-        }
-
-    @Test
-    fun `a successful loadMore clears a previous page error`() =
-        runTest(dispatcher) {
-            val failure = IOException("offline")
-            val repository =
-                FakeLibraryRepository(
-                    refreshResult = listOf(FRIEREN),
-                    loadMoreFailure = failure,
-                    loadMoreAppends = listOf(BEBOP),
-                )
-            val viewModel = FavoritesViewModel(repository)
-            viewModel.refresh() // stands in for LifecycleResumeEffect's first call — see class KDoc
-            advanceUntilIdle()
-            viewModel.loadMore()
-            advanceUntilIdle()
-            assertEquals(failure, (viewModel.state.value as FavoritesUiState.Success).pageError)
-
-            repository.loadMoreFailure = null
-            viewModel.loadMore()
-            advanceUntilIdle()
-
-            assertEquals(
-                FavoritesUiState.Success(entries = listOf(FRIEREN, BEBOP), loadingMore = false, pageError = null),
-                viewModel.state.value,
-            )
+            assertEquals(listOf(SEVERANCE, MADE_IN_ABYSS, FOURTH), viewModel.success().podium.take(PODIUM_SIZE))
         }
 
     private companion object {
-        fun entry(
-            id: String,
-            title: String,
-        ) = LibraryEntry(
-            id = id,
-            status = UserMediaStatus.WATCHING,
-            score = null,
-            progress = 0,
-            favorite = true,
-            updatedAt = Instant.parse("2026-08-28T10:15:30Z"),
-            media =
-                Media(
-                    id = "media-$id",
-                    source = MediaSource.ANILIST,
-                    externalId = id,
-                    type = MediaType.ANIME,
-                    title = title,
-                    year = 2023,
-                    genres = listOf("fantasy"),
-                    coverImageUrl = null,
-                    status = MediaStatus.AIRING,
-                    nextEpisodeSeason = null,
-                    nextEpisodeNumber = null,
-                    nextEpisodeDate = null,
-                    daysUntilNextEpisode = null,
-                ),
-        )
-
-        val FRIEREN = entry(id = "frieren", title = "Frieren")
-        val BEBOP = entry(id = "bebop", title = "Cowboy Bebop")
+        val FRIEREN = favourite(id = "frieren", title = "Frieren: Beyond Journey's End", score = "9.5")
+        val SEVERANCE = favourite(id = "severance", title = "Severance", type = MediaType.TV, score = "9.0")
+        val UNSCORED = favourite(id = "unscored", title = "Mushishi")
+        val MADE_IN_ABYSS = favourite(id = "abyss", title = "Made in Abyss", score = "8.5")
+        val FOURTH = favourite(id = "mononoke", title = "Mononoke", score = "8.0")
     }
 }
