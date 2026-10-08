@@ -7,7 +7,7 @@ import coil3.ImageLoader
 import coil3.PlatformContext
 import coil3.SingletonImageLoader
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
-import com.anarky.showtrack.core.data.alerts.AlertSessionObserver
+import com.anarky.showtrack.core.data.session.SessionEndObserver
 import com.anarky.showtrack.core.network.di.PlainClient
 import dagger.Lazy
 import dagger.hilt.android.HiltAndroidApp
@@ -57,7 +57,7 @@ class ShowTrackApplication :
      * event, so deferring construction to first use would defeat it.
      */
     @Inject
-    lateinit var alertSessionObserver: AlertSessionObserver
+    lateinit var sessionEndObserver: SessionEndObserver
 
     @Inject
     lateinit var workerFactory: HiltWorkerFactory
@@ -72,7 +72,7 @@ class ShowTrackApplication :
 
     override fun onCreate() {
         super.onCreate()
-        alertSessionObserver.start(applicationScope)
+        sessionEndObserver.start(applicationScope)
     }
 
     // Episode-alert workers take injected repositories; the manifest removes WorkManager's own

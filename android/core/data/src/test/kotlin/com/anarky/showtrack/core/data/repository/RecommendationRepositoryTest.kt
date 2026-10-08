@@ -1,5 +1,6 @@
 package com.anarky.showtrack.core.data.repository
 
+import com.anarky.showtrack.core.model.Recommendation
 import com.anarky.showtrack.core.network.api.ShowTrackApi
 import com.anarky.showtrack.core.network.dto.AddLibraryEntryRequest
 import com.anarky.showtrack.core.network.dto.CreateGroupRequestDto
@@ -30,6 +31,9 @@ import com.anarky.showtrack.core.network.dto.UserDto
 import com.anarky.showtrack.core.network.dto.WatchedEpisodesDto
 import com.anarky.showtrack.core.network.dto.WatchlistItemDto
 import com.anarky.showtrack.core.network.dto.WatchlistPageDto
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
 import org.junit.Assert.assertEquals
@@ -38,6 +42,25 @@ import org.junit.Test
 import java.io.IOException
 
 class RecommendationRepositoryTest {
+    @Test
+    fun `sign-out empties the feed, and a page in flight then is dropped`() =
+        runTest {
+            val api = FakeApi(mapOf(null to page(titles = listOf("Frieren"), nextCursor = null)))
+            val repository = RecommendationRepositoryImpl(api)
+            repository.refresh()
+            val gate = CompletableDeferred<Unit>().also { api.gate = it }
+            val refresh = launch { repository.refresh() }
+            runCurrent()
+
+            val clear = launch { repository.clearUserData() }
+            runCurrent()
+            gate.complete(Unit)
+            refresh.join()
+            clear.join()
+
+            assertEquals(emptyList<Recommendation>(), repository.feed.value)
+        }
+
     @Test
     fun `refresh publishes the first page`() =
         runTest {
@@ -313,6 +336,7 @@ class RecommendationRepositoryTest {
         val requestedCursors = mutableListOf<String?>()
         val requestedLimits = mutableListOf<Int>()
         var nextFailure: Throwable? = null
+        var gate: CompletableDeferred<Unit>? = null
 
         override suspend fun recommendations(
             cursor: String?,
@@ -320,6 +344,7 @@ class RecommendationRepositoryTest {
         ): RecommendationPageDto {
             requestedCursors += cursor
             requestedLimits += limit
+            gate?.await()
             nextFailure?.let {
                 nextFailure = null
                 throw it

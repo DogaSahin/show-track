@@ -7,6 +7,7 @@ import app.cash.turbine.test
 import com.anarky.showtrack.core.data.alerts.EpisodeAlerts
 import com.anarky.showtrack.core.data.mapper.toDomain
 import com.anarky.showtrack.core.data.mapper.toEntity
+import com.anarky.showtrack.core.data.session.UserData
 import com.anarky.showtrack.core.database.LibraryDao
 import com.anarky.showtrack.core.database.LibraryEntryEntity
 import com.anarky.showtrack.core.database.ShowTrackDatabase
@@ -660,6 +661,41 @@ class LibraryRepositoryImplTest {
             assertEquals(listOf<String?>("watching"), api.requestedStatuses)
             assertEquals(listOf<String?>("next_episode_date"), api.requestedSorts)
             assertEquals(listOf("media-cached"), dao.observeAll().first().map { it.mediaId })
+        }
+
+    @Test
+    fun `clearing user data empties the cache, the loaded pages and the filter`() =
+        runTest {
+            repository.refresh()
+            repository.loadMore()
+            assertEquals(listOf("1", "2"), repository.observeLibrary().first().map { it.id })
+
+            (repository as UserData).clearUserData()
+
+            assertEquals(emptyList<String>(), dao.observeAll().first().map { it.id })
+            assertEquals(emptyList<String>(), repository.observeLibrary().first().map { it.id })
+            // Back to the first page, under the default filter.
+            repository.refresh()
+            assertEquals(listOf(null, "c1", null), api.requestedCursors)
+            assertEquals(null, api.requestedStatuses.last())
+        }
+
+    @Test
+    fun `a refresh still in flight at sign-out does not put the old rows back`() =
+        runTest {
+            val gate = CompletableDeferred<Unit>()
+            api.libraryGate = gate
+            val refresh = launch { repository.refresh() }
+            runCurrent()
+
+            val clear = launch { (repository as UserData).clearUserData() }
+            runCurrent()
+            gate.complete(Unit)
+            refresh.join()
+            clear.join()
+
+            assertEquals(emptyList<String>(), dao.observeAll().first().map { it.id })
+            assertEquals(emptyList<String>(), repository.observeLibrary().first().map { it.id })
         }
 
     @Test

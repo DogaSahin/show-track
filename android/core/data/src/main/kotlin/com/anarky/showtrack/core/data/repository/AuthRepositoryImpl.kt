@@ -2,7 +2,7 @@ package com.anarky.showtrack.core.data.repository
 
 import android.util.Log
 import com.anarky.showtrack.core.data.alerts.EpisodeAlerts
-import com.anarky.showtrack.core.data.search.RecentSearchStore
+import com.anarky.showtrack.core.data.session.UserDataCleaner
 import com.anarky.showtrack.core.model.AuthFailure
 import com.anarky.showtrack.core.model.CurrentUser
 import com.anarky.showtrack.core.network.api.AuthApi
@@ -37,7 +37,7 @@ class AuthRepositoryImpl
         private val showTrackApi: ShowTrackApi,
         private val tokenStore: TokenStore,
         private val alerts: EpisodeAlerts,
-        private val recentSearches: RecentSearchStore,
+        private val userData: UserDataCleaner,
     ) : AuthRepository {
         // In-memory only, per decision at [AuthRepository.currentUserId]'s own KDoc — cleared on
         // [logout], never persisted. A benign, not a correctness, race: two concurrent first callers
@@ -88,12 +88,16 @@ class AuthRepositoryImpl
         ) {
             // logout() is not the only way a session ends: TokenRefreshAuthenticator clears the
             // token store directly on an unrecoverable 401 (never calling logout()) and emits
-            // AuthEvent.LoggedOut for AuthGate/AlertSessionObserver to react to. Neither of those
+            // AuthEvent.LoggedOut for AuthGate/SessionEndObserver to react to. Neither of those
             // consumers reaches this cache, so a stale id from the PREVIOUS account would
             // otherwise survive into a new session started this way. Clearing here, at the one
             // place every new session actually begins, covers that path along with the ordinary
             // logout-then-login one logout() already covers.
             cachedUserId = null
+            // Before the new tokens exist, so nothing the next account loads can be swept away:
+            // a sign-out interrupted half way (the process killed) must still not hand the
+            // previous account's cache, lists or choices to this one.
+            userData.clear()
             try {
                 val tokens = api.login(LoginRequest(email = email, password = password))
                 tokenStore.save(access = tokens.accessToken, refresh = tokens.refreshToken)
@@ -102,9 +106,6 @@ class AuthRepositoryImpl
             } catch (failure: Exception) {
                 throw mapLoginFailure(failure)
             }
-            // On sign-in too, not only sign-out: an expired session drops its tokens without
-            // passing through logout(), and the next account must not inherit these.
-            clearRecentSearches()
             // A clean slate first: nothing scheduled before this sign-in (even by a sync that raced
             // the previous sign-out) can show after it.
             alerts.cancelAll()
@@ -157,19 +158,8 @@ class AuthRepositoryImpl
             // The session this id belonged to is gone; the next signed-in session (same account
             // signing back in, or a different one) must re-resolve it rather than read a stale cache.
             cachedUserId = null
-            clearRecentSearches()
-        }
-
-        /** Best effort: a failed local write must never fail a sign-in or sign-out. */
-        @Suppress("TooGenericExceptionCaught")
-        private suspend fun clearRecentSearches() {
-            try {
-                recentSearches.clear()
-            } catch (cancellation: CancellationException) {
-                throw cancellation
-            } catch (failure: Exception) {
-                Log.w(TAG, "clearing recent searches failed: ${failure.javaClass.simpleName}")
-            }
+            // After the tokens are gone, so nothing can load this account's data back in.
+            userData.clear()
         }
 
         @Suppress("TooGenericExceptionCaught")

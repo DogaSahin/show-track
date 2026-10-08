@@ -1,6 +1,7 @@
 package com.anarky.showtrack.core.data.repository
 
 import com.anarky.showtrack.core.model.MediaSource
+import com.anarky.showtrack.core.model.SearchResults
 import com.anarky.showtrack.core.network.api.ShowTrackApi
 import com.anarky.showtrack.core.network.dto.AddLibraryEntryRequest
 import com.anarky.showtrack.core.network.dto.CreateGroupRequestDto
@@ -44,6 +45,26 @@ import java.io.IOException
 import java.time.LocalDate
 
 class MediaRepositoryTest {
+    @Test
+    fun `sign-out empties search results, and a search in flight then is dropped`() =
+        runTest {
+            val api = FakeApi(response(sources = mapOf("anilist" to "ok")))
+            val repository = MediaRepositoryImpl(api)
+            repository.search("bebop")
+            val gate = CompletableDeferred<Unit>()
+            api.gates = mapOf("frieren" to gate)
+            val search = launch { repository.search("frieren") }
+            runCurrent()
+
+            val clear = launch { repository.clearUserData() }
+            runCurrent()
+            gate.complete(Unit)
+            search.join()
+            clear.join()
+
+            assertEquals(SearchResults.EMPTY, repository.searchResults.value)
+        }
+
     @Test
     fun `a provider that did not answer is reported as degraded`() =
         runTest {

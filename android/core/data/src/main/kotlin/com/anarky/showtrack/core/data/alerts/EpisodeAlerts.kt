@@ -13,6 +13,9 @@ interface EpisodeAlerts {
     /** Re-plan alerts soon (after sign-in, or after a library change). */
     suspend fun requestSync()
 
-    /** Cancel every scheduled alert and forget which ones already fired (sign-out). */
+    /**
+     * The account is gone (sign-out, expiry) or a new one begins (sign-in): turn alerts off,
+     * cancel everything scheduled or shown, and forget which ones already fired.
+     */
     suspend fun cancelAll()
 }

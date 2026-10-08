@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.anarky.showtrack.core.data.session.UserData
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
@@ -61,7 +62,8 @@ private val Context.recentSearchDataStore: DataStore<Preferences> by preferences
 @Singleton
 class DataStoreRecentSearchStore(
     private val dataStore: DataStore<Preferences>,
-) : RecentSearchStore {
+) : RecentSearchStore,
+    UserData {
     @Inject
     constructor(
         @ApplicationContext context: Context,
@@ -82,6 +84,8 @@ class DataStoreRecentSearchStore(
     override suspend fun clear() {
         dataStore.edit { prefs -> prefs.remove(QUERIES) }
     }
+
+    override suspend fun clearUserData() = clear()
 
     private fun decode(raw: String?): List<String> = raw?.split(SEPARATOR)?.filter { it.isNotBlank() }.orEmpty()
 

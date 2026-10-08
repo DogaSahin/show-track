@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.anarky.showtrack.core.data.session.UserData
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
@@ -74,7 +75,8 @@ private val Context.activeGroupDataStore: DataStore<Preferences> by preferencesD
 @Singleton
 class DataStoreActiveGroupStore(
     private val dataStore: DataStore<Preferences>,
-) : ActiveGroupStore {
+) : ActiveGroupStore,
+    UserData {
     /**
      * The constructor Hilt uses; the primary one takes the [DataStore] directly, matching
      * `DataStoreRecentSearchStore`'s own shape and for the same reason: a default argument
@@ -102,6 +104,9 @@ class DataStoreActiveGroupStore(
             // collects this at app start.
             .catch { cause -> if (cause is IOException) emit(emptyPreferences()) else throw cause }
             .map { prefs -> prefs[ACTIVE_GROUP_ID] }
+
+    // The previous account's group is meaningless (and not even visible) to the next one.
+    override suspend fun clearUserData() = setActiveGroup(null)
 
     override suspend fun setActiveGroup(groupId: String?) {
         dataStore.edit { prefs ->

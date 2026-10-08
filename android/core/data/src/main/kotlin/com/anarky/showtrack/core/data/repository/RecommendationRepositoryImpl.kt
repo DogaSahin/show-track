@@ -3,6 +3,8 @@ package com.anarky.showtrack.core.data.repository
 import com.anarky.showtrack.core.data.mapper.toDomain
 import com.anarky.showtrack.core.data.paging.CursorPaginator
 import com.anarky.showtrack.core.data.paging.Page
+import com.anarky.showtrack.core.data.session.SessionGuard
+import com.anarky.showtrack.core.data.session.UserData
 import com.anarky.showtrack.core.model.Recommendation
 import com.anarky.showtrack.core.network.api.ShowTrackApi
 import com.anarky.showtrack.core.network.dto.RecommendationDto
@@ -25,7 +27,11 @@ class RecommendationRepositoryImpl
     @Inject
     constructor(
         private val api: ShowTrackApi,
-    ) : RecommendationRepository {
+    ) : RecommendationRepository,
+        UserData {
+        // A page still in flight at sign-out is dropped, never published.
+        private val session = SessionGuard()
+
         // `restart()` drops the cursor; there is no filter/query field on this repository whose
         // agreement with the paginator [applyFilter]-style code elsewhere has to preserve across a
         // throw — recommendations take no client-chosen parameter to go stale.
@@ -60,8 +66,9 @@ class RecommendationRepositoryImpl
          * from the fetch's own result).
          */
         override suspend fun refresh() {
+            val startedIn = session.current()
             val firstPage = paginator.restart()
-            mutableFeed.value = firstPage
+            session.ifStill(startedIn) { mutableFeed.value = firstPage }
         }
 
         /**
@@ -79,8 +86,17 @@ class RecommendationRepositoryImpl
          * lock and answers `null` when it fetched nothing.
          */
         override suspend fun loadMore() {
+            val startedIn = session.current()
             val page = paginator.loadMore() ?: return
-            mutableFeed.value = mutableFeed.value + page
+            session.ifStill(startedIn) { mutableFeed.value = mutableFeed.value + page }
+        }
+
+        /** Sign-out: recommendations are made from this account's library. */
+        override suspend fun clearUserData() {
+            session.end {
+                paginator.reset()
+                mutableFeed.value = emptyList()
+            }
         }
 
         override fun remove(mediaId: String) {

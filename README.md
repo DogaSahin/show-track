@@ -242,8 +242,9 @@ before and one 6 hours before (just one if the episode is first seen less than 6
   the tailnet; an alert that is already scheduled shows offline.
 - **Doze can make an alert a few minutes late.** There are no exact alarms. The wording ("airs in
   3 hours") is worked out when the alert shows, so a late one is still accurate.
-- **Signing out cancels everything**, including alerts already in the notification shade. An
-  alert scheduled before a sign-out never shows, for a signed-out phone or for whoever signs in next.
+- **Signing out cancels everything** and turns alerts off, including alerts already in the
+  notification shade; whoever signs in next opts in for themselves. An alert scheduled before a
+  sign-out never shows, for a signed-out phone or for whoever signs in next.
 
 ## Contributing
 

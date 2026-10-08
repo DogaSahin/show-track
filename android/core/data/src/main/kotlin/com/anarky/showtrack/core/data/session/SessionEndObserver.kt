@@ -1,5 +1,6 @@
-package com.anarky.showtrack.core.data.alerts
+package com.anarky.showtrack.core.data.session
 
+import com.anarky.showtrack.core.data.alerts.EpisodeAlerts
 import com.anarky.showtrack.core.data.auth.AuthEventSource
 import com.anarky.showtrack.core.model.AuthEvent
 import kotlinx.coroutines.CoroutineScope
@@ -9,21 +10,26 @@ import javax.inject.Singleton
 
 /**
  * A session can end without logout(): TokenRefreshAuthenticator clears the tokens on an
- * unrecoverable 401 and emits [AuthEvent.LoggedOut]. Alerts scheduled for that account are
- * cancelled then too, so nothing fires for a signed-out phone. Started once, by the Application.
+ * unrecoverable 401 and emits [AuthEvent.LoggedOut]. That ending gets the same clean-up as a
+ * sign-out: the account's alerts are cancelled and its data leaves the phone. Started once, by
+ * the Application.
  */
 @Singleton
-class AlertSessionObserver
+class SessionEndObserver
     @Inject
     constructor(
         private val authEvents: AuthEventSource,
         private val alerts: EpisodeAlerts,
+        private val userData: UserDataCleaner,
     ) {
         fun start(scope: CoroutineScope) {
             scope.launch {
                 authEvents.authEvents.collect { event ->
                     when (event) {
-                        AuthEvent.LoggedOut -> alerts.cancelAll()
+                        AuthEvent.LoggedOut -> {
+                            alerts.cancelAll()
+                            userData.clear()
+                        }
                     }
                 }
             }
