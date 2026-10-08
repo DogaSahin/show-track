@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import app.cash.turbine.test
+import com.anarky.showtrack.core.data.alerts.EpisodeAlerts
 import com.anarky.showtrack.core.data.mapper.toDomain
 import com.anarky.showtrack.core.data.mapper.toEntity
 import com.anarky.showtrack.core.database.LibraryDao
@@ -37,9 +38,7 @@ import com.anarky.showtrack.core.network.dto.MediaSearchResponseDto
 import com.anarky.showtrack.core.network.dto.MemberDto
 import com.anarky.showtrack.core.network.dto.ProgressEntryDto
 import com.anarky.showtrack.core.network.dto.ProposeTitleRequestDto
-import com.anarky.showtrack.core.network.dto.PushTargetDto
 import com.anarky.showtrack.core.network.dto.RecommendationPageDto
-import com.anarky.showtrack.core.network.dto.RegisterTargetRequest
 import com.anarky.showtrack.core.network.dto.ResolveMediaRequestDto
 import com.anarky.showtrack.core.network.dto.ReviewDto
 import com.anarky.showtrack.core.network.dto.SetWatchedRequestDto
@@ -94,6 +93,7 @@ class LibraryRepositoryImplTest {
     private lateinit var dao: LibraryDao
     private lateinit var api: FakeShowTrackApi
     private lateinit var repository: LibraryRepository
+    private val alerts = CountingAlerts()
 
     private val cachedEntry =
         LibraryEntryEntity(
@@ -124,7 +124,7 @@ class LibraryRepositoryImplTest {
                     "c1" to LibraryPageDto(items = listOf(dto(id = "2")), nextCursor = null),
                 ),
             )
-        repository = LibraryRepositoryImpl(api, dao)
+        repository = LibraryRepositoryImpl(api, dao, alerts)
     }
 
     @After
@@ -662,6 +662,40 @@ class LibraryRepositoryImplTest {
             assertEquals(listOf("media-cached"), dao.observeAll().first().map { it.mediaId })
         }
 
+    @Test
+    fun `allWatching reads every page of Watching titles`() =
+        runTest {
+            val entries = repository.allWatching()
+
+            assertEquals(listOf("1", "2"), entries.map { it.id })
+            assertEquals(listOf(null, "c1"), api.requestedCursors)
+            assertEquals(listOf<String?>("watching", "watching"), api.requestedStatuses)
+            assertEquals(listOf(100, 100), api.requestedLimits)
+        }
+
+    @Test
+    fun `adding, removing or changing a status re-plans episode alerts, other edits do not`() =
+        runTest {
+            api.enqueueEntry(entryBody(title = "Newly added"))
+            api.enqueueLibraryPage(pageOf("Newly added"))
+            repository.add(MediaSource.ANILIST, "154587")
+            assertEquals(1, alerts.syncRequests)
+
+            api.enqueueEntry(entryBody())
+            repository.update("entry-1", LibraryPatch(progress = 12))
+            assertEquals(1, alerts.syncRequests)
+
+            api.enqueueEntry(entryBody())
+            repository.update("entry-1", LibraryPatch(status = UserMediaStatus.COMPLETED))
+            assertEquals(2, alerts.syncRequests)
+
+            repository.remove("1")
+            assertEquals(3, alerts.syncRequests)
+
+            repository.importAniList("someone")
+            assertEquals(4, alerts.syncRequests)
+        }
+
     /** The pass-through half of task 9b.6: a successful import maps every field, `truncated` included. */
     @Test
     fun `importAniList reads through the three counts and the truncated flag`() =
@@ -854,8 +888,7 @@ private class FakeShowTrackApi(
 
     // The rest of the interface. `error(...)` rather than a silent no-op: a library test that
     // reached these would be doing something it has no business doing, and should say so loudly.
-    // PushRepositoryImplTest has its own fake for the push half; the search/detail methods stay
-    // outside this repository's business.
+    // The search/detail methods stay outside this repository's business.
     override suspend fun libraryStats(): LibraryStatsDto = statsResponse
 
     override suspend fun importAniList(request: ImportAniListRequest): ImportSummaryDto {
@@ -909,12 +942,6 @@ private class FakeShowTrackApi(
     }
 
     override suspend fun me(): UserDto = error("this fake only serves observeLibrary/refresh/loadMore")
-
-    override suspend fun registerPushTarget(request: RegisterTargetRequest): PushTargetDto =
-        error("the library repository must not touch push registration")
-
-    override suspend fun deletePushTarget(id: String): Unit =
-        error("the library repository must not touch push registration")
 
     override suspend fun recommendations(
         cursor: String?,
@@ -983,4 +1010,14 @@ private class FakeShowTrackApi(
         id: String,
         patch: JsonObject,
     ): ReviewDto = error("the library repository must not touch groups")
+}
+
+private class CountingAlerts : EpisodeAlerts {
+    var syncRequests = 0
+
+    override suspend fun requestSync() {
+        syncRequests++
+    }
+
+    override suspend fun cancelAll() = Unit
 }

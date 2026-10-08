@@ -603,8 +603,8 @@ async def bulk_add_entries(session: AsyncSession, *, user_id: uuid.UUID, rows: S
 
     ON CONFLICT DO NOTHING is what makes "local wins" a DATABASE property rather than application
     logic: there is no code path that could overwrite an existing score or progress, so no future
-    refactor can introduce one by accident. The same philosophy as the notification dedup
-    constraint.
+    refactor can introduce one by accident. The same philosophy as every other dedup
+    constraint in this codebase.
 
     DO NOTHING here, rather than the no-op DO UPDATE used for `media`, because the intent is the
     opposite: there we needed the conflicting row's id back, here we need the conflicting row

@@ -113,11 +113,13 @@ class MapperTest {
         assertEquals("Cached Title", entry.media.title)
         assertEquals("https://example.com/cached.jpg", entry.media.coverImageUrl)
         assertEquals(5, entry.media.daysUntilNextEpisode)
+        assertEquals(28, entry.media.totalEpisodes)
     }
 
     @Test
     fun `the domain maps onto the cache row a list needs and nothing more`() {
         val entity = cachedEntity().toDomain().toEntity()
+        assertEquals(28, entity.totalEpisodes)
 
         assertEquals("cached", entity.id)
         // `status.name`, not the wire spelling — which is why the entity mapper reads it back
@@ -310,6 +312,7 @@ class MapperTest {
             title = "Cached Title",
             coverUrl = "https://example.com/cached.jpg",
             daysUntilNextEpisode = 5,
+            totalEpisodes = 28,
         )
 
     @Test

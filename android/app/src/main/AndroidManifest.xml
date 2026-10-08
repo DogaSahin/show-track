@@ -25,7 +25,7 @@
             </intent-filter>
 
             <!--
-                The door a push notification's tap comes through. The URI is built by
+                The door an episode alert's tap comes through. The URI is built by
                 :core:navigation's detailDeepLink() and answered by :feature:detail's
                 navDeepLink<DetailRoute>, so this filter is the ONLY place the scheme and host are
                 written as literals — a change to DEEP_LINK_SCHEME that forgets this file makes
@@ -40,7 +40,7 @@
                 A custom scheme rather than an https:// App Link because App Links need a verified
                 domain and hosting is still undecided (design doc §11). Any app may claim a custom
                 scheme, so nothing sensitive travels in it — the media id is a public identifier
-                and every screen behind it needs a token. PushNotifier pins the intent to this
+                and every screen behind it needs a token. EpisodeAlertNotifier pins the intent to this
                 package for the outbound half.
             -->
             <intent-filter>
@@ -54,6 +54,22 @@
                     android:scheme="showtrack" />
             </intent-filter>
         </activity>
+
+        <!--
+            WorkManager's own startup initializer is removed: ShowTrackApplication is its
+            Configuration.Provider, so the alert workers are built by Hilt's worker factory.
+            MergedManifestTest fails if this removal is lost.
+        -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.work.WorkManagerInitializer"
+                android:value="androidx.startup"
+                tools:node="remove" />
+        </provider>
     </application>
 
 </manifest>

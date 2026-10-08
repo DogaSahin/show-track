@@ -51,7 +51,7 @@ internal class FakeLibraryRepository(
     var lastUsername: String? = null
         private set
 
-    // Round 1's own regression guard: proves `init`/push toggles reach `libraryStats()` zero
+    // Round 1's own regression guard: proves `init`/alerts toggles reach `libraryStats()` zero
     // times, which a state-only assertion (`statsState.value`, still `Loading`) cannot — a
     // ViewModel that fetched and then discarded the result would look identical to one that
     // never fetched at all if only the resulting state were checked. Round 2's `ProfileResumeTest`
@@ -105,6 +105,18 @@ internal class FakeLibraryRepository(
     }
 
     override suspend fun upcomingWatching(limit: Int): List<LibraryEntry> = emptyList()
+
+    var watching: List<LibraryEntry> = emptyList()
+    var allWatchingFailure: Throwable? = null
+
+    // Runs inside allWatching(), so a test can change the world mid-fetch (e.g. sign out).
+    var duringAllWatching: () -> Unit = {}
+
+    override suspend fun allWatching(): List<LibraryEntry> {
+        duringAllWatching()
+        allWatchingFailure?.let { throw it }
+        return watching
+    }
 
     override suspend fun importAniList(username: String): ImportSummary {
         importCalls++

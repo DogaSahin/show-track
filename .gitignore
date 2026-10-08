@@ -17,9 +17,8 @@ google-services.json
 firebase-adminsdk*.json
 secrets.properties
 
-# ntfy server state — the auth database holds user credentials and access tokens, and a
-# server.yml would hold the same token this app authenticates with. Added now, when the file
-# type is introduced, not when a file first appears.
+# Left from the retired ntfy service: its auth database and server.yml hold credentials, and an
+# old checkout may still have them lying around.
 ntfy-data/
 server.yml
 

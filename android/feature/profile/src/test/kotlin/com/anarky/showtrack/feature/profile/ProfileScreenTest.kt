@@ -4,6 +4,10 @@ import android.content.Context
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsOff
+import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isToggleable
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -14,6 +18,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.anarky.showtrack.core.model.CurrentUser
 import com.anarky.showtrack.core.model.LibraryStats
 import com.anarky.showtrack.core.model.UserMediaStatus
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -65,6 +70,8 @@ class ProfileScreenTest {
                 groupNames = null,
                 statsState = LibraryStatsUiState.Success(UNRATED_STATS),
                 signOutError = false,
+                alerts = AlertsRowState.Off,
+                onAlertsClick = {},
                 onStatsRetry = {},
                 onSignOut = {},
                 onGroupsClick = {},
@@ -111,6 +118,8 @@ class ProfileScreenTest {
                 groupNames = null,
                 statsState = LibraryStatsUiState.Success(stats),
                 signOutError = false,
+                alerts = AlertsRowState.Off,
+                onAlertsClick = {},
                 onStatsRetry = {},
                 onSignOut = {},
                 onGroupsClick = {},
@@ -149,6 +158,8 @@ class ProfileScreenTest {
                 groupNames = null,
                 statsState = LibraryStatsUiState.Success(PARTIAL_STATS),
                 signOutError = false,
+                alerts = AlertsRowState.Off,
+                onAlertsClick = {},
                 onStatsRetry = {},
                 onSignOut = {},
                 onGroupsClick = {},
@@ -171,7 +182,7 @@ class ProfileScreenTest {
      * `@Config(qualifiers = ...)` widens the Robolectric virtual display for this one test, and
      * this is a test-environment fact worth recording rather than a stylistic pick:
      * `createComposeRule()`'s default Robolectric root measured a fixed 320x470px in this project
-     * — NOT auto-sized to content — and `ProfileScreen`'s full stack (push card, stats card, then
+     * — NOT auto-sized to content — and `ProfileScreen`'s full stack (stats card, settings card, then
      * `ImportSection`) genuinely exceeds that height. Confirmed by printing the semantics tree, not
      * guessed: the button's own node reported `Actions = […, OnClick, …]` — present, genuinely
      * clickable, and unambiguously matched (`onNodeWithText` found exactly one node) — with
@@ -194,6 +205,8 @@ class ProfileScreenTest {
                 groupNames = null,
                 statsState = LibraryStatsUiState.Success(UNRATED_STATS),
                 signOutError = false,
+                alerts = AlertsRowState.Off,
+                onAlertsClick = {},
                 onStatsRetry = {},
                 onSignOut = {},
                 onGroupsClick = {},
@@ -236,6 +249,8 @@ class ProfileScreenTest {
                 groupNames = null,
                 statsState = LibraryStatsUiState.Success(UNRATED_STATS),
                 signOutError = false,
+                alerts = AlertsRowState.Off,
+                onAlertsClick = {},
                 onStatsRetry = {},
                 onSignOut = {},
                 onGroupsClick = {},
@@ -308,11 +323,39 @@ class ProfileScreenTest {
         composeRule.onNodeWithContentDescription("Watching 6, Dropped 3").assertIsDisplayed()
     }
 
+    @Test
+    fun `the alerts row is one switch whose label says what it does`() {
+        var clicks = 0
+        setScreen(alerts = AlertsRowState.On, onAlertsClick = { clicks++ })
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule
+            .onNode(hasText(context.getString(R.string.profile_alerts_on)) and isToggleable())
+            .performScrollTo()
+            .assertIsOn()
+            .performClick()
+        assertEquals(1, clicks)
+    }
+
+    @Test
+    fun `alerts never read as on without permission`() {
+        setScreen(alerts = AlertsRowState.NeedsPermission)
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule
+            .onNode(hasText(context.getString(R.string.profile_alerts_needs_permission)) and isToggleable())
+            .performScrollTo()
+            .assertIsOff()
+    }
+
+    @Suppress("LongParameterList")
     private fun setScreen(
         user: CurrentUser? = null,
         groupNames: List<String>? = null,
         stats: LibraryStats = UNRATED_STATS,
         onSearchClick: () -> Unit = {},
+        alerts: AlertsRowState = AlertsRowState.Off,
+        onAlertsClick: () -> Unit = {},
     ) {
         composeRule.setContent {
             ProfileScreen(
@@ -320,6 +363,8 @@ class ProfileScreenTest {
                 groupNames = groupNames,
                 statsState = LibraryStatsUiState.Success(stats),
                 signOutError = false,
+                alerts = alerts,
+                onAlertsClick = onAlertsClick,
                 onStatsRetry = {},
                 onSignOut = {},
                 onGroupsClick = {},

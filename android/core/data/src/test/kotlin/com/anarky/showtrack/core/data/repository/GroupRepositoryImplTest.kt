@@ -27,9 +27,7 @@ import com.anarky.showtrack.core.network.dto.MediaSearchResponseDto
 import com.anarky.showtrack.core.network.dto.MemberDto
 import com.anarky.showtrack.core.network.dto.ProgressEntryDto
 import com.anarky.showtrack.core.network.dto.ProposeTitleRequestDto
-import com.anarky.showtrack.core.network.dto.PushTargetDto
 import com.anarky.showtrack.core.network.dto.RecommendationPageDto
-import com.anarky.showtrack.core.network.dto.RegisterTargetRequest
 import com.anarky.showtrack.core.network.dto.ResolveMediaRequestDto
 import com.anarky.showtrack.core.network.dto.ReviewDto
 import com.anarky.showtrack.core.network.dto.SetWatchedRequestDto
@@ -801,10 +799,6 @@ class GroupRepositoryImplTest {
         // AuthRepositoryImpl — see GroupRepository.kt's own KDoc) — kept as a loud failure, not a
         // stub answer, so a regression that reintroduces the call here is caught immediately.
         override suspend fun me(): UserDto = error("not used")
-
-        override suspend fun registerPushTarget(request: RegisterTargetRequest): PushTargetDto = error("not used")
-
-        override suspend fun deletePushTarget(id: String): Unit = error("not used")
 
         override suspend fun recommendations(
             cursor: String?,

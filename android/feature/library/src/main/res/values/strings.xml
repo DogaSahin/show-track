@@ -53,4 +53,13 @@
     <string name="library_sort_title">Title</string>
     <string name="library_sort_score">Score</string>
     <string name="library_sort_next_episode">Next episode</string>
+
+    <!-- With the title's episode count. -->
+    <string name="library_eps_watched_of">%1$d of %2$d watched</string>
+    <!-- Before an upcoming episode: "14/28 · Ep 15 in 2 days". -->
+    <string name="library_eps_count_short">%1$d/%2$d</string>
+    <plurals name="library_not_started_with_total">
+        <item quantity="one">Not started · %d ep</item>
+        <item quantity="other">Not started · %d eps</item>
+    </plurals>
 </resources>

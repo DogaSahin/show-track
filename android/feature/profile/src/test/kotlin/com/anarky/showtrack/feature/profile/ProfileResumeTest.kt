@@ -25,8 +25,8 @@ import com.anarky.showtrack.core.designsystem.R as DesignSystemR
  * Splitting the two made the effect load-bearing: it is now the ONLY production caller of
  * [ProfileViewModel.refreshStats] for the initial load AND for a resume, and
  * `StatsSection`'s retry button is the only caller for a manual retry. `ProfileViewModelTest`'s
- * `init does not fetch stats`/`toggling push does not fetch stats` prove the NEGATIVE (`init` and
- * push toggles do NOT call it); this test proves the POSITIVE — that something real actually does,
+ * `init does not fetch stats` proves the NEGATIVE (`init` does NOT
+ * call it); this test proves the POSITIVE — that something real actually does,
  * on all three of the paths a user can reach it from. Modelled directly on `FavoritesResumeTest`
  * (task 9b.4, round 1), including its own reasoning for why this needs no Hilt harness.
  *
@@ -54,7 +54,7 @@ class ProfileResumeTest {
         // nothing in this test needs to observe a state mid-flight.
         val failure = IOException("stats offline")
         val repository = FakeLibraryRepository(statsFailure = failure)
-        val viewModel = ProfileViewModel(FakeDistributors(), FakeAuthRepository(), repository)
+        val viewModel = ProfileViewModel(FakeAlertSwitch(), FakeAuthRepository(), repository)
 
         composeRule.setContent {
             ProfileScreen(
@@ -86,7 +86,7 @@ class ProfileResumeTest {
 
         // The retry button inside StatsSection's ErrorState — StatsSection's `onRetry` must be
         // wired to `refreshStats`, not `refresh` (round 0/round 1's shipped bug: retrying used to
-        // re-run only the push read, leaving the error banner's own retry a dead button).
+        // re-run only an unrelated read, leaving the error banner's own retry a dead button).
         composeRule.onNodeWithText(context.getString(DesignSystemR.string.action_retry)).performClick()
         composeRule.waitForIdle()
 

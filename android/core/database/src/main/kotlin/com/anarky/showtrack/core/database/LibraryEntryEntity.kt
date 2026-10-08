@@ -43,4 +43,7 @@ data class LibraryEntryEntity(
     val coverUrl: String?,
     @ColumnInfo(name = "days_until_next_episode")
     val daysUntilNextEpisode: Int?,
+    // The title's episode count, for "14 of 28 watched"; null until the server has its list.
+    @ColumnInfo(name = "total_episodes")
+    val totalEpisodes: Int? = null,
 )

@@ -40,7 +40,7 @@ import java.time.Instant
  * pinned module-wide in `src/test/resources/robolectric.properties` — Robolectric ships no shadow
  * jar for 36. No `application` override: unlike `:app`, this library module's own manifest names
  * no `Application` class, so the default test application is already enough — the same setup
- * `:feature:profile`'s `PushNotifierTest` uses, and the same reasoning `:core:designsystem`'s
+ * `:feature:profile`'s `EpisodeAlertNotifierTest` uses, and the same reasoning `:core:designsystem`'s
  * `StatusPresentationTest` gives for relying on the properties file alone.
  */
 @RunWith(RobolectricTestRunner::class)
@@ -169,6 +169,29 @@ class LibraryScreenTest {
                 onSearchClick = {},
             )
         }
+    }
+
+    @Test
+    fun `with the episode count, a row says how far through the show you are`() {
+        val noUpcoming =
+            ENTRY.media.copy(
+                nextEpisodeNumber = null,
+                nextEpisodeSeason = null,
+                nextEpisodeDate = null,
+                daysUntilNextEpisode = null,
+            )
+        setScreen(
+            entries =
+                listOf(
+                    ENTRY.copy(id = "a", progress = 14, media = ENTRY.media.copy(id = "ma", totalEpisodes = 1200)),
+                    ENTRY.copy(id = "b", progress = 14, media = noUpcoming.copy(id = "mb", totalEpisodes = 28)),
+                    ENTRY.copy(id = "c", progress = 0, media = noUpcoming.copy(id = "mc", totalEpisodes = 28)),
+                ),
+        )
+
+        composeRule.onNodeWithText("Watching · 14/1200 · Ep 1100 in 4 days").assertIsDisplayed()
+        composeRule.onNodeWithText("Watching · 14 of 28 watched").assertIsDisplayed()
+        composeRule.onNodeWithText("Watching · Not started · 28 eps").assertIsDisplayed()
     }
 
     private companion object {

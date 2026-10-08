@@ -1,28 +1,34 @@
 <resources>
-    <string name="search_field_label">Search</string>
     <string name="search_field_placeholder">Search for an anime or show</string>
     <string name="search_field_clear_content_description">Clear search</string>
+    <string name="search_back">Back</string>
 
-    <!-- SearchUiState.Idle: nothing has been typed yet. Distinct from an empty Success — that is
-         "no results for that query", this is "no query at all" (SearchUiState's KDoc). -->
-    <string name="search_idle_message">Search for a title to add it to your library</string>
+    <!-- Before typing: the phone's own recent searches. -->
+    <string name="search_recent_heading">Recent searches</string>
+    <string name="search_recent_clear">Clear</string>
+    <!-- The ↖ on a recent search: puts the query in the field without running it. -->
+    <string name="search_recent_fill_content_description">Edit %1$s</string>
+
     <string name="search_empty_message">No results for that search</string>
 
     <string name="search_error_message">Couldn\'t search right now. Check your connection and try again.</string>
 
-    <!-- A failed loadMoreResults() (SearchUiState.Success.pageError) — the already-loaded results
-         stay on screen underneath this footer, so the copy is a small tap-to-retry note, not the
-         full-screen search_error_message above. -->
+    <!-- A failed load-more: the results already loaded stay on screen above this footer. -->
     <string name="search_page_error">Couldn\'t load more. Tap to retry.</string>
 
-    <!-- SearchResults.isDegraded (decision C-O): has_more is false because the provider that
-         ANSWERED has no more, which looks exactly like a complete result set unless this is shown.
-         %1$s is the comma-joined list of providers that did not answer, e.g. "TMDB". -->
+    <!-- The provider that answered has no more, which looks like a complete result set unless
+         this is shown. %1$s is the comma-joined list of providers that did not answer. -->
     <string name="search_degraded_notice">%1$s isn\'t responding right now — results may be incomplete.</string>
 
-    <!-- add() calls refresh() after a successful POST (LibraryRepositoryImpl); if the refresh
-         throws, the title may already have been added even though this call failed. Worded for
-         what is actually known — never "Couldn't add this title". Retrying (tapping the row again)
-         is always safe: the endpoint is idempotent. -->
-    <string name="search_add_error">Couldn\'t confirm this was added — it may already be in your library. Tap to try again.</string>
+    <string name="search_add_button">Add</string>
+    <string name="search_add_content_description">Add %1$s to your library</string>
+    <!-- Spoken for the status chip on a title already in the library. %1$s is the status. -->
+    <string name="search_in_library">In your library, %1$s</string>
+    <string name="search_added_snackbar">%1$s added to Planned</string>
+    <string name="search_added_snackbar_action">Open</string>
+    <!-- The add may have succeeded even though this call failed (the library refresh after a
+         successful POST can fail on its own), so this never says the add failed outright. Adding
+         again is safe: the endpoint is idempotent. -->
+    <string name="search_add_error">Couldn\'t confirm this was added. It may already be in your library.</string>
+    <string name="search_open_error">Couldn\'t open this title. Try again.</string>
 </resources>

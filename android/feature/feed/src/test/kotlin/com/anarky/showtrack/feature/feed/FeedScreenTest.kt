@@ -506,6 +506,26 @@ class FeedScreenTest {
         vararg args: Any,
     ): String = "${ACTOR.username} " + context.getString(actionRes, *args)
 
+    @Test
+    fun `a progress event shows how far through the show it is, when the count is known`() {
+        composeRule.setContent {
+            FeedScreen(
+                activeGroupState = ActiveGroupState.Success(groups = emptyList(), activeGroupId = GROUP_ID),
+                state = FeedUiState.Success(entries = listOf(PROGRESSED.copy(totalEpisodes = 28))),
+                onLoadMore = {},
+                onRetry = {},
+                onEntryClick = {},
+                onSwitchGroup = {},
+                onRetryGroups = {},
+                onOpenGroups = {},
+            )
+        }
+
+        val shown = "${PROGRESSED.payload.getValue("progress")} of 28"
+        composeRule.onNodeWithText(shown, useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithContentDescription(shown, substring = true).assertExists()
+    }
+
     private companion object {
         const val GROUP_ID = "group-1"
         const val TITLE = "Frieren"

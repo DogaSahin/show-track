@@ -8,7 +8,7 @@ import com.anarky.showtrack.core.model.Review
 
 /**
  * [entry] null means "not in your library" — a normal state, not an error. It is what makes the
- * primary action Add rather than Edit, and it is reachable from search and from a push deep-link
+ * primary action Add rather than Edit, and it is reachable from search and from an alert deep-link
  * where no entry can exist yet (decision C-D).
  */
 data class DetailData(

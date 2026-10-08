@@ -86,7 +86,7 @@ class ActiveGroupStoreTest {
      * mutation below) before any protobuf parsing runs, which is exactly the failure
      * [DataStoreActiveGroupStore.activeGroupId]'s OWN `.catch { cause is IOException }` — not
      * DataStore's separate `corruptionHandler` — exists to survive, the same idiom
-     * `DataStorePushRegistrationStore.read()` already uses.
+     * `DataStoreRecentSearchStore` already uses.
      */
     @Test
     fun `a corrupt preferences file yields null rather than crashing at launch`() =
