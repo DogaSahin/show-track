@@ -21,6 +21,9 @@ sealed interface SearchUiState {
     /** The first page of a new query is in flight. */
     data object Loading : SearchUiState
 
+    /** Longer than the server accepts (100 characters): nothing is sent. */
+    data object QueryTooLong : SearchUiState
+
     /**
      * [adding] and [opening] hold the [key] of the one row with an add or an open in flight, so
      * only that row shows it.
