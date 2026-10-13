@@ -8,7 +8,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.users import security, service
+from app.users import security, service, throttle
 from app.users.models import RefreshToken
 
 VALID = {"username": "doga", "email": "doga@example.com", "password": "correct horse battery staple"}
@@ -341,3 +341,24 @@ async def test_concurrent_attempts_cannot_overrun_the_limit(monkeypatch) -> None
 
     assert calls == 5
     assert sum(isinstance(result, service.LoginThrottled) for result in results) == 15
+
+
+async def test_a_login_cancelled_before_its_answer_does_not_count_as_an_attempt(monkeypatch) -> None:
+    """A client that disconnects while its request waits for an argon2 slot never had a password
+    checked, so the attempt it recorded is given back."""
+    monkeypatch.setattr(throttle, "login_throttle", throttle.LoginThrottle(max_attempts=1))
+    entered = asyncio.Event()
+
+    async def stub_authenticate(session, *, email, password):
+        entered.set()
+        await asyncio.Event().wait()  # never answers: stands in for waiting on a hashing slot
+
+    monkeypatch.setattr(service, "authenticate", stub_authenticate)
+
+    task = asyncio.create_task(service.login(None, email="a@example.com", password="x", now=1000.0))
+    await entered.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert throttle.login_throttle.begin(throttle.key_for("a@example.com"), 1000.0) is None

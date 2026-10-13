@@ -9,7 +9,6 @@ Pure: no FastAPI, no clock. Callers pass `now` (monotonic seconds).
 """
 
 import math
-from collections import OrderedDict
 
 MAX_ATTEMPTS = 5
 WINDOW_SECONDS = 15 * 60
@@ -35,7 +34,8 @@ class LoginThrottle:
         self._max_attempts = max_attempts
         self._window = window_seconds
         self._max_keys = max_keys
-        self._attempts: OrderedDict[str, list[float]] = OrderedDict()
+        # A plain dict: insertion order is all _make_room needs, and nothing reorders keys.
+        self._attempts: dict[str, list[float]] = {}
 
     def begin(self, key: str, now: float) -> int | None:
         """Check AND record in one synchronous step — no await between them — so concurrent
@@ -79,7 +79,8 @@ class LoginThrottle:
         return attempts
 
     def _make_room(self, now: float) -> bool:
-        """Evict keys whose every attempt has expired, oldest first. True once there is room."""
+        """Evict keys whose every attempt has expired, in insertion order (the longest-held key
+        first). True once there is room."""
         cutoff = now - self._window
         for key in list(self._attempts):
             if self._attempts[key][-1] <= cutoff:

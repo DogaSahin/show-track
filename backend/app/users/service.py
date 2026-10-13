@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -103,6 +104,12 @@ async def login(session: AsyncSession, *, email: str, password: str, now: float)
     """Throttle, then authenticate. The attempt is counted BEFORE any argon2 work, in the same
     synchronous step as the check, and the refusal is identical for known and unknown emails.
     An attempt refused for a busy hashing queue never reached a password check, so it is refunded.
+
+    So is one cancelled before it answered (the client disconnected). That includes a request
+    cancelled after its hash started, by choice: it got no answer, so it tested no password, and
+    the hash keeps its argon2 slot until the thread finishes regardless, so the refund lends no
+    extra hashing capacity. Telling the two cases apart would mean the hashing gate reporting
+    whether a thread had started, for no gain.
     """
     key = throttle.key_for(email)
     retry_after = throttle.login_throttle.begin(key, now)
@@ -110,7 +117,7 @@ async def login(session: AsyncSession, *, email: str, password: str, now: float)
         raise LoginThrottled(retry_after)
     try:
         user = await authenticate(session, email=email, password=password)
-    except security.HashingBusy:
+    except (security.HashingBusy, asyncio.CancelledError):
         throttle.login_throttle.refund(key, now)
         raise
     if user is None:
