@@ -192,4 +192,6 @@
          with the propose dialog itself — see GroupDetailActionState's own KDoc for why proposing
          moved to :feature:detail (task 9c.6). -->
     <string name="groups_watchlist_error_no_such_entry">That title was already removed from the watchlist.</string>
+    <string name="groups_validation_name_long">Group names can be at most 64 characters.</string>
+    <string name="groups_validation_code_long">Invite codes are at most 64 characters.</string>
 </resources>
