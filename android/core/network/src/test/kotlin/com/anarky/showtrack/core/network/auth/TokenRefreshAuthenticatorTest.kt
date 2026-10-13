@@ -13,6 +13,7 @@ import mockwebserver3.Dispatcher
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
 import mockwebserver3.RecordedRequest
+import mockwebserver3.SocketEffect
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -184,6 +185,121 @@ class TokenRefreshAuthenticatorTest {
     }
 
     /**
+     * A weak signal or a proxy mid-redeploy says nothing about the refresh token, which is still
+     * valid. Signing out here sends the user to the password screen for a network problem.
+     */
+    @Test
+    fun `a dropped connection during refresh keeps the user signed in`() {
+        buildApi()
+        server.dispatcher =
+            backend(refreshAnswer = { MockResponse.Builder().onResponseStart(SocketEffect.CloseSocket()).build() })
+
+        // IOException, not HttpException: the refresh never produced a response. What matters is
+        // that the session survives, so only that is asserted.
+        runBlocking {
+            events.events.test(timeout = 10.seconds) {
+                runCatching { callLibrary() }
+                expectNoEvents()
+            }
+        }
+        assertEquals(TokenPair(EXPIRED_ACCESS, VALID_REFRESH), runBlocking { store.tokens() })
+    }
+
+    @Test
+    fun `a 500 during refresh keeps the user signed in`() {
+        buildApi()
+        server.dispatcher = backend(refreshAnswer = status(500))
+        assertStaysSignedIn()
+    }
+
+    @Test
+    fun `a 502 during refresh keeps the user signed in`() {
+        buildApi()
+        server.dispatcher = backend(refreshAnswer = status(502))
+        assertStaysSignedIn()
+    }
+
+    @Test
+    fun `a 503 during refresh keeps the user signed in`() {
+        buildApi()
+        server.dispatcher = backend(refreshAnswer = status(503))
+        assertStaysSignedIn()
+    }
+
+    @Test
+    fun `a 408 during refresh keeps the user signed in`() {
+        buildApi()
+        server.dispatcher = backend(refreshAnswer = status(408))
+        assertStaysSignedIn()
+    }
+
+    @Test
+    fun `a 429 during refresh keeps the user signed in`() {
+        buildApi()
+        server.dispatcher = backend(refreshAnswer = status(429))
+        assertStaysSignedIn()
+    }
+
+    /** A 2xx that is not a token pair: the server may have rotated, but the next refresh settles it. */
+    @Test
+    fun `an unreadable refresh response keeps the user signed in`() {
+        buildApi()
+        server.dispatcher =
+            backend(
+                refreshAnswer = {
+                    MockResponse
+                        .Builder()
+                        .code(200)
+                        .setHeader("Content-Type", "application/json")
+                        .body("not json")
+                        .build()
+                },
+            )
+        assertStaysSignedIn()
+    }
+
+    @Test
+    fun `a 400 from refresh signs the user out`() {
+        buildApi()
+        server.dispatcher = backend(refreshAnswer = status(400))
+        assertSignedOut()
+    }
+
+    @Test
+    fun `a 401 from refresh signs the user out`() {
+        buildApi()
+        server.dispatcher = backend(refreshAnswer = status(401))
+        assertSignedOut()
+    }
+
+    @Test
+    fun `a 403 from refresh signs the user out`() {
+        buildApi()
+        server.dispatcher = backend(refreshAnswer = status(403))
+        assertSignedOut()
+    }
+
+    /**
+     * Sign-out cleared the store while this refresh was on the wire. Writing the new pair back
+     * would sign the user in again behind the login screen; the server already ended the session.
+     */
+    @Test
+    fun `a refresh that finishes after sign-out writes nothing back`() {
+        buildApi()
+        server.dispatcher = backend(beforeRefreshAnswers = { runBlocking { store.clear() } })
+
+        runBlocking {
+            events.events.test(timeout = 10.seconds) {
+                val failure = assertThrows(HttpException::class.java) { runBlocking { callLibrary() } }
+                assertEquals(401, failure.code())
+                expectNoEvents()
+            }
+        }
+        assertNull("a lost compare-and-set must not resurrect the session", runBlocking { store.tokens() })
+        assertEquals("no replay without a saved token", 1, libraryRequests.get())
+    }
+
+    /**
      * The PRODUCTION wiring, assembled by Dagger from the real [NetworkModule] — not a
      * hand-built copy of it.
      *
@@ -201,6 +317,39 @@ class TokenRefreshAuthenticatorTest {
         api = component.showTrackApi()
     }
 
+    private fun status(code: Int) =
+        {
+            MockResponse
+                .Builder()
+                .code(code)
+                .body("""{"detail":"x"}""")
+                .build()
+        }
+
+    /** Expects the original 401 to surface, no LoggedOut, and the stored pair untouched. */
+    private fun assertStaysSignedIn() {
+        runBlocking {
+            events.events.test(timeout = 10.seconds) {
+                val failure = assertThrows(HttpException::class.java) { runBlocking { callLibrary() } }
+                assertEquals(401, failure.code())
+                expectNoEvents()
+            }
+        }
+        assertEquals(TokenPair(EXPIRED_ACCESS, VALID_REFRESH), runBlocking { store.tokens() })
+    }
+
+    /** Expects the original 401 to surface with LoggedOut, and the store cleared. */
+    private fun assertSignedOut() {
+        runBlocking {
+            events.events.test(timeout = 10.seconds) {
+                val failure = assertThrows(HttpException::class.java) { runBlocking { callLibrary() } }
+                assertEquals(401, failure.code())
+                assertEquals(AuthEvent.LoggedOut, awaitItem())
+            }
+        }
+        assertNull(runBlocking { store.tokens() })
+    }
+
     /** Every filter left null: these tests exercise the auth stack, not the library filters. */
     private suspend fun callLibrary() =
         api.library(cursor = null, limit = 20, status = null, sort = null, mediaId = null, favorite = null, type = null)
@@ -214,12 +363,15 @@ class TokenRefreshAuthenticatorTest {
     private fun backend(
         refreshSucceeds: Boolean = true,
         libraryAlwaysRejects: Boolean = false,
+        refreshAnswer: (() -> MockResponse)? = null,
+        beforeRefreshAnswers: () -> Unit = {},
     ) = object : Dispatcher() {
         override fun dispatch(request: RecordedRequest): MockResponse =
             when (request.url.encodedPath) {
                 "/v1/auth/refresh" -> {
                     refreshRequests.incrementAndGet()
-                    if (refreshSucceeds) {
+                    beforeRefreshAnswers()
+                    refreshAnswer?.invoke() ?: if (refreshSucceeds) {
                         MockResponse
                             .Builder()
                             .code(200)
