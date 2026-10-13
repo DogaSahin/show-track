@@ -145,6 +145,26 @@ class DataStoreTokenStore(
         }
     }
 
+    override suspend fun replace(
+        expectedRefresh: String,
+        access: String,
+        refresh: String,
+    ): Boolean {
+        val encryptedAccess = crypto.encrypt(access)
+        val encryptedRefresh = crypto.encrypt(refresh)
+        var replaced = false
+        // Compare and write inside ONE edit: edit is where DataStore serialises writers, so a
+        // clear() or save() cannot land between the check and the write.
+        dataStore.edit { prefs ->
+            replaced = decrypt(prefs)?.refresh == expectedRefresh
+            if (replaced) {
+                prefs[ACCESS_KEY] = encryptedAccess
+                prefs[REFRESH_KEY] = encryptedRefresh
+            }
+        }
+        return replaced
+    }
+
     override suspend fun clear() {
         dataStore.edit { it.clear() }
     }

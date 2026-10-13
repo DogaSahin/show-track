@@ -324,6 +324,16 @@ private class FakeTokenStore(
         pair = TokenPair(access, refresh)
     }
 
+    override suspend fun replace(
+        expectedRefresh: String,
+        access: String,
+        refresh: String,
+    ): Boolean {
+        if (pair?.refresh != expectedRefresh) return false
+        pair = TokenPair(access, refresh)
+        return true
+    }
+
     override suspend fun clear() {
         pair = null
     }

@@ -478,6 +478,16 @@ class AuthRepositoryTest {
             current = saved
         }
 
+        override suspend fun replace(
+            expectedRefresh: String,
+            access: String,
+            refresh: String,
+        ): Boolean {
+            if (current?.refresh != expectedRefresh) return false
+            save(access, refresh)
+            return true
+        }
+
         override suspend fun clear() {
             calls += "store.clear"
             current = null
