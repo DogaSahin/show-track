@@ -112,6 +112,14 @@ async def _find_refresh_token(session: AsyncSession, raw_token: str) -> RefreshT
     return result.scalar_one_or_none()
 
 
+async def _revoke_family(session: AsyncSession, family_id: uuid.UUID, now: datetime) -> None:
+    await session.execute(
+        update(RefreshToken)
+        .where(RefreshToken.family_id == family_id, RefreshToken.revoked_at.is_(None))
+        .values(revoked_at=now)
+    )
+
+
 async def rotate_refresh_token(session: AsyncSession, raw_token: str) -> tuple[str, str] | None:
     """Issue a new pair and revoke the presented token. Returns None if it cannot be used.
 
@@ -121,6 +129,8 @@ async def rotate_refresh_token(session: AsyncSession, raw_token: str) -> tuple[s
     token in the family is revoked in response, which logs out the thief and the real user
     together. That is the intended outcome: it is the only way to be sure the thief is out, at
     the cost of an occasional false-positive logout on a dropped response.
+
+    The claim is atomic, so concurrent use of one token is treated as reuse.
     """
     stored = await _find_refresh_token(session, raw_token)
     if stored is None:
@@ -129,17 +139,26 @@ async def rotate_refresh_token(session: AsyncSession, raw_token: str) -> tuple[s
     now = datetime.now(UTC)
 
     if stored.revoked_at is not None:
-        await session.execute(
-            update(RefreshToken)
-            .where(RefreshToken.family_id == stored.family_id, RefreshToken.revoked_at.is_(None))
-            .values(revoked_at=now)
-        )
+        await _revoke_family(session, stored.family_id, now)
         return None
 
     if stored.expires_at <= now:
         return None
 
-    stored.revoked_at = now
+    # Claim the token in ONE statement. Two concurrent refreshes both read it unrevoked above;
+    # under READ COMMITTED the second UPDATE waits for the first to commit, re-checks
+    # `revoked_at IS NULL` against the committed row and matches nothing. Zero rows is therefore
+    # exactly "someone else used this token first" — the reuse signal — and the family revoke
+    # below runs in a fresh snapshot that includes the winner's new token.
+    claimed = await session.scalar(
+        update(RefreshToken)
+        .where(RefreshToken.id == stored.id, RefreshToken.revoked_at.is_(None))
+        .values(revoked_at=now)
+        .returning(RefreshToken.id)
+    )
+    if claimed is None:
+        await _revoke_family(session, stored.family_id, now)
+        return None
     user = await session.get(User, stored.user_id)
     if user is None:
         return None
