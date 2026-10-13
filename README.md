@@ -20,6 +20,7 @@ Self-hosted. It runs on your own machine and is reached over Tailscale.
   credentials). Read-only and one-way — ShowTrack never writes back.
 - **Share with a group** — an activity feed, reviews, a shared watchlist, and side-by-side progress.
   You get in with an invite code, which is also all a new member needs to create an account.
+  When an owner removes a member, the group's invite code is rotated so the old one stops working.
 - **Get recommendations** seeded from titles you rated 7+, favourited or finished, ranked by how
   well each candidate's genres match your taste profile. Content-based, not collaborative filtering
   — nothing about what anyone else watched feeds a suggestion.
@@ -196,6 +197,22 @@ the api unable to connect.
 short or example `SECRET_KEY` / `REGISTRATION_CODE` values, so regenerate them
 (`openssl rand -hex 32`). Changing `POSTGRES_PASSWORD` on an existing volume needs
 `ALTER USER showtrack PASSWORD '...'` first; otherwise keep the old password.
+
+**Upgrading with existing accounts:** usernames are now normalised (invisible characters removed,
+Unicode NFKC, trimmed) and unique regardless of case. The migration applies this to existing
+accounts and **refuses to run**, listing the names, if it would make two usernames collide, blank
+one, or push one past 64 characters. Rename those accounts, then upgrade again.
+
+### What production switches off
+
+With `ENVIRONMENT=production` (hardcoded in `docker-compose.yml`; the dev override sets `local`) the
+API serves no `/docs`, `/redoc` or `/openapi.json`, and no debug sync route.
+
+Sign-in is rate-limited: 5 failed attempts per email in 15 minutes returns `429` with `Retry-After`,
+and a successful login clears the count. Password hashing runs off the event loop with a bounded
+queue; when it is full, login and registration return `503` with `Retry-After: 1`. Passwords longer
+than 256 characters are rejected at login. Limits are per email, not per IP, because behind Docker
+every client shares one address.
 
 ### The production image
 
