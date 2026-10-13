@@ -203,9 +203,24 @@ async def rotate_refresh_token(session: AsyncSession, raw_token: str) -> tuple[s
 
 
 async def revoke_refresh_token(session: AsyncSession, raw_token: str) -> None:
-    """Idempotent by design: an unknown or already-revoked token is a no-op, so retries work
-    and the caller cannot learn whether the token existed.
+    """End the sign-in session the token belongs to: every token in its family, not just this one.
+
+    Idempotent by design: an unknown token is a no-op, so retries work and the caller cannot
+    learn whether the token existed. A token that was already rotated still ends the session,
+    so a client that read its pair just before a refresh cannot leave the successor alive.
+
+    The row lock serialises with a concurrent refresh of the same token. A refresh that claimed
+    it first holds the lock until it commits its successor; the family UPDATE below is a new
+    statement under READ COMMITTED, so it sees that successor and revokes it. If logout locks
+    first, the refresh's claim then matches nothing and is treated as reuse.
     """
     stored = await _find_refresh_token(session, raw_token)
-    if stored is not None and stored.revoked_at is None:
-        stored.revoked_at = datetime.now(UTC)
+    if stored is None:
+        return
+    await session.execute(
+        select(RefreshToken)
+        .where(RefreshToken.id == stored.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    await _revoke_family(session, stored.family_id, datetime.now(UTC))
