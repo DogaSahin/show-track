@@ -197,11 +197,16 @@ async def _resolve_candidates(
         if provider is None:
             continue
         try:
-            details.extend((await provider.get_many(external_ids)).values())
-        except ProviderError:
-            # A candidate we cannot resolve is simply not a candidate this sweep. The edge is
-            # skipped and the next sweep retries it.
-            logger.warning("could not resolve %d %s candidates", len(external_ids), source, exc_info=True)
+            batch = await provider.get_many(external_ids)
+        except Exception:
+            # Contract breach (get_many reports failures, it doesn't raise). Containing it keeps
+            # one source from costing the whole sweep; the next sweep retries.
+            logger.exception("resolving %d %s candidates raised", len(external_ids), source)
+            continue
+        if batch.failed:
+            # Not candidates this sweep; the edge is skipped and the next sweep retries them.
+            logger.warning("could not resolve %d %s candidates", len(batch.failed), source)
+        details.extend(batch.found.values())
 
     persisted = await persist_media_bulk(session, details)
     known.update(persisted)

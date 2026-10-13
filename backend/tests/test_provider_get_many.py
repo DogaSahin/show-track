@@ -1,8 +1,11 @@
+import json
+
 import httpx
 
 from app.media.models import MediaSource, MediaStatus, MediaType
 from app.media.providers.anilist.client import BATCH_SIZE, AniListProvider
-from app.media.providers.base import MediaProvider, MediaRef, ProviderMedia
+from app.media.providers.base import MAX_CONSECUTIVE_FAILURES, MediaProvider, MediaRef, ProviderMedia
+from app.media.providers.errors import ProviderRateLimited, ProviderUnavailable
 from app.media.providers.http import ProviderHTTPClient, RateLimiter
 
 
@@ -27,8 +30,12 @@ class LoopingProvider(MediaProvider):
     source = MediaSource.TMDB
     media_type = MediaType.TV
 
-    def __init__(self, known: set[str]) -> None:
+    def __init__(
+        self, known: set[str], errors: dict[str, Exception] | None = None, broken: set[str] | None = None
+    ) -> None:
         self._known = known
+        self._errors = errors or {}
+        self._broken = broken or set()
         self.calls: list[str] = []
 
     async def search(self, query: str, page: int):
@@ -36,6 +43,10 @@ class LoopingProvider(MediaProvider):
 
     async def get_by_id(self, external_id: str) -> ProviderMedia | None:
         self.calls.append(external_id)
+        if external_id in self._errors:
+            raise self._errors[external_id]
+        if external_id in self._broken:
+            raise KeyError("id")
         if external_id not in self._known:
             return None
         return ProviderMedia(
@@ -65,7 +76,8 @@ async def test_the_default_loops_get_by_id():
     result = await provider.get_many(["1", "2"])
 
     assert provider.calls == ["1", "2"]
-    assert sorted(result) == ["1", "2"]
+    assert sorted(result.found) == ["1", "2"]
+    assert result.failed == frozenset()
 
 
 async def test_the_default_omits_ids_the_provider_does_not_know():
@@ -76,7 +88,8 @@ async def test_the_default_omits_ids_the_provider_does_not_know():
 
     result = await provider.get_many(["1", "404"])
 
-    assert sorted(result) == ["1"]
+    assert sorted(result.found) == ["1"]
+    assert result.failed == frozenset()
 
 
 async def test_anilist_fetches_a_whole_batch_in_one_request():
@@ -92,8 +105,8 @@ async def test_anilist_fetches_a_whole_batch_in_one_request():
     result = await _anilist(handler).get_many(["1", "2", "3"])
 
     assert len(requests) == 1
-    assert sorted(result) == ["1", "2", "3"]
-    assert result["2"].title == "Show 2"
+    assert sorted(result.found) == ["1", "2", "3"]
+    assert result.found["2"].title == "Show 2"
 
 
 async def test_anilist_keys_by_external_id_not_by_position():
@@ -107,8 +120,8 @@ async def test_anilist_keys_by_external_id_not_by_position():
 
     result = await _anilist(handler).get_many(["1", "3"])
 
-    assert result["1"].title == "Show 1"
-    assert result["3"].title == "Show 3"
+    assert result.found["1"].title == "Show 1"
+    assert result.found["3"].title == "Show 3"
 
 
 async def test_anilist_omits_ids_the_provider_does_not_know():
@@ -119,7 +132,8 @@ async def test_anilist_omits_ids_the_provider_does_not_know():
 
     result = await _anilist(handler).get_many(["1", "999999"])
 
-    assert sorted(result) == ["1"]
+    assert sorted(result.found) == ["1"]
+    assert result.failed == frozenset()
 
 
 async def test_anilist_chunks_internally_so_callers_need_not_know_the_batch_size():
@@ -149,7 +163,8 @@ async def test_anilist_skips_non_numeric_ids_without_a_request():
 
     result = await _anilist(handler).get_many(["not-a-number"])
 
-    assert result == {}
+    assert result.found == {}
+    assert result.failed == frozenset()
     assert requests == []
 
 
@@ -166,4 +181,62 @@ async def test_one_malformed_entry_does_not_lose_the_rest_of_the_batch():
 
     result = await _anilist(handler).get_many(["1", "2", "3"])
 
-    assert sorted(result) == ["1", "2"]
+    assert sorted(result.found) == ["1", "2"]
+    assert result.failed == frozenset()
+
+
+async def test_the_default_reports_one_failed_id_and_keeps_the_rest():
+    provider = LoopingProvider(known={"1", "3"}, errors={"2": ProviderUnavailable("boom")})
+
+    batch = await provider.get_many(["1", "2", "3"])
+
+    assert sorted(batch.found) == ["1", "3"]
+    assert batch.failed == frozenset({"2"})
+
+
+async def test_a_rate_limit_fails_the_rest_without_asking():
+    provider = LoopingProvider(known={"1", "3"}, errors={"2": ProviderRateLimited()})
+
+    batch = await provider.get_many(["1", "2", "3"])
+
+    assert sorted(batch.found) == ["1"]
+    assert batch.failed == frozenset({"2", "3"})
+    assert provider.calls == ["1", "2"]
+
+
+async def test_the_default_stops_after_consecutive_failures():
+    """A dead provider must cost a few timeouts, not one per title."""
+    ids = [str(i) for i in range(10)]
+    provider = LoopingProvider(known=set(), errors={i: ProviderUnavailable("down") for i in ids})
+
+    batch = await provider.get_many(ids)
+
+    assert len(provider.calls) == MAX_CONSECUTIVE_FAILURES
+    assert batch.failed == frozenset(ids)
+
+
+async def test_an_unmappable_payload_is_missing_not_failed():
+    provider = LoopingProvider(known={"1", "2"}, broken={"2"})
+
+    batch = await provider.get_many(["1", "2"])
+
+    assert sorted(batch.found) == ["1"]
+    assert batch.failed == frozenset()
+
+
+async def test_anilist_fails_only_the_chunk_that_failed():
+    calls = 0
+
+    def handler(request):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            return httpx.Response(500, json={})
+        ids = json.loads(request.content)["variables"]["ids"]
+        return httpx.Response(200, json={"data": {"Page": {"media": [_media(i) for i in ids]}}})
+
+    ids = [str(i) for i in range(1, BATCH_SIZE * 2 + 1)]
+    batch = await _anilist(handler).get_many(ids)
+
+    assert sorted(batch.found, key=int) == ids[:BATCH_SIZE]
+    assert batch.failed == frozenset(ids[BATCH_SIZE:])

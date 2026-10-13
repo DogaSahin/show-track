@@ -357,8 +357,9 @@ async def test_get_many_returns_known_ids_and_omits_unknown(case: Case):
 
     result = await provider.get_many([case.known_id, "999999999"])
 
-    assert case.known_id in result
-    # ABSENT from the mapping, not present-with-None: callers write `if ref in result`.
-    assert "999999999" not in result
-    assert result[case.known_id].ref.external_id == case.known_id
-    assert result[case.known_id].ref.source == provider.source
+    assert case.known_id in result.found
+    # ABSENT from the mapping, not present-with-None: callers write `if ref in result.found`.
+    assert "999999999" not in result.found
+    assert result.found[case.known_id].ref.external_id == case.known_id
+    assert result.found[case.known_id].ref.source == provider.source
+    assert result.failed == frozenset()

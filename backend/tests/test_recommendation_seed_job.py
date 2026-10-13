@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from app.library.models import UserMedia, UserMediaStatus
 from app.media.models import Media, MediaSource, MediaStatus, MediaType
-from app.media.providers.base import MediaProvider, MediaRef, ProviderMedia
+from app.media.providers.base import MediaProvider, MediaRef, ProviderBatch, ProviderMedia
 from app.media.providers.errors import ProviderUnavailable
 from app.recommendations import service
 from app.recommendations.models import MediaSimilarity, Recommendation, RecommendationRun
@@ -40,7 +40,8 @@ class SimilarProvider(MediaProvider):
         return self._similar.get(external_id, ())
 
     async def get_many(self, external_ids):
-        return {eid: self._details[eid] for eid in external_ids if eid in self._details}
+        found = {eid: self._details[eid] for eid in external_ids if eid in self._details}
+        return ProviderBatch(found=found, failed=frozenset())
 
 
 def _provider_media(external_id: str, title: str) -> ProviderMedia:

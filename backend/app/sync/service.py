@@ -15,7 +15,7 @@ from app.library.models import UserMedia
 from app.media import service as media_service
 from app.media.models import Media, MediaSource, MediaStatus
 from app.media.providers.base import MediaProvider, ProviderEpisode, ProviderMedia
-from app.media.providers.errors import ProviderError, ProviderRateLimited
+from app.media.providers.errors import ProviderRateLimited
 from app.sync.locks import SYNC_LOCK_KEY, advisory_lock
 from app.sync.schemas import SyncSummary
 
@@ -236,7 +236,7 @@ async def store_episode_lists(
 
 async def fetch_all(
     providers: Mapping[MediaSource, MediaProvider], worklist: Sequence[tuple[uuid.UUID, MediaSource, str]]
-) -> tuple[dict[tuple[MediaSource, str], ProviderMedia], set[MediaSource]]:
+) -> tuple[dict[tuple[MediaSource, str], ProviderMedia], set[tuple[MediaSource, str]]]:
     """Every provider call, with NO session and therefore no transaction in scope.
 
     Separated from the database work on purpose, and this is the shape decision 4-M asks for. An
@@ -248,55 +248,47 @@ async def fetch_all(
     ABC's looping default — N sequential 8-second requests. Taking no session at all is the only
     shape where that cannot regress.
 
-    Returns (fetched, failed_sources). Failures are reported here rather than raised: nothing
+    Returns (fetched, failed_refs). Failures are reported here rather than raised: nothing
     above a scheduled job catches anything.
 
-    The second element is the set of sources that never answered, NOT a count. The caller has to
-    tell "the provider replied and no longer knows this title" apart from "the provider was
-    down" — they mean opposite things for whether the row may start a refresh cooldown, and both
-    look identical as an absent key in `fetched`.
+    The second element is the set of `(source, external_id)` refs that got no answer, NOT a
+    count — and per title, so one failure costs only that title its stamp. The caller has to tell
+    "the provider replied and no longer knows this title" apart from "the provider was down" —
+    they mean opposite things for whether the row may start a refresh cooldown, and both look
+    identical as an absent key in `fetched`.
     """
     by_source: dict[MediaSource, list[str]] = defaultdict(list)
     for _media_id, source, external_id in worklist:
         by_source[source].append(external_id)
 
     fetched: dict[tuple[MediaSource, str], ProviderMedia] = {}
-    failed_sources: set[MediaSource] = set()
+    failed_refs: set[tuple[MediaSource, str]] = set()
     for source, external_ids in by_source.items():
         provider = providers.get(source)
         if provider is None:
             logger.warning("no provider registered for %s; %d titles not refreshed", source, len(external_ids))
-            failed_sources.add(source)
+            failed_refs.update((source, external_id) for external_id in external_ids)
             continue
-
         try:
-            answered = await provider.get_many(external_ids)
-        except ProviderRateLimited as exc:
-            # Abandon this source for the cycle rather than sleeping. The next cycle is hours
-            # away, the data is not urgent, and a job that sleeps inside a scheduler is harder to
-            # reason about than one that gives up and comes back.
-            logger.warning("%s rate limited; retry_after=%s; skipping this cycle", source, exc.retry_after)
-            failed_sources.add(source)
+            batch = await provider.get_many(external_ids)
+        except Exception:
+            # get_many reports upstream failures in `failed` rather than raising, so reaching here
+            # is a bug or a provider breaking its contract. Nothing above a scheduled job catches
+            # anything: contain it to this source and count its titles as failed.
+            logger.exception("%s get_many raised; skipping this source this cycle", source)
+            failed_refs.update((source, external_id) for external_id in external_ids)
             continue
-        except ProviderError:
-            # NOTHING above this catches anything: app/errors.py is registered on the FastAPI app
-            # and a scheduled job has no request. One provider failing must not stop the others,
-            # and must be a counted outcome rather than an exception into APScheduler.
-            logger.exception("%s failed during sync; skipping this cycle", source)
-            failed_sources.add(source)
-            continue
-
-        for external_id, detail in answered.items():
+        for external_id, detail in batch.found.items():
             fetched[(source, external_id)] = detail
-
-    return fetched, failed_sources
+        failed_refs.update((source, external_id) for external_id in batch.failed)
+    return fetched, failed_refs
 
 
 async def apply_refresh(
     session: AsyncSession,
     worklist: Sequence[tuple[uuid.UUID, MediaSource, str]],
     fetched: Mapping[tuple[MediaSource, str], ProviderMedia],
-    failed_sources: Collection[MediaSource],
+    failed_refs: Collection[tuple[MediaSource, str]],
     *,
     now: datetime,
 ) -> SyncSummary:
@@ -313,7 +305,7 @@ async def apply_refresh(
 
     Also owns `last_synced_at`, which drives the tier the row lands in next cycle. It is stamped
     for every title the provider ANSWERED about — including the ones it disowned, because "we no
-    longer know this title" is an answer — and left alone when the source itself failed. Both
+    longer know this title" is an answer — and left alone for a title that got no answer. Both
     halves matter, in opposite directions:
 
     - Stamping on failure would push titles into cooldown BECAUSE the provider was down, so an
@@ -341,9 +333,9 @@ async def apply_refresh(
             # likely. Distinct from `missing`, which is a statement about the PROVIDER.
             logger.debug("media %s vanished before it could be refreshed", media_id)
             continue
-        if source in failed_sources:
-            # No answer came back at all. Counted per title so the summary reflects how much data
-            # went stale, and pointedly NOT stamped — see the docstring.
+        if (source, external_id) in failed_refs:
+            # No answer came back for this title. Counted per title so the summary reflects how
+            # much data went stale, and pointedly NOT stamped — see the docstring.
             summary.failed += 1
             continue
         detail = fetched.get((source, external_id))
@@ -388,9 +380,9 @@ async def run_sync(providers: Mapping[MediaSource, MediaProvider], *, now: datet
             # nothing has been written and the read already returned what it needed.
             await session.rollback()
 
-            fetched, failed_sources = await fetch_all(providers, worklist)
+            fetched, failed_refs = await fetch_all(providers, worklist)
 
-            summary = await apply_refresh(session, worklist, fetched, failed_sources, now=now)
+            summary = await apply_refresh(session, worklist, fetched, failed_refs, now=now)
             await session.commit()
 
             # The episode phase, after the refresh committed: a failure here never costs the

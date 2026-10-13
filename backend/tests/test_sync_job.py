@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 from typing import ClassVar
 
 from app.media.models import Media, MediaSource, MediaStatus, MediaType
-from app.media.providers.base import MediaProvider, MediaRef, NextEpisode, ProviderMedia
+from app.media.providers.base import MediaProvider, MediaRef, NextEpisode, ProviderBatch, ProviderMedia
 from app.media.providers.errors import ProviderRateLimited, ProviderUnavailable
 from app.sync import service
 from tests.factories import make_media, make_user, make_user_media
@@ -29,16 +29,22 @@ def _detail(external_id: str, *, source=MediaSource.ANILIST, status=MediaStatus.
 
 
 class BatchProvider(MediaProvider):
-    """Answers get_many from a canned mapping, or raises. Counts calls, so a test can prove the
-    job batched instead of looping.
+    """Answers get_many from a canned mapping (plus canned per-title failures), or raises.
+    Counts calls, so a test can prove the job batched instead of looping.
     """
 
     source: ClassVar[MediaSource] = MediaSource.ANILIST
     media_type: ClassVar[MediaType] = MediaType.ANIME
 
-    def __init__(self, results: dict[str, ProviderMedia] | None = None, error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        results: dict[str, ProviderMedia] | None = None,
+        error: Exception | None = None,
+        failed: set[str] | None = None,
+    ) -> None:
         self._results = results or {}
         self._error = error
+        self._failed = failed or set()
         self.calls = 0
 
     async def search(self, query: str, page: int):
@@ -58,7 +64,9 @@ class BatchProvider(MediaProvider):
         if self._error is not None:
             raise self._error
         wanted = set(external_ids)
-        return {k: v for k, v in self._results.items() if k in wanted}
+        return ProviderBatch(
+            found={k: v for k, v in self._results.items() if k in wanted}, failed=frozenset(self._failed & wanted)
+        )
 
 
 async def _run(db_session, providers, *, now=NOW):
@@ -69,8 +77,8 @@ async def _run(db_session, providers, *, now=NOW):
     making three tests fail and two pass for the wrong reason.
     """
     worklist = await service.collect_worklist(db_session, now=now)
-    fetched, failed_sources = await service.fetch_all(providers, worklist)
-    return await service.apply_refresh(db_session, worklist, fetched, failed_sources, now=now)
+    fetched, failed_refs = await service.fetch_all(providers, worklist)
+    return await service.apply_refresh(db_session, worklist, fetched, failed_refs, now=now)
 
 
 async def _tracked_media(db_session, **overrides) -> Media:
@@ -400,3 +408,20 @@ async def test_slack_does_not_make_a_fresh_title_due(db_session):
     worklist = await service.collect_worklist(db_session, now=NOW + timedelta(minutes=54))
 
     assert media.id not in {media_id for media_id, _, _ in worklist}
+
+
+async def test_one_failed_title_does_not_cost_the_others_their_refresh(db_session):
+    ok = await _tracked_media(
+        db_session, external_id="ok", status=MediaStatus.AIRING, next_episode_date=datetime(2020, 1, 1, tzinfo=UTC)
+    )
+    bad = await _tracked_media(
+        db_session, external_id="bad", status=MediaStatus.AIRING, next_episode_date=datetime(2020, 1, 1, tzinfo=UTC)
+    )
+
+    summary = await _run(db_session, {MediaSource.ANILIST: BatchProvider({"ok": _detail("ok")}, failed={"bad"})})
+
+    assert (summary.updated, summary.failed) == (1, 1)
+    await db_session.refresh(ok)
+    await db_session.refresh(bad)
+    assert ok.last_synced_at == NOW
+    assert bad.last_synced_at is None
