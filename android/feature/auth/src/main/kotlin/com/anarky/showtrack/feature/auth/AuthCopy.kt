@@ -1,6 +1,15 @@
 package com.anarky.showtrack.feature.auth
 
+// The server's own bounds (backend/app/users/schemas.py), mirrored so a request it would refuse
+// is never sent and the user gets a specific message instead of a generic error.
 private const val MIN_PASSWORD_LENGTH = 8
+private const val MAX_PASSWORD_LENGTH = 256
+private const val MAX_USERNAME_LENGTH = 64
+private const val MAX_INVITE_CODE_LENGTH = 64
+
+// Loose on purpose: it only has to reject what the server's email check certainly rejects — no
+// dot in the domain, whitespace, a missing @. The server stays the authority.
+private val EMAIL_SHAPE = Regex("""^[^\s@]+@[^\s@]+\.[^\s@]+$""")
 
 /**
  * [AuthError.EmailOrUsernameTaken] and [AuthError.AccountCreatedNotSignedIn] only — both are
@@ -18,14 +27,19 @@ internal val AuthError.pointsAtSigningIn: Boolean
 internal fun validate(
     mode: AuthMode,
     fields: AuthFormFields,
-): Int? =
-    when {
-        mode == AuthMode.REGISTER && fields.username.isBlank() -> R.string.auth_validation_username_blank
-        '@' !in fields.email -> R.string.auth_validation_email_invalid
+): Int? {
+    val registering = mode == AuthMode.REGISTER
+    return when {
+        registering && fields.username.isBlank() -> R.string.auth_validation_username_blank
+        registering && fields.username.trim().length > MAX_USERNAME_LENGTH -> R.string.auth_validation_username_long
+        !EMAIL_SHAPE.matches(fields.email) -> R.string.auth_validation_email_invalid
         fields.password.length < MIN_PASSWORD_LENGTH -> R.string.auth_validation_password_short
-        mode == AuthMode.REGISTER && fields.inviteCode.isBlank() -> R.string.auth_validation_invite_code_blank
+        fields.password.length > MAX_PASSWORD_LENGTH -> R.string.auth_validation_password_long
+        registering && fields.inviteCode.isBlank() -> R.string.auth_validation_invite_code_blank
+        registering && fields.inviteCode.length > MAX_INVITE_CODE_LENGTH -> R.string.auth_validation_invite_code_long
         else -> null
     }
+}
 
 /** The one place an [AuthError] becomes copy — see decision C-L in the task brief. */
 internal fun AuthError.messageRes(): Int =
@@ -35,6 +49,8 @@ internal fun AuthError.messageRes(): Int =
         AuthError.EmailOrUsernameTaken -> R.string.auth_error_email_or_username_taken
         AuthError.RegistrationRefused -> R.string.auth_error_registration_refused
         AuthError.AccountCreatedNotSignedIn -> R.string.auth_error_account_created_not_signed_in
+        AuthError.TooManyAttempts -> R.string.auth_error_too_many_attempts
+        AuthError.ServerBusy -> R.string.auth_error_server_busy
         AuthError.Offline -> R.string.auth_error_offline
         AuthError.Unknown -> R.string.auth_error_unknown
     }
