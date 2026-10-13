@@ -36,6 +36,12 @@ class AuthCopyTest {
             R.string.auth_validation_username_long,
             validate(AuthMode.REGISTER, fields(username = "😀".repeat(65))),
         )
+        // Four emoji are eight UTF-16 units but four characters: too short, as the server sees it.
+        assertEquals(
+            R.string.auth_validation_password_short,
+            validate(AuthMode.REGISTER, fields(password = "😀".repeat(4))),
+        )
+        assertNull(validate(AuthMode.REGISTER, fields(password = "😀".repeat(8))))
     }
 
     @Test

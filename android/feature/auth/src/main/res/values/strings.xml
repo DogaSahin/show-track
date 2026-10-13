@@ -46,7 +46,7 @@
     <string name="auth_validation_username_long">Username must be at most 64 characters.</string>
     <string name="auth_validation_invite_code_long">Invite code must be at most 64 characters.</string>
 
-    <!-- One body for every login failure that isn\'t Offline: the backend already returns one
+    <!-- One body for every 401/422 from login: the backend already returns one
          generic 401 for both an unknown email and a wrong password (users/routes.py's
          _INVALID_CREDENTIALS), so this does not invent a distinction the server itself declined
          to make either. -->

@@ -37,7 +37,7 @@ internal fun validate(
         registering && fields.username.trim().characterCount() > MAX_USERNAME_LENGTH ->
             R.string.auth_validation_username_long
         !EMAIL_SHAPE.matches(fields.email.trim()) -> R.string.auth_validation_email_invalid
-        fields.password.length < MIN_PASSWORD_LENGTH -> R.string.auth_validation_password_short
+        fields.password.characterCount() < MIN_PASSWORD_LENGTH -> R.string.auth_validation_password_short
         fields.password.characterCount() > MAX_PASSWORD_LENGTH -> R.string.auth_validation_password_long
         registering && fields.inviteCode.isBlank() -> R.string.auth_validation_invite_code_blank
         registering && fields.inviteCode.characterCount() > MAX_INVITE_CODE_LENGTH ->
