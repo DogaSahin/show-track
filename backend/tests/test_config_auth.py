@@ -2,13 +2,14 @@ import pytest
 from pydantic import ValidationError
 
 from app.config import Settings
+from tests.factories import TEST_REGISTRATION_CODE, TEST_SECRET_KEY
 
 
 def _base_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Every setting Settings requires; callers delete the one under test."""
     monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://u:p@localhost:5432/d")
-    monkeypatch.setenv("SECRET_KEY", "test-secret")
-    monkeypatch.setenv("REGISTRATION_CODE", "test-code")
+    monkeypatch.setenv("SECRET_KEY", TEST_SECRET_KEY)
+    monkeypatch.setenv("REGISTRATION_CODE", TEST_REGISTRATION_CODE)
 
 
 def test_settings_requires_secret_key(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:

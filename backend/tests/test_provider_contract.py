@@ -26,6 +26,7 @@ from app.media.providers.errors import ProviderError, ProviderRateLimited, Provi
 from app.media.providers.genres import CANONICAL_GENRES
 from app.media.providers.http import ProviderHTTPClient, RateLimiter
 from app.media.providers.tmdb.client import TMDBProvider
+from tests.factories import valid_settings
 from tests.fixtures.loader import load_fixture
 
 _TMDB_KNOWN_ID = "71912"
@@ -108,14 +109,7 @@ def _settings(**overrides: object) -> Settings:
     `Settings` resolves `env_file=".env"` relative to the working directory, so a developer who has
     a TMDB key configured would otherwise get different results from CI.
     """
-    base = {
-        "database_url": "postgresql+asyncpg://x/y",
-        "secret_key": "s",
-        "registration_code": "r",
-        "tmdb_api_key": "dummy-key",
-        "_env_file": None,
-    }
-    return Settings(**{**base, **overrides})
+    return valid_settings(**{"tmdb_api_key": "dummy-key", **overrides})
 
 
 @pytest.fixture(params=CASES, ids=[case.name for case in CASES])

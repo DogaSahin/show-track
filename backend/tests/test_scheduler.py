@@ -9,6 +9,7 @@ from app.sync.scheduler import (
     SYNC_JOB_ID,
     start_scheduler,
 )
+from tests.factories import valid_settings
 
 
 def _settings(**overrides) -> Settings:
@@ -20,13 +21,7 @@ def _settings(**overrides) -> Settings:
     values that would then make these tests fail locally and pass in CI. A test that fails because
     someone followed the documentation is a bad test.
     """
-    base = {
-        "_env_file": None,
-        "database_url": "postgresql+asyncpg://x/y",
-        "secret_key": "x",
-        "registration_code": "x",
-    }
-    return Settings(**{**base, **overrides})
+    return valid_settings(**overrides)
 
 
 def test_the_scheduler_does_not_start_when_sync_is_disabled(monkeypatch):

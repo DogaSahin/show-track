@@ -77,8 +77,11 @@ uv pip install -r requirements-dev.txt
 
 cp .env.example .env           # REQUIRED before any compose command: docker-compose.yml
                                # interpolates POSTGRES_PASSWORD, SECRET_KEY and REGISTRATION_CODE
-                               # from it and refuses to start if any is unset. The shipped
-                               # defaults work for development as-is.
+                               # from it and refuses to start if any is unset. The three ship
+                               # empty: fill each with `openssl rand -hex 32`, and put the same
+                               # password into DATABASE_URL. The server also refuses to start with
+                               # a SECRET_KEY under 32 characters, a REGISTRATION_CODE under 16,
+                               # or an old example value.
 docker compose up -d db        # PostgreSQL on :5432
 
 .venv/bin/alembic upgrade head    # REQUIRED before the tests — they run against a real schema
@@ -188,6 +191,11 @@ openssl rand -hex 32        # -> POSTGRES_PASSWORD
 **Set `POSTGRES_PASSWORD` before the first start, not after.** Postgres reads it only when
 initialising an empty data directory; changing it later leaves the old password in the volume and
 the api unable to connect.
+
+**Upgrading from a version that shipped example secrets:** the server now refuses to start with
+short or example `SECRET_KEY` / `REGISTRATION_CODE` values, so regenerate them
+(`openssl rand -hex 32`). Changing `POSTGRES_PASSWORD` on an existing volume needs
+`ALTER USER showtrack PASSWORD '...'` first; otherwise keep the old password.
 
 ### The production image
 

@@ -45,7 +45,7 @@ jobs:
       # Throwaway CI-only values, not credentials — nothing they protect exists outside this
       # job, so there is nothing to rotate.
       SECRET_KEY: ci-test-secret-not-used-outside-ci
-      REGISTRATION_CODE: ci-test-code
+      REGISTRATION_CODE: ci-test-registration-code
 
     steps:
       - uses: actions/checkout@v4
