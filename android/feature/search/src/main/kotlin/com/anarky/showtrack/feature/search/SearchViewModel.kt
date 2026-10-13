@@ -101,14 +101,9 @@ class SearchViewModel
             skipQuery = null
             mutableQuery.value = newQuery
             if (newQuery.isBlank()) {
-                searchJob?.cancel()
-                shownQuery = null
-                mutableState.value = SearchUiState.Idle
-            }
-            if (newQuery.tooLong()) {
-                searchJob?.cancel()
-                shownQuery = null
-                mutableState.value = SearchUiState.QueryTooLong
+                stopSearching(SearchUiState.Idle)
+            } else if (newQuery.tooLong()) {
+                stopSearching(SearchUiState.QueryTooLong)
             }
         }
 
@@ -126,10 +121,17 @@ class SearchViewModel
             }
         }
 
-        /** A recent search tapped: runs it now, and moves it to the top. */
+        /**
+         * A recent search tapped: runs it now, and moves it to the top. One saved before the length
+         * limit was checked here can be over it; that one goes in the field with the reason instead.
+         */
         fun runRecent(recent: String) {
             skipQuery = recent
             mutableQuery.value = recent
+            if (recent.tooLong()) {
+                stopSearching(SearchUiState.QueryTooLong)
+                return
+            }
             record(recent)
             startSearch(recent)
         }
@@ -138,6 +140,7 @@ class SearchViewModel
         fun fillQuery(recent: String) {
             skipQuery = recent
             mutableQuery.value = recent
+            if (recent.tooLong()) stopSearching(SearchUiState.QueryTooLong)
         }
 
         fun clearRecentSearches() {
@@ -256,6 +259,13 @@ class SearchViewModel
         private fun startSearch(searchQuery: String) {
             searchJob?.cancel()
             searchJob = viewModelScope.launch { runSearch(searchQuery) }
+        }
+
+        /** Cancels any search in flight and shows [reason] in place of results. */
+        private fun stopSearching(reason: SearchUiState) {
+            searchJob?.cancel()
+            shownQuery = null
+            mutableState.value = reason
         }
 
         // Loading counts only while a search is really running: one that was superseded returns

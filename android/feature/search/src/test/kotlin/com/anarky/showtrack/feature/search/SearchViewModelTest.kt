@@ -602,6 +602,46 @@ class SearchViewModelTest {
             assertEquals(listOf("q".repeat(99)), media.searchCalls)
         }
 
+    @Test
+    fun `an over-long query of only spaces is blank, not too long`() =
+        runTest(dispatcher) {
+            val viewModel = SearchViewModel(FakeMediaRepository(), FakeLibraryRepository(), FakeRecentSearchStore())
+
+            viewModel.onQueryChange(" ".repeat(101))
+            advanceUntilIdle()
+
+            assertEquals(SearchUiState.Idle, viewModel.state.value)
+        }
+
+    @Test
+    fun `an over-long recent search is not run and says why`() =
+        runTest(dispatcher) {
+            // Saved before the limit was checked on this side, so the list can still hold one.
+            val media = FakeMediaRepository()
+            val recent = FakeRecentSearchStore()
+            val viewModel = SearchViewModel(media, FakeLibraryRepository(), recent)
+            val tooLong = "q".repeat(101)
+
+            viewModel.runRecent(tooLong)
+            advanceUntilIdle()
+
+            assertTrue(media.searchCalls.isEmpty())
+            assertTrue("not moved to the top of the recent searches", recent.recorded.isEmpty())
+            assertEquals(SearchUiState.QueryTooLong, viewModel.state.value)
+            assertEquals(tooLong, viewModel.query.value)
+        }
+
+    @Test
+    fun `filling in an over-long recent search says it is too long`() =
+        runTest(dispatcher) {
+            val viewModel = SearchViewModel(FakeMediaRepository(), FakeLibraryRepository(), FakeRecentSearchStore())
+
+            viewModel.fillQuery("q".repeat(101))
+            advanceUntilIdle()
+
+            assertEquals(SearchUiState.QueryTooLong, viewModel.state.value)
+        }
+
     private suspend fun kotlinx.coroutines.test.TestScope.searchedViewModel(
         media: FakeMediaRepository,
         library: FakeLibraryRepository = FakeLibraryRepository(),
