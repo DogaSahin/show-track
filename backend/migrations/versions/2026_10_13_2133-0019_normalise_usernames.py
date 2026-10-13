@@ -1,0 +1,68 @@
+"""normalise usernames
+
+Usernames become case-insensitively unique on their normalised form (invisible characters
+removed, NFKC, trimmed), as email already is. Existing rows are normalised in Python with a frozen
+copy of the app's normaliser, so both agree exactly; if that would make two accounts collide, or
+leave a name blank or over 64 characters, the upgrade stops and lists them — rename first.
+
+Revision ID: 0019
+Revises: 0018
+Create Date: 2026-10-13 21:33:17.380052
+
+"""
+import unicodedata
+from collections import defaultdict
+from typing import Sequence, Union
+
+import sqlalchemy as sa
+from alembic import op
+
+# revision identifiers, used by Alembic.
+revision: str = "0019"
+down_revision: Union[str, Sequence[str], None] = "0018"
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
+
+
+def _normalise(value: str) -> str:
+    # Frozen copy of app.users.schemas.normalise_username at this revision. Migrations never
+    # import app code: a later change there must not rewrite what this migration did.
+    visible = "".join(ch for ch in value if unicodedata.category(ch) not in ("Cf", "Cc"))
+    return unicodedata.normalize("NFKC", visible).strip()
+
+
+def find_problems(rows: list[tuple[object, str]]) -> list[str]:
+    problems: list[str] = []
+    by_folded: dict[str, list[str]] = defaultdict(list)
+    for _id, name in rows:
+        normalised = _normalise(name)
+        if not normalised:
+            problems.append(f"{name!r} is blank once normalised")
+            continue
+        if len(normalised) > 64:
+            problems.append(f"{name!r} is longer than 64 characters once normalised")
+        by_folded[normalised.lower()].append(name)
+    for names in by_folded.values():
+        if len(names) > 1:
+            problems.append("these usernames would collide: " + ", ".join(repr(n) for n in names))
+    return problems
+
+
+def upgrade() -> None:
+    bind = op.get_bind()
+    rows = [(row.id, row.username) for row in bind.execute(sa.text("SELECT id, username FROM users"))]
+    problems = find_problems(rows)
+    if problems:
+        raise RuntimeError("Rename these accounts before upgrading:\n" + "\n".join(problems))
+    for user_id, name in rows:
+        normalised = _normalise(name)
+        if normalised != name:
+            bind.execute(sa.text("UPDATE users SET username = :name WHERE id = :id"), {"name": normalised, "id": user_id})
+    op.drop_constraint(op.f("uq_users_username"), "users", type_="unique")
+    op.create_index("uq_users_lower_username", "users", [sa.literal_column("lower(username)")], unique=True)
+
+
+def downgrade() -> None:
+    # Normalised names are kept; only the uniqueness rule goes back.
+    op.drop_index("uq_users_lower_username", table_name="users")
+    op.create_unique_constraint(op.f("uq_users_username"), "users", ["username"])
