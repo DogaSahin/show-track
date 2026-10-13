@@ -135,3 +135,22 @@ async def test_a_degraded_search_still_marks_what_came_back(auth_client, db_sess
 
     assert body["sources"]["tmdb"] != "ok"
     assert _by_id(body)["0"]["media_id"] == str(stored.id)
+
+
+async def test_search_holds_no_transaction_while_waiting_on_providers(auth_client, db_session, use_providers):
+    """The auth dependency's user read begins a transaction; holding it across the provider calls
+    leaves a pooled connection idle in transaction for up to the search timeout.
+    """
+    seen: list[bool] = []
+
+    class Watching(PageProvider):
+        async def search(self, query: str, page: int):
+            seen.append(db_session.in_transaction())
+            return await super().search(query, page)
+
+    use_providers({MediaSource.ANILIST: Watching(MediaSource.ANILIST, MediaType.ANIME, 1)})
+
+    response = await auth_client.get("/v1/media/search", params={"q": "x"})
+
+    assert response.status_code == 200
+    assert seen == [False]
