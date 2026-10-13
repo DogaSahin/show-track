@@ -11,6 +11,9 @@ private const val MAX_INVITE_CODE_LENGTH = 64
 // dot in the domain, whitespace, a missing @. The server stays the authority.
 private val EMAIL_SHAPE = Regex("""^[^\s@]+@[^\s@]+\.[^\s@]+$""")
 
+// The server counts Unicode code points, not UTF-16 units, so an emoji is one character here too.
+private fun String.characterCount(): Int = codePointCount(0, length)
+
 /**
  * [AuthError.EmailOrUsernameTaken] and [AuthError.AccountCreatedNotSignedIn] only — both are
  * refusals that only signing in can fix, so the message shown for them offers a "Log in" action
@@ -31,12 +34,14 @@ internal fun validate(
     val registering = mode == AuthMode.REGISTER
     return when {
         registering && fields.username.isBlank() -> R.string.auth_validation_username_blank
-        registering && fields.username.trim().length > MAX_USERNAME_LENGTH -> R.string.auth_validation_username_long
-        !EMAIL_SHAPE.matches(fields.email) -> R.string.auth_validation_email_invalid
+        registering && fields.username.trim().characterCount() > MAX_USERNAME_LENGTH ->
+            R.string.auth_validation_username_long
+        !EMAIL_SHAPE.matches(fields.email.trim()) -> R.string.auth_validation_email_invalid
         fields.password.length < MIN_PASSWORD_LENGTH -> R.string.auth_validation_password_short
-        fields.password.length > MAX_PASSWORD_LENGTH -> R.string.auth_validation_password_long
+        fields.password.characterCount() > MAX_PASSWORD_LENGTH -> R.string.auth_validation_password_long
         registering && fields.inviteCode.isBlank() -> R.string.auth_validation_invite_code_blank
-        registering && fields.inviteCode.length > MAX_INVITE_CODE_LENGTH -> R.string.auth_validation_invite_code_long
+        registering && fields.inviteCode.characterCount() > MAX_INVITE_CODE_LENGTH ->
+            R.string.auth_validation_invite_code_long
         else -> null
     }
 }

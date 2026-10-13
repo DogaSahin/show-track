@@ -25,6 +25,20 @@ class AuthCopyTest {
     }
 
     @Test
+    fun `an email with surrounding spaces is accepted like the server does`() {
+        assertNull(validate(AuthMode.LOGIN, fields(email = " a@example.com ")))
+    }
+
+    @Test
+    fun `length limits count characters, not UTF-16 units`() {
+        assertNull(validate(AuthMode.REGISTER, fields(username = "😀".repeat(64))))
+        assertEquals(
+            R.string.auth_validation_username_long,
+            validate(AuthMode.REGISTER, fields(username = "😀".repeat(65))),
+        )
+    }
+
+    @Test
     fun `an email the server would reject is caught before sending`() {
         for (email in listOf("bob@localhost", "no-at-sign.com", "a b@example.com", "a@example.")) {
             val result = validate(AuthMode.LOGIN, fields(email = email))

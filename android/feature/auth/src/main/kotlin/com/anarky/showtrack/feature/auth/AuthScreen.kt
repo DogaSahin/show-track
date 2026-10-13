@@ -126,9 +126,9 @@ internal fun AuthScreen(
         validationError = error
         if (error == null) {
             if (state.mode == AuthMode.LOGIN) {
-                onLogin(fields.email, fields.password)
+                onLogin(fields.email.trim(), fields.password)
             } else {
-                onRegister(fields.username, fields.email, fields.password, fields.inviteCode)
+                onRegister(fields.username, fields.email.trim(), fields.password, fields.inviteCode)
             }
         }
     }
