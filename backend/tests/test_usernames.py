@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.users.schemas import normalise_username
@@ -68,3 +69,16 @@ def test_the_migration_normaliser_matches_the_app() -> None:
     frozen = _migration()._normalise
     for raw in ["Alice ", "ａｌｉｃｅ", "alice​", "e‍́", "Ünïcödé\t"]:
         assert frozen(raw) == normalise_username(raw)
+
+
+async def test_migration_also_asks_the_database_which_names_collide(db_session: AsyncSession) -> None:
+    """The unique index folds with Postgres's lower(), which can disagree with Python's .lower()
+    (under glibc en_US.utf8, capital dotted I lowers to a plain i in Postgres but to i plus a
+    combining dot in Python), so the migration asks the database too. The test cluster runs the C
+    locale, where that pair doesn't reproduce; an ASCII case pair exercises the same query.
+    """
+    check = _migration().find_database_collisions
+    conn = await db_session.connection()
+    rows = [(1, "alice"), (2, "bob"), (3, "ALICE ")]
+    assert await conn.run_sync(lambda sync: check(sync, rows)) == ["these usernames would collide: 'alice', 'ALICE '"]
+    assert await conn.run_sync(lambda sync: check(sync, [(1, "alice"), (2, "bob")])) == []

@@ -4,6 +4,7 @@ Usernames become case-insensitively unique on their normalised form (invisible c
 removed, NFKC, trimmed), as email already is. Existing rows are normalised in Python with a frozen
 copy of the app's normaliser, so both agree exactly; if that would make two accounts collide, or
 leave a name blank or over 64 characters, the upgrade stops and lists them — rename first.
+Collisions are checked twice: by Python's lower() and by Postgres's, which the index uses.
 
 Revision ID: 0019
 Revises: 0018
@@ -48,10 +49,41 @@ def find_problems(rows: list[tuple[object, str]]) -> list[str]:
     return problems
 
 
+def find_database_collisions(bind: sa.engine.Connection, rows: list[tuple[object, str]]) -> list[str]:
+    """Collisions as the unique index will see them: grouped by Postgres's lower(), not Python's.
+
+    The two can disagree (under glibc en_US.utf8, capital dotted I lowers to a plain i in Postgres
+    but to i plus a combining dot in Python), and a pair only Postgres folds together would pass
+    find_problems and then fail create_index with a bare UniqueViolation and no rename list.
+    """
+    # Listed in row order, the order find_problems uses, so a collision both checks find reads
+    # identically and upgrade() can drop the duplicate.
+    raw_by_normalised: dict[str, list[tuple[int, str]]] = defaultdict(list)
+    for index, (_id, name) in enumerate(rows):
+        normalised = _normalise(name)
+        if normalised:
+            raw_by_normalised[normalised].append((index, name))
+    if not raw_by_normalised:
+        return []
+    groups = bind.execute(
+        sa.text(
+            "SELECT array_agg(n) FROM unnest(CAST(:names AS text[])) AS n GROUP BY lower(n) HAVING count(*) > 1"
+        ),
+        {"names": list(raw_by_normalised)},
+    )
+    problems: list[str] = []
+    for (folded_together,) in groups:
+        names = [raw for _index, raw in sorted(entry for n in folded_together for entry in raw_by_normalised[n])]
+        problems.append("these usernames would collide: " + ", ".join(repr(n) for n in names))
+    return problems
+
+
 def upgrade() -> None:
     bind = op.get_bind()
     rows = [(row.id, row.username) for row in bind.execute(sa.text("SELECT id, username FROM users"))]
     problems = find_problems(rows)
+    # Checked before any UPDATE, so a refusal leaves every row as it was.
+    problems += [p for p in find_database_collisions(bind, rows) if p not in problems]
     if problems:
         raise RuntimeError("Rename these accounts before upgrading:\n" + "\n".join(problems))
     for user_id, name in rows:
