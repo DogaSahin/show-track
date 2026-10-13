@@ -12,7 +12,14 @@ from sqlalchemy import delete, func, select, update
 from app.db import get_sessionmaker
 from app.media import service as media_service
 from app.media.models import Episode, Media, MediaSource, MediaStatus, MediaType
-from app.media.providers.base import MediaProvider, MediaRef, NextEpisode, ProviderEpisode, ProviderMedia
+from app.media.providers.base import (
+    MediaProvider,
+    MediaRef,
+    NextEpisode,
+    ProviderBatch,
+    ProviderEpisode,
+    ProviderMedia,
+)
 from app.media.providers.errors import ProviderRateLimited, ProviderUnavailable
 from app.sync import service as sync_service
 from app.users.models import User
@@ -389,4 +396,12 @@ class SyncProvider(EpisodeProvider):
     """The sync job asks get_many for the title first; this answers it unchanged."""
 
     async def get_many(self, external_ids):
-        return {}
+        return ProviderBatch(found={}, failed=frozenset())
+
+
+async def test_an_episode_list_stamped_a_few_ms_late_is_still_due_next_day(db_session):
+    media = await _tracked(db_session, status=MediaStatus.AIRING, episodes_synced_at=NOW + timedelta(milliseconds=4))
+
+    due = await sync_service.collect_episode_worklist(db_session, now=NOW + timedelta(hours=24, milliseconds=3))
+
+    assert media.id in {media_id for media_id, _, _ in due}

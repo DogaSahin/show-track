@@ -71,7 +71,17 @@ async def resolve_invite_code(session: AsyncSession, code: str, *, now: datetime
     and normalise_code("---") both return "", and equality against a column whose every value
     is 12 characters can never match that; a prefix match would match everything.
     """
-    group = await session.scalar(select(Group).where(Group.invite_code == invites.normalise_code(code)))
+    group = await session.scalar(
+        select(Group)
+        .where(Group.invite_code == invites.normalise_code(code))
+        # FOR SHARE conflicts with remove_member's FOR UPDATE on this row. A join or register that
+        # resolves while a removal is in flight waits for it, then Postgres re-checks
+        # `invite_code = :code` against the rotated row and finds nothing - so the removed member
+        # can't slip back in through the gap. On the register path the lock is held across the
+        # argon2 hash, delaying a concurrent removal by about one hash; fine at this scale.
+        .with_for_update(read=True)
+        .execution_options(populate_existing=True)
+    )
     if group is None or group.invite_code_expires_at <= now:
         return None
     return group
@@ -119,13 +129,15 @@ async def join_by_code(session: AsyncSession, *, code: str, user: User, now: dat
         # the constraint is the arbiter, and the loser gets the same answer it would have got a
         # millisecond earlier.
         #
-        # A foreign-key violation means the group was deleted underneath us: remove_member takes
-        # FOR UPDATE on the `groups` row and drops the group when its last member leaves, while
-        # this INSERT needs FOR KEY SHARE on that same row. A join that resolved the code just
-        # before a departure commits therefore blocks for the whole leave transaction and then
-        # fails the FK deterministically. Reporting `(group, False)` there would answer 200 with
-        # GroupWithInvite — handing the caller a group AND its invite code that no longer exist
-        # (expire_on_commit=False lets the stale object serialise without a murmur).
+        # A foreign-key violation means the group was deleted underneath us. remove_member takes
+        # FOR UPDATE on the `groups` row and drops the group when its last member leaves, and
+        # resolve_invite_code already holds FOR SHARE on that row, so the two serialise: a leave
+        # that locked first makes the resolve wait and then find nothing (None above), and a join
+        # that resolved first makes the leave wait for it. This branch is therefore a fallback
+        # for an ordering that should not occur, not an expected path. If it is reached anyway,
+        # reporting `(group, False)` would answer 200 with GroupWithInvite — handing the caller a
+        # group AND its invite code that no longer exist (expire_on_commit=False lets the stale
+        # object serialise without a murmur).
         already = await session.scalar(
             select(GroupMember.id).where(GroupMember.group_id == group.id, GroupMember.user_id == user.id)
         )
@@ -264,7 +276,7 @@ class NotPermitted(Exception):
 
 
 async def remove_member(
-    session: AsyncSession, *, group_id: uuid.UUID, actor: GroupMember, target_user_id: uuid.UUID
+    session: AsyncSession, *, group_id: uuid.UUID, actor: GroupMember, target_user_id: uuid.UUID, now: datetime
 ) -> None:
     """Remove `target_user_id` from the group, applying G-E's two lifecycle rules.
 
@@ -287,7 +299,9 @@ async def remove_member(
     # skipped the transfer branch and simply deleted the row tx1 had just made owner.) The group
     # row is the natural lock: it is the one row every participant in the race touches, so no
     # ordering between two locks exists to deadlock on.
-    group = await session.scalar(select(Group).where(Group.id == group_id).with_for_update())
+    group = await session.scalar(
+        select(Group).where(Group.id == group_id).with_for_update().execution_options(populate_existing=True)
+    )
 
     target = await session.scalar(
         select(GroupMember)
@@ -321,6 +335,11 @@ async def remove_member(
 
     await session.delete(target)
     await session.flush()
+    if not is_self:
+        # An owner removing someone: the removed member holds the invite code (create and join
+        # both return it), so it must die with their membership. Same transaction, under the
+        # group row lock taken above. Leaving on your own doesn't rotate - nothing to revoke.
+        await rotate_invite_code(session, group=group, now=now)
 
 
 FEED_SORT_KEY = "created_at"

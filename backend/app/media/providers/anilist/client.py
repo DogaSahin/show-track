@@ -1,5 +1,5 @@
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from typing import Any, ClassVar
 
 from app.media.models import MediaSource, MediaType
@@ -14,16 +14,18 @@ from app.media.providers.anilist.queries import (
     USER_LIST_QUERY,
 )
 from app.media.providers.base import (
+    MAX_CONSECUTIVE_FAILURES,
     SIMILAR_LIMIT,
     MediaProvider,
     MediaRef,
+    ProviderBatch,
     ProviderEpisode,
     ProviderListEntry,
     ProviderMedia,
     ProviderSearchPage,
     ProviderUserList,
 )
-from app.media.providers.errors import ProviderUnavailable, UserListNotAvailable
+from app.media.providers.errors import ProviderError, ProviderRateLimited, ProviderUnavailable, UserListNotAvailable
 from app.media.providers.http import ProviderHTTPClient
 
 logger = logging.getLogger(__name__)
@@ -162,11 +164,13 @@ class AniListProvider(MediaProvider):
             refs.append(MediaRef(source=MediaSource.ANILIST, external_id=str(target["id"])))
         return tuple(refs[:SIMILAR_LIMIT])
 
-    async def get_many(self, external_ids: Sequence[str]) -> Mapping[str, ProviderMedia]:
+    async def get_many(self, external_ids: Sequence[str]) -> ProviderBatch:
         """One GraphQL request per BATCH_SIZE ids instead of one per id.
 
         Chunks internally: callers hand over every id for this source and the provider decides how
-        to split them, because batch size is provider knowledge.
+        to split them, because batch size is provider knowledge. A failing chunk fails only its own
+        ids; a rate limit fails every chunk not yet asked for; MAX_CONSECUTIVE_FAILURES failing
+        chunks in a row fail the rest.
         """
         numeric: list[int] = []
         for external_id in external_ids:
@@ -177,29 +181,48 @@ class AniListProvider(MediaProvider):
                 # would waste a request to learn what get_by_id already answers with None.
                 logger.warning("skipping non-numeric AniList id %r", external_id)
 
+        found: dict[str, ProviderMedia] = {}
+        failed: set[str] = set()
+        consecutive = 0
+        chunks = [numeric[start : start + BATCH_SIZE] for start in range(0, len(numeric), BATCH_SIZE)]
+        for index, chunk in enumerate(chunks):
+            try:
+                found.update(await self._fetch_chunk(chunk))
+            except ProviderRateLimited:
+                logger.warning("AniList rate limited; %d chunks left for the next cycle", len(chunks) - index)
+                failed.update(str(i) for rest in chunks[index:] for i in rest)
+                break
+            except (ProviderError, KeyError, TypeError, AttributeError):
+                logger.warning("AniList batch chunk failed", exc_info=True)
+                failed.update(str(i) for i in chunk)
+                consecutive += 1
+                if consecutive >= MAX_CONSECUTIVE_FAILURES:
+                    failed.update(str(i) for rest in chunks[index + 1 :] for i in rest)
+                    break
+                continue
+            consecutive = 0
+        return ProviderBatch(found=found, failed=frozenset(failed))
+
+    async def _fetch_chunk(self, chunk: list[int]) -> dict[str, ProviderMedia]:
+        body = await self._post(MEDIA_BATCH_QUERY, {"ids": chunk, "perPage": BATCH_SIZE})
+        if body is None:
+            # A 404 on a batch endpoint has no "no such record" reading — there is no single
+            # record to be missing. The same judgement search() makes.
+            raise ProviderUnavailable("AniList batch endpoint returned 404")
+        raw_page = body["data"].get("Page")
+        if not isinstance(raw_page, dict):
+            raise ProviderUnavailable("AniList batch response carried no Page object")
         results: dict[str, ProviderMedia] = {}
-        for start in range(0, len(numeric), BATCH_SIZE):
-            chunk = numeric[start : start + BATCH_SIZE]
-            body = await self._post(MEDIA_BATCH_QUERY, {"ids": chunk, "perPage": BATCH_SIZE})
-            if body is None:
-                # A 404 on a batch endpoint has no "no such record" reading — there is no single
-                # record to be missing. The same judgement search() makes.
-                raise ProviderUnavailable("AniList batch endpoint returned 404")
-            raw_page = body["data"].get("Page")
-            if not isinstance(raw_page, dict):
-                raise ProviderUnavailable("AniList batch response carried no Page object")
-            for raw_media in raw_page.get("media") or []:
-                try:
-                    detail = mapper.to_media(raw_media)
-                except (KeyError, TypeError, ValueError):
-                    # Map per ENTRY, not per batch. to_media indexes raw["id"] unguarded, and a
-                    # KeyError is not a ProviderError — so one malformed entry would escape this
-                    # method, escape the sync job's per-source `except ProviderError`, and roll
-                    # back every update already applied for EVERY source. A skipped id simply
-                    # reads as `missing`, which is already a defined outcome.
-                    logger.warning("unmappable AniList entry in batch; skipping it", exc_info=True)
-                    continue
-                results[detail.ref.external_id] = detail
+        for raw_media in raw_page.get("media") or []:
+            try:
+                detail = mapper.to_media(raw_media)
+            except (KeyError, TypeError, ValueError, AttributeError):
+                # Map per ENTRY, not per chunk. to_media indexes raw["id"] unguarded, so one
+                # malformed entry would otherwise fail the other 49 titles in its chunk. A skipped
+                # id simply reads as missing, which is already a defined outcome.
+                logger.warning("unmappable AniList entry in batch; skipping it", exc_info=True)
+                continue
+            results[detail.ref.external_id] = detail
         return results
 
     async def fetch_user_list(self, username: str) -> ProviderUserList:

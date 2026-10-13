@@ -1,11 +1,18 @@
 from functools import lru_cache
+from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Every value .env.example has ever shipped for a secret. Matched exactly, after the length checks
+# would already catch most of them, because "showtrack" in a 16+ field is still a known value.
+_PLACEHOLDER_SECRETS = frozenset({"change-me-use-openssl-rand-hex-32", "change-me", "showtrack"})
+_GENERATE_HINT = "generate one with: openssl rand -hex 32"
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    # hide_input_in_errors: a rejected secret must not be echoed into startup logs.
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", hide_input_in_errors=True)
 
     database_url: str
     # Required, no default. A default here would work perfectly and silently make every
@@ -17,8 +24,9 @@ class Settings(BaseSettings):
     # 64, so a longer code here would brick the only bootstrap path with a 422 blaming the client's
     # invite_code. The documented `openssl rand -hex 32` produces EXACTLY 64 characters — the
     # recommended value sits on the boundary with zero slack, which is what makes this worth a
-    # constraint rather than a comment.
-    registration_code: str = Field(min_length=1, max_length=64)
+    # constraint rather than a comment. The minimum lives in the validator below so its message
+    # carries the generate hint.
+    registration_code: str = Field(max_length=64)
     # Optional, unlike SECRET_KEY. Absent means the TMDB provider is never registered and
     # /v1/media/search returns AniList results only, reporting `not_configured` for TMDB in its
     # `sources` map. Required would mean CI and docker-compose both need a value or every
@@ -57,7 +65,27 @@ class Settings(BaseSettings):
     # behind IDF drifting as `media` grows. Both move slowly.
     recommendations_ttl_hours: int = Field(default=24, ge=1)
     log_level: str = "INFO"
-    environment: str = "local"
+    # Read by main.create_app: "production" serves no docs or debug routes. A Literal, so a typo
+    # fails startup instead of silently leaving the docs open.
+    environment: Literal["local", "production"] = "local"
+
+    @field_validator("secret_key")
+    @classmethod
+    def _secret_key_is_real(cls, value: str) -> str:
+        if value in _PLACEHOLDER_SECRETS:
+            raise ValueError(f"SECRET_KEY is the example placeholder; {_GENERATE_HINT}")
+        if len(value) < 32:
+            raise ValueError(f"SECRET_KEY must be at least 32 characters; {_GENERATE_HINT}")
+        return value
+
+    @field_validator("registration_code")
+    @classmethod
+    def _registration_code_is_real(cls, value: str) -> str:
+        if value in _PLACEHOLDER_SECRETS:
+            raise ValueError(f"REGISTRATION_CODE is the example placeholder; {_GENERATE_HINT}")
+        if len(value) < 16:
+            raise ValueError(f"REGISTRATION_CODE must be at least 16 characters; {_GENERATE_HINT}")
+        return value
 
 
 @lru_cache

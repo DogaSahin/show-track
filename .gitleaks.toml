@@ -21,6 +21,10 @@ description = "Base64 pagination cursors in the wire fixtures are not credential
 #
 # token_pair.json is a different fixture and stays fully scanned; it holds the access/refresh pair
 # (scrubbed) and must keep tripping every rule it would otherwise trip.
+#
+# The test SECRET_KEY in backend/tests/factories.py is a fixed placeholder sized to pass config.py's
+# length floor; its hex tail trips `generic-api-key`. Scoped to the exact value for the same reason.
 regexes = [
   '''eyJrIjoidGl0bGUiLCJ2IjoiQ293Ym95IEJlYm9wIiwiaSI6ImM5ZjQzOTdjLTExNWItNDM5YS05MWQ5LWExODhmOWI2NzRhYyJ9''',
+  '''test-secret-key-0123456789abcdef0123''',
 ]

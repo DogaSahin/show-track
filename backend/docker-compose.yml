@@ -48,7 +48,9 @@ services:
       # one place without the two URLs fighting over the same variable name.
       DATABASE_URL: postgresql+asyncpg://showtrack:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/showtrack
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      ENVIRONMENT: ${ENVIRONMENT:-production}
+      # Hardcoded, not ${ENVIRONMENT:-production}: Compose reads .env, whose example says `local`,
+      # which would run production with the docs open. docker-compose.override.yml sets `local`.
+      ENVIRONMENT: production
       SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env — openssl rand -hex 32}
       REGISTRATION_CODE: ${REGISTRATION_CODE:?set REGISTRATION_CODE in .env — openssl rand -hex 32}
       TMDB_API_KEY: ${TMDB_API_KEY:-}

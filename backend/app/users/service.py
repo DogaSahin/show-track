@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -6,7 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.users import security
+from app.users import security, throttle
 from app.users.models import RefreshToken, User
 
 
@@ -47,7 +48,7 @@ async def create_account(session: AsyncSession, *, username: str, email: str, pa
     """
     try:
         return await create_user(
-            session, username=username, email=email, hashed_password=security.hash_password(password)
+            session, username=username, email=email, hashed_password=await security.hash_password_async(password)
         )
     except IntegrityError as exc:
         await session.rollback()
@@ -80,12 +81,48 @@ async def authenticate(session: AsyncSession, *, email: str, password: str) -> U
     user = result.scalar_one_or_none()
 
     if user is None:
-        security.verify_password(security.DUMMY_PASSWORD_HASH, password)
+        await security.verify_password_async(security.DUMMY_PASSWORD_HASH, password)
         return None
 
-    if not security.verify_password(user.hashed_password, password):
+    if not await security.verify_password_async(user.hashed_password, password):
         return None
 
+    return user
+
+
+class LoginThrottled(Exception):
+    def __init__(self, retry_after: int) -> None:
+        self.retry_after = retry_after
+        super().__init__(f"retry after {retry_after}s")
+
+
+class InvalidCredentials(Exception):
+    """Unknown email or wrong password — deliberately one exception for both."""
+
+
+async def login(session: AsyncSession, *, email: str, password: str, now: float) -> User:
+    """Throttle, then authenticate. The attempt is counted BEFORE any argon2 work, in the same
+    synchronous step as the check, and the refusal is identical for known and unknown emails.
+    An attempt refused for a busy hashing queue never reached a password check, so it is refunded.
+
+    So is one cancelled before it answered (the client disconnected). That includes a request
+    cancelled after its hash started, by choice: it got no answer, so it tested no password, and
+    the hash keeps its argon2 slot until the thread finishes regardless, so the refund lends no
+    extra hashing capacity. Telling the two cases apart would mean the hashing gate reporting
+    whether a thread had started, for no gain.
+    """
+    key = throttle.key_for(email)
+    retry_after = throttle.login_throttle.begin(key, now)
+    if retry_after is not None:
+        raise LoginThrottled(retry_after)
+    try:
+        user = await authenticate(session, email=email, password=password)
+    except (security.HashingBusy, asyncio.CancelledError):
+        throttle.login_throttle.refund(key, now)
+        raise
+    if user is None:
+        raise InvalidCredentials
+    throttle.login_throttle.reset(key)
     return user
 
 
@@ -112,6 +149,14 @@ async def _find_refresh_token(session: AsyncSession, raw_token: str) -> RefreshT
     return result.scalar_one_or_none()
 
 
+async def _revoke_family(session: AsyncSession, family_id: uuid.UUID, now: datetime) -> None:
+    await session.execute(
+        update(RefreshToken)
+        .where(RefreshToken.family_id == family_id, RefreshToken.revoked_at.is_(None))
+        .values(revoked_at=now)
+    )
+
+
 async def rotate_refresh_token(session: AsyncSession, raw_token: str) -> tuple[str, str] | None:
     """Issue a new pair and revoke the presented token. Returns None if it cannot be used.
 
@@ -121,6 +166,8 @@ async def rotate_refresh_token(session: AsyncSession, raw_token: str) -> tuple[s
     token in the family is revoked in response, which logs out the thief and the real user
     together. That is the intended outcome: it is the only way to be sure the thief is out, at
     the cost of an occasional false-positive logout on a dropped response.
+
+    The claim is atomic, so concurrent use of one token is treated as reuse.
     """
     stored = await _find_refresh_token(session, raw_token)
     if stored is None:
@@ -129,17 +176,26 @@ async def rotate_refresh_token(session: AsyncSession, raw_token: str) -> tuple[s
     now = datetime.now(UTC)
 
     if stored.revoked_at is not None:
-        await session.execute(
-            update(RefreshToken)
-            .where(RefreshToken.family_id == stored.family_id, RefreshToken.revoked_at.is_(None))
-            .values(revoked_at=now)
-        )
+        await _revoke_family(session, stored.family_id, now)
         return None
 
     if stored.expires_at <= now:
         return None
 
-    stored.revoked_at = now
+    # Claim the token in ONE statement. Two concurrent refreshes both read it unrevoked above;
+    # under READ COMMITTED the second UPDATE waits for the first to commit, re-checks
+    # `revoked_at IS NULL` against the committed row and matches nothing. Zero rows is therefore
+    # exactly "someone else used this token first" — the reuse signal — and the family revoke
+    # below runs in a fresh snapshot that includes the winner's new token.
+    claimed = await session.scalar(
+        update(RefreshToken)
+        .where(RefreshToken.id == stored.id, RefreshToken.revoked_at.is_(None))
+        .values(revoked_at=now)
+        .returning(RefreshToken.id)
+    )
+    if claimed is None:
+        await _revoke_family(session, stored.family_id, now)
+        return None
     user = await session.get(User, stored.user_id)
     if user is None:
         return None

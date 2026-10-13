@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import Settings
 from app.groups.models import Group, GroupMember, GroupRole, GroupWatchlist
 from app.library.models import Activity, ActivityKind, Review, UserMedia, UserMediaStatus
 from app.media.models import Episode, Media, MediaSource, MediaStatus, MediaType
@@ -104,3 +105,23 @@ async def make_parents(db_session: AsyncSession) -> tuple[User, Media]:
     db_session.add(media)
     await db_session.flush()
     return user, media
+
+
+# Long enough for config.py's floors (32 / 16), and obviously not a real secret.
+TEST_SECRET_KEY = "test-secret-key-0123456789abcdef0123"
+TEST_REGISTRATION_CODE = "test-registration-code"
+
+
+def valid_settings(**overrides: object) -> Settings:
+    """Settings that pass validation without reading the developer's real .env.
+
+    `_env_file=None` for the reason tests/test_provider_contract.py gives: Settings resolves
+    `.env` relative to the working directory, so without it a test reads the developer's values.
+    """
+    base: dict[str, object] = {
+        "_env_file": None,
+        "database_url": "postgresql+asyncpg://x/y",
+        "secret_key": TEST_SECRET_KEY,
+        "registration_code": TEST_REGISTRATION_CODE,
+    }
+    return Settings(**{**base, **overrides})

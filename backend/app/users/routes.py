@@ -1,3 +1,4 @@
+import time
 from datetime import UTC, datetime
 from typing import Annotated
 
@@ -7,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import get_session
 from app.groups import service as groups_service
 from app.groups.models import GroupRole
-from app.users import service
+from app.users import security, service
 from app.users.dependencies import get_current_user
 from app.users.models import User
 from app.users.schemas import LoginRequest, RefreshRequest, RegisterRequest, TokenPair, UserOut
@@ -18,6 +19,14 @@ auth_router = APIRouter(prefix="/auth", tags=["auth"])
 # One body for every authentication failure. Distinguishing "no such account" from "wrong
 # password" tells an attacker which addresses are registered.
 _INVALID_CREDENTIALS = "invalid email or password"
+_TOO_MANY_ATTEMPTS = "too many attempts, try again later"
+
+
+def _busy() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="server busy, try again", headers={"Retry-After": "1"}
+    )
+
 
 # `Depends(...)` lives in the annotation, not a default value: ruff's B008 (function-call-in-
 # default-argument, part of this project's selected `B` rules) flags `= Depends(get_session)`
@@ -63,6 +72,8 @@ async def register(payload: RegisterRequest, session: SessionDep) -> UserOut:
             await groups_service.add_member(session, group_id=group.id, user_id=user.id, role=GroupRole.MEMBER)
     except service.RegistrationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    except security.HashingBusy as exc:
+        raise _busy() from exc
 
     await session.commit()
     return UserOut.model_validate(user)
@@ -70,9 +81,18 @@ async def register(payload: RegisterRequest, session: SessionDep) -> UserOut:
 
 @auth_router.post("/login", response_model=TokenPair)
 async def login(payload: LoginRequest, session: SessionDep) -> TokenPair:
-    user = await service.authenticate(session, email=payload.email, password=payload.password)
-    if user is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_INVALID_CREDENTIALS)
+    try:
+        user = await service.login(session, email=payload.email, password=payload.password, now=time.monotonic())
+    except service.LoginThrottled as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=_TOO_MANY_ATTEMPTS,
+            headers={"Retry-After": str(exc.retry_after)},
+        ) from exc
+    except service.InvalidCredentials as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_INVALID_CREDENTIALS) from exc
+    except security.HashingBusy as exc:
+        raise _busy() from exc
 
     access, refresh = await service.issue_token_pair(session, user)
     await session.commit()

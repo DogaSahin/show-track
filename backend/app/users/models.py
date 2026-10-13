@@ -10,7 +10,7 @@ from app.db import Base, UUIDPrimaryKeyMixin
 class User(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "users"
 
-    username: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    username: Mapped[str] = mapped_column(String(64), nullable=False)
     email: Mapped[str] = mapped_column(String(320), nullable=False)
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
@@ -23,7 +23,14 @@ class User(UUIDPrimaryKeyMixin, Base):
     # unique constraint on `lower(email)` isn't expressible as a UniqueConstraint, only
     # as a unique Index. A later migration must drop it with `op.drop_index(...)`, not
     # `op.drop_constraint(..., type_="unique")`.
-    __table_args__ = (Index("uq_users_lower_email", func.lower(email), unique=True),)
+    #
+    # Usernames are case-insensitively unique for the same reason as email: members identify
+    # each other by them, so "Doga" and "doga" must not be two accounts. They are also stored
+    # normalised (schemas.normalise_username), so the index compares the visible form.
+    __table_args__ = (
+        Index("uq_users_lower_email", func.lower(email), unique=True),
+        Index("uq_users_lower_username", func.lower(username), unique=True),
+    )
 
 
 class RefreshToken(UUIDPrimaryKeyMixin, Base):

@@ -38,6 +38,11 @@ def positive_signal_clause():
     )
 
 
+# Same reason as app.sync.service.SYNC_DUE_SLACK (stamp jitter must not cost a whole cadence);
+# kept separate so recommendations doesn't import sync internals.
+SEED_DUE_SLACK = timedelta(minutes=5)
+
+
 async def collect_seeds(session: AsyncSession, *, now: datetime, force: bool = False) -> Sequence[Media]:
     """Distinct media that are a positive signal for ANY user and are due a refresh.
 
@@ -61,7 +66,9 @@ async def collect_seeds(session: AsyncSession, *, now: datetime, force: bool = F
     if not force:
         # NULL means "never seeded", which is always due — the same reading Media.last_synced_at
         # gives NULL in the sync job.
-        statement = statement.where((freshest.c.fetched_at.is_(None)) | (freshest.c.fetched_at < now - cadence))
+        statement = statement.where(
+            (freshest.c.fetched_at.is_(None)) | (freshest.c.fetched_at < now - cadence + SEED_DUE_SLACK)
+        )
     return (await session.scalars(statement)).all()
 
 
@@ -190,11 +197,16 @@ async def _resolve_candidates(
         if provider is None:
             continue
         try:
-            details.extend((await provider.get_many(external_ids)).values())
-        except ProviderError:
-            # A candidate we cannot resolve is simply not a candidate this sweep. The edge is
-            # skipped and the next sweep retries it.
-            logger.warning("could not resolve %d %s candidates", len(external_ids), source, exc_info=True)
+            batch = await provider.get_many(external_ids)
+        except Exception:
+            # Contract breach (get_many reports failures, it doesn't raise). Containing it keeps
+            # one source from costing the whole sweep; the next sweep retries.
+            logger.exception("resolving %d %s candidates raised", len(external_ids), source)
+            continue
+        if batch.failed:
+            # Not candidates this sweep; the edge is skipped and the next sweep retries them.
+            logger.warning("could not resolve %d %s candidates", len(batch.failed), source)
+        details.extend(batch.found.values())
 
     persisted = await persist_media_bulk(session, details)
     known.update(persisted)

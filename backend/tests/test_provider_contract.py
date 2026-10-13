@@ -26,6 +26,7 @@ from app.media.providers.errors import ProviderError, ProviderRateLimited, Provi
 from app.media.providers.genres import CANONICAL_GENRES
 from app.media.providers.http import ProviderHTTPClient, RateLimiter
 from app.media.providers.tmdb.client import TMDBProvider
+from tests.factories import valid_settings
 from tests.fixtures.loader import load_fixture
 
 _TMDB_KNOWN_ID = "71912"
@@ -108,14 +109,7 @@ def _settings(**overrides: object) -> Settings:
     `Settings` resolves `env_file=".env"` relative to the working directory, so a developer who has
     a TMDB key configured would otherwise get different results from CI.
     """
-    base = {
-        "database_url": "postgresql+asyncpg://x/y",
-        "secret_key": "s",
-        "registration_code": "r",
-        "tmdb_api_key": "dummy-key",
-        "_env_file": None,
-    }
-    return Settings(**{**base, **overrides})
+    return valid_settings(**{"tmdb_api_key": "dummy-key", **overrides})
 
 
 @pytest.fixture(params=CASES, ids=[case.name for case in CASES])
@@ -363,8 +357,9 @@ async def test_get_many_returns_known_ids_and_omits_unknown(case: Case):
 
     result = await provider.get_many([case.known_id, "999999999"])
 
-    assert case.known_id in result
-    # ABSENT from the mapping, not present-with-None: callers write `if ref in result`.
-    assert "999999999" not in result
-    assert result[case.known_id].ref.external_id == case.known_id
-    assert result[case.known_id].ref.source == provider.source
+    assert case.known_id in result.found
+    # ABSENT from the mapping, not present-with-None: callers write `if ref in result.found`.
+    assert "999999999" not in result.found
+    assert result.found[case.known_id].ref.external_id == case.known_id
+    assert result.found[case.known_id].ref.source == provider.source
+    assert result.failed == frozenset()
