@@ -11,8 +11,15 @@ from app.db import get_session, get_session_factory
 from app.media.models import MediaSource
 from app.media.providers import get_providers
 from app.media.providers.base import MediaProvider
+from app.users import throttle
 from app.users.models import User
 from main import app
+
+
+@pytest.fixture(autouse=True)
+def _fresh_login_throttle(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Module-level state: without this, one test's failed logins lock the next test out."""
+    monkeypatch.setattr(throttle, "login_throttle", throttle.LoginThrottle())
 
 
 @pytest.fixture(scope="session")

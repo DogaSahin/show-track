@@ -27,7 +27,9 @@ class RegisterRequest(BaseModel):
 
 class LoginRequest(BaseModel):
     email: EmailStr
-    password: str
+    # Request-body sanity, matching RegisterRequest's bound. No minimum: a short wrong password
+    # is a 401, not a validation error.
+    password: str = Field(max_length=256)
 
 
 class RefreshRequest(BaseModel):

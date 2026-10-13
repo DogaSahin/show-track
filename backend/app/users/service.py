@@ -6,7 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.users import security
+from app.users import security, throttle
 from app.users.models import RefreshToken, User
 
 
@@ -47,7 +47,7 @@ async def create_account(session: AsyncSession, *, username: str, email: str, pa
     """
     try:
         return await create_user(
-            session, username=username, email=email, hashed_password=security.hash_password(password)
+            session, username=username, email=email, hashed_password=await security.hash_password_async(password)
         )
     except IntegrityError as exc:
         await session.rollback()
@@ -80,12 +80,42 @@ async def authenticate(session: AsyncSession, *, email: str, password: str) -> U
     user = result.scalar_one_or_none()
 
     if user is None:
-        security.verify_password(security.DUMMY_PASSWORD_HASH, password)
+        await security.verify_password_async(security.DUMMY_PASSWORD_HASH, password)
         return None
 
-    if not security.verify_password(user.hashed_password, password):
+    if not await security.verify_password_async(user.hashed_password, password):
         return None
 
+    return user
+
+
+class LoginThrottled(Exception):
+    def __init__(self, retry_after: int) -> None:
+        self.retry_after = retry_after
+        super().__init__(f"retry after {retry_after}s")
+
+
+class InvalidCredentials(Exception):
+    """Unknown email or wrong password — deliberately one exception for both."""
+
+
+async def login(session: AsyncSession, *, email: str, password: str, now: float) -> User:
+    """Throttle, then authenticate. The attempt is counted BEFORE any argon2 work, in the same
+    synchronous step as the check, and the refusal is identical for known and unknown emails.
+    An attempt refused for a busy hashing queue never reached a password check, so it is refunded.
+    """
+    key = throttle.key_for(email)
+    retry_after = throttle.login_throttle.begin(key, now)
+    if retry_after is not None:
+        raise LoginThrottled(retry_after)
+    try:
+        user = await authenticate(session, email=email, password=password)
+    except security.HashingBusy:
+        throttle.login_throttle.refund(key, now)
+        raise
+    if user is None:
+        raise InvalidCredentials
+    throttle.login_throttle.reset(key)
     return user
 
 

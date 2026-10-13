@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import secrets
 import uuid
@@ -38,6 +39,58 @@ def verify_password(hashed: str, password: str) -> bool:
         return _hasher.verify(hashed, password)
     except (Argon2Error, InvalidHashError):
         return False
+
+
+# Argon2 at default parameters takes ~64 MiB and tens of ms per call. Run on the event loop it
+# stalls every request and the scheduler; run unbounded in threads it trades that for a memory
+# spike. Two at a time, and a short queue behind them: past ARGON2_MAX_PENDING the caller is
+# refused at once (a 503) rather than queued for minutes.
+ARGON2_CONCURRENCY = 2
+ARGON2_MAX_PENDING = 16
+_slots = asyncio.Semaphore(ARGON2_CONCURRENCY)
+_pending = 0
+
+
+class HashingBusy(Exception):
+    """Too many password hashes queued; the route answers 503."""
+
+
+def _release(_finished: object) -> None:
+    global _pending
+    _pending -= 1
+    _slots.release()
+
+
+async def _run_hashing(fn, *args):
+    """Count, wait for a slot, run `fn` in a thread.
+
+    The slot is released when the THREAD finishes, not when the awaiting coroutine ends: the
+    thread future is shielded and released from its done-callback, so a cancelled request (a
+    client disconnecting mid-login) cannot free a slot while its hash is still running. A request
+    cancelled while still WAITING never started a thread, so it releases its own count.
+    """
+    global _pending
+    if _pending >= ARGON2_MAX_PENDING:
+        raise HashingBusy
+    _pending += 1
+    try:
+        await _slots.acquire()
+    except BaseException:
+        _pending -= 1
+        raise
+    # No await between acquiring and scheduling: ownership passes to the callback atomically.
+    worker = asyncio.ensure_future(asyncio.to_thread(fn, *args))
+    worker.add_done_callback(_release)
+    return await asyncio.shield(worker)
+
+
+async def hash_password_async(password: str) -> str:
+    return await _run_hashing(hash_password, password)
+
+
+async def verify_password_async(hashed: str, password: str) -> bool:
+    # `verify_password` is looked up at call time, so tests that monkeypatch it still see calls.
+    return await _run_hashing(verify_password, hashed, password)
 
 
 def create_access_token(user_id: uuid.UUID) -> str:
