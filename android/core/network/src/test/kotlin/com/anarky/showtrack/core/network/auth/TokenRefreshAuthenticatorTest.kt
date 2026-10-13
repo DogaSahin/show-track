@@ -18,6 +18,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -106,23 +107,6 @@ class TokenRefreshAuthenticatorTest {
     }
 
     @Test
-    fun `a failed refresh clears tokens and emits LoggedOut`() {
-        buildApi()
-        server.dispatcher = backend(refreshSucceeds = false)
-
-        runBlocking {
-            events.events.test(timeout = 10.seconds) {
-                val failure = assertThrows(HttpException::class.java) { runBlocking { callLibrary() } }
-                assertEquals(401, failure.code())
-                assertEquals(AuthEvent.LoggedOut, awaitItem())
-            }
-        }
-
-        assertNull(runBlocking { store.tokens() })
-        assertEquals(1, refreshRequests.get())
-    }
-
-    @Test
     fun `a 401 on the retried request does not loop`() {
         buildApi()
         server.dispatcher = backend(libraryAlwaysRejects = true)
@@ -203,6 +187,8 @@ class TokenRefreshAuthenticatorTest {
             }
         }
         assertEquals(TokenPair(EXPIRED_ACCESS, VALID_REFRESH), runBlocking { store.tokens() })
+        // At least one, not exactly one: OkHttp may retry a request whose connection dropped.
+        assertTrue("the refresh must have been attempted", refreshRequests.get() >= 1)
     }
 
     @Test
@@ -300,6 +286,29 @@ class TokenRefreshAuthenticatorTest {
     }
 
     /**
+     * The server rotated the token, but the new pair never reached disk: the stored refresh token
+     * is now dead server-side, so keeping it would only fail later. Sign out, and keep the
+     * failure inside the authenticator.
+     */
+    @Test
+    fun `a refresh whose save fails signs the user out`() {
+        buildApi()
+        server.dispatcher = backend()
+        store.failReplace = true
+
+        runBlocking {
+            events.events.test(timeout = 10.seconds) {
+                // The original 401, not an IOException: the save failure must not escape.
+                val failure = assertThrows(HttpException::class.java) { runBlocking { callLibrary() } }
+                assertEquals(401, failure.code())
+                assertEquals(AuthEvent.LoggedOut, awaitItem())
+            }
+        }
+        assertNull(runBlocking { store.tokens() })
+        assertEquals("no replay without a saved token", 1, libraryRequests.get())
+    }
+
+    /**
      * The PRODUCTION wiring, assembled by Dagger from the real [NetworkModule] — not a
      * hand-built copy of it.
      *
@@ -338,7 +347,7 @@ class TokenRefreshAuthenticatorTest {
         assertEquals(TokenPair(EXPIRED_ACCESS, VALID_REFRESH), runBlocking { store.tokens() })
     }
 
-    /** Expects the original 401 to surface with LoggedOut, and the store cleared. */
+    /** Expects the original 401 to surface with LoggedOut, the store cleared, and one refresh. */
     private fun assertSignedOut() {
         runBlocking {
             events.events.test(timeout = 10.seconds) {
@@ -348,6 +357,7 @@ class TokenRefreshAuthenticatorTest {
             }
         }
         assertNull(runBlocking { store.tokens() })
+        assertEquals(1, refreshRequests.get())
     }
 
     /** Every filter left null: these tests exercise the auth stack, not the library filters. */
@@ -361,7 +371,6 @@ class TokenRefreshAuthenticatorTest {
      * or it is not.
      */
     private fun backend(
-        refreshSucceeds: Boolean = true,
         libraryAlwaysRejects: Boolean = false,
         refreshAnswer: (() -> MockResponse)? = null,
         beforeRefreshAnswers: () -> Unit = {},
@@ -371,25 +380,17 @@ class TokenRefreshAuthenticatorTest {
                 "/v1/auth/refresh" -> {
                     refreshRequests.incrementAndGet()
                     beforeRefreshAnswers()
-                    refreshAnswer?.invoke() ?: if (refreshSucceeds) {
-                        MockResponse
-                            .Builder()
-                            .code(200)
-                            .setHeader("Content-Type", "application/json")
-                            // Held open long enough that every concurrent caller is certainly
-                            // inside authenticate() before the winner finishes. Without this the
-                            // single-flight race is real but narrow, and a test that only
-                            // sometimes observes it is not a test.
-                            .headersDelay(REFRESH_DELAY_MS, TimeUnit.MILLISECONDS)
-                            .body(ROTATED_TOKEN_PAIR_JSON)
-                            .build()
-                    } else {
-                        MockResponse
-                            .Builder()
-                            .code(401)
-                            .body("""{"detail":"invalid refresh token"}""")
-                            .build()
-                    }
+                    refreshAnswer?.invoke() ?: MockResponse
+                        .Builder()
+                        .code(200)
+                        .setHeader("Content-Type", "application/json")
+                        // Held open long enough that every concurrent caller is certainly
+                        // inside authenticate() before the winner finishes. Without this the
+                        // single-flight race is real but narrow, and a test that only
+                        // sometimes observes it is not a test.
+                        .headersDelay(REFRESH_DELAY_MS, TimeUnit.MILLISECONDS)
+                        .body(ROTATED_TOKEN_PAIR_JSON)
+                        .build()
                 }
 
                 "/v1/library" -> {
@@ -463,6 +464,10 @@ private class FakeTokenStore(
         readsBeforeFailure = count
     }
 
+    /** Makes [replace] throw, as a full disk would. */
+    @Volatile
+    var failReplace: Boolean = false
+
     override suspend fun tokens(): TokenPair? {
         // IOException because that is what an unreadable DataStore file raises.
         if (reads.incrementAndGet() > readsBeforeFailure) throw IOException("token store unreadable")
@@ -481,6 +486,7 @@ private class FakeTokenStore(
         access: String,
         refresh: String,
     ): Boolean {
+        if (failReplace) throw IOException("disk full")
         if (pair?.refresh != expectedRefresh) return false
         pair = TokenPair(access, refresh)
         return true
