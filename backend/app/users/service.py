@@ -150,6 +150,21 @@ async def _find_refresh_token(session: AsyncSession, raw_token: str) -> RefreshT
 
 
 async def _revoke_family(session: AsyncSession, family_id: uuid.UUID, now: datetime) -> None:
+    """Revoke every live token in the family, including one a concurrent refresh is minting.
+
+    Lock the family first, in id order so two revokes of one family cannot deadlock. A refresh
+    that has claimed a token holds its row lock until it commits the successor, so this waits
+    for it. The UPDATE is then a separate statement: under READ COMMITTED it takes a new
+    snapshot, which includes that successor. One UPDATE alone would not — its snapshot predates
+    the successor, and the re-check after the wait covers only the rows it already matched.
+    """
+    await session.execute(
+        select(RefreshToken.id)
+        .where(RefreshToken.family_id == family_id)
+        .order_by(RefreshToken.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     await session.execute(
         update(RefreshToken)
         .where(RefreshToken.family_id == family_id, RefreshToken.revoked_at.is_(None))
@@ -209,18 +224,12 @@ async def revoke_refresh_token(session: AsyncSession, raw_token: str) -> None:
     learn whether the token existed. A token that was already rotated still ends the session,
     so a client that read its pair just before a refresh cannot leave the successor alive.
 
-    The row lock serialises with a concurrent refresh of the same token. A refresh that claimed
-    it first holds the lock until it commits its successor; the family UPDATE below is a new
-    statement under READ COMMITTED, so it sees that successor and revokes it. If logout locks
-    first, the refresh's claim then matches nothing and is treated as reuse.
+    The family lock serialises with a concurrent refresh of any token in the family, including
+    the presented one's successor: a refresh that claimed first is waited for and its new token
+    revoked too. If logout locks first, the refresh's claim then matches nothing and is treated
+    as reuse.
     """
     stored = await _find_refresh_token(session, raw_token)
     if stored is None:
         return
-    await session.execute(
-        select(RefreshToken)
-        .where(RefreshToken.id == stored.id)
-        .with_for_update()
-        .execution_options(populate_existing=True)
-    )
     await _revoke_family(session, stored.family_id, datetime.now(UTC))
