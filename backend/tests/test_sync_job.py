@@ -4,7 +4,6 @@ from typing import ClassVar
 
 from app.media.models import Media, MediaSource, MediaStatus, MediaType
 from app.media.providers.base import MediaProvider, MediaRef, NextEpisode, ProviderBatch, ProviderMedia
-from app.media.providers.errors import ProviderRateLimited, ProviderUnavailable
 from app.sync import service
 from tests.factories import make_media, make_user, make_user_media
 
@@ -153,10 +152,12 @@ async def test_a_title_in_nobody_s_library_is_not_synced(db_session):
     assert summary.checked == 0
 
 
-async def test_one_provider_failing_does_not_stop_the_other(db_session):
-    """Nothing above this catches anything — app/errors.py is registered on the FastAPI app and a
-    scheduled job has no request. A provider failure must be a counted outcome, not an exception
-    escaping into APScheduler.
+async def test_a_provider_that_breaks_its_contract_is_contained_to_its_source(db_session):
+    """Contract-breach containment. get_many reports upstream failures in `failed` and never
+    raises, so an exception out of it is a bug — and nothing above this catches anything:
+    app/errors.py is registered on the FastAPI app and a scheduled job has no request. The job must
+    count that source's titles as failed and still refresh the other source, not let the
+    exception escape into APScheduler.
     """
     await _tracked_media(db_session, external_id="1", source=MediaSource.ANILIST, status=MediaStatus.AIRING)
     await _tracked_media(
@@ -167,7 +168,7 @@ async def test_one_provider_failing_does_not_stop_the_other(db_session):
     summary = await _run(
         db_session,
         {
-            MediaSource.ANILIST: BatchProvider(error=ProviderUnavailable("down")),
+            MediaSource.ANILIST: BatchProvider(error=RuntimeError("a bug in the provider")),
             MediaSource.TMDB: healthy,
         },
     )
@@ -176,15 +177,17 @@ async def test_one_provider_failing_does_not_stop_the_other(db_session):
     assert summary.updated == 1
 
 
-async def test_a_rate_limited_provider_is_counted_not_slept_on(db_session):
-    """The job abandons that source for the cycle rather than sleeping: the next cycle is six
-    hours away, and the data is not urgent.
+async def test_titles_a_rate_limited_provider_failed_are_counted_not_slept_on(db_session):
+    """A rate limit reaches the job as ids in the batch's `failed` set — the provider fails every
+    id it had not asked for yet — not as an exception. The job counts those titles and leaves them
+    for the next cycle rather than sleeping, while the titles that did come back are applied.
     """
     await _tracked_media(db_session, external_id="1", status=MediaStatus.AIRING)
+    await _tracked_media(db_session, external_id="2", status=MediaStatus.AIRING)
 
-    summary = await _run(db_session, {MediaSource.ANILIST: BatchProvider(error=ProviderRateLimited(retry_after=30))})
+    summary = await _run(db_session, {MediaSource.ANILIST: BatchProvider({"1": _detail("1")}, failed={"2"})})
 
-    assert summary.failed == 1
+    assert (summary.updated, summary.failed) == (1, 1)
 
 
 async def test_a_title_the_provider_no_longer_knows_is_counted_missing(db_session):
@@ -341,17 +344,17 @@ async def test_a_title_with_no_air_date_is_polled_at_the_lost_pointer_cadence(db
     assert [external_id for _, _, external_id in worklist] == ["lost-pointer"]
 
 
-async def test_a_source_level_failure_does_not_start_a_cooldown(db_session):
+async def test_a_failed_title_does_not_start_a_cooldown(db_session):
     """Stamping last_synced_at on a failure would put titles into cooldown BECAUSE the provider
     was down — an outage would then render as "everything looks fresh", which is the one reading
     that makes it invisible.
 
-    Also pins the failed/missing split: a title whose whole source fell over is not a title the
-    provider disowned.
+    Also pins the failed/missing split: a title the provider could not answer for is not a title
+    the provider disowned.
     """
     media = await _tracked_media(db_session, external_id="1", status=MediaStatus.AIRING)
 
-    summary = await _run(db_session, {MediaSource.ANILIST: BatchProvider(error=ProviderUnavailable("down"))})
+    summary = await _run(db_session, {MediaSource.ANILIST: BatchProvider(failed={"1"})})
 
     assert (summary.failed, summary.missing) == (1, 0)
     await db_session.refresh(media)

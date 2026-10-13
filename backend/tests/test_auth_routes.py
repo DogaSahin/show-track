@@ -269,6 +269,24 @@ async def test_the_sixth_attempt_is_refused_even_with_the_right_password(client:
     assert int(response.headers["Retry-After"]) >= 1
 
 
+async def test_the_lockout_looks_the_same_for_known_and_unknown_emails(client: AsyncClient) -> None:
+    """The throttle must not become an account-existence oracle: an email with no account is
+    counted and refused exactly like one that has an account."""
+    await client.post("/v1/auth/register", json=_register_body())
+
+    async def six_wrong(email: str) -> list:
+        return [
+            await client.post("/v1/auth/login", json={"email": email, "password": "wrong-password"}) for _ in range(6)
+        ]
+
+    known, unknown = await six_wrong(VALID["email"]), await six_wrong("nobody@example.com")
+
+    assert [r.status_code for r in known] == [r.status_code for r in unknown] == [401] * 5 + [429]
+    assert known[-1].json()["detail"] == unknown[-1].json()["detail"]
+    assert int(known[-1].headers["Retry-After"]) >= 1
+    assert int(unknown[-1].headers["Retry-After"]) >= 1
+
+
 async def test_a_successful_login_clears_earlier_failures(client: AsyncClient) -> None:
     await client.post("/v1/auth/register", json=_register_body())
     bad = {"email": VALID["email"], "password": "wrong-password"}

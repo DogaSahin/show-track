@@ -239,3 +239,24 @@ async def test_anilist_fails_only_the_chunk_that_failed():
 
     assert sorted(batch.found, key=int) == ids[:BATCH_SIZE]
     assert batch.failed == frozenset(ids[BATCH_SIZE:])
+
+
+async def test_anilist_rate_limited_mid_batch_fails_the_rest_without_asking():
+    """A 429 on chunk 2 of 3 fails chunks 2 and 3 and sends no third request — asking again now
+    would only be refused — while chunk 1's titles are kept."""
+    calls = 0
+
+    def handler(request):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            return httpx.Response(429, headers={"Retry-After": "30"}, json={})
+        ids = json.loads(request.content)["variables"]["ids"]
+        return httpx.Response(200, json={"data": {"Page": {"media": [_media(i) for i in ids]}}})
+
+    ids = [str(i) for i in range(1, BATCH_SIZE * 3 + 1)]
+    batch = await _anilist(handler).get_many(ids)
+
+    assert sorted(batch.found, key=int) == ids[:BATCH_SIZE]
+    assert batch.failed == frozenset(ids[BATCH_SIZE:])
+    assert calls == 2
