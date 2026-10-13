@@ -64,6 +64,33 @@ class AuthViewModelTest {
         }
 
     @Test
+    fun `a throttled login says to try again later`() =
+        runTest(dispatcher) {
+            val viewModel = AuthViewModel(FakeAuthRepository(loginFailure = AuthFailure.Throttled(IOException())))
+
+            viewModel.submitLogin("a@example.com", "hunter2hunter2")
+            advanceUntilIdle()
+
+            assertEquals(
+                AuthUiState.Form(mode = AuthMode.LOGIN, error = AuthError.TooManyAttempts),
+                viewModel.state.value,
+            )
+        }
+
+    @Test
+    fun `a busy server says so on login and register`() =
+        runTest(dispatcher) {
+            val login = AuthViewModel(FakeAuthRepository(loginFailure = AuthFailure.ServerBusy(IOException())))
+            login.submitLogin("a@example.com", "hunter2hunter2")
+            val register = AuthViewModel(FakeAuthRepository(registerOutcome = AuthFailure.ServerBusy(IOException())))
+            register.submitRegister("someone", "a@example.com", "hunter2hunter2", "CODE")
+            advanceUntilIdle()
+
+            assertEquals(AuthUiState.Form(mode = AuthMode.LOGIN, error = AuthError.ServerBusy), login.state.value)
+            assertEquals(AuthUiState.Form(mode = AuthMode.REGISTER, error = AuthError.ServerBusy), register.state.value)
+        }
+
+    @Test
     fun `an account created without a session says exactly that`() =
         runTest(dispatcher) {
             // The distinction C-M exists for. Collapsing this into RegistrationRefused sends the

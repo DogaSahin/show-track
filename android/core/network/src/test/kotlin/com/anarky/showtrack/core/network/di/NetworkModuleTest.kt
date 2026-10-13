@@ -227,6 +227,12 @@ class NetworkModuleTest {
             refresh: String,
         ) = Unit
 
+        override suspend fun replace(
+            expectedRefresh: String,
+            access: String,
+            refresh: String,
+        ) = false
+
         override suspend fun clear() = Unit
     }
 }

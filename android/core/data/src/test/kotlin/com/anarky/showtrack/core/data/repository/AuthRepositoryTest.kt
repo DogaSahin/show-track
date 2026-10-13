@@ -171,6 +171,69 @@ class AuthRepositoryTest {
         }
 
     @Test
+    fun `a login the server cannot even validate surfaces as invalid credentials`() =
+        runTest {
+            // 422: e.g. an address the server's email check rejects. To the user it is the same
+            // as a wrong email, and "something went wrong" would send them hunting for a bug.
+            val api = FakeAuthApi(loginFailure = httpError(422))
+            val repository = AuthRepositoryImpl(api, FakeShowTrackApi(), FakeTokenStore(), FakeAlerts(), userData)
+
+            val failure = runCatching { repository.login("bob@localhost", "hunter2hunter2") }.exceptionOrNull()
+
+            assertTrue(failure is AuthFailure.InvalidCredentials)
+        }
+
+    @Test
+    fun `a throttled login surfaces as throttled`() =
+        runTest {
+            val api = FakeAuthApi(loginFailure = httpError(429))
+            val repository = AuthRepositoryImpl(api, FakeShowTrackApi(), FakeTokenStore(), FakeAlerts(), userData)
+
+            val failure = runCatching { repository.login("a@example.com", "hunter2hunter2") }.exceptionOrNull()
+
+            assertTrue(failure is AuthFailure.Throttled)
+        }
+
+    @Test
+    fun `a busy server surfaces as busy on login and on register`() =
+        runTest {
+            val loginApi = FakeAuthApi(loginFailure = httpError(503))
+            val registerApi = FakeAuthApi(registerFailure = httpError(503))
+
+            val loginFailure =
+                runCatching {
+                    AuthRepositoryImpl(loginApi, FakeShowTrackApi(), FakeTokenStore(), FakeAlerts(), userData)
+                        .login("a@example.com", "hunter2hunter2")
+                }.exceptionOrNull()
+            val registerFailure =
+                runCatching {
+                    AuthRepositoryImpl(registerApi, FakeShowTrackApi(), FakeTokenStore(), FakeAlerts(), userData)
+                        .register("someone", "a@example.com", "hunter2hunter2", "CODE")
+                }.exceptionOrNull()
+
+            assertTrue(loginFailure is AuthFailure.ServerBusy)
+            assertTrue(registerFailure is AuthFailure.ServerBusy)
+        }
+
+    /**
+     * Logout goes through the unauthenticated AuthApi with the refresh token in the body, so an
+     * expired access token cannot trigger a refresh (and a rotation) on the way out. It revokes
+     * the token stored at that moment; the server ends the whole session from any token in it.
+     */
+    @Test
+    fun `logout with an expired access token revokes the stored refresh token`() =
+        runTest {
+            val api = FakeAuthApi()
+            val store = FakeTokenStore(initial = TokenPair("expired-access", "refresh-current"))
+            val repository = AuthRepositoryImpl(api, FakeShowTrackApi(), store, FakeAlerts(), userData)
+
+            repository.logout()
+
+            assertEquals(listOf("logout:refresh-current"), api.calls)
+            assertFalse(repository.hasSession())
+        }
+
+    @Test
     fun `currentUserId returns the id GET v1users me answers with`() =
         runTest {
             val showTrackApi =
@@ -333,7 +396,9 @@ class AuthRepositoryTest {
 
         override suspend fun refresh(request: RefreshRequest) = TokenPairDto("access-2", "refresh-2")
 
-        override suspend fun logout(request: RefreshRequest) = Unit
+        override suspend fun logout(request: RefreshRequest) {
+            calls += "logout:${request.refreshToken}"
+        }
     }
 
     /**
@@ -476,6 +541,16 @@ class AuthRepositoryTest {
         ) {
             saved = TokenPair(access, refresh)
             current = saved
+        }
+
+        override suspend fun replace(
+            expectedRefresh: String,
+            access: String,
+            refresh: String,
+        ): Boolean {
+            if (current?.refresh != expectedRefresh) return false
+            save(access, refresh)
+            return true
         }
 
         override suspend fun clear() {

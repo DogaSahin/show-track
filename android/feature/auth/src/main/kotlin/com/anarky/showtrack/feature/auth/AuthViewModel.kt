@@ -89,6 +89,8 @@ private fun Throwable.toAuthError(): AuthError =
         is RegisteredButNotLoggedIn -> AuthError.AccountCreatedNotSignedIn
         is AuthFailure.InvalidCredentials -> AuthError.InvalidCredentials
         is AuthFailure.Offline -> AuthError.Offline
+        is AuthFailure.Throttled -> AuthError.TooManyAttempts
+        is AuthFailure.ServerBusy -> AuthError.ServerBusy
         is AuthFailure.Refused ->
             when (statusCode) {
                 HTTP_INVITE_CODE_REJECTED -> AuthError.InviteCodeRejected

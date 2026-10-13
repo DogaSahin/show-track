@@ -20,6 +20,9 @@ import javax.inject.Singleton
 
 private const val TAG = "ShowTrackAuth"
 private const val HTTP_UNAUTHORIZED = 401
+private const val HTTP_UNPROCESSABLE = 422
+private const val HTTP_TOO_MANY_REQUESTS = 429
+private const val HTTP_SERVICE_UNAVAILABLE = 503
 
 /**
  * `@Suppress("TooManyFunctions")`: [currentUserId] (round 1 review) is the eleventh member,
@@ -152,6 +155,8 @@ class AuthRepositoryImpl
             // First, so nothing scheduled for this account can fire once it is signed out.
             alerts.cancelAll()
             if (tokens != null) {
+                // Whichever refresh token is read here is enough: the server ends the whole
+                // session from any token in it.
                 revoke(tokens.refresh)
             }
             tokenStore.clear()
@@ -182,22 +187,31 @@ class AuthRepositoryImpl
                 else -> AuthFailure.Unexpected(failure)
             }
 
-        /** A 401 means the password was wrong; anything else here is not something the user typed. */
+        /**
+         * A 401 means the password was wrong. A 422 means the server could not even validate what
+         * was typed (an email its check rejects): to the user, the same mistake.
+         */
         private fun mapLoginFailure(failure: Throwable): AuthFailure =
             when {
-                failure is HttpException && failure.code() == HTTP_UNAUTHORIZED ->
+                failure is HttpException && failure.code() in setOf(HTTP_UNAUTHORIZED, HTTP_UNPROCESSABLE) ->
                     AuthFailure.InvalidCredentials(failure)
+                failure is HttpException && failure.code() == HTTP_TOO_MANY_REQUESTS ->
+                    AuthFailure.Throttled(failure)
+                failure is HttpException && failure.code() == HTTP_SERVICE_UNAVAILABLE ->
+                    AuthFailure.ServerBusy(failure)
                 failure is IOException -> AuthFailure.Offline(failure)
                 else -> AuthFailure.Unexpected(failure)
             }
 
         /**
-         * Any HTTP status from register is a refusal. The code is kept as-is — 400 vs. 409 vs.
-         * anything else — and left for the caller to interpret; this boundary only translates
-         * the exception type.
+         * Any HTTP status from register is a refusal, except 503: the server was too busy to look.
+         * The code is kept as-is — 400 vs. 409 vs. anything else — and left for the caller to
+         * interpret; this boundary only translates the exception type.
          */
         private fun mapRegisterFailure(failure: Throwable): AuthFailure =
             when {
+                failure is HttpException && failure.code() == HTTP_SERVICE_UNAVAILABLE ->
+                    AuthFailure.ServerBusy(failure)
                 failure is HttpException -> AuthFailure.Refused(failure.code(), failure)
                 failure is IOException -> AuthFailure.Offline(failure)
                 else -> AuthFailure.Unexpected(failure)

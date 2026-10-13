@@ -20,5 +20,16 @@ interface TokenStore {
         refresh: String,
     )
 
+    /**
+     * Saves the pair only if the stored refresh token is still [expectedRefresh]; true if it
+     * wrote. The refresh path saves through this so a refresh that finishes after sign-out (or
+     * after a new login) cannot put a session back.
+     */
+    suspend fun replace(
+        expectedRefresh: String,
+        access: String,
+        refresh: String,
+    ): Boolean
+
     suspend fun clear()
 }

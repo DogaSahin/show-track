@@ -197,6 +197,31 @@ async def test_logout_is_idempotent_and_does_not_leak(client: AsyncClient) -> No
     assert unknown.status_code == 204
 
 
+async def test_logout_with_a_rotated_token_ends_the_session(client: AsyncClient) -> None:
+    """The app can read its pair a moment before a refresh rotates it, and then log out with the
+    old one. Logout must still end the session: the successor dies with it.
+    """
+    first = await _login(client)
+    second = (await client.post("/v1/auth/refresh", json={"refresh_token": first["refresh_token"]})).json()
+
+    logout = await client.post("/v1/auth/logout", json={"refresh_token": first["refresh_token"]})
+    assert logout.status_code == 204
+
+    after = await client.post("/v1/auth/refresh", json={"refresh_token": second["refresh_token"]})
+    assert after.status_code == 401
+
+
+async def test_logout_leaves_other_sessions_alone(client: AsyncClient) -> None:
+    """Each login is its own family, so signing out on one device must not sign out another."""
+    phone = await _login(client)
+    tablet = await _login(client)
+
+    await client.post("/v1/auth/logout", json={"refresh_token": phone["refresh_token"]})
+
+    still_signed_in = await client.post("/v1/auth/refresh", json={"refresh_token": tablet["refresh_token"]})
+    assert still_signed_in.status_code == 200
+
+
 async def test_the_cascade_is_scoped_to_the_replayed_tokens_family(client: AsyncClient) -> None:
     """The cascade must revoke only the family the replayed token belongs to, not every
     unrevoked refresh token in the table. With a single account in play, "this family" and

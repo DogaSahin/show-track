@@ -12,6 +12,7 @@
     <string name="search_empty_message">No results for that search</string>
 
     <string name="search_error_message">Couldn\'t search right now. Check your connection and try again.</string>
+    <string name="search_query_too_long">Searches are limited to 100 characters.</string>
 
     <!-- A failed load-more: the results already loaded stay on screen above this footer. -->
     <string name="search_page_error">Couldn\'t load more. Tap to retry.</string>

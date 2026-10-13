@@ -543,6 +543,105 @@ class SearchViewModelTest {
             }
         }
 
+    @Test
+    fun `a query of 100 characters is searched`() =
+        runTest(dispatcher) {
+            val media = FakeMediaRepository()
+            val viewModel = SearchViewModel(media, FakeLibraryRepository(), FakeRecentSearchStore())
+
+            viewModel.onQueryChange("q".repeat(100))
+            advanceUntilIdle()
+
+            assertEquals(listOf("q".repeat(100)), media.searchCalls)
+        }
+
+    @Test
+    fun `the limit counts characters the way the server does, not UTF-16 units`() =
+        runTest(dispatcher) {
+            // 100 emoji are 100 code points (what the server counts) but 200 UTF-16 units.
+            val emoji = "😀".repeat(100)
+            val media = FakeMediaRepository()
+            val viewModel = SearchViewModel(media, FakeLibraryRepository(), FakeRecentSearchStore())
+
+            viewModel.onQueryChange(emoji)
+            advanceUntilIdle()
+
+            assertEquals(listOf(emoji), media.searchCalls)
+        }
+
+    @Test
+    fun `a query over 100 characters is not sent and says why`() =
+        runTest(dispatcher) {
+            // The server refuses it with a 422, which would otherwise show as a search failure.
+            val media = FakeMediaRepository()
+            val recent = FakeRecentSearchStore()
+            val viewModel = SearchViewModel(media, FakeLibraryRepository(), recent)
+
+            viewModel.onQueryChange("q".repeat(101))
+            advanceUntilIdle()
+            viewModel.onSubmit()
+            viewModel.retry()
+            advanceUntilIdle()
+
+            assertTrue(media.searchCalls.isEmpty())
+            assertEquals(SearchUiState.QueryTooLong, viewModel.state.value)
+            assertTrue("not saved as a recent search", recent.recorded.isEmpty())
+        }
+
+    @Test
+    fun `shortening an over-long query searches again`() =
+        runTest(dispatcher) {
+            val media = FakeMediaRepository()
+            val viewModel = SearchViewModel(media, FakeLibraryRepository(), FakeRecentSearchStore())
+
+            viewModel.onQueryChange("q".repeat(101))
+            advanceUntilIdle()
+            viewModel.onQueryChange("q".repeat(99))
+            advanceUntilIdle()
+
+            assertEquals(listOf("q".repeat(99)), media.searchCalls)
+        }
+
+    @Test
+    fun `an over-long query of only spaces is blank, not too long`() =
+        runTest(dispatcher) {
+            val viewModel = SearchViewModel(FakeMediaRepository(), FakeLibraryRepository(), FakeRecentSearchStore())
+
+            viewModel.onQueryChange(" ".repeat(101))
+            advanceUntilIdle()
+
+            assertEquals(SearchUiState.Idle, viewModel.state.value)
+        }
+
+    @Test
+    fun `an over-long recent search is not run and says why`() =
+        runTest(dispatcher) {
+            // Saved before the limit was checked on this side, so the list can still hold one.
+            val media = FakeMediaRepository()
+            val recent = FakeRecentSearchStore()
+            val viewModel = SearchViewModel(media, FakeLibraryRepository(), recent)
+            val tooLong = "q".repeat(101)
+
+            viewModel.runRecent(tooLong)
+            advanceUntilIdle()
+
+            assertTrue(media.searchCalls.isEmpty())
+            assertTrue("not moved to the top of the recent searches", recent.recorded.isEmpty())
+            assertEquals(SearchUiState.QueryTooLong, viewModel.state.value)
+            assertEquals(tooLong, viewModel.query.value)
+        }
+
+    @Test
+    fun `filling in an over-long recent search says it is too long`() =
+        runTest(dispatcher) {
+            val viewModel = SearchViewModel(FakeMediaRepository(), FakeLibraryRepository(), FakeRecentSearchStore())
+
+            viewModel.fillQuery("q".repeat(101))
+            advanceUntilIdle()
+
+            assertEquals(SearchUiState.QueryTooLong, viewModel.state.value)
+        }
+
     private suspend fun kotlinx.coroutines.test.TestScope.searchedViewModel(
         media: FakeMediaRepository,
         library: FakeLibraryRepository = FakeLibraryRepository(),

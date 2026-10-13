@@ -27,8 +27,9 @@ interface AuthApi {
     ): TokenPairDto
 
     /**
-     * 204 No Content: revokes the refresh token server-side. The access token stays valid until
-     * it expires. A non-2xx arrives as an `HttpException`, which is what the caller wants here —
+     * 204 No Content: ends the sign-in session server-side — every refresh token in the
+     * presented token's family, not just that one. The access token stays valid until it
+     * expires. A non-2xx arrives as an `HttpException`, which is what the caller wants here —
      * there is nothing to read from a successful logout. AuthApiTest pins the empty-body case.
      */
     @POST("v1/auth/logout")

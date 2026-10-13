@@ -88,7 +88,7 @@ class SearchViewModel
             viewModelScope.launch {
                 mutableQuery
                     .debounce(SEARCH_DEBOUNCE_MS)
-                    .filter { it.isNotBlank() && it != skipQuery && !isShowing(it) }
+                    .filter { it.isNotBlank() && !it.tooLong() && it != skipQuery && !isShowing(it) }
                     .collect { startSearch(it) }
             }
         }
@@ -101,9 +101,9 @@ class SearchViewModel
             skipQuery = null
             mutableQuery.value = newQuery
             if (newQuery.isBlank()) {
-                searchJob?.cancel()
-                shownQuery = null
-                mutableState.value = SearchUiState.Idle
+                stopSearching(SearchUiState.Idle)
+            } else if (newQuery.tooLong()) {
+                stopSearching(SearchUiState.QueryTooLong)
             }
         }
 
@@ -113,7 +113,7 @@ class SearchViewModel
          */
         fun onSubmit() {
             val current = mutableQuery.value
-            if (current.isBlank()) return
+            if (current.isBlank() || current.tooLong()) return
             record(current)
             if (!isShowing(current)) {
                 skipQuery = current
@@ -121,10 +121,17 @@ class SearchViewModel
             }
         }
 
-        /** A recent search tapped: runs it now, and moves it to the top. */
+        /**
+         * A recent search tapped: runs it now, and moves it to the top. One saved before the length
+         * limit was checked here can be over it; that one goes in the field with the reason instead.
+         */
         fun runRecent(recent: String) {
             skipQuery = recent
             mutableQuery.value = recent
+            if (recent.tooLong()) {
+                stopSearching(SearchUiState.QueryTooLong)
+                return
+            }
             record(recent)
             startSearch(recent)
         }
@@ -133,6 +140,7 @@ class SearchViewModel
         fun fillQuery(recent: String) {
             skipQuery = recent
             mutableQuery.value = recent
+            if (recent.tooLong()) stopSearching(SearchUiState.QueryTooLong)
         }
 
         fun clearRecentSearches() {
@@ -144,7 +152,7 @@ class SearchViewModel
         /** Re-runs the current query: the only operation allowed to replace [state] with an error. */
         fun retry() {
             val current = mutableQuery.value
-            if (current.isNotBlank()) startSearch(current)
+            if (current.isNotBlank() && !current.tooLong()) startSearch(current)
         }
 
         /** Re-entrant calls are dropped: the end-of-list trigger can fire on several frames. */
@@ -253,6 +261,13 @@ class SearchViewModel
             searchJob = viewModelScope.launch { runSearch(searchQuery) }
         }
 
+        /** Cancels any search in flight and shows [reason] in place of results. */
+        private fun stopSearching(reason: SearchUiState) {
+            searchJob?.cancel()
+            shownQuery = null
+            mutableState.value = reason
+        }
+
         // Loading counts only while a search is really running: one that was superseded returns
         // without publishing, and its Loading must not block the same query from running again.
         private fun isShowing(searchQuery: String): Boolean =
@@ -262,6 +277,10 @@ class SearchViewModel
                     is SearchUiState.Loading -> searchJob?.isActive == true
                     else -> false
                 }
+
+        // The server counts Unicode code points (pydantic max_length); String.length counts UTF-16
+        // units, which would refuse a 100-emoji query the server accepts.
+        private fun String.tooLong(): Boolean = codePointCount(0, length) > MAX_QUERY_LENGTH
 
         private fun openedJustNow(): Boolean =
             lastOpenAtNanos?.let { System.nanoTime() - it < OPEN_GUARD_NANOS } ?: false
@@ -336,6 +355,9 @@ class SearchViewModel
 
         private companion object {
             const val SEARCH_DEBOUNCE_MS = 300L
+
+            // The server's bound on `q` (backend/app/media/routes.py). Past it the request is a 422.
+            const val MAX_QUERY_LENGTH = 100
 
             // Long enough to swallow a double tap, short enough that coming back and opening
             // another title is never refused.

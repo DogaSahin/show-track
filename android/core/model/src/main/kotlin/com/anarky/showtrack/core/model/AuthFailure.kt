@@ -30,6 +30,16 @@ sealed class AuthFailure(
         cause: Throwable,
     ) : AuthFailure(cause)
 
+    /** A 429 from `POST /v1/auth/login`: too many attempts for this email; try again later. */
+    class Throttled(
+        cause: Throwable,
+    ) : AuthFailure(cause)
+
+    /** A 503 from login or register: the server is too busy to check a password right now. */
+    class ServerBusy(
+        cause: Throwable,
+    ) : AuthFailure(cause)
+
     /** The request never reached the server. */
     class Offline(
         cause: Throwable,

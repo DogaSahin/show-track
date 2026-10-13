@@ -161,6 +161,11 @@ internal fun SearchScreen(
                         onClear = actions.onClearRecent,
                     )
                 is SearchUiState.Loading -> SearchSkeleton()
+                is SearchUiState.QueryTooLong ->
+                    EmptyState(
+                        message = stringResource(R.string.search_query_too_long),
+                        modifier = Modifier.fillMaxSize(),
+                    )
                 is SearchUiState.Error ->
                     ErrorState(
                         message = stringResource(R.string.search_error_message),
