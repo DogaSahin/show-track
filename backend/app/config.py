@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -64,7 +65,9 @@ class Settings(BaseSettings):
     # behind IDF drifting as `media` grows. Both move slowly.
     recommendations_ttl_hours: int = Field(default=24, ge=1)
     log_level: str = "INFO"
-    environment: str = "local"
+    # Read by main.create_app: "production" serves no docs or debug routes. A Literal, so a typo
+    # fails startup instead of silently leaving the docs open.
+    environment: Literal["local", "production"] = "local"
 
     @field_validator("secret_key")
     @classmethod

@@ -5,6 +5,7 @@ from fastapi import Depends, FastAPI
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, Response
 
+from app.config import Settings, get_settings
 from app.db import dispose_engine
 from app.errors import register_exception_handlers
 from app.groups import routes as groups_routes
@@ -61,49 +62,59 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     reset_providers()
 
 
-app = FastAPI(title="ShowTrack API", version="0.1.0", lifespan=lifespan)
-app.add_middleware(RequestIDMiddleware)
-
-# Domain and provider failures become statuses here rather than in four route bodies. The
-# response returns through RequestIDMiddleware's `call_next`, so it takes that middleware's
-# `else` branch and is logged as "request completed" with a real status, rather than as an
-# untyped "request failed".
-register_exception_handlers(app)
-
-
-@app.exception_handler(Exception)
-async def unhandled_exception_handler(request: Request, exc: Exception) -> Response:
-    """Reproduces Starlette's default 500 response, plus the X-Request-ID header.
-
-    RequestIDMiddleware's `finally` has already reset the contextvar by the time this
-    runs (the exception propagates out through ServerErrorMiddleware, which wraps this
-    middleware), so the ID is recovered from `request.state` instead.
+def create_app(settings: Settings | None = None) -> FastAPI:
+    """Build the app. In production the interactive docs, the OpenAPI schema and the debug routes
+    are not served at all — the debug sync lets any member burn provider rate limits.
     """
-    response = PlainTextResponse("Internal Server Error", status_code=500)
-    response.headers[REQUEST_ID_HEADER] = getattr(request.state, "request_id", "-")
-    return response
+    settings = settings or get_settings()
+    production = settings.environment == "production"
+    docs = {"docs_url": None, "redoc_url": None, "openapi_url": None} if production else {}
+    app = FastAPI(title="ShowTrack API", version="0.1.0", lifespan=lifespan, **docs)
+    app.add_middleware(RequestIDMiddleware)
+
+    # Domain and provider failures become statuses here rather than in four route bodies. The
+    # response returns through RequestIDMiddleware's `call_next`, so it takes that middleware's
+    # `else` branch and is logged as "request completed" with a real status, rather than as an
+    # untyped "request failed".
+    register_exception_handlers(app)
+
+    @app.exception_handler(Exception)
+    async def unhandled_exception_handler(request: Request, exc: Exception) -> Response:
+        """Reproduces Starlette's default 500 response, plus the X-Request-ID header.
+
+        RequestIDMiddleware's `finally` has already reset the contextvar by the time this
+        runs (the exception propagates out through ServerErrorMiddleware, which wraps this
+        middleware), so the ID is recovered from `request.state` instead.
+        """
+        response = PlainTextResponse("Internal Server Error", status_code=500)
+        response.headers[REQUEST_ID_HEADER] = getattr(request.state, "request_id", "-")
+        return response
+
+    # Protection is a property of where a router is mounted, not of a decorator on each route.
+    # A route added in a later phase to one of these routers is protected because it joined a
+    # protected router. tests/test_auth_protection.py checks this two ways: a direct check that
+    # get_current_user is present in the route's mount-level dependency list — which runs for EVERY
+    # route including `{param}` ones, since it is pure route-object inspection and needs no real id
+    # — and, for routes with no `{param}`, an HTTP-level 401 without a token. The former is what
+    # actually catches this dependencies=[...] argument being dropped, since some handlers also
+    # depend on get_current_user for their own data needs and would otherwise mask the loss from an
+    # HTTP-only check. Routes with no HTTP methods at all (e.g. a Mount) are covered by neither.
+    for router in DOMAIN_ROUTERS:
+        app.include_router(router, prefix="/v1", dependencies=[Depends(get_current_user)])
+
+    app.include_router(users_routes.auth_router, prefix="/v1")
+
+    # Mounted separately from DOMAIN_ROUTERS, so tests/test_health.py's "eight domain routers with
+    # eight domain prefixes" invariant keeps meaning what it says — /debug is not a domain. Explicit
+    # dependencies=, because this router does not inherit the mounting loop's auth above.
+    if not production:
+        app.include_router(sync_routes.debug_router, prefix="/v1", dependencies=[Depends(get_current_user)])
+
+    @app.get("/health", tags=["infra"])
+    async def health() -> dict[str, str]:
+        return {"status": "ok"}
+
+    return app
 
 
-# Protection is a property of where a router is mounted, not of a decorator on each route.
-# A route added in a later phase to one of these routers is protected because it joined a
-# protected router. tests/test_auth_protection.py checks this two ways: a direct check that
-# get_current_user is present in the route's mount-level dependency list — which runs for EVERY
-# route including `{param}` ones, since it is pure route-object inspection and needs no real id
-# — and, for routes with no `{param}`, an HTTP-level 401 without a token. The former is what
-# actually catches this dependencies=[...] argument being dropped, since some handlers also
-# depend on get_current_user for their own data needs and would otherwise mask the loss from an
-# HTTP-only check. Routes with no HTTP methods at all (e.g. a Mount) are covered by neither.
-for router in DOMAIN_ROUTERS:
-    app.include_router(router, prefix="/v1", dependencies=[Depends(get_current_user)])
-
-app.include_router(users_routes.auth_router, prefix="/v1")
-
-# Mounted separately from DOMAIN_ROUTERS, so tests/test_health.py's "eight domain routers with
-# eight domain prefixes" invariant keeps meaning what it says — /debug is not a domain. Explicit
-# dependencies=, because this router does not inherit the mounting loop's auth above.
-app.include_router(sync_routes.debug_router, prefix="/v1", dependencies=[Depends(get_current_user)])
-
-
-@app.get("/health", tags=["infra"])
-async def health() -> dict[str, str]:
-    return {"status": "ok"}
+app = create_app()
