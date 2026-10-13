@@ -71,7 +71,17 @@ async def resolve_invite_code(session: AsyncSession, code: str, *, now: datetime
     and normalise_code("---") both return "", and equality against a column whose every value
     is 12 characters can never match that; a prefix match would match everything.
     """
-    group = await session.scalar(select(Group).where(Group.invite_code == invites.normalise_code(code)))
+    group = await session.scalar(
+        select(Group)
+        .where(Group.invite_code == invites.normalise_code(code))
+        # FOR SHARE conflicts with remove_member's FOR UPDATE on this row. A join or register that
+        # resolves while a removal is in flight waits for it, then Postgres re-checks
+        # `invite_code = :code` against the rotated row and finds nothing - so the removed member
+        # can't slip back in through the gap. On the register path the lock is held across the
+        # argon2 hash, delaying a concurrent removal by about one hash; fine at this scale.
+        .with_for_update(read=True)
+        .execution_options(populate_existing=True)
+    )
     if group is None or group.invite_code_expires_at <= now:
         return None
     return group
@@ -264,7 +274,7 @@ class NotPermitted(Exception):
 
 
 async def remove_member(
-    session: AsyncSession, *, group_id: uuid.UUID, actor: GroupMember, target_user_id: uuid.UUID
+    session: AsyncSession, *, group_id: uuid.UUID, actor: GroupMember, target_user_id: uuid.UUID, now: datetime
 ) -> None:
     """Remove `target_user_id` from the group, applying G-E's two lifecycle rules.
 
@@ -287,7 +297,9 @@ async def remove_member(
     # skipped the transfer branch and simply deleted the row tx1 had just made owner.) The group
     # row is the natural lock: it is the one row every participant in the race touches, so no
     # ordering between two locks exists to deadlock on.
-    group = await session.scalar(select(Group).where(Group.id == group_id).with_for_update())
+    group = await session.scalar(
+        select(Group).where(Group.id == group_id).with_for_update().execution_options(populate_existing=True)
+    )
 
     target = await session.scalar(
         select(GroupMember)
@@ -321,6 +333,11 @@ async def remove_member(
 
     await session.delete(target)
     await session.flush()
+    if not is_self:
+        # An owner removing someone: the removed member holds the invite code (create and join
+        # both return it), so it must die with their membership. Same transaction, under the
+        # group row lock taken above. Leaving on your own doesn't rotate - nothing to revoke.
+        await rotate_invite_code(session, group=group, now=now)
 
 
 FEED_SORT_KEY = "created_at"

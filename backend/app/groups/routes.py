@@ -116,7 +116,9 @@ async def remove_member(
     dependency that cannot see the target.
     """
     try:
-        await service.remove_member(session, group_id=group_id, actor=member, target_user_id=user_id)
+        await service.remove_member(
+            session, group_id=group_id, actor=member, target_user_id=user_id, now=datetime.now(tz=UTC)
+        )
     except service.NotPermitted as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="only the group owner may do that") from exc
     except service.NotAMember as exc:
