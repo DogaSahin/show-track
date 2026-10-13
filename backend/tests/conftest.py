@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import AsyncGenerator, Mapping
 from contextlib import asynccontextmanager
 
@@ -11,7 +12,7 @@ from app.db import get_session, get_session_factory
 from app.media.models import MediaSource
 from app.media.providers import get_providers
 from app.media.providers.base import MediaProvider
-from app.users import throttle
+from app.users import security, throttle
 from app.users.models import User
 from main import app
 
@@ -20,6 +21,15 @@ from main import app
 def _fresh_login_throttle(monkeypatch: pytest.MonkeyPatch) -> None:
     """Module-level state: without this, one test's failed logins lock the next test out."""
     monkeypatch.setattr(throttle, "login_throttle", throttle.LoginThrottle())
+
+
+@pytest.fixture(autouse=True)
+def _fresh_hashing_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Module-level state too: a test that leaks a pending count or a semaphore slot (or a late
+    release from a cancelled hash) must not starve or 503 the tests after it.
+    """
+    monkeypatch.setattr(security, "_slots", asyncio.Semaphore(security.ARGON2_CONCURRENCY))
+    monkeypatch.setattr(security, "_pending", 0)
 
 
 @pytest.fixture(scope="session")
