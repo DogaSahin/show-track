@@ -21,6 +21,8 @@ Self-hosted. It runs on your own machine and is reached over Tailscale.
 - **Share with a group** — an activity feed, reviews, a shared watchlist, and side-by-side progress.
   You get in with an invite code, which is also all a new member needs to create an account.
   When an owner removes a member, the group's invite code is rotated so the old one stops working.
+  A member leaving on their own does not rotate it; after a contentious departure the owner can
+  rotate the code by hand (`POST /v1/groups/{id}/invite/rotate`).
 - **Get recommendations** seeded from titles you rated 7+, favourited or finished, ranked by how
   well each candidate's genres match your taste profile. Content-based, not collaborative filtering
   — nothing about what anyone else watched feeds a suggestion.
@@ -208,11 +210,17 @@ one, or push one past 64 characters. Rename those accounts, then upgrade again.
 With `ENVIRONMENT=production` (hardcoded in `docker-compose.yml`; the dev override sets `local`) the
 API serves no `/docs`, `/redoc` or `/openapi.json`, and no debug sync route.
 
+### Sign-in limits
+
+These apply in every environment, not only production.
+
 Sign-in is rate-limited: 5 failed attempts per email in 15 minutes returns `429` with `Retry-After`,
 and a successful login clears the count. Password hashing runs off the event loop with a bounded
 queue; when it is full, login and registration return `503` with `Retry-After: 1`. Passwords longer
 than 256 characters are rejected at login. Limits are per email, not per IP, because behind Docker
-every client shares one address.
+every client shares one address. The trade-off: someone who knows a member's email can keep that
+account locked out for 15 minutes at a time. For a closed group on a private network that is
+accepted.
 
 ### The production image
 
