@@ -222,6 +222,11 @@ every client shares one address. The trade-off: someone who knows a member's ema
 account locked out for 15 minutes at a time. For a closed group on a private network that is
 accepted.
 
+Signing out ends that sign-in session on the server: every refresh token issued since that login
+is revoked, even if the app's copy was already rotated. Other devices stay signed in. The app keeps
+you signed in when a token refresh fails because of the network or a server error, and signs you
+out only when the server rejects the token.
+
 ### The production image
 
 Multi-stage. `build-essential` exists only in a discarded builder stage and pytest/ruff only in the
