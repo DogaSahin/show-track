@@ -224,8 +224,8 @@ accepted.
 
 Signing out ends that sign-in session on the server: every refresh token issued since that login
 is revoked, even if the app's copy was already rotated. Other devices stay signed in. The app keeps
-you signed in when a token refresh fails because of the network or a server error, and signs you
-out only when the server rejects the token.
+you signed in when a token refresh fails because the connection dropped or the server returned an
+error, and signs you out when the server rejects the token.
 
 ### The production image
 
