@@ -65,6 +65,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 def create_app(settings: Settings | None = None) -> FastAPI:
     """Build the app. In production the interactive docs, the OpenAPI schema and the debug routes
     are not served at all — the debug sync lets any member burn provider rate limits.
+
+    `settings` only selects that docs/debug exposure; the lifespan and the dependencies still read
+    get_settings().
     """
     settings = settings or get_settings()
     production = settings.environment == "production"

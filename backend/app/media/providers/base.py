@@ -108,10 +108,10 @@ class ProviderBatch:
 class MediaProvider(ABC):
     """One external source of titles, normalized.
 
-    An ABC rather than a Protocol: providers share a constructor taking the HTTP client, and a
-    future batched get_many() wants a default implementation that loops with AniList overriding
-    it (one GraphQL query can fetch many ids; TMDB's REST API cannot). Protocols carry no
-    defaults. get_many() is not defined here — Phase 5 does not exist yet.
+    An ABC rather than a Protocol: providers share a constructor taking the HTTP client, and
+    get_many() has a default implementation here that loops over get_by_id and returns a
+    ProviderBatch. AniList overrides it with batched requests (one GraphQL query can fetch many
+    ids); TMDB's REST API cannot, so it keeps the default. Protocols carry no defaults.
 
     There is deliberately no get_next_episode(): both upstreams return the next episode inside
     the detail payload, so a separate method would issue a second identical request per title

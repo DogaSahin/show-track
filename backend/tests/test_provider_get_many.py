@@ -169,10 +169,9 @@ async def test_anilist_skips_non_numeric_ids_without_a_request():
 
 
 async def test_one_malformed_entry_does_not_lose_the_rest_of_the_batch():
-    """to_media indexes raw["id"] unguarded, and a KeyError is not a ProviderError — so without
-    per-entry containment one bad entry would escape get_many, escape the sync job's per-source
-    guard, and roll back every update for every source. In single-fetch shape that cost one title;
-    in batch shape it costs the other 49 plus the cycle.
+    """to_media indexes raw["id"] unguarded, so without per-entry containment one bad entry
+    would fail its whole chunk, and the sync job would leave every title in it unrefreshed. In
+    single-fetch shape that cost one title; in batch shape it costs the other 49 for the cycle.
     """
 
     def handler(request: httpx.Request) -> httpx.Response:

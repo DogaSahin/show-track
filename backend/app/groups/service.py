@@ -129,13 +129,15 @@ async def join_by_code(session: AsyncSession, *, code: str, user: User, now: dat
         # the constraint is the arbiter, and the loser gets the same answer it would have got a
         # millisecond earlier.
         #
-        # A foreign-key violation means the group was deleted underneath us: remove_member takes
-        # FOR UPDATE on the `groups` row and drops the group when its last member leaves, while
-        # this INSERT needs FOR KEY SHARE on that same row. A join that resolved the code just
-        # before a departure commits therefore blocks for the whole leave transaction and then
-        # fails the FK deterministically. Reporting `(group, False)` there would answer 200 with
-        # GroupWithInvite — handing the caller a group AND its invite code that no longer exist
-        # (expire_on_commit=False lets the stale object serialise without a murmur).
+        # A foreign-key violation means the group was deleted underneath us. remove_member takes
+        # FOR UPDATE on the `groups` row and drops the group when its last member leaves, and
+        # resolve_invite_code already holds FOR SHARE on that row, so the two serialise: a leave
+        # that locked first makes the resolve wait and then find nothing (None above), and a join
+        # that resolved first makes the leave wait for it. This branch is therefore a fallback
+        # for an ordering that should not occur, not an expected path. If it is reached anyway,
+        # reporting `(group, False)` would answer 200 with GroupWithInvite — handing the caller a
+        # group AND its invite code that no longer exist (expire_on_commit=False lets the stale
+        # object serialise without a murmur).
         already = await session.scalar(
             select(GroupMember.id).where(GroupMember.group_id == group.id, GroupMember.user_id == user.id)
         )

@@ -24,9 +24,11 @@ SEED_JOB_ID = "seed_recommendations"
 # client. A single shared offset put them on the same tick at boot — and since the default
 # intervals are 1h and 12h, 12 being a multiple of 1, every later seed run landed on a sync run
 # too, in perpetuity. That contention is asymmetric: seed_once counts a ProviderRateLimited as one
-# failed seed, while app/sync/service.py abandons a whole source for the cycle, so the 12-hourly
-# recommendations job could cost the time-critical airing sync a full cycle. Worst case is the
-# first boot after a large AniList import, when both worklists are at their largest at once.
+# failed seed, while on a rate limit the provider's get_many fails every id it has not fetched
+# yet and app/sync/service.py leaves each of those titles unrefreshed until the next cycle, so the
+# 12-hourly recommendations job could cost the time-critical airing sync most of a cycle. Worst
+# case is the first boot after a large AniList import, when both worklists are at their largest
+# at once.
 #
 # Five minutes for the seed: far enough past the sync's one minute that a fresh import's sync
 # sweep has drained first, short enough not to punish a developer following the README. With the
