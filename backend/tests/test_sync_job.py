@@ -369,3 +369,34 @@ async def test_a_title_the_provider_disowned_is_stamped_as_answered(db_session):
     assert (summary.missing, summary.failed) == (1, 0)
     await db_session.refresh(media)
     assert media.last_synced_at == NOW
+
+
+async def test_a_title_stamped_a_few_ms_late_is_still_due_next_hour(db_session):
+    """The scheduler fires on the hour but the stamp is wall-clock after the lock: without slack a
+    title stamped 4 ms into one run is "not due" 3 ms into the next and waits a whole extra hour.
+    """
+    media = await _tracked_media(
+        db_session,
+        external_id="jitter",
+        status=MediaStatus.AIRING,
+        next_episode_date=NOW + timedelta(hours=3),
+        last_synced_at=NOW + timedelta(milliseconds=4),
+    )
+
+    worklist = await service.collect_worklist(db_session, now=NOW + timedelta(hours=1, milliseconds=3))
+
+    assert media.id in {media_id for media_id, _, _ in worklist}
+
+
+async def test_slack_does_not_make_a_fresh_title_due(db_session):
+    media = await _tracked_media(
+        db_session,
+        external_id="fresh",
+        status=MediaStatus.AIRING,
+        next_episode_date=NOW + timedelta(hours=3),
+        last_synced_at=NOW,
+    )
+
+    worklist = await service.collect_worklist(db_session, now=NOW + timedelta(minutes=54))
+
+    assert media.id not in {media_id for media_id, _, _ in worklist}

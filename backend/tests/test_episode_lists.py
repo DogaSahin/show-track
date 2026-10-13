@@ -390,3 +390,11 @@ class SyncProvider(EpisodeProvider):
 
     async def get_many(self, external_ids):
         return {}
+
+
+async def test_an_episode_list_stamped_a_few_ms_late_is_still_due_next_day(db_session):
+    media = await _tracked(db_session, status=MediaStatus.AIRING, episodes_synced_at=NOW + timedelta(milliseconds=4))
+
+    due = await sync_service.collect_episode_worklist(db_session, now=NOW + timedelta(hours=24, milliseconds=3))
+
+    assert media.id in {media_id for media_id, _, _ in due}

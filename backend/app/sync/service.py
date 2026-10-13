@@ -42,6 +42,11 @@ SYNC_TIERS: tuple[tuple[timedelta, timedelta], ...] = (
     (timedelta(hours=48), timedelta(hours=1)),
     (timedelta(days=7), timedelta(hours=6)),
 )
+# The scheduler fires on fixed times, but rows are stamped with the job's own `now`, read after
+# the lock — a few ms later each run. Comparing against `now - interval` exactly makes due-ness a
+# coin flip on those milliseconds, and a lost flip costs a whole extra interval. Five minutes is
+# far below the tightest tier (1 h), so it never makes a row due twice in one interval.
+SYNC_DUE_SLACK = timedelta(minutes=5)
 # Further out than the last tier.
 DEFAULT_SYNC_INTERVAL = timedelta(hours=24)
 # No known air date at all — its own tier, NOT the default. See _due_cutoff.
@@ -89,13 +94,19 @@ def _due_cutoff(now: datetime):
     whens = [
         # First, so the intent reads in source order. Ordering is not load-bearing — a NULL
         # compares NULL, never true, so it could never match a tier condition anyway.
-        (Media.next_episode_date.is_(None), literal(now - UNKNOWN_DATE_SYNC_INTERVAL, DateTime(timezone=True))),
+        (
+            Media.next_episode_date.is_(None),
+            literal(now - UNKNOWN_DATE_SYNC_INTERVAL + SYNC_DUE_SLACK, DateTime(timezone=True)),
+        ),
         *(
-            (Media.next_episode_date <= now + horizon, literal(now - interval, DateTime(timezone=True)))
+            (
+                Media.next_episode_date <= now + horizon,
+                literal(now - interval + SYNC_DUE_SLACK, DateTime(timezone=True)),
+            )
             for horizon, interval in SYNC_TIERS
         ),
     ]
-    return case(*whens, else_=literal(now - DEFAULT_SYNC_INTERVAL, DateTime(timezone=True)))
+    return case(*whens, else_=literal(now - DEFAULT_SYNC_INTERVAL + SYNC_DUE_SLACK, DateTime(timezone=True)))
 
 
 def _apply(media: Media, detail: ProviderMedia) -> bool:
@@ -155,7 +166,7 @@ async def collect_episode_worklist(session: AsyncSession, *, now: datetime) -> W
                 Media.episodes_refresh_due.is_(True),
                 and_(
                     Media.status.in_(SYNCABLE_STATUSES),
-                    Media.episodes_synced_at <= now - EPISODE_REFRESH_INTERVAL,
+                    Media.episodes_synced_at <= now - EPISODE_REFRESH_INTERVAL + SYNC_DUE_SLACK,
                 ),
             )
         )

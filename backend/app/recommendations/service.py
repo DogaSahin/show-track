@@ -38,6 +38,11 @@ def positive_signal_clause():
     )
 
 
+# Same reason as app.sync.service.SYNC_DUE_SLACK (stamp jitter must not cost a whole cadence);
+# kept separate so recommendations doesn't import sync internals.
+SEED_DUE_SLACK = timedelta(minutes=5)
+
+
 async def collect_seeds(session: AsyncSession, *, now: datetime, force: bool = False) -> Sequence[Media]:
     """Distinct media that are a positive signal for ANY user and are due a refresh.
 
@@ -61,7 +66,9 @@ async def collect_seeds(session: AsyncSession, *, now: datetime, force: bool = F
     if not force:
         # NULL means "never seeded", which is always due — the same reading Media.last_synced_at
         # gives NULL in the sync job.
-        statement = statement.where((freshest.c.fetched_at.is_(None)) | (freshest.c.fetched_at < now - cadence))
+        statement = statement.where(
+            (freshest.c.fetched_at.is_(None)) | (freshest.c.fetched_at < now - cadence + SEED_DUE_SLACK)
+        )
     return (await session.scalars(statement)).all()
 
 

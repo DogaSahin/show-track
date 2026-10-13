@@ -478,3 +478,22 @@ async def test_is_stale_reads_the_run_row_from_the_table_not_the_identity_map(db
     assert run.computed_at == first, "precondition: the Core upsert leaves the mapped instance stale"
 
     assert not await service.is_stale(db_session, user_id=auth_user.id, now=now)
+
+
+async def test_a_seed_fetched_a_few_ms_late_is_still_due_next_sweep(db_session, auth_user):
+    now = datetime(2026, 8, 21, 12, 0, tzinfo=UTC)
+    seed = await _seed_library(db_session, auth_user.id, external_id="s1")
+    other = await _seed_library(db_session, auth_user.id, external_id="s2")
+    db_session.add(
+        MediaSimilarity(
+            source_media_id=seed.id,
+            similar_media_id=other.id,
+            position=0,
+            fetched_at=now + timedelta(milliseconds=4),
+        )
+    )
+    await db_session.flush()
+
+    due = await service.collect_seeds(db_session, now=now + timedelta(hours=12, milliseconds=3))
+
+    assert seed.id in {media.id for media in due}
