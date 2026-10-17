@@ -11,10 +11,11 @@ import com.anarky.showtrack.core.model.MediaSource
 import com.anarky.showtrack.core.model.SearchResults
 import com.anarky.showtrack.core.network.api.ShowTrackApi
 import com.anarky.showtrack.core.network.dto.ResolveMediaRequestDto
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -42,6 +43,14 @@ class MediaRepositoryImpl
         private var query: String = ""
         private var latest: SearchResults = SearchResults.EMPTY
 
+        // Serialises search() and loadMoreResults(): the query write and the paginator call happen
+        // together, so a load-more can only ever fetch the next page of the query the paginator's
+        // contents came from. Sign-out does not take it: `paginator.reset()` does wait for a fetch
+        // already in flight (on the paginator's own lock), but sign-out does not queue behind the
+        // searches and load-mores waiting here, and the session guard already drops what a
+        // superseded search publishes.
+        private val searchLock = Mutex()
+
         // ONE paginator for the life of the repository, whose fetch reads `query` when it runs.
         // `restart()` resets the page counter, so a new query needs no new instance — and a
         // stable instance keeps `paginator.items` a single flow that callers can hold.
@@ -55,38 +64,28 @@ class MediaRepositoryImpl
         @Suppress("TooGenericExceptionCaught")
         override suspend fun search(query: String) {
             val startedIn = session.current()
-            val previous = this.query
-            this.query = query
-            try {
-                paginator.restart()
-            } catch (cancellation: CancellationException) {
-                restoreQuery(failed = query, previous = previous)
-                throw cancellation
-            } catch (failure: Exception) {
-                // PagePaginator.restart() mutates nothing when its fetch throws, so the
-                // paginator's contents still belong to `previous`. Leaving `query` on the new
-                // value would let a later loadMoreResults() fetch the new query's page 2 and
-                // APPEND it onto the old query's page 1 — a search result mixing two queries
-                // with no way for the caller to detect it. `query` must always name the query
-                // the paginator's current contents actually came from.
-                restoreQuery(failed = query, previous = previous)
-                throw failure
+            searchLock.withLock {
+                val previous = this.query
+                this.query = query
+                try {
+                    paginator.restart()
+                } catch (failure: Throwable) {
+                    // PagePaginator.restart() mutates nothing when its fetch throws (cancellation
+                    // included), so the paginator's contents still belong to `previous`. `query`
+                    // must always name the query those contents came from, or a later
+                    // loadMoreResults() appends the failed query's page 2 to the old results.
+                    // Conditional: a sign-out may have reset `query` meanwhile (it does not take the
+                    // lock), and restoring over that would resurrect the previous account's query.
+                    if (this.query == query) this.query = previous
+                    throw failure
+                }
             }
             publish(startedIn)
         }
 
-        // Only while this call's query is still the current one: a newer search may have started
-        // meanwhile, and rolling back over it would make that search fetch the old query.
-        private fun restoreQuery(
-            failed: String,
-            previous: String,
-        ) {
-            if (this.query == failed) this.query = previous
-        }
-
         override suspend fun loadMoreResults() {
             val startedIn = session.current()
-            paginator.loadMore()
+            searchLock.withLock { paginator.loadMore() }
             publish(startedIn)
         }
 

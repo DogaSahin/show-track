@@ -525,6 +525,62 @@ class LibraryRepositoryImplTest {
         }
 
     @Test
+    fun `an edit replaces the row in the loaded list`() =
+        runTest {
+            repository.refresh()
+            api.enqueueEntry(dto(id = "1").copy(progress = 20))
+
+            repository.update("1", LibraryPatch(progress = 20))
+
+            assertEquals(listOf(20), repository.observeLibrary().first().map { it.progress })
+        }
+
+    @Test
+    fun `a status change under a status filter drops the row`() =
+        runTest {
+            api.enqueueLibraryPage(LibraryPageDto(items = listOf(dto(id = "1")), nextCursor = null))
+            repository.applyFilter(LibraryFilter(status = UserMediaStatus.WATCHING))
+            api.enqueueEntry(dto(id = "1").copy(status = "completed"))
+
+            repository.update("1", LibraryPatch(status = UserMediaStatus.COMPLETED))
+
+            assertEquals(emptyList<String>(), repository.observeLibrary().first().map { it.id })
+        }
+
+    @Test
+    fun `an edit to a title outside the loaded pages adds nothing`() =
+        runTest {
+            repository.refresh()
+            api.enqueueEntry(dto(id = "elsewhere"))
+
+            repository.update("elsewhere", LibraryPatch(progress = 3))
+
+            assertEquals(listOf("1"), repository.observeLibrary().first().map { it.id })
+        }
+
+    @Test
+    fun `ticking episodes replaces the row in the loaded list`() =
+        runTest {
+            repository.refresh()
+            api.enqueueEntry(dto(id = "1").copy(progress = 15))
+
+            repository.setWatched("1", listOf("e-4"), watched = true)
+
+            assertEquals(listOf(15), repository.observeLibrary().first().map { it.progress })
+        }
+
+    @Test
+    fun `a removal leaves the loaded list even when the follow-up refresh fails`() =
+        runTest {
+            repository.refresh()
+            api.failNext()
+
+            repository.remove("1")
+
+            assertEquals(emptyList<String>(), repository.observeLibrary().first().map { it.id })
+        }
+
+    @Test
     fun `marking episodes sends one batch and the cached row takes the new progress`() =
         runTest {
             repository.refresh()

@@ -181,6 +181,21 @@ class CursorPaginatorTest {
             assertEquals(listOf("a", "b"), paginator.items.value)
         }
 
+    @Test
+    fun `edit transforms the loaded items and leaves paging state alone`() =
+        runTest {
+            val pages = mapOf(null to Page(listOf("a", "b"), "c1"), "c1" to Page(listOf("c"), null))
+            val paginator = CursorPaginator<String> { cursor -> pages.getValue(cursor) }
+            paginator.loadMore()
+
+            paginator.edit { items -> items.map { if (it == "b") "B" else it } }
+
+            assertEquals(listOf("a", "B"), paginator.items.value)
+            assertTrue("an edit must not touch hasMore", paginator.hasMore.value)
+            paginator.loadMore()
+            assertEquals("the cursor survives an edit", listOf("a", "B", "c"), paginator.items.value)
+        }
+
     private val threePages =
         mapOf(
             null to Page(listOf("a"), "c1"),

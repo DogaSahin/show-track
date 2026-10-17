@@ -50,7 +50,8 @@ private const val AIRING_SOON_KEY = "airing-soon"
  *
  * The counts and the "Airing soon" row reload on every resume ([LibraryViewModel.refreshOverview]):
  * an add or status change made in Detail or Search changes both, and this ViewModel outlives that
- * round trip.
+ * round trip. The list itself also reloads quietly on every resume
+ * ([LibraryViewModel.refreshOnReturn]), so a title added elsewhere or a changed sort order settles in.
  */
 @Composable
 fun LibraryScreen(
@@ -65,6 +66,7 @@ fun LibraryScreen(
     val airingSoon by viewModel.airingSoon.collectAsStateWithLifecycle()
     LifecycleResumeEffect(viewModel) {
         viewModel.refreshOverview()
+        viewModel.refreshOnReturn()
         onPauseOrDispose { }
     }
     LibraryScreen(

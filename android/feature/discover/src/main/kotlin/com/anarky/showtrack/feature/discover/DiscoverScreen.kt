@@ -25,13 +25,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.anarky.showtrack.core.designsystem.component.EmptyState
-import com.anarky.showtrack.core.designsystem.component.EndOfListTrigger
 import com.anarky.showtrack.core.designsystem.component.ErrorState
 import com.anarky.showtrack.core.designsystem.component.LargeTitleScaffold
 import com.anarky.showtrack.core.designsystem.component.LoadingState
@@ -40,6 +40,7 @@ import com.anarky.showtrack.core.designsystem.component.StaleDataBanner
 import com.anarky.showtrack.core.model.Recommendation
 
 private const val TOP_PICK_KEY = "top-pick"
+private const val LIST_END_THRESHOLD = 2
 private const val SKELETON_POSTERS = 3
 
 /**
@@ -163,18 +164,12 @@ internal fun DiscoverScreen(
 }
 
 /**
- * The top pick, then the shelves, plus paging via [EndOfListTrigger] (decision D-H).
+ * The top pick, then the shelves. Paging is driven by finished scrolls via [ScrollEndTrigger]:
+ * this list scrolling near its end, or any shelf scrolling sideways near its end. Opening the
+ * screen, or a page arriving, never asks for another.
  *
  * `remember(items)` around the derivation: `toDiscoverLayout` walks the whole paged list, and this
- * composable recomposes on every frame while the list is near its end (that is exactly what
- * [EndOfListTrigger]'s own `derivedStateOf` is reacting to).
- *
- * **`rearmKey = items.size` is load-bearing, not tidiness.** `itemCount` here is this LazyColumn's
- * own index space (the top pick plus the shelves) — but a page arrives as items, and the endpoint
- * orders by score rather than by seed, so a page routinely lands entirely inside shelves that
- * already exist and leaves that count untouched. Without a key that moves with the items, the
- * trigger's cached `derivedStateOf` stays latched at `true`, `LaunchedEffect` sees no edge, and
- * Discover stops paging while still holding a cursor. See [EndOfListTrigger]'s own KDoc.
+ * composable recomposes as pages land.
  *
  * [DiscoverUiState.Success.pageError] renders as a footer rather than replacing the shelves;
  * tapping it retries by calling [onLoadMore] again — mirroring `LibraryList`/`SearchResultsList`.
@@ -192,16 +187,11 @@ private fun DiscoverList(
     val listState = rememberLazyListState()
     val topPick = layout.topPick
 
-    EndOfListTrigger(
-        listState = listState,
-        itemCount = layout.shelves.size + if (topPick != null) 1 else 0,
-        rearmKey = items.size,
-        onTriggered = onLoadMore,
-    )
+    ScrollEndTrigger(state = listState, threshold = LIST_END_THRESHOLD, onTriggered = onLoadMore)
 
     LazyColumn(
         state = listState,
-        modifier = modifier.fillMaxSize(),
+        modifier = modifier.fillMaxSize().testTag(DISCOVER_LIST_TAG),
         contentPadding = PaddingValues(top = 6.dp, bottom = 16.dp),
         verticalArrangement = Arrangement.spacedBy(space = 24.dp),
     ) {
@@ -221,6 +211,7 @@ private fun DiscoverList(
                 onItemClick = onRowClick,
                 onAdd = onAdd,
                 addErrorMediaId = success.addError?.mediaId,
+                onLoadMore = onLoadMore,
             )
         }
         if (success.loadingMore) {
