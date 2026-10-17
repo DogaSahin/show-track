@@ -117,6 +117,9 @@ class LibraryViewModel
         // `paginator.items` untouched on a throw; see `LibraryUiState.Success.pageError`'s KDoc).
         private val mutableLoadMoreError = MutableStateFlow<Throwable?>(null)
 
+        // refreshOnReturn's failures land here and nowhere visible; see its KDoc.
+        private val backgroundRefreshError = MutableStateFlow<Throwable?>(null)
+
         /**
          * `WhileSubscribed(5_000)`, matching the `entries` field this replaced in an earlier
          * revision of this class: [LibraryRepository.observeLibrary] combines a Room-backed flow,
@@ -320,6 +323,18 @@ class LibraryViewModel
          * this class.
          */
         fun refresh() = applyCurrentFilter(blank = state.value !is LibraryUiState.Success)
+
+        /**
+         * A quiet reload of page 1 when the Library tab comes back into view, so a title added,
+         * edited or reordered on another screen settles into place. Only while a list is showing:
+         * before the first load `init`'s own load is in charge, and during a filter switch the
+         * switch is. It never shows loading, and a failure is dropped rather than surfaced — a
+         * background reload failing offline must not replace a good list with an error.
+         */
+        fun refreshOnReturn() {
+            if (state.value !is LibraryUiState.Success) return
+            guard(errorSink = backgroundRefreshError) { repository.applyFilter(mutableFilter.value) }
+        }
 
         /**
          * Re-entrant calls are dropped up front rather than left to [LibraryRepository]'s own

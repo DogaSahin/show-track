@@ -570,6 +570,55 @@ class LibraryViewModelTest {
             assertEquals(LibraryUiState.Error(failure), viewModel.state.value)
         }
 
+    @Test
+    fun `refreshOnReturn does nothing before the first load has finished`() =
+        runTest(dispatcher) {
+            val repository = FakeLibraryRepository()
+            val viewModel = LibraryViewModel(repository)
+            backgroundScope.launch { viewModel.state.collect {} }
+
+            viewModel.refreshOnReturn() // init's load has not run yet
+            advanceUntilIdle()
+
+            assertEquals("only init's own load", 1, repository.applyFilterCalls)
+        }
+
+    @Test
+    fun `refreshOnReturn reloads once and never leaves the list`() =
+        runTest(dispatcher) {
+            val repository = FakeLibraryRepository()
+            repository.entries.value = listOf(ENTRY)
+            val viewModel = LibraryViewModel(repository)
+            val states = mutableListOf<LibraryUiState>()
+            backgroundScope.launch { viewModel.state.collect { states += it } }
+            advanceUntilIdle()
+            states.clear()
+
+            viewModel.refreshOnReturn()
+            advanceUntilIdle()
+
+            assertEquals(2, repository.applyFilterCalls)
+            assertTrue("the list must stay on screen throughout", states.all { it is LibraryUiState.Success })
+        }
+
+    @Test
+    fun `a failed refreshOnReturn keeps the list`() =
+        runTest(dispatcher) {
+            val repository = FakeLibraryRepository()
+            repository.entries.value = listOf(ENTRY)
+            val viewModel = LibraryViewModel(repository)
+            backgroundScope.launch { viewModel.state.collect {} }
+            advanceUntilIdle()
+
+            repository.applyFilterFailure = IOException("offline")
+            viewModel.refreshOnReturn()
+            advanceUntilIdle()
+
+            val state = viewModel.state.value
+            assertTrue("an offline return must not replace the list with an error", state is LibraryUiState.Success)
+            assertEquals(listOf(ENTRY), (state as LibraryUiState.Success).entries)
+        }
+
     private class FakeLibraryRepository(
         var applyFilterFailure: Throwable? = null,
         var loadMoreFailure: Throwable? = null,
@@ -588,6 +637,8 @@ class LibraryViewModelTest {
         var loadMoreCalls = 0
             private set
 
+        var applyFilterCalls = 0
+
         override fun observeLibrary(): Flow<List<LibraryEntry>> = entries
 
         // Never exercised directly by LibraryViewModel any more: every load — the initial one and
@@ -603,6 +654,7 @@ class LibraryViewModelTest {
         }
 
         override suspend fun applyFilter(filter: LibraryFilter) {
+            applyFilterCalls++
             applyFilterGate?.await()
             applyFilterFailure?.let { throw it }
             appliedFilter = filter
