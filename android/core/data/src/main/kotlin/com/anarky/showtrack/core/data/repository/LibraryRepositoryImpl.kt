@@ -253,14 +253,32 @@ class LibraryRepositoryImpl
             return created
         }
 
+        /**
+         * Puts a confirmed write into the loaded pages. The row is replaced in place, or dropped
+         * when it no longer belongs to the active status filter. A row that is not loaded is
+         * left out: where it belongs under the active sort is unknown, and the next reload of
+         * page 1 brings it in.
+         */
+        private suspend fun showInLoadedPages(updated: LibraryEntry) {
+            val status = filter.value.status
+            paginator.edit { items ->
+                if (status != null && updated.status != status) {
+                    items.filterNot { it.id == updated.id }
+                } else {
+                    items.map { if (it.id == updated.id) updated else it }
+                }
+            }
+        }
+
         @Suppress("TooGenericExceptionCaught")
         override suspend fun remove(entryId: String) {
             api.deleteLibraryEntry(entryId)
             dao.deleteById(entryId)
+            paginator.edit { items -> items.filterNot { it.id == entryId } }
             alerts.requestSync()
             try {
-                // The paged list is rebuilt so the title leaves it too; the removal already
-                // succeeded, so a failed refresh must not report it as failed.
+                // The row has already left the loaded list; this brings the next page's first row
+                // up. The removal already succeeded, so a failed refresh must not report it as failed.
                 refresh()
             } catch (cancellation: CancellationException) {
                 throw cancellation
@@ -284,8 +302,12 @@ class LibraryRepositoryImpl
                         entryId,
                         SetWatchedRequestDto(episodeIds = episodeIds.toList(), watched = watched),
                     ).toDomain()
-            // Same single-row upsert as update(): the new progress shows in the Library list at once.
-            session.ifStill(startedIn) { dao.insertAll(listOf(updated.toEntity())) }
+            // Same single-row upsert as update(), and the loaded list takes the row too: the new
+            // progress shows in the Library list at once.
+            session.ifStill(startedIn) {
+                dao.insertAll(listOf(updated.toEntity()))
+                showInLoadedPages(updated)
+            }
             return updated
         }
 
@@ -301,7 +323,12 @@ class LibraryRepositoryImpl
             // dedicated DAO method. Accepted consequence: an edited entry outside the cached first
             // page gets ADDED to the cache; `observeAll()` orders by `updated_at DESC` so it sorts
             // to the top, and the next `refresh()` rebuilds the cache to match the server anyway.
-            session.ifStill(startedIn) { dao.insertAll(listOf(updated.toEntity())) }
+            // The loaded list is patched in the same step (see showInLoadedPages), so the Library
+            // screen shows the edit without waiting for a reload.
+            session.ifStill(startedIn) {
+                dao.insertAll(listOf(updated.toEntity()))
+                showInLoadedPages(updated)
+            }
             // Only a status change can start or stop alerts (they are for Watching titles).
             if (patch.status != null) alerts.requestSync()
             return updated
