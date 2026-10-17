@@ -34,6 +34,7 @@ import com.anarky.showtrack.core.network.dto.WatchlistItemDto
 import com.anarky.showtrack.core.network.dto.WatchlistPageDto
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
@@ -276,12 +277,39 @@ class MediaRepositoryTest {
         }
 
     /**
+     * The paginator's fetch reads `query` when it runs. A load-more already queued on the
+     * paginator when a new search writes `query` would fetch the NEW query's next page and append
+     * it to the OLD query's results.
+     */
+    @Test
+    fun `a load-more queued behind a new search fetches only the old query's next page`() =
+        runTest {
+            val api = FakeApi(response(titles = listOf("A1"), hasMore = true))
+            val repository = MediaRepositoryImpl(api)
+            repository.search("a")
+            val gate = CompletableDeferred<Unit>()
+            api.gates = mapOf("a" to gate)
+
+            launch { repository.loadMoreResults() } // holds the paginator, waiting on the gate
+            runCurrent()
+            launch { repository.loadMoreResults() } // queued behind it
+            runCurrent()
+            launch { repository.search("b") }
+            runCurrent()
+            gate.complete(Unit)
+            advanceUntilIdle()
+
+            assertEquals(listOf("a" to 1, "a" to 2, "a" to 3, "b" to 1), api.requests)
+        }
+
+    /**
      * Every method but `searchMedia`/`mediaDetail` is unused by [MediaRepositoryImpl] and would
      * signal a repository that has started reaching outside its own concern if it were ever hit.
      */
     private class FakeApi(
         var next: MediaSearchResponseDto,
     ) : ShowTrackApi {
+        val requests = mutableListOf<Pair<String, Int>>()
         var lastQuery: String? = null
         var lastPage: Int? = null
         var nextFailure: Throwable? = null
@@ -315,6 +343,7 @@ class MediaRepositoryTest {
             query: String,
             page: Int,
         ): MediaSearchResponseDto {
+            requests += query to page
             lastQuery = query
             lastPage = page
             gates[query]?.await()

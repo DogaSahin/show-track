@@ -102,6 +102,23 @@ class SearchViewModelTest {
         }
 
     @Test
+    fun `clearing and retyping the same query quickly searches again`() =
+        runTest(dispatcher) {
+            val media = FakeMediaRepository()
+            val viewModel = SearchViewModel(media, FakeLibraryRepository(), FakeRecentSearchStore())
+            viewModel.onQueryChange("naruto")
+            advanceUntilIdle()
+
+            viewModel.onQueryChange("")
+            advanceTimeBy(100)
+            viewModel.onQueryChange("naruto")
+            advanceUntilIdle()
+
+            assertEquals(listOf("naruto", "naruto"), media.searchCalls)
+            assertTrue(viewModel.state.value is SearchUiState.Success)
+        }
+
+    @Test
     fun `a blank query shows Idle instead of running a search`() =
         runTest(dispatcher) {
             val media = FakeMediaRepository()
