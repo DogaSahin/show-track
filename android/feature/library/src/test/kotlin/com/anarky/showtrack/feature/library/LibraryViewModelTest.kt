@@ -641,9 +641,92 @@ class LibraryViewModelTest {
             viewModel.refreshOnReturn()
             advanceUntilIdle()
 
-            val state = viewModel.state.value
-            assertTrue("an offline return must not replace the list with an error", state is LibraryUiState.Success)
-            assertEquals(listOf(ENTRY), (state as LibraryUiState.Success).entries)
+            assertEquals(
+                "an offline return must not replace the list with an error",
+                LibraryUiState.Success(entries = listOf(ENTRY), loadingMore = false, pageError = null, isStale = false),
+                viewModel.state.value,
+            )
+        }
+
+    @Test
+    fun `refreshOnReturn leaves a list paged past its first page alone`() =
+        runTest(dispatcher) {
+            val repository = FakeLibraryRepository()
+            repository.entries.value = listOf(ENTRY)
+            repository.nextPage = listOf(SECOND_ENTRY)
+            val viewModel = LibraryViewModel(repository)
+            backgroundScope.launch { viewModel.state.collect {} }
+            advanceUntilIdle()
+            viewModel.loadMore()
+            advanceUntilIdle()
+
+            viewModel.refreshOnReturn()
+            advanceUntilIdle()
+
+            assertEquals("reloading page 1 would drop the page the user scrolled to", 1, repository.applyFilterCalls)
+            assertEquals(listOf(ENTRY, SECOND_ENTRY), (viewModel.state.value as LibraryUiState.Success).entries)
+        }
+
+    @Test
+    fun `refreshOnReturn reloads again after a full refresh`() =
+        runTest(dispatcher) {
+            val repository = FakeLibraryRepository()
+            repository.entries.value = listOf(ENTRY)
+            repository.nextPage = listOf(SECOND_ENTRY)
+            val viewModel = LibraryViewModel(repository)
+            backgroundScope.launch { viewModel.state.collect {} }
+            advanceUntilIdle()
+            viewModel.loadMore()
+            advanceUntilIdle()
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            viewModel.refreshOnReturn()
+            advanceUntilIdle()
+
+            assertEquals("init, refresh, then the quiet reload", 3, repository.applyFilterCalls)
+        }
+
+    @Test
+    fun `a loadMore that adds nothing still lets refreshOnReturn reload`() =
+        runTest(dispatcher) {
+            // A short list fits on screen, so its end trigger fires a loadMore on first layout
+            // that finds the list exhausted: that must not count as paging past page 1.
+            val repository = FakeLibraryRepository()
+            repository.entries.value = listOf(ENTRY)
+            val viewModel = LibraryViewModel(repository)
+            backgroundScope.launch { viewModel.state.collect {} }
+            advanceUntilIdle()
+            viewModel.loadMore()
+            advanceUntilIdle()
+
+            viewModel.refreshOnReturn()
+            advanceUntilIdle()
+
+            assertEquals(2, repository.applyFilterCalls)
+        }
+
+    @Test
+    fun `a loadMore failing during refreshOnReturn keeps its page error`() =
+        runTest(dispatcher) {
+            val repository = FakeLibraryRepository()
+            repository.entries.value = listOf(ENTRY)
+            val viewModel = LibraryViewModel(repository)
+            backgroundScope.launch { viewModel.state.collect {} }
+            advanceUntilIdle()
+
+            val gate = CompletableDeferred<Unit>()
+            repository.applyFilterGate = gate
+            viewModel.refreshOnReturn()
+            advanceUntilIdle()
+            val failure = IOException("page 2 offline")
+            repository.loadMoreFailure = failure
+            viewModel.loadMore()
+            advanceUntilIdle()
+            gate.complete(Unit)
+            advanceUntilIdle()
+
+            assertEquals(failure, (viewModel.state.value as LibraryUiState.Success).pageError)
         }
 
     private class FakeLibraryRepository(
@@ -675,9 +758,13 @@ class LibraryViewModelTest {
         // 9a.5's carried-forward note).
         override suspend fun refresh(): Unit = error("not exercised by LibraryViewModel; it always calls applyFilter")
 
+        // Appended to [entries] by a successful loadMore; empty stands for an exhausted list.
+        var nextPage: List<LibraryEntry> = emptyList()
+
         override suspend fun loadMore() {
             loadMoreFailure?.let { throw it }
             loadMoreCalls++
+            entries.value += nextPage
         }
 
         override suspend fun applyFilter(filter: LibraryFilter) {
@@ -801,5 +888,7 @@ class LibraryViewModelTest {
                         daysUntilNextEpisode = 4,
                     ),
             )
+
+        val SECOND_ENTRY = ENTRY.copy(id = "entry-2", media = ENTRY.media.copy(id = "media-2"))
     }
 }

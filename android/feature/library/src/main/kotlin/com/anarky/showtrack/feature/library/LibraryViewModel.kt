@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -119,6 +120,12 @@ class LibraryViewModel
 
         // refreshOnReturn's failures land here and nowhere visible; see its KDoc.
         private val backgroundRefreshError = MutableStateFlow<Throwable?>(null)
+
+        // Whether a `loadMore()` has appended rows since the last full reload. While it is true
+        // `refreshOnReturn` stays out of the way: reloading page 1 would drop the pages below it.
+        // Set only when a page actually grew the list — a short list's end trigger fires a
+        // `loadMore()` on first layout that finds the list exhausted, and that must not count.
+        private var loadedBeyondFirstPage = false
 
         /**
          * `WhileSubscribed(5_000)`, matching the `entries` field this replaced in an earlier
@@ -330,16 +337,25 @@ class LibraryViewModel
          * before the first load `init`'s own load is in charge, and during a filter switch the
          * switch is. It never shows loading, and a failure is dropped rather than surfaced — a
          * background reload failing offline must not replace a good list with an error.
+         *
+         * Skipped once the user has paged past page 1 ([loadedBeyondFirstPage]): reloading page 1
+         * would drop the pages they scrolled through and clamp their scroll position. Nothing is
+         * lost by skipping — edits and removals are already patched into the loaded pages in
+         * place, and an add refreshes the list itself.
          */
         fun refreshOnReturn() {
-            if (state.value !is LibraryUiState.Success) return
+            if (state.value !is LibraryUiState.Success || loadedBeyondFirstPage) return
             guard(errorSink = backgroundRefreshError) {
+                // Captured before the reload, so a load-more that fails while it is in flight
+                // keeps its footer: only the failure that was already on record is cleared.
+                val loadMoreErrorBefore = mutableLoadMoreError.value
                 repository.applyFilter(mutableFilter.value)
+                loadedBeyondFirstPage = false
                 // The reload just succeeded, so an earlier load failure no longer describes the list;
                 // without this, `hasLoaded` flipping true would surface that stale failure as a
                 // full-screen error over a list that just loaded fine.
                 mutableError.value = null
-                mutableLoadMoreError.value = null
+                if (mutableLoadMoreError.value === loadMoreErrorBefore) mutableLoadMoreError.value = null
             }
         }
 
@@ -361,7 +377,9 @@ class LibraryViewModel
             mutableLoadingMore.value = true
             guard(errorSink = mutableLoadMoreError) {
                 try {
+                    val sizeBefore = repository.observeLibrary().first().size
                     repository.loadMore()
+                    if (repository.observeLibrary().first().size > sizeBefore) loadedBeyondFirstPage = true
                 } finally {
                     mutableLoadingMore.value = false
                 }
@@ -417,7 +435,11 @@ class LibraryViewModel
                 mutableLoadState.value = mutableLoadState.value.copy(loading = true)
             }
             mutableLoadMoreError.value = null
-            guard(errorSink = mutableError, trackLoading = true) { repository.applyFilter(mutableFilter.value) }
+            guard(errorSink = mutableError, trackLoading = true) {
+                repository.applyFilter(mutableFilter.value)
+                // Back to page 1, so the quiet reload on return is safe again.
+                loadedBeyondFirstPage = false
+            }
         }
 
         /**
