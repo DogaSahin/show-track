@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -20,6 +21,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -32,6 +34,7 @@ import com.anarky.showtrack.core.model.Recommendation
 private val PosterWidth = 96.dp
 private val AddButtonSize = 28.dp
 private const val MAX_SHARED_GENRES = 2
+private const val SHELF_END_THRESHOLD = 3
 
 /**
  * One seed's worth of recommendations, grouped for rendering.
@@ -60,9 +63,7 @@ internal data class DiscoverShelf(
  * `RecommendationItem` — the ordering IS the score), so a second page usually lands inside shelves
  * the reader has already scrolled past: those shelves grow behind them rather than new ones
  * appearing at the bottom. That is the honest cost of the shelf layout over this endpoint. It is
- * survivable — a shelf scrolls horizontally, so growth costs no vertical space and moves nothing —
- * but it is also why `DiscoverList` passes the flat item count as `EndOfListTrigger`'s `rearmKey`:
- * without it, a page that adds no shelf leaves the trigger latched and paging stops.
+ * survivable — a shelf scrolls horizontally, so growth costs no vertical space and moves nothing.
  */
 internal fun List<Recommendation>.toShelves(): List<DiscoverShelf> =
     groupBy { it.reason.seedMediaId }
@@ -100,13 +101,17 @@ internal fun DiscoverShelf.sharedGenres(): List<String> =
  * item's own list: five stacked genre lists is noise, one shared line is the reason in brief.
  */
 @Composable
+@Suppress("LongParameterList")
 internal fun DiscoverShelfRow(
     shelf: DiscoverShelf,
     onItemClick: (Recommendation) -> Unit,
     onAdd: (Recommendation) -> Unit,
     addErrorMediaId: String?,
+    onLoadMore: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val rowState = rememberLazyListState()
+    ScrollEndTrigger(state = rowState, threshold = SHELF_END_THRESHOLD, onTriggered = onLoadMore)
     val sharedGenres = remember(shelf) { shelf.sharedGenres() }
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(space = 10.dp)) {
         Column(modifier = Modifier.padding(horizontal = 16.dp)) {
@@ -132,6 +137,8 @@ internal fun DiscoverShelfRow(
             }
         }
         LazyRow(
+            state = rowState,
+            modifier = Modifier.testTag(discoverShelfTag(shelf.seedMediaId)),
             contentPadding = PaddingValues(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(space = 10.dp),
         ) {
