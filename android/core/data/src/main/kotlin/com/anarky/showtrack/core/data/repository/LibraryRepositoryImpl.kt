@@ -113,11 +113,13 @@ class LibraryRepositoryImpl
          *
          * `ifEmpty` on the default branch is a cold-start sentinel, not the failure path: a
          * failed [refresh] leaves [paginator] untouched (see its KDoc), so `paged` still holds
-         * whatever was there before and this never falls back to the cache on a failure. Its one
-         * inherent edge: a [refresh] that legitimately answers zero rows is indistinguishable
-         * from "nothing fetched yet" until [dao]'s write a moment later catches up, so a
-         * genuinely empty default library flickers the stale cache for a frame. Not worth chasing
-         * for a single-frame flicker on an empty library.
+         * whatever was there before and this never falls back to the cache on a failure — except
+         * after a [remove] that empties the loaded pages on the default view, where the cache
+         * (which took the same delete) shows instead. Its one inherent edge: a [refresh] that
+         * legitimately answers zero rows is indistinguishable from "nothing fetched yet" until
+         * [dao]'s write a moment later catches up, so a genuinely empty default library flickers
+         * the stale cache for a frame. Not worth chasing for a single-frame flicker on an empty
+         * library.
          *
          * `distinctUntilChanged` is not tidying: [combine] re-emits on every emission of ANY of
          * the three sources, and both [refresh] and [applyFilter] move more than one of them in

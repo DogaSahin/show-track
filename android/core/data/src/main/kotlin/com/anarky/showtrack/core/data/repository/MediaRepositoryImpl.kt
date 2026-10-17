@@ -45,8 +45,10 @@ class MediaRepositoryImpl
 
         // Serialises search() and loadMoreResults(): the query write and the paginator call happen
         // together, so a load-more can only ever fetch the next page of the query the paginator's
-        // contents came from. Sign-out does not take it — it must not wait behind a search stuck
-        // on the network, and the session guard already drops what a superseded search publishes.
+        // contents came from. Sign-out does not take it: `paginator.reset()` does wait for a fetch
+        // already in flight (on the paginator's own lock), but sign-out does not queue behind the
+        // searches and load-mores waiting here, and the session guard already drops what a
+        // superseded search publishes.
         private val searchLock = Mutex()
 
         // ONE paginator for the life of the repository, whose fetch reads `query` when it runs.
