@@ -228,14 +228,13 @@ class DiscoverViewModel
         private val optimisticallyRemovedIds = mutableSetOf<String>()
 
         // Set by [loadMore] when it drops itself because [refreshInFlight] (task 9c.8 round 2,
-        // review finding "B3 guard can stall paging"). `EndOfListTrigger` only emits
-        // [DiscoverScreen]'s `onTriggered` on the false -> true edge of its own `shouldTrigger`
-        // (that composable's own KDoc); a `loadMore()` dropped here changes neither `itemCount`
-        // nor scroll position, so `shouldTrigger` never toggles and the trigger never re-fires on
-        // its own — without this flag, Discover would stop paging silently until the user
-        // scrolled up past the threshold and back down. [refresh]'s own `finally` checks this once
-        // [refreshInFlight] is clear and re-issues the dropped [loadMore] itself, restoring paging
-        // without any Compose-layer involvement.
+        // review finding "B3 guard can stall paging"). `ScrollEndTrigger` asks for more only when a
+        // user scroll FINISHES near an end (that composable's own KDoc) — never when items change
+        // and never on its own; a `loadMore()` dropped here leaves the user already parked at the
+        // end with no further scroll coming, so the trigger never re-fires — without this flag,
+        // Discover would stop paging silently until the user scrolled again. [refresh]'s own
+        // `finally` checks this once [refreshInFlight] is clear and re-issues the dropped
+        // [loadMore] itself, restoring paging without any Compose-layer involvement.
         //
         // **Cleared only when the re-issued [loadMore] actually commits to a fetch, not merely
         // called (task 9c.8 round 3, review finding).** An earlier version of this mechanism
@@ -269,12 +268,12 @@ class DiscoverViewModel
          * when [refresh] was reachable only from [DiscoverUiState.Error] (nothing to lose there),
          * but not once a resume can land [refresh] OVER a populated screen: a concurrent [loadMore]
          * mid-flight would have its own [DiscoverUiState.Success.loadingMore] flag silently flipped
-         * back to `false` here while the page fetch was still genuinely running, freeing
-         * `EndOfListTrigger` to fire a SECOND, concurrent `loadMore()` — `FeedViewModel.reload`'s
-         * identical lesson (see its own KDoc), applied here. [pageError] is explicitly cleared
-         * (not merely carried forward), matching `GroupDetailViewModel.reloadWatchlist`'s own
-         * precedent: a successful refresh is a strictly newer, authoritative read, so a stale
-         * page-fetch error must not survive it.
+         * back to `false` here while the page fetch was still genuinely running, freeing the next
+         * scroll that ends near the end (`ScrollEndTrigger`) to fire a SECOND, concurrent
+         * `loadMore()` — `FeedViewModel.reload`'s identical lesson (see its own KDoc), applied
+         * here. [pageError] is explicitly cleared (not merely carried forward), matching
+         * `GroupDetailViewModel.reloadWatchlist`'s own precedent: a successful refresh is a
+         * strictly newer, authoritative read, so a stale page-fetch error must not survive it.
          *
          * On failure: if [state] is still [DiscoverUiState.Success] when the failure lands, this
          * marks [DiscoverUiState.Success.isStale] instead of replacing it with
@@ -317,7 +316,7 @@ class DiscoverViewModel
          *
          * **Re-issues a [loadMore] dropped by [refreshInFlight] once this call actually finishes**
          * (task 9c.8 round 2, review finding "B3 guard can stall paging") — see
-         * [pendingLoadMoreAfterRefresh]'s own KDoc for why `EndOfListTrigger` cannot be trusted to
+         * [pendingLoadMoreAfterRefresh]'s own KDoc for why `ScrollEndTrigger` cannot be trusted to
          * do this on its own.
          */
         @Suppress("TooGenericExceptionCaught")
@@ -389,7 +388,7 @@ class DiscoverViewModel
          * — never a duplicate — so there is nothing here for [refresh] to defer to.
          *
          * A call dropped here sets [pendingLoadMoreAfterRefresh] so [refresh] can re-issue it once
-         * it actually finishes — see that field's own KDoc for why `EndOfListTrigger` on its own
+         * it actually finishes — see that field's own KDoc for why `ScrollEndTrigger` on its own
          * would otherwise leave Discover silently stuck. Against the dropped-call rule (this
          * class's KDoc) that satisfies clause 1 outright: this is a DEFERRAL, not a discard. The
          * other early return here — [DiscoverUiState.Success.loadingMore] already `true` — is
