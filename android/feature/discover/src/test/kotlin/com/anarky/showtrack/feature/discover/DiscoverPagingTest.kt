@@ -69,6 +69,7 @@ class DiscoverPagingTest {
             )
         }
         composeRule.waitForIdle()
+        assertEquals("nothing may load on open", 0, loadMoreCalls)
 
         items = feed(shelves = 2, perShelf = 6)
         composeRule.waitForIdle()
@@ -96,8 +97,13 @@ class DiscoverPagingTest {
             composeRule.onNodeWithTag(DISCOVER_LIST_TAG).performTouchInput { swipeUp() }
             composeRule.waitForIdle()
         }
+        val before = loadMoreCalls
+        assertTrue("the swipes above must already have reached the end", before >= 1)
 
-        assertTrue("a scroll ending near the end must ask for the next page", loadMoreCalls >= 1)
+        composeRule.onNodeWithTag(DISCOVER_LIST_TAG).performTouchInput { swipeUp() }
+        composeRule.waitForIdle()
+
+        assertEquals("one scroll ending near the end asks for exactly one page", before + 1, loadMoreCalls)
     }
 
     @Test
@@ -108,8 +114,13 @@ class DiscoverPagingTest {
             composeRule.onNodeWithTag(discoverShelfTag("seed-1")).performTouchInput { swipeLeft() }
             composeRule.waitForIdle()
         }
+        val before = loadMoreCalls
+        assertTrue("the swipes above must already have reached the end", before >= 1)
 
-        assertTrue("a shelf scrolled to its end must ask for the next page", loadMoreCalls >= 1)
+        composeRule.onNodeWithTag(discoverShelfTag("seed-1")).performTouchInput { swipeLeft() }
+        composeRule.waitForIdle()
+
+        assertEquals("one shelf scroll ending at its end asks for exactly one page", before + 1, loadMoreCalls)
     }
 
     private companion object {
