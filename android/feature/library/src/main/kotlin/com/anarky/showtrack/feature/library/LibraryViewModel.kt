@@ -333,7 +333,14 @@ class LibraryViewModel
          */
         fun refreshOnReturn() {
             if (state.value !is LibraryUiState.Success) return
-            guard(errorSink = backgroundRefreshError) { repository.applyFilter(mutableFilter.value) }
+            guard(errorSink = backgroundRefreshError) {
+                repository.applyFilter(mutableFilter.value)
+                // The reload just succeeded, so an earlier load failure no longer describes the list;
+                // without this, `hasLoaded` flipping true would surface that stale failure as a
+                // full-screen error over a list that just loaded fine.
+                mutableError.value = null
+                mutableLoadMoreError.value = null
+            }
         }
 
         /**

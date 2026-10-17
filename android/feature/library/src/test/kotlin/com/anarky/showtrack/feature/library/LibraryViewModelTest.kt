@@ -589,16 +589,43 @@ class LibraryViewModelTest {
             val repository = FakeLibraryRepository()
             repository.entries.value = listOf(ENTRY)
             val viewModel = LibraryViewModel(repository)
-            val states = mutableListOf<LibraryUiState>()
-            backgroundScope.launch { viewModel.state.collect { states += it } }
+            backgroundScope.launch { viewModel.state.collect {} }
             advanceUntilIdle()
-            states.clear()
 
+            val gate = CompletableDeferred<Unit>()
+            repository.applyFilterGate = gate
+            viewModel.refreshOnReturn()
+            advanceUntilIdle()
+            assertTrue("the list must stay on screen while reloading", viewModel.state.value is LibraryUiState.Success)
+
+            gate.complete(Unit)
+            advanceUntilIdle()
+
+            assertTrue(viewModel.state.value is LibraryUiState.Success)
+            assertEquals(2, repository.applyFilterCalls)
+        }
+
+    @Test
+    fun `a successful refreshOnReturn from the stale cache shows the list, not the old failure`() =
+        runTest(dispatcher) {
+            val repository = FakeLibraryRepository(applyFilterFailure = IOException("offline"))
+            repository.entries.value = listOf(ENTRY)
+            val viewModel = LibraryViewModel(repository)
+            backgroundScope.launch { viewModel.state.collect {} }
+            advanceUntilIdle()
+            assertEquals(
+                LibraryUiState.Success(entries = listOf(ENTRY), loadingMore = false, isStale = true),
+                viewModel.state.value,
+            )
+
+            repository.applyFilterFailure = null
             viewModel.refreshOnReturn()
             advanceUntilIdle()
 
-            assertEquals(2, repository.applyFilterCalls)
-            assertTrue("the list must stay on screen throughout", states.all { it is LibraryUiState.Success })
+            assertEquals(
+                LibraryUiState.Success(entries = listOf(ENTRY), loadingMore = false, isStale = false),
+                viewModel.state.value,
+            )
         }
 
     @Test
