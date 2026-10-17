@@ -33,6 +33,7 @@ import com.anarky.showtrack.core.network.dto.WatchedEpisodesDto
 import com.anarky.showtrack.core.network.dto.WatchlistItemDto
 import com.anarky.showtrack.core.network.dto.WatchlistPageDto
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
@@ -45,6 +46,7 @@ import org.junit.Test
 import java.io.IOException
 import java.time.LocalDate
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class MediaRepositoryTest {
     @Test
     fun `sign-out empties search results, even with a search in flight`() =

@@ -72,7 +72,9 @@ class MediaRepositoryImpl
                     // included), so the paginator's contents still belong to `previous`. `query`
                     // must always name the query those contents came from, or a later
                     // loadMoreResults() appends the failed query's page 2 to the old results.
-                    this.query = previous
+                    // Conditional: a sign-out may have reset `query` meanwhile (it does not take the
+                    // lock), and restoring over that would resurrect the previous account's query.
+                    if (this.query == query) this.query = previous
                     throw failure
                 }
             }
