@@ -27,15 +27,16 @@ import kotlinx.serialization.json.JsonPrimitive
 import java.time.Instant
 
 /**
- * A role this client does not know decodes to null ("not known"), never to MEMBER or OWNER: a
- * wrong guess would show or hide owner-only actions (RT-21's tolerant-enum rule).
+ * A missing role stays null ("not known yet"); a present role this client does not know decodes to
+ * [GroupRole.UNKNOWN], never to MEMBER or OWNER: a wrong guess would show or hide owner-only
+ * actions (RT-21's tolerant-enum rule).
  */
 fun GroupDto.toDomain(): Group =
     Group(
         id = id,
         name = name,
         createdAt = Instant.parse(createdAt),
-        myRole = myRole?.let { raw -> GroupRole.entries.find { it.name.equals(raw, ignoreCase = true) } },
+        myRole = myRole?.let { raw -> wireEnum(raw, GroupRole.UNKNOWN) },
         memberCount = memberCount,
         memberPreview = memberPreview.map { it.toDomain() },
         watchlistCount = watchlistCount,
@@ -56,15 +57,14 @@ fun GroupWithInviteDto.toDomain(): GroupWithInvite =
     )
 
 /**
- * `GroupRole` is strict — `valueOf(uppercase())`, the same crash-loud convention `MediaMapper`
- * uses for `MediaSource`/`MediaType`/`MediaStatus`: unlike [ActivityKind] below, there is no
- * behaviour a client could sensibly fall back to for a third role it does not understand.
+ * A role this client does not know decodes to [GroupRole.UNKNOWN] rather than failing the member
+ * list; the UI shows it without owner-only affordances, never guessing MEMBER or OWNER.
  */
 fun MemberDto.toDomain(): GroupMember =
     GroupMember(
         userId = userId,
         username = username,
-        role = GroupRole.valueOf(role.uppercase()),
+        role = wireEnum(role, GroupRole.UNKNOWN),
         joinedAt = Instant.parse(joinedAt),
     )
 
@@ -78,9 +78,9 @@ fun GroupActorDto.toDomain(): GroupActor = GroupActor(id = id, username = userna
  */
 fun MediaDto.toSummary(): MediaSummary =
     MediaSummary(
-        source = MediaSource.valueOf(source.uppercase()),
+        source = wireEnum(source, MediaSource.UNKNOWN),
         externalId = externalId,
-        type = MediaType.valueOf(type.uppercase()),
+        type = wireEnum(type, MediaType.UNKNOWN),
         title = title,
         year = year,
         genres = genres,
@@ -89,12 +89,11 @@ fun MediaDto.toSummary(): MediaSummary =
 
 /**
  * A future seventh kind must decode into something rather than crash a client built today — the
- * same treatment [statusOf] in `SearchMapper` gives an unrecognised search-provider key. Every
+ * same tolerance [wireEnum] gives an unrecognised search-provider key. Every
  * value the backend actually sends (`app/library/models.py ActivityKind`) is upper-cased and
  * matched by name; anything else, including a case mismatch, falls back to [ActivityKind.UNKNOWN].
  */
-private fun kindOf(raw: String): ActivityKind =
-    ActivityKind.entries.find { it.name.equals(raw, ignoreCase = true) } ?: ActivityKind.UNKNOWN
+private fun kindOf(raw: String): ActivityKind = wireEnum(raw, ActivityKind.UNKNOWN)
 
 /**
  * `payload` is `dict[str, Any]` on the wire (spec §6) — an untyped bag is a coupling to interpret
@@ -143,6 +142,6 @@ fun WatchlistItemDto.toDomain(): WatchlistEntry =
 fun ProgressEntryDto.toDomain(): MemberProgress =
     MemberProgress(
         member = member.toDomain(),
-        status = UserMediaStatus.valueOf(status.uppercase()),
+        status = wireEnum(status, UserMediaStatus.UNKNOWN),
         progress = progress,
     )

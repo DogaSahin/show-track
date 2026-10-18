@@ -1,6 +1,7 @@
 package com.anarky.showtrack.core.data.repository
 
 import com.anarky.showtrack.core.data.mapper.toDomain
+import com.anarky.showtrack.core.data.mapper.wireValue
 import com.anarky.showtrack.core.data.paging.NumberedPage
 import com.anarky.showtrack.core.data.paging.PagePaginator
 import com.anarky.showtrack.core.data.session.SessionGuard
@@ -109,7 +110,7 @@ class MediaRepositoryImpl
         ): Media =
             api
                 .resolveMedia(
-                    ResolveMediaRequestDto(source = source.name.lowercase(), externalId = externalId),
+                    ResolveMediaRequestDto(source = source.wireValue(), externalId = externalId),
                 ).toDomain()
 
         private suspend fun publish(startedIn: Long) {

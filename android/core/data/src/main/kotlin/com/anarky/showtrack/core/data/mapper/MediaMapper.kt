@@ -17,23 +17,23 @@ import java.time.LocalDate
  * ISO-8601 `String` timestamps — precisely so the parse happens once, here, and nothing
  * downstream of `:core:data` ever handles a raw wire value.
  *
- * `uppercase()` because the backend serialises its enums lower-case: `"anilist"`, `"anime"`,
- * `"finished"`, `"not_yet_aired"`, decoded from a real response in `:core:network`'s
- * `WireContractTest`. `valueOf` therefore throws on a value a newer backend adds — deliberate,
- * and the same asymmetry `ignoreUnknownKeys` gives the DTOs: a NEW field is ignored, a CHANGED
- * meaning fails loudly rather than becoming a silently wrong default.
+ * Enums are matched case-insensitively because the backend serialises them lower-case:
+ * `"anilist"`, `"anime"`, `"finished"`, `"not_yet_aired"`, decoded from a real response in
+ * `:core:network`'s `WireContractTest`. A value a newer backend adds maps to the enum's `UNKNOWN`
+ * member rather than failing the page — the same tolerance `ignoreUnknownKeys` gives the DTOs.
+ * The UI renders `UNKNOWN` neutrally and never offers it as a choice.
  */
 fun MediaDto.toDomain(): Media =
     Media(
         id = id,
-        source = MediaSource.valueOf(source.uppercase()),
+        source = wireEnum(source, MediaSource.UNKNOWN),
         externalId = externalId,
-        type = MediaType.valueOf(type.uppercase()),
+        type = wireEnum(type, MediaType.UNKNOWN),
         title = title,
         year = year,
         genres = genres,
         coverImageUrl = coverImageUrl,
-        status = MediaStatus.valueOf(status.uppercase()),
+        status = wireEnum(status, MediaStatus.UNKNOWN),
         nextEpisodeSeason = nextEpisodeSeason,
         nextEpisodeNumber = nextEpisodeNumber,
         nextEpisodeDate = nextEpisodeDate?.let(Instant::parse),

@@ -41,6 +41,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
@@ -469,5 +470,16 @@ class MediaRepositoryTest {
 
             assertEquals(ResolveMediaRequestDto(source = "tmdb", externalId = "95396"), api.lastResolve)
             assertEquals("m-1", media.id)
+        }
+
+    @Test
+    fun `resolving an unknown source fails without a request`() =
+        runTest {
+            val api = FakeApi(response())
+
+            val failure = runCatching { MediaRepositoryImpl(api).resolve(MediaSource.UNKNOWN, "1") }.exceptionOrNull()
+
+            assertTrue(failure is IllegalArgumentException)
+            assertNull(api.lastResolve)
         }
 }

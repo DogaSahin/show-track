@@ -3,6 +3,7 @@ package com.anarky.showtrack.core.data.repository
 import com.anarky.showtrack.core.data.alerts.EpisodeAlerts
 import com.anarky.showtrack.core.data.mapper.toDomain
 import com.anarky.showtrack.core.data.mapper.toEntity
+import com.anarky.showtrack.core.data.mapper.wireValue
 import com.anarky.showtrack.core.data.paging.CursorPaginator
 import com.anarky.showtrack.core.data.paging.Page
 import com.anarky.showtrack.core.data.session.SessionGuard
@@ -96,7 +97,7 @@ class LibraryRepositoryImpl
                     api.library(
                         cursor = cursor,
                         limit = PAGE_SIZE,
-                        status = current.status?.name?.lowercase(),
+                        status = current.status?.wireValue(),
                         sort = current.sort.wire,
                         mediaId = null,
                         favorite = null,
@@ -245,7 +246,7 @@ class LibraryRepositoryImpl
             val created =
                 api
                     .addLibraryEntry(
-                        AddLibraryEntryRequest(source = source.name.lowercase(), externalId = externalId),
+                        AddLibraryEntryRequest(source = source.wireValue(), externalId = externalId),
                     ).toDomain()
             // Decision C-K: without this the user returns from the detail screen to a list that
             // does not contain what they just added. A network round trip is acceptable here
@@ -370,7 +371,7 @@ class LibraryRepositoryImpl
                     sort = sort.wire,
                     mediaId = null,
                     favorite = true,
-                    type = type?.name?.lowercase(),
+                    type = type?.wireValue(),
                 )
             return Page(page.items.map(LibraryEntryDto::toDomain), page.nextCursor)
         }
@@ -383,7 +384,7 @@ class LibraryRepositoryImpl
                 .library(
                     cursor = null,
                     limit = limit,
-                    status = UserMediaStatus.WATCHING.name.lowercase(),
+                    status = UserMediaStatus.WATCHING.wireValue(),
                     sort = LibrarySort.NEXT_EPISODE_DATE.wire,
                     mediaId = null,
                     favorite = null,
@@ -399,7 +400,7 @@ class LibraryRepositoryImpl
                     api.library(
                         cursor = cursor,
                         limit = ALL_WATCHING_PAGE_SIZE,
-                        status = UserMediaStatus.WATCHING.name.lowercase(),
+                        status = UserMediaStatus.WATCHING.wireValue(),
                         sort = null,
                         mediaId = null,
                         favorite = null,
@@ -459,7 +460,7 @@ private fun mapImportFailure(failure: Throwable): ImportFailure =
  */
 private fun LibraryPatch.toJson(): JsonObject =
     buildJsonObject {
-        status?.let { put("status", it.name.lowercase()) }
+        status?.let { put("status", it.wireValue()) }
         progress?.let { put("progress", it) }
         favorite?.let { put("favorite", it) }
         when (val change = score) {

@@ -17,34 +17,39 @@ import com.anarky.showtrack.core.network.dto.SearchItemDto
  */
 fun MediaSearchResponseDto.toDomain(): SearchResults =
     SearchResults(
-        items = items.map(SearchItemDto::toDomain),
+        items = items.mapNotNull(SearchItemDto::toDomain),
         hasMore = hasMore,
         degraded =
             sources.entries.mapNotNull { (source, status) ->
-                val known = MediaSource.entries.find { it.name.equals(source, ignoreCase = true) }
+                val known = wireEnum(source, MediaSource.UNKNOWN).takeIf { it != MediaSource.UNKNOWN }
                 known?.takeIf { statusOf(status) != SourceStatus.OK }
             },
     )
 
-private fun statusOf(raw: String): SourceStatus =
-    SourceStatus.entries.find { it.name.equals(raw, ignoreCase = true) } ?: SourceStatus.UNKNOWN
+private fun statusOf(raw: String): SourceStatus = wireEnum(raw, SourceStatus.UNKNOWN)
 
-/** A status this client does not know reads as unknown (null), never as a guessed one. */
-fun SearchItemDto.toDomain(): SearchResult =
-    SearchResult(
+/**
+ * Null for a result whose source or type this client does not know: it cannot be opened or added
+ * (the request would carry a value the server never agreed to), so it is left out of the list.
+ * A known result whose library status is unknown maps to [UserMediaStatus.UNKNOWN], never to
+ * "not tracked" — a title the user has must not look addable.
+ */
+fun SearchItemDto.toDomain(): SearchResult? {
+    val knownSource = wireEnum(source, MediaSource.UNKNOWN)
+    val knownType = wireEnum(type, MediaType.UNKNOWN)
+    if (knownSource == MediaSource.UNKNOWN || knownType == MediaType.UNKNOWN) return null
+    return SearchResult(
         media =
             MediaSummary(
-                source = MediaSource.valueOf(source.uppercase()),
+                source = knownSource,
                 externalId = externalId,
-                type = MediaType.valueOf(type.uppercase()),
+                type = knownType,
                 title = title,
                 year = year,
                 genres = genres,
                 coverImageUrl = coverImageUrl,
             ),
         mediaId = mediaId,
-        libraryStatus =
-            libraryEntry?.status?.let { raw ->
-                UserMediaStatus.entries.find { it.name.equals(raw, ignoreCase = true) }
-            },
+        libraryStatus = libraryEntry?.status?.let { raw -> wireEnum(raw, UserMediaStatus.UNKNOWN) },
     )
+}

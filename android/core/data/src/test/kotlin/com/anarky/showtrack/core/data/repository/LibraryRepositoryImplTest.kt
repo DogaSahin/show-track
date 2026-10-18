@@ -659,6 +659,25 @@ class LibraryRepositoryImplTest {
         }
 
     @Test
+    fun `updating to an unknown status fails without a request`() =
+        runTest {
+            val patch = LibraryPatch(status = UserMediaStatus.UNKNOWN)
+            val failure = runCatching { repository.update("1", patch) }.exceptionOrNull()
+
+            assertTrue(failure is IllegalArgumentException)
+            assertTrue(api.updateRequests.isEmpty())
+        }
+
+    @Test
+    fun `adding an unknown-source title fails without a request`() =
+        runTest {
+            val failure = runCatching { repository.add(MediaSource.UNKNOWN, "1") }.exceptionOrNull()
+
+            assertTrue(failure is IllegalArgumentException)
+            assertTrue(api.addRequests.isEmpty())
+        }
+
+    @Test
     fun `adding a title refreshes the list so it appears`() =
         runTest {
             // Decision C-K. Without the refresh the user returns from detail to a list that does
