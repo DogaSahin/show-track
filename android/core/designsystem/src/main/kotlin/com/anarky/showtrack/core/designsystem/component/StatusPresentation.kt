@@ -9,8 +9,8 @@ import com.anarky.showtrack.core.model.UserMediaStatus
 
 // Shared label + colour mapping for UserMediaStatus, consumed by both StatusTab (a selectable
 // filter control) and the read-only status badge inside MediaCard. They are different controls
-// (per the task brief, MediaCard must not reuse StatusTab), but they still describe the same five
-// values, and a mapping duplicated across both would drift the moment a sixth status is added.
+// (per the task brief, MediaCard must not reuse StatusTab), but they still describe the same
+// set of values, and a mapping duplicated across both would drift the moment a status is added.
 
 /**
  * Public since task 9b.5 — decision C-T: `:feature:profile`'s library-stats block labels the same

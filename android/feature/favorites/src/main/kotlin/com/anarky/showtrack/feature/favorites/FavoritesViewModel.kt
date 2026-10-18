@@ -260,7 +260,7 @@ internal fun FavoritesUiState.Success.with(
     return when (entry.media.type) {
         MediaType.ANIME -> copy(podium = restoredPodium, anime = restoredShelf)
         MediaType.TV -> copy(podium = restoredPodium, tv = restoredShelf)
-        MediaType.UNKNOWN -> this
+        MediaType.UNKNOWN -> copy(podium = restoredPodium)
     }
 }
 
