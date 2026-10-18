@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta, timezone
 import pytest
 from sqlalchemy import func, select
 
+from app import clock
 from app.media import service
 from app.media.models import Media, MediaSource, MediaStatus, MediaType
 from app.media.providers.base import MediaProvider, MediaRef, NextEpisode, ProviderMedia
@@ -155,8 +156,10 @@ async def test_persist_media_bulk_tolerates_a_duplicated_ref(db_session):
     assert WITCHER.ref in resolved
 
 
-async def test_detail_endpoint_returns_the_row(auth_client, db_session):
-    media = make_media(next_episode_date=datetime.now(tz=UTC) + timedelta(days=3))
+async def test_detail_endpoint_returns_the_row(auth_client, db_session, monkeypatch):
+    fixed = datetime(2026, 10, 31, 23, 59, 59, tzinfo=UTC)
+    monkeypatch.setattr(clock, "utcnow", lambda: fixed)
+    media = make_media(next_episode_date=fixed + timedelta(days=3))
     db_session.add(media)
     await db_session.flush()
 

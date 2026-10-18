@@ -6,6 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import clock
 from app.db import get_session
 from app.media import service
 from app.media.models import MediaSource
@@ -58,7 +59,7 @@ async def resolve_media(payload: ResolveMediaRequest, session: SessionDep, provi
 # route above /search would capture it and 422 on "search" failing UUID validation.
 @router.get("/{media_id}", response_model=MediaDetail)
 async def read_media(media_id: uuid.UUID, session: SessionDep) -> MediaDetail:
-    detail = await service.get_media_detail(session, media_id, datetime.now(tz=UTC))
+    detail = await service.get_media_detail(session, media_id, clock.utcnow())
     if detail is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="media not found")
     return detail
