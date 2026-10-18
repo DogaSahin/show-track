@@ -5,6 +5,7 @@ import com.anarky.showtrack.core.model.GroupRole
 import com.anarky.showtrack.core.model.MediaSource
 import com.anarky.showtrack.core.model.MediaStatus
 import com.anarky.showtrack.core.model.MediaType
+import com.anarky.showtrack.core.model.SourceStatus
 import com.anarky.showtrack.core.model.UserMediaStatus
 import com.anarky.showtrack.core.network.dto.AddLibraryEntryRequest
 import com.anarky.showtrack.core.network.dto.CreateGroupRequestDto
@@ -64,7 +65,8 @@ import java.io.File
  *
  * Responses are checked field-by-field (see [SchemaChecker]); requests only for carrying every
  * field the server requires. Nested DTOs are covered by recursion from their parents; they are
- * listed on their own anyway, so the table is the complete inventory of the `dto` package.
+ * listed on their own anyway; the table must list every DTO, so adding one to the `dto` package
+ * means adding its row here.
  */
 class OpenApiContractTest {
     private val snapshotFile: File? = System.getProperty(SNAPSHOT_PROPERTY)?.let(::File)
@@ -126,7 +128,7 @@ class OpenApiContractTest {
 
     private data class EnumRow(
         val component: String,
-        val property: String,
+        val property: String?,
         val values: List<String>,
     )
 
@@ -139,6 +141,8 @@ class OpenApiContractTest {
             EnumRow("MemberRead", "role", wire(GroupRole.entries - GroupRole.UNKNOWN)),
             EnumRow("GroupSummary", "my_role", wire(GroupRole.entries - GroupRole.UNKNOWN)),
             EnumRow("FeedItem", "kind", wire(ActivityKind.entries - ActivityKind.UNKNOWN)),
+            // Carried as a map value under MediaSearchResponse.sources, so the component is the enum.
+            EnumRow("SourceStatus", null, wire(SourceStatus.entries - SourceStatus.UNKNOWN)),
         )
 
     @Test
@@ -268,6 +272,15 @@ class OpenApiContractTest {
         val problems = checker.checkEnum("M", "status", listOf("airing", "not_yet_aired"))
 
         assertEquals(listOf("M.status: value 'not_yet_aired' is not a server value"), problems)
+    }
+
+    @Test
+    fun `a component that is itself an enum is checked`() {
+        val checker = synthetic("S" to """{"type": "string", "enum": ["ok", "error"]}""")
+
+        val problems = checker.checkEnum("S", null, listOf("ok", "timeout"))
+
+        assertEquals(listOf("S: value 'timeout' is not a server value"), problems)
     }
 
     /** A snapshot holding only [components], each a schema written as JSON. */

@@ -29,7 +29,7 @@ import java.time.Instant
 /**
  * A missing role stays null ("not known yet"); a present role this client does not know decodes to
  * [GroupRole.UNKNOWN], never to MEMBER or OWNER: a wrong guess would show or hide owner-only
- * actions (RT-21's tolerant-enum rule).
+ * actions (the tolerant-enum rule).
  */
 fun GroupDto.toDomain(): Group =
     Group(

@@ -156,7 +156,7 @@ Four of these are less obvious than they look:
   architecture rules actually fail a build. Without the root lifecycle task they are never executed.
 - **`assembleDebugAndroidTest` compiles instrumentation sources** that need an emulator to run, so
   an androidTest that stops building is caught immediately rather than rotting. CI executes them on
-  an emulator on pushes to `main`.
+  an emulator on pushes to `main` that touch the app.
 - **`lintDebug` cannot see a hardcoded string in a Compose screen.** `HardcodedText` understands XML
   `android:text` attributes, and this project has no XML layouts. Measured, not assumed. It stays
   for the surfaces it *can* see; a Compose-aware replacement is an open follow-up.

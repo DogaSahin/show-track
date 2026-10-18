@@ -86,17 +86,21 @@ internal fun DetailHero(
                     maxLines = 3,
                     overflow = TextOverflow.Ellipsis,
                 )
+                val typeAndYear = media.typeAndYear()
                 val statusLabel = media.status.label()
-                Text(
-                    text =
-                        if (statusLabel == null) {
-                            media.typeAndYear()
-                        } else {
-                            stringResource(R.string.detail_hero_meta, media.typeAndYear(), statusLabel)
-                        },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                val meta =
+                    when {
+                        statusLabel == null -> typeAndYear
+                        typeAndYear.isEmpty() -> statusLabel
+                        else -> stringResource(R.string.detail_hero_meta, typeAndYear, statusLabel)
+                    }
+                if (meta.isNotEmpty()) {
+                    Text(
+                        text = meta,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
     }

@@ -96,16 +96,13 @@ class SchemaChecker(
     /** Every value the client knows is one the server can send for `component.property`. */
     fun checkEnum(
         component: String,
-        property: String,
+        property: String?,
         values: Collection<String>,
     ): List<String> {
-        val where = "$component.$property"
-        val raw =
-            schemas[component]
-                ?.jsonObject
-                ?.get("properties")
-                ?.jsonObject
-                ?.get(property)
+        val where = if (property == null) component else "$component.$property"
+        val schema = schemas[component]?.jsonObject
+        // A null property means the component is itself the enum (e.g. a map value's schema).
+        val raw = if (property == null) schema else schema?.get("properties")?.jsonObject?.get(property)
         val resolved = raw?.let { resolve(it.jsonObject) }
         val known = (resolved as? Resolved.Schema)?.schema?.stringList("enum")?.toSet()
         return when {
