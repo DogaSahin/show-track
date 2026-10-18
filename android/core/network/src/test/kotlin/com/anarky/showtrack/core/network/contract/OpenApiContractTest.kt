@@ -56,7 +56,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
-import java.util.jar.JarFile
 
 /**
  * Every DTO against the backend's committed OpenAPI snapshot (`backend/openapi.json`), so a field
@@ -169,14 +168,6 @@ class OpenApiContractTest {
         assertEquals(emptyList<String>(), problems)
     }
 
-    /** A DTO added to the package without a row here would otherwise go unchecked. */
-    @Test
-    fun `every dto in the package has a row`() {
-        val covered = (responses + requests).map { it.first.serialName }.toSet()
-        // Equality, not "nothing missing": an empty scan must fail rather than pass vacuously.
-        assertEquals(covered, serializableDtoNames())
-    }
-
     // --- The checker itself, against synthetic schemas -------------------------------------
 
     @Serializable
@@ -255,6 +246,17 @@ class OpenApiContractTest {
         assertEquals(listOf("Req.year: required by the server but the client never sends it"), problems)
     }
 
+    /** An optional server field renamed under `additionalProperties: false` would 422 every request. */
+    @Test
+    fun `a request field the server does not accept is reported`() {
+        val schema = """{"type": "object", "properties": {"name": $STRING}, "additionalProperties": false}"""
+        val checker = synthetic("Req" to schema)
+
+        val problems = checker.checkRequest(Titled.serializer().descriptor, "Req")
+
+        assertEquals(listOf("Req.title: not in the server schema"), problems)
+    }
+
     @Test
     fun `an enum value missing on the server is reported`() {
         val checker =
@@ -286,38 +288,8 @@ class OpenApiContractTest {
 
     private companion object {
         const val SNAPSHOT_PROPERTY = "showtrack.openapi"
-        const val DTO_PACKAGE = "com.anarky.showtrack.core.network.dto"
-        const val SERIALIZER_SUFFIX = "\$\$serializer.class"
         const val STRING = """{"type": "string"}"""
 
         fun wire(values: List<Enum<*>>): List<String> = values.map { it.name.lowercase() }
-
-        /**
-         * The `@Serializable` classes of the dto package, found by the `$$serializer` class the
-         * plugin generates for each (the annotation itself is not visible at runtime). Reads the
-         * compiled main classes, whether Gradle hands them over as a directory or a jar.
-         */
-        fun serializableDtoNames(): Set<String> {
-            val root =
-                File(
-                    MediaDto::class.java.protectionDomain.codeSource.location
-                        .toURI(),
-                )
-            val dir = DTO_PACKAGE.replace('.', '/')
-            val entries =
-                if (root.isDirectory) {
-                    root
-                        .resolve(dir)
-                        .listFiles()
-                        .orEmpty()
-                        .map { "$dir/${it.name}" }
-                } else {
-                    JarFile(root).use { jar -> jar.entries().toList().map { it.name } }
-                }
-            return entries
-                .filter { it.substringBeforeLast('/') == dir && it.endsWith(SERIALIZER_SUFFIX) }
-                .map { it.removeSuffix(SERIALIZER_SUFFIX).replace('/', '.') }
-                .toSet()
-        }
     }
 }

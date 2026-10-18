@@ -64,7 +64,11 @@ class SchemaChecker(
         return problems
     }
 
-    /** Every field the server requires is one the client sends. */
+    /**
+     * Every field the server requires is one the client sends. When the schema forbids extra
+     * fields (`additionalProperties: false`, a 422 on the server), every client field must also
+     * be one of its `properties` — otherwise a renamed optional field would pass unnoticed.
+     */
     fun checkRequest(
         descriptor: SerialDescriptor,
         component: String,
@@ -72,13 +76,21 @@ class SchemaChecker(
         val schema = schemas[component]?.jsonObject ?: return listOf("$component: no such component")
         val sent = descriptor.elementNames.filterIndexed { i, _ -> !descriptor.isElementOptional(i) }.toSet()
         val defaulted = descriptor.elementNames.toSet() - sent
-        return schema.stringList("required").mapNotNull { name ->
-            when (name) {
-                in sent -> null
-                in defaulted -> "$component.$name: required by the server but the client omits it by default"
-                else -> "$component.$name: required by the server but the client never sends it"
+        val missing =
+            schema.stringList("required").mapNotNull { name ->
+                when (name) {
+                    in sent -> null
+                    in defaulted -> "$component.$name: required by the server but the client omits it by default"
+                    else -> "$component.$name: required by the server but the client never sends it"
+                }
             }
-        }
+        val properties = schema["properties"]?.jsonObject?.keys.orEmpty()
+        val forbidsExtra = schema["additionalProperties"] == JsonPrimitive(false)
+        val unknown =
+            descriptor.elementNames
+                .filter { forbidsExtra && it !in properties }
+                .map { "$component.$it: not in the server schema" }
+        return missing + unknown
     }
 
     /** Every value the client knows is one the server can send for `component.property`. */
