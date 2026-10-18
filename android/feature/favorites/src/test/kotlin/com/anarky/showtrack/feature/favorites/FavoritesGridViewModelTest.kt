@@ -59,6 +59,14 @@ class FavoritesGridViewModelTest {
         }
 
     @Test
+    fun `an unknown type argument opens the anime grid`() {
+        val viewModel =
+            FavoritesGridViewModel(SavedStateHandle(mapOf("type" to "unknown")), FakeLibraryRepository(mutableMapOf()))
+
+        assertEquals(MediaType.ANIME, viewModel.type)
+    }
+
+    @Test
     fun `a refused removal puts the poster back at its old place`() =
         runTest(dispatcher) {
             val first = favourite(id = "a", type = MediaType.TV)

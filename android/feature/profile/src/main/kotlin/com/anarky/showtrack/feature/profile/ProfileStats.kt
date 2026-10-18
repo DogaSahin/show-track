@@ -129,7 +129,7 @@ internal fun SectionLabel(
  */
 @Composable
 private fun StatusDistribution(byStatus: Map<UserMediaStatus, Int>) {
-    val present = UserMediaStatus.entries.filter { (byStatus[it] ?: 0) > 0 }
+    val present = UserMediaStatus.selectable.filter { (byStatus[it] ?: 0) > 0 }
     if (present.isEmpty()) return
     val spoken = present.map { "${it.label()} ${byStatus.getValue(it)}" }.joinToString(separator = ", ")
 

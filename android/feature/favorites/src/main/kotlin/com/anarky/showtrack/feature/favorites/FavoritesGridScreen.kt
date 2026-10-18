@@ -260,5 +260,5 @@ private fun FavoritesGridSort.labelRes(): Int =
 private fun MediaType.gridTitleRes(): Int =
     when (this) {
         MediaType.ANIME -> R.string.favorites_see_all_title_anime
-        MediaType.TV -> R.string.favorites_see_all_title_tv
+        MediaType.TV, MediaType.UNKNOWN -> R.string.favorites_see_all_title_tv
     }

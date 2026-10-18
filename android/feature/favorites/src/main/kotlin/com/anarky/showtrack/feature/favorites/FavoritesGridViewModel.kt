@@ -192,6 +192,6 @@ class FavoritesGridViewModel
 
 /** The route's wire value back to a type. Anything unexpected falls back to anime rather than crashing. */
 internal fun mediaTypeOf(wire: String): MediaType =
-    MediaType.entries.find { it.name.equals(wire, ignoreCase = true) } ?: MediaType.ANIME
+    MediaType.selectable.find { it.name.equals(wire, ignoreCase = true) } ?: MediaType.ANIME
 
 internal fun MediaType.wire(): String = name.lowercase()

@@ -128,7 +128,7 @@ internal fun FavoritesScreen(
                                     key = "podium",
                                 ) { FavoritesPodium(ranked = state.podium, onOpen = onOpen, onRemove = onRemove) }
                             }
-                            MediaType.entries.forEach { type ->
+                            MediaType.selectable.forEach { type ->
                                 val shelf = state.shelf(type)
                                 if (shelf.entries.isNotEmpty()) {
                                     item(key = "shelf-${type.wire()}") {
@@ -209,7 +209,7 @@ private fun FavoriteShelfRow(
 private fun MediaType.rowTitleRes(): Int =
     when (this) {
         MediaType.ANIME -> R.string.favorites_row_anime
-        MediaType.TV -> R.string.favorites_row_tv
+        MediaType.TV, MediaType.UNKNOWN -> R.string.favorites_row_tv
     }
 
 @Composable

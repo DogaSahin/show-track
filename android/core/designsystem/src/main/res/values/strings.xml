@@ -6,6 +6,7 @@
     <string name="status_dropped">Dropped</string>
     <string name="status_planned">Planned</string>
     <string name="status_paused">Paused</string>
+    <string name="status_other">Other</string>
     <!-- The library screen's unfiltered tab — StatusTabRow's `selected == null` case. -->
     <string name="status_all">All</string>
 

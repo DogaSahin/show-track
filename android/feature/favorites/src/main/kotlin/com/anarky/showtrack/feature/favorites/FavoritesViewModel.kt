@@ -212,6 +212,7 @@ class FavoritesViewModel
                 when (type) {
                     MediaType.ANIME -> current.copy(anime = transform(current.anime))
                     MediaType.TV -> current.copy(tv = transform(current.tv))
+                    MediaType.UNKNOWN -> current
                 }
         }
     }
@@ -226,6 +227,7 @@ internal fun FavoritesUiState.Success.shelf(type: MediaType): FavoriteShelf =
     when (type) {
         MediaType.ANIME -> anime
         MediaType.TV -> tv
+        MediaType.UNKNOWN -> FavoriteShelf()
     }
 
 internal fun FavoritesUiState.Success.placementOf(entry: LibraryEntry) =
@@ -258,6 +260,7 @@ internal fun FavoritesUiState.Success.with(
     return when (entry.media.type) {
         MediaType.ANIME -> copy(podium = restoredPodium, anime = restoredShelf)
         MediaType.TV -> copy(podium = restoredPodium, tv = restoredShelf)
+        MediaType.UNKNOWN -> this
     }
 }
 

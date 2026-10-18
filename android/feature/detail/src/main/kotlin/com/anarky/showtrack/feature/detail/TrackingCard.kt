@@ -130,7 +130,7 @@ private fun StatusDropdown(
             }
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            UserMediaStatus.entries.forEach { option ->
+            UserMediaStatus.selectable.forEach { option ->
                 DropdownMenuItem(
                     leadingIcon = { StatusDot(option) },
                     text = { Text(text = option.label()) },

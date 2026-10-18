@@ -95,7 +95,7 @@ private fun StatusDropdown(
             onClick = { expanded = true },
         )
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            (listOf(null) + UserMediaStatus.entries).forEach { option ->
+            (listOf(null) + UserMediaStatus.selectable).forEach { option ->
                 val isCurrent = option == status
                 DropdownMenuItem(
                     text = { Text(text = option?.label() ?: stringResource(R.string.library_status_all)) },

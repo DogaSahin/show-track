@@ -203,7 +203,7 @@ private fun DegradedNotice(
 ) {
     // Names resolved with `map` (inline, so still a composable context) before joining:
     // `joinToString`'s transform is not inline and could not call displayName().
-    val providerNames = providers.map { it.displayName() }
+    val providerNames = providers.mapNotNull { it.displayName() }
     Surface(
         modifier = modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
         shape = MaterialTheme.shapes.small,

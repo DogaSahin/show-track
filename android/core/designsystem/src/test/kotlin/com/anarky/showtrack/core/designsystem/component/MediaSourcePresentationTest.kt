@@ -29,16 +29,16 @@ class MediaSourcePresentationTest {
     fun `every source maps to a distinct label`() {
         val labels = mutableListOf<String>()
         composeRule.setContent {
-            labels += MediaSource.entries.map { it.displayName() }
+            labels += MediaSource.entries.filter { it != MediaSource.UNKNOWN }.mapNotNull { it.displayName() }
         }
         composeRule.waitForIdle()
 
-        assertEquals(MediaSource.entries.size, labels.toSet().size)
+        assertEquals(MediaSource.entries.size - 1, labels.toSet().size)
     }
 
     @Test
     fun `AniList resolves to its brand name, not the raw enum constant`() {
-        var label = ""
+        var label: String? = null
         composeRule.setContent {
             label = MediaSource.ANILIST.displayName()
         }
@@ -46,5 +46,16 @@ class MediaSourcePresentationTest {
 
         assertEquals("AniList", label)
         assertNotEquals(MediaSource.ANILIST.name, label)
+    }
+
+    @Test
+    fun `an unknown source has no display name`() {
+        var label: String? = "unset"
+        composeRule.setContent {
+            label = MediaSource.UNKNOWN.displayName()
+        }
+        composeRule.waitForIdle()
+
+        assertEquals(null, label)
     }
 }

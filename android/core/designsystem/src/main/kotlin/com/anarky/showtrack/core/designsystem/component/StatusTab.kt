@@ -66,7 +66,7 @@ fun StatusTabRow(
     onStatusSelected: (UserMediaStatus?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val statuses = UserMediaStatus.entries
+    val statuses = UserMediaStatus.selectable
     // "All" is prepended at index 0, ahead of one tab per status, so the two never collide.
     val selectedIndex = if (selected == null) 0 else statuses.indexOf(selected) + 1
     // ScrollableTabRow defaults contentColor to `primary`, which it hands to selected AND
