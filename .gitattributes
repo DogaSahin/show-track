@@ -1,0 +1,2 @@
+# Keep the API snapshot LF on Windows checkouts (autocrlf) so it matches the committed blob.
+backend/openapi.json text eol=lf

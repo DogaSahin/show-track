@@ -154,8 +154,9 @@ Four of these are less obvious than they look:
   root invocation does not reach it.
 - **`testDebugUnitTest` also runs `:build-logic:test`** — the TestKit tests that prove the two
   architecture rules actually fail a build. Without the root lifecycle task they are never executed.
-- **`assembleDebugAndroidTest` compiles instrumentation sources** that CI cannot run without an
-  emulator, so an androidTest that stops building is caught immediately rather than rotting.
+- **`assembleDebugAndroidTest` compiles instrumentation sources** that need an emulator to run, so
+  an androidTest that stops building is caught immediately rather than rotting. CI executes them on
+  an emulator on pushes to `main`.
 - **`lintDebug` cannot see a hardcoded string in a Compose screen.** `HardcodedText` understands XML
   `android:text` attributes, and this project has no XML layouts. Measured, not assumed. It stays
   for the surfaces it *can* see; a Compose-aware replacement is an open follow-up.
@@ -293,7 +294,10 @@ Tests are required for new logic and bugfixes. **Write useful tests, not exhaust
 the meaningful paths and the tricky edge that would actually break. A test must earn its place by
 catching a real regression in behaviour we own.
 
-Any API-contract change updates backend and client in the same PR.
+Any API-contract change updates backend and client in the same PR. The API schema is snapshotted in
+`backend/openapi.json`; regenerate it with `.venv/bin/python scripts/export_openapi.py` (from
+`backend/`) whenever the API changes. The backend test fails if it drifts, and the Android contract
+test checks the app's DTOs against it.
 
 A few things that will otherwise cost you an afternoon:
 
