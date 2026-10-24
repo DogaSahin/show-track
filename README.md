@@ -26,6 +26,10 @@ Self-hosted. It runs on your own machine and is reached over Tailscale.
 - **Get recommendations** seeded from titles you rated 7+, favourited or finished, ranked by how
   well each candidate's genres match your taste profile. Content-based, not collaborative filtering
   — nothing about what anyone else watched feeds a suggestion.
+- **Update from inside the app.** Signed-in users see a banner when a newer build is out, and a
+  minimum version can block older apps until they update. The APK comes from your own server, checked
+  against its published size and SHA-256 and against the installed app's signing key, then handed to
+  Android's installer — no app store, no second app.
 
 Data comes from **AniList** (anime, GraphQL) and **TMDB** (TV, REST), normalised behind one provider
 interface. `GET /v1/media/search` fans out to both live with a per-provider timeout, so a slow
@@ -51,7 +55,8 @@ One repo, because backend and client share one API contract: a change to an endp
 that calls it lands as a single reviewable unit.
 
 **Backend** — each domain is four files (`models.py`, `schemas.py`, `service.py`, `routes.py`)
-across `users`, `media`, `library`, `sync`, `recommendations`, `groups`. Routes
+across `users`, `media`, `library`, `sync`, `recommendations`, `groups`, plus `releases`, which is
+file-backed (it reads `release.json` and the APK from a directory) and has no models. Routes
 mount under `/v1`; `/health` stays unversioned because it's an infra probe, not client contract.
 
 **Android** — 16 Gradle modules: `:app`, six `:core:*` (`model`, `designsystem`, `navigation`,
@@ -285,6 +290,57 @@ before and one 6 hours before (just one if the episode is first seen less than 6
   notification shade; whoever signs in next opts in for themselves. An alert scheduled before a
   sign-out never shows, for a signed-out phone or for whoever signs in next.
 
+## Releasing
+
+Release builds are signed with your own key, and the server hands the newest one to the apps, which
+offer it as an in-app update.
+
+1. **One time: make a signing key.** Keep the keystore outside the repo and back it up off the
+   machine. Losing it means nobody can update the installed app again.
+
+   ```bash
+   keytool -genkeypair -v -keystore showtrack-release.jks -keyalg RSA -keysize 4096 \
+     -validity 10000 -alias showtrack
+   ```
+
+   Then point Gradle at it in `~/.gradle/gradle.properties` (never the repo's):
+
+   ```properties
+   showtrack.release.storeFile=/path/to/showtrack-release.jks
+   showtrack.release.storePassword=...
+   showtrack.release.keyAlias=showtrack
+   showtrack.release.keyPassword=...
+   ```
+
+2. **Each release.** Bump `versionCode` and `versionName` in `android/app/build.gradle.kts` (and
+   `minVersionCode` only when older apps must stop working until they update), then build and copy
+   the result to the server:
+
+   ```bash
+   cd android
+   ./gradlew :app:assembleRelease     # optionally -Pshowtrack.release.notes="What changed"
+   scp app/build/release-out/showtrack-*.apk <server>:<path>/backend/releases/
+   scp app/build/release-out/release.json <server>:<path>/backend/releases/
+   ```
+
+   `assembleRelease` refuses to run unless all four signing properties are set. It writes
+   `showtrack-<versionCode>.apk` and `release.json` (version, minimum version, file name, SHA-256,
+   notes) into `android/app/build/release-out/`. The server picks the new release up from
+   `backend/releases/` without a restart.
+
+   Copy the APK first and `release.json` last: the server offers whatever `release.json` names, so
+   copied the other way round it would advertise a file that is missing or still half-written, and
+   every phone that checked in the meantime would see a failed download. Older `showtrack-<n>.apk`
+   files in `backend/releases/` are no longer served and can be deleted.
+
+3. **First install.** Send each friend the release-signed APK from `assembleRelease` once. After
+   that they update from inside the app. A debug build cannot take these updates: it is signed with
+   a different key, and Android refuses an update whose signature does not match. Debug and release
+   builds share an application id, so a phone with a debug build installed has to uninstall it before
+   the release build will go on.
+4. **Allow installs.** The first time an update is installed, the app explains that Android needs
+   permission and opens the setting; the phone asks once to let ShowTrack install apps.
+
 ## Contributing
 
 Work on a local branch off `dev`, get the gate green, conventional-commit, PR into `dev`,
@@ -336,14 +392,14 @@ both get worse the longer they wait.
 | 9a–9c | Nine feature screens, end to end | code complete, unverified on device |
 | 9.5 | Visual redesign — palette, nav icons, auth, library, discover, feed, profile, favourites, groups, search, show details | done |
 | 10 | Polish and deployment | in progress |
+| 10 | In-app updates — signed release builds, update banner, minimum-version block | code complete, unverified on device |
 
 **Nothing has been run on a physical device by this repository's own tooling** — there is no device
 or emulator in the environment it was built in. Screens have been rendered headlessly and the gate
 is green, but "code complete" above means exactly that and not more.
 
-Open before this is finished: release signing (there is no `signingConfig`, so `assembleRelease`
-produces an unsigned APK Android will refuse to install), off-machine backups, and a manual pass on
-a real phone.
+Open before this is finished: off-machine backups, and a manual pass on a real phone — including a
+first install and an in-app update end to end.
 
 Architecture documentation lives outside this repository alongside the working copy — a design doc,
 a phased task breakdown and a decision record. This README is the orientation a fresh clone gets.

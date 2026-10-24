@@ -4,6 +4,7 @@ import com.anarky.showtrack.core.model.MediaSource
 import com.anarky.showtrack.core.model.SearchResults
 import com.anarky.showtrack.core.network.api.ShowTrackApi
 import com.anarky.showtrack.core.network.dto.AddLibraryEntryRequest
+import com.anarky.showtrack.core.network.dto.AppReleaseDto
 import com.anarky.showtrack.core.network.dto.CreateGroupRequestDto
 import com.anarky.showtrack.core.network.dto.CreateReviewRequestDto
 import com.anarky.showtrack.core.network.dto.EpisodeDto
@@ -39,11 +40,13 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
+import okhttp3.ResponseBody
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import retrofit2.Response
 import java.io.IOException
 import java.time.LocalDate
 
@@ -334,6 +337,10 @@ class MediaRepositoryTest {
         override suspend fun addLibraryEntry(request: AddLibraryEntryRequest): LibraryEntryDto = TODO("not used")
 
         override suspend fun libraryStats(): LibraryStatsDto = TODO("not used")
+
+        override suspend fun latestRelease(): Response<AppReleaseDto> = error("not used")
+
+        override suspend fun downloadRelease(): ResponseBody = error("not used")
 
         override suspend fun importAniList(request: ImportAniListRequest): ImportSummaryDto = TODO("not used")
 

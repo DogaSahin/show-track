@@ -2,6 +2,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- In-app updates: lets the app hand a downloaded APK to the system installer, which still
+         asks the user to confirm. The user also has to allow "Install unknown apps" once. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <application
         android:name=".ShowTrackApplication"
         android:allowBackup="true"
@@ -69,6 +73,24 @@
                 android:name="androidx.work.WorkManagerInitializer"
                 android:value="androidx.startup"
                 tools:node="remove" />
+        </provider>
+
+        <!--
+            Serves downloaded updates to the system installer. Not exported: the installer gets a
+            one-off read grant on the single APK URI (ApkInstaller), and update_paths.xml exposes
+            only cacheDir/updates/. The authority is what ApkInstaller asks FileProvider for.
+            MergedManifestTest pins the authority, that the provider is private, and that
+            cacheDir/updates/ resolves while the rest of the cache does not; that the directory
+            matches :core:data's UPDATES_DIR is a literal in that test, not a shared constant.
+        -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.updates"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/update_paths" />
         </provider>
     </application>
 

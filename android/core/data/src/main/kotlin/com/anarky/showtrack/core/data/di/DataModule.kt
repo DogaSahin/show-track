@@ -19,11 +19,18 @@ import com.anarky.showtrack.core.data.repository.RecommendationRepositoryImpl
 import com.anarky.showtrack.core.data.search.DataStoreRecentSearchStore
 import com.anarky.showtrack.core.data.search.RecentSearchStore
 import com.anarky.showtrack.core.data.session.UserData
+import com.anarky.showtrack.core.data.update.AppUpdateRepository
+import com.anarky.showtrack.core.data.update.AppUpdateRepositoryImpl
+import com.anarky.showtrack.core.data.update.DataStoreUpdateSnoozeStore
+import com.anarky.showtrack.core.data.update.UpdateSnoozeStore
 import dagger.Binds
 import dagger.Module
+import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import dagger.multibindings.IntoSet
+import java.time.Clock
+import javax.inject.Singleton
 
 /**
  * The edge that makes architecture rule 2 usable rather than merely enforced: everything upstream
@@ -117,6 +124,14 @@ abstract class DataModule {
     @Binds
     abstract fun alertSettingsStore(impl: DataStoreAlertSettingsStore): AlertSettingsStore
 
+    /** `AppUpdateRepositoryImpl` carries the `@Singleton`, same reasoning as the others above. */
+    @Binds
+    abstract fun appUpdateRepository(impl: AppUpdateRepositoryImpl): AppUpdateRepository
+
+    /** `DataStoreUpdateSnoozeStore` carries the `@Singleton`, for the same DataStore reason. */
+    @Binds
+    abstract fun updateSnoozeStore(impl: DataStoreUpdateSnoozeStore): UpdateSnoozeStore
+
     // Everything that holds one account's data, cleared together by UserDataCleaner at sign-in,
     // sign-out and session expiry. Each binds the class itself, which carries the @Singleton, so
     // the set holds the very instances the screens use.
@@ -139,4 +154,11 @@ abstract class DataModule {
     @Binds
     @IntoSet
     abstract fun activeGroupUserData(impl: DataStoreActiveGroupStore): UserData
+
+    companion object {
+        /** The wall clock; tests build repositories with their own. */
+        @Provides
+        @Singleton
+        fun clock(): Clock = Clock.systemUTC()
+    }
 }

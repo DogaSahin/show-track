@@ -5,17 +5,24 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import androidx.core.content.FileProvider
 import androidx.core.net.toUri
 import androidx.test.core.app.ApplicationProvider
 import com.anarky.showtrack.core.navigation.detailDeepLink
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.xmlpull.v1.XmlPullParser
+import java.io.File
 
 /**
- * The manifest half of episode alerts.
+ * The manifest half of episode alerts and of in-app updates.
  *
  * Robolectric loads `:app`'s **merged** manifest, which is where the libraries' declarations land
  * after the manifest merger runs. So two things no other test can reach are queryable through a
@@ -89,5 +96,76 @@ class MergedManifestTest {
             "androidx.work.WorkManagerInitializer is still in the merged manifest",
             provider.metaData?.containsKey("androidx.work.WorkManagerInitializer") != true,
         )
+    }
+
+    /** Without it the system refuses the installer hand-off and the Install button does nothing. */
+    @Test
+    fun `the app may ask to install packages`() {
+        val info = context.packageManager.getPackageInfo(context.packageName, PackageManager.GET_PERMISSIONS)
+
+        assertTrue(
+            "REQUEST_INSTALL_PACKAGES is missing from the merged manifest",
+            info.requestedPermissions.orEmpty().contains("android.permission.REQUEST_INSTALL_PACKAGES"),
+        )
+    }
+
+    /**
+     * The installer reads the downloaded APK through this provider. The authority is the one
+     * ApkInstaller asks FileProvider for; an exported provider would let any app read the cache.
+     */
+    @Test
+    fun `a private FileProvider serves downloaded updates`() {
+        val provider =
+            context.packageManager.getProviderInfo(
+                ComponentName(context, FileProvider::class.java),
+                PackageManager.GET_META_DATA,
+            )
+
+        assertEquals("com.anarky.showtrack.updates", provider.authority)
+        assertFalse("the update FileProvider must not be exported", provider.exported)
+        assertTrue("the update FileProvider must grant URI permissions", provider.grantUriPermissions)
+    }
+
+    /**
+     * Pins update_paths.xml, as the merged manifest links it, to the directory downloads land in
+     * (`:core:data`'s UPDATES_DIR, written here as a literal): a renamed path would make every
+     * hand-off throw. Read from the XML because FileProvider's own lookup cannot run on a Windows
+     * host (next test).
+     */
+    @Test
+    fun `the update FileProvider exposes exactly cacheDir updates`() {
+        val provider =
+            context.packageManager.getProviderInfo(
+                ComponentName(context, FileProvider::class.java),
+                PackageManager.GET_META_DATA,
+            )
+        val parser = provider.loadXmlMetaData(context.packageManager, "android.support.FILE_PROVIDER_PATHS")
+        // Unprefixed attributes, as FileProvider itself reads them.
+        val roots = mutableListOf<String>()
+        while (parser.next() != XmlPullParser.END_DOCUMENT) {
+            if (parser.eventType == XmlPullParser.START_TAG && parser.name != "paths") {
+                roots += "${parser.name}:${parser.getAttributeValue(null, "path")}"
+            }
+        }
+
+        assertEquals(listOf("cache-path:updates/"), roots)
+    }
+
+    /**
+     * The same pin through FileProvider itself, with the rest of the cache as the negative control.
+     * FileProvider matches roots with a literal '/', so on a Windows host every file looks outside
+     * them; this runs on CI's Linux runners and is skipped here.
+     */
+    @Test
+    fun `FileProvider serves a file in cacheDir updates and nothing beside it`() {
+        assumeTrue("FileProvider's root matching needs '/' separators", File.separatorChar == '/')
+        val authority = "com.anarky.showtrack.updates"
+
+        val uri = FileProvider.getUriForFile(context, authority, File(context.cacheDir, "updates/x.apk"))
+
+        assertEquals(authority, uri.authority)
+        assertThrows(IllegalArgumentException::class.java) {
+            FileProvider.getUriForFile(context, authority, File(context.cacheDir, "x.apk"))
+        }
     }
 }

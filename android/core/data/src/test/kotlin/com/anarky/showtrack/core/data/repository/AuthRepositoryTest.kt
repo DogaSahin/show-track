@@ -10,6 +10,7 @@ import com.anarky.showtrack.core.network.api.ShowTrackApi
 import com.anarky.showtrack.core.network.auth.TokenPair
 import com.anarky.showtrack.core.network.auth.TokenStore
 import com.anarky.showtrack.core.network.dto.AddLibraryEntryRequest
+import com.anarky.showtrack.core.network.dto.AppReleaseDto
 import com.anarky.showtrack.core.network.dto.CreateGroupRequestDto
 import com.anarky.showtrack.core.network.dto.CreateReviewRequestDto
 import com.anarky.showtrack.core.network.dto.EpisodeListDto
@@ -41,6 +42,7 @@ import com.anarky.showtrack.core.network.dto.WatchlistItemDto
 import com.anarky.showtrack.core.network.dto.WatchlistPageDto
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
+import okhttp3.ResponseBody
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -439,6 +441,10 @@ class AuthRepositoryTest {
         ): LibraryEntryDto = error("not used")
 
         override suspend fun libraryStats(): LibraryStatsDto = error("not used")
+
+        override suspend fun latestRelease(): Response<AppReleaseDto> = error("not used")
+
+        override suspend fun downloadRelease(): ResponseBody = error("not used")
 
         override suspend fun importAniList(request: ImportAniListRequest): ImportSummaryDto = error("not used")
 

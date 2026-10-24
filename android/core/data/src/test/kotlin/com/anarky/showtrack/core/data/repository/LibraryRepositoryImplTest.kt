@@ -21,6 +21,7 @@ import com.anarky.showtrack.core.model.ScoreChange
 import com.anarky.showtrack.core.model.UserMediaStatus
 import com.anarky.showtrack.core.network.api.ShowTrackApi
 import com.anarky.showtrack.core.network.dto.AddLibraryEntryRequest
+import com.anarky.showtrack.core.network.dto.AppReleaseDto
 import com.anarky.showtrack.core.network.dto.CreateGroupRequestDto
 import com.anarky.showtrack.core.network.dto.CreateReviewRequestDto
 import com.anarky.showtrack.core.network.dto.EpisodeListDto
@@ -57,6 +58,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonPrimitive
+import okhttp3.ResponseBody
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -1025,6 +1027,10 @@ private class FakeShowTrackApi(
     // reached these would be doing something it has no business doing, and should say so loudly.
     // The search/detail methods stay outside this repository's business.
     override suspend fun libraryStats(): LibraryStatsDto = statsResponse
+
+    override suspend fun latestRelease(): Response<AppReleaseDto> = error("not used")
+
+    override suspend fun downloadRelease(): ResponseBody = error("not used")
 
     override suspend fun importAniList(request: ImportAniListRequest): ImportSummaryDto {
         lastImportUsername = request.username

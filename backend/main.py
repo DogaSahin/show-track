@@ -16,6 +16,7 @@ from app.media import routes as media_routes
 from app.media.providers import get_providers, reset_providers
 from app.middleware import REQUEST_ID_HEADER, RequestIDMiddleware
 from app.recommendations import routes as recommendations_routes
+from app.releases import routes as releases_routes
 from app.sync import routes as sync_routes
 from app.sync import scheduler as scheduler_module
 from app.sync.scheduler import start_scheduler
@@ -30,6 +31,7 @@ DOMAIN_ROUTERS = (
     sync_routes.router,
     recommendations_routes.router,
     groups_routes.router,
+    releases_routes.router,
 )
 
 setup_logging()

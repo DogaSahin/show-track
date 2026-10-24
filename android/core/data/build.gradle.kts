@@ -54,6 +54,8 @@ dependencies {
     // one. `implementation`, never `api`, for the same reason as the two lines above: this stops
     // here, `:feature:auth` never sees `HttpException` itself.
     implementation(libs.retrofit.core)
+    // `ResponseBody` is the type of the streamed APK download on ShowTrackApi.
+    implementation(libs.okhttp.core)
 
     // Room's runtime is `implementation` inside :core:database, so it reaches this module's
     // RUNTIME classpath but not its COMPILE one. The repository test calls

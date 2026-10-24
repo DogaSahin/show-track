@@ -1,6 +1,7 @@
 package com.anarky.showtrack.core.network.api
 
 import com.anarky.showtrack.core.network.dto.AddLibraryEntryRequest
+import com.anarky.showtrack.core.network.dto.AppReleaseDto
 import com.anarky.showtrack.core.network.dto.CreateGroupRequestDto
 import com.anarky.showtrack.core.network.dto.CreateReviewRequestDto
 import com.anarky.showtrack.core.network.dto.EpisodeListDto
@@ -27,6 +28,8 @@ import com.anarky.showtrack.core.network.dto.WatchedEpisodesDto
 import com.anarky.showtrack.core.network.dto.WatchlistItemDto
 import com.anarky.showtrack.core.network.dto.WatchlistPageDto
 import kotlinx.serialization.json.JsonObject
+import okhttp3.ResponseBody
+import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.DELETE
 import retrofit2.http.GET
@@ -35,6 +38,7 @@ import retrofit2.http.POST
 import retrofit2.http.PUT
 import retrofit2.http.Path
 import retrofit2.http.Query
+import retrofit2.http.Streaming
 
 /**
  * The authenticated surface of the backend. Served by the OkHttp client that carries
@@ -314,4 +318,13 @@ interface ShowTrackApi {
     suspend fun deleteReview(
         @Path("id") id: String,
     )
+
+    /** `GET /v1/app/release`: the newest published build; 204 (null body) when none is published. */
+    @GET("v1/app/release")
+    suspend fun latestRelease(): Response<AppReleaseDto>
+
+    /** `GET /v1/app/release/apk`: the APK itself, streamed; 404 when none is published. */
+    @Streaming
+    @GET("v1/app/release/apk")
+    suspend fun downloadRelease(): ResponseBody
 }

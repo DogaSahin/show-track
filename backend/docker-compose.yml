@@ -54,6 +54,9 @@ services:
       SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env — openssl rand -hex 32}
       REGISTRATION_CODE: ${REGISTRATION_CODE:?set REGISTRATION_CODE in .env — openssl rand -hex 32}
       TMDB_API_KEY: ${TMDB_API_KEY:-}
+    # The owner publishes release.json + the APK here; read-only so the API can never alter a build.
+    volumes:
+      - ./releases:/app/releases:ro
     # Migrations run here rather than in a separate one-shot service, and the reason is reboots.
     # `depends_on` orders `docker compose up`; it does NOT order the restart policy, so after a
     # host reboot the api container can start before Postgres is accepting connections. Inline,

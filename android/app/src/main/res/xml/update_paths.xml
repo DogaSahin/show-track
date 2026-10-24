@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+    What the update FileProvider (AndroidManifest.xml) may hand out: downloaded APKs in
+    cacheDir/updates/ and nothing else. The directory name matches :core:data's UPDATES_DIR.
+-->
+<paths>
+    <cache-path
+        name="updates"
+        path="updates/" />
+</paths>
