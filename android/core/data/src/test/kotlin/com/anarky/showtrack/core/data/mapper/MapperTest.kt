@@ -8,6 +8,7 @@ import com.anarky.showtrack.core.model.MediaStatus
 import com.anarky.showtrack.core.model.MediaType
 import com.anarky.showtrack.core.model.UserMediaStatus
 import com.anarky.showtrack.core.network.dto.GenreCountDto
+import com.anarky.showtrack.core.network.dto.GroupActorDto
 import com.anarky.showtrack.core.network.dto.GroupDto
 import com.anarky.showtrack.core.network.dto.LibraryEntryDto
 import com.anarky.showtrack.core.network.dto.LibraryEntryRefDto
@@ -15,6 +16,7 @@ import com.anarky.showtrack.core.network.dto.LibraryStatsDto
 import com.anarky.showtrack.core.network.dto.MediaDto
 import com.anarky.showtrack.core.network.dto.MemberDto
 import com.anarky.showtrack.core.network.dto.PersistedMediaDto
+import com.anarky.showtrack.core.network.dto.ProgressEntryDto
 import com.anarky.showtrack.core.network.dto.RecommendationDto
 import com.anarky.showtrack.core.network.dto.RecommendationReasonDto
 import com.anarky.showtrack.core.network.dto.SearchItemDto
@@ -376,6 +378,33 @@ class MapperTest {
     @Test
     fun `an unknown media type and source map to unknown`() {
         val media = mediaDto().copy(type = "movie", source = "mal").toDomain()
+
+        assertEquals(MediaType.UNKNOWN, media.type)
+        assertEquals(MediaSource.UNKNOWN, media.source)
+    }
+
+    @Test
+    fun `a feed or watchlist title with an unknown type and source maps to unknown`() {
+        val summary = mediaDto().copy(type = "movie", source = "mal").toSummary()
+
+        assertEquals(MediaType.UNKNOWN, summary.type)
+        assertEquals(MediaSource.UNKNOWN, summary.source)
+        assertEquals("One Piece", summary.title)
+    }
+
+    @Test
+    fun `a member's progress with an unknown status maps to unknown`() {
+        val progress =
+            ProgressEntryDto(member = GroupActorDto(id = "u-1", username = "mira"), status = "rewatching", progress = 3)
+                .toDomain()
+
+        assertEquals(UserMediaStatus.UNKNOWN, progress.status)
+        assertEquals(3, progress.progress)
+    }
+
+    @Test
+    fun `a recommended title with an unknown type and source maps to unknown`() {
+        val media = persistedMediaDto().copy(type = "movie", source = "mal").toDomain()
 
         assertEquals(MediaType.UNKNOWN, media.type)
         assertEquals(MediaSource.UNKNOWN, media.source)
