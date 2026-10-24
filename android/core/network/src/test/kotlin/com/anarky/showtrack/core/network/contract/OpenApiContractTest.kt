@@ -67,6 +67,8 @@ import retrofit2.http.PATCH
 import retrofit2.http.POST
 import retrofit2.http.PUT
 import retrofit2.http.Query
+import retrofit2.http.QueryMap
+import retrofit2.http.QueryName
 import java.io.File
 
 /**
@@ -200,7 +202,7 @@ class OpenApiContractTest {
     @Test
     fun `every api route and query parameter exists on the server`() {
         val routes = listOf(ShowTrackApi::class.java, AuthApi::class.java).flatMap(::routesOf)
-        assertTrue("no routes found by reflection", routes.size > 30)
+        assertTrue("no routes found by reflection", routes.isNotEmpty())
 
         val problems = routes.flatMap { checker.checkRoute(it.method, it.path, it.queries) }
 
@@ -213,9 +215,13 @@ class OpenApiContractTest {
         val queries: List<String>,
     )
 
-    /** Retrofit's annotations are runtime-retained, so the interface itself is the route table. */
+    /**
+     * Retrofit's annotations are runtime-retained, so the interface itself is the route table.
+     * Every declared method must read as a route, and only `@Query` parameters are understood:
+     * an `@HTTP` route or a `@QueryMap` fails here rather than escaping the check unseen.
+     */
     private fun routesOf(api: Class<*>): List<Route> =
-        api.declaredMethods.mapNotNull { method ->
+        api.declaredMethods.filterNot { it.isSynthetic }.map { method ->
             val (verb, path) =
                 method.annotations.firstNotNullOfOrNull { annotation ->
                     when (annotation) {
@@ -226,8 +232,15 @@ class OpenApiContractTest {
                         is DELETE -> "DELETE" to annotation.value
                         else -> null
                     }
-                } ?: return@mapNotNull null
-            val queries = method.parameterAnnotations.flatMap { it.filterIsInstance<Query>() }.map { it.value }
+                }
+                    ?: error(
+                        "${api.simpleName}.${method.name}: no GET/POST/PUT/PATCH/DELETE annotation",
+                    )
+            val annotations = method.parameterAnnotations.flatMap { it.toList() }
+            check(annotations.none { it is QueryMap || it is QueryName }) {
+                "${api.simpleName}.${method.name}: @QueryMap/@QueryName names can't be checked against the schema"
+            }
+            val queries = annotations.filterIsInstance<Query>().map { it.value }
             Route(verb, path, queries)
         }
 

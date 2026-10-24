@@ -284,6 +284,8 @@ class DiscoverScreenTest {
         }
 
         val context = ApplicationProvider.getApplicationContext<Context>()
+        // Positive control: the shelf poster is on screen, so its missing Add is real, not unrendered.
+        composeRule.onNodeWithText(BEBOP.media.title).assertExists()
         composeRule.onNodeWithText(context.getString(R.string.discover_add_button)).assertDoesNotExist()
         composeRule
             .onNodeWithContentDescription(
