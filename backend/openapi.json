@@ -34,6 +34,45 @@
         "title": "AddLibraryEntryRequest",
         "type": "object"
       },
+      "AppRelease": {
+        "description": "The latest published build of the Android app, as the update prompt needs it.",
+        "properties": {
+          "min_version_code": {
+            "title": "Min Version Code",
+            "type": "integer"
+          },
+          "notes": {
+            "title": "Notes",
+            "type": "string"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "version_code": {
+            "title": "Version Code",
+            "type": "integer"
+          },
+          "version_name": {
+            "title": "Version Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version_code",
+          "version_name",
+          "min_version_code",
+          "notes",
+          "size_bytes",
+          "sha256"
+        ],
+        "title": "AppRelease",
+        "type": "object"
+      },
       "CreateGroupRequest": {
         "properties": {
           "name": {
@@ -1720,6 +1759,60 @@
         "summary": "Health",
         "tags": [
           "infra"
+        ]
+      }
+    },
+    "/v1/app/release": {
+      "get": {
+        "operationId": "get_release_v1_app_release_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppRelease"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "204": {
+            "description": "No release is published."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Release",
+        "tags": [
+          "releases"
+        ]
+      }
+    },
+    "/v1/app/release/apk": {
+      "get": {
+        "operationId": "get_release_apk_v1_app_release_apk_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/vnd.android.package-archive": {}
+            },
+            "description": "The published APK."
+          },
+          "404": {
+            "description": "No release is published."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Release Apk",
+        "tags": [
+          "releases"
         ]
       }
     },

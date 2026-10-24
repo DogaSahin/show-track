@@ -44,7 +44,7 @@ def test_include_router_mounts_domain_routers_under_v1_prefix() -> None:
         importlib.reload(main)
 
 
-def test_domain_routers_cover_all_seven_domains_with_expected_prefixes() -> None:
+def test_domain_routers_cover_all_eight_domains_with_expected_prefixes() -> None:
     """Catches a forgotten or misnamed domain router in main.DOMAIN_ROUTERS."""
     expected_prefixes = {
         "/users",
@@ -54,11 +54,12 @@ def test_domain_routers_cover_all_seven_domains_with_expected_prefixes() -> None
         "/sync",
         "/recommendations",
         "/groups",
+        "/app",
     }
 
     actual_prefixes = {router.prefix for router in main.DOMAIN_ROUTERS}
 
-    assert len(main.DOMAIN_ROUTERS) == 7
+    assert len(main.DOMAIN_ROUTERS) == 8
     assert actual_prefixes == expected_prefixes
 
 
