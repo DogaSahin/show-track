@@ -13,7 +13,12 @@ from app.media.providers.images import relay_cover_url
 CoverImageUrl = Annotated[
     str | None,
     PlainSerializer(relay_cover_url, return_type=str | None),
-    Field(description="Absolute URL, or a path relative to the API root (resolve it against the API base URL)."),
+    Field(
+        description=(
+            "Absolute URL, or a path beginning /v1/ - append it to the API base URL the same way "
+            "API routes are (keep any base-URL path prefix)."
+        )
+    ),
 ]
 
 

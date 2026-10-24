@@ -667,16 +667,19 @@ async def fetch_tmdb_image(client: httpx.AsyncClient, size: str, file_name: str)
                 if response.status_code == 404:
                     raise ImageNotFoundError
                 if response.status_code != 200:
+                    logger.warning("poster relay rejected: upstream status %d", response.status_code)
                     raise ImageUpstreamError
                 # "image/jpeg; charset=..." is still a JPEG; compare the bare type.
                 media_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
                 if media_type not in IMAGE_MEDIA_TYPES:
+                    logger.warning("poster relay rejected: content type %r", media_type)
                     raise ImageUpstreamError
                 # Counted as it arrives rather than trusting Content-Length, which may be absent.
                 body = bytearray()
                 async for chunk in response.aiter_bytes():
                     body.extend(chunk)
                     if len(body) > MAX_IMAGE_BYTES:
+                        logger.warning("poster relay rejected: body over %d bytes", MAX_IMAGE_BYTES)
                         raise ImageUpstreamError
     except (TimeoutError, httpx.HTTPError) as exc:
         # Type only: the transport's message would put the upstream URL into the log stream.
