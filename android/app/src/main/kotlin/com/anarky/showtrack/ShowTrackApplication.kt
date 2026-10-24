@@ -8,12 +8,15 @@ import coil3.PlatformContext
 import coil3.SingletonImageLoader
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import com.anarky.showtrack.core.data.session.SessionEndObserver
+import com.anarky.showtrack.core.network.di.BaseUrl
 import com.anarky.showtrack.core.network.di.PlainClient
+import com.anarky.showtrack.image.ApiRelativeUrlMapper
 import dagger.Lazy
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import javax.inject.Inject
 
@@ -47,6 +50,11 @@ class ShowTrackApplication :
     @Inject
     @PlainClient
     lateinit var plainClient: Lazy<OkHttpClient>
+
+    /** Base for server-relative cover paths; see [ApiRelativeUrlMapper]. */
+    @Inject
+    @BaseUrl
+    lateinit var baseUrl: String
 
     /**
      * Started here rather than from a screen, and it is not arbitrary: `AuthEventBus` has
@@ -89,6 +97,7 @@ class ShowTrackApplication :
         ImageLoader
             .Builder(context)
             .components {
+                add(ApiRelativeUrlMapper(baseUrl.toHttpUrl()))
                 add(OkHttpNetworkFetcherFactory(callFactory = { plainClient.get() }))
             }.build()
 }
