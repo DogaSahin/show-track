@@ -268,6 +268,30 @@ class DiscoverScreenTest {
         assertEquals(FRIEREN, opened)
     }
 
+    /** Adding resolves through the title's provider, so an unknown provider gets no Add at all. */
+    @Test
+    fun `titles from an unknown provider offer no add, on the top pick or a shelf`() {
+        val unknown = { r: Recommendation -> r.copy(media = r.media.copy(source = MediaSource.UNKNOWN)) }
+        composeRule.setContent {
+            DiscoverScreen(
+                state = DiscoverUiState.Success(items = listOf(unknown(FRIEREN), unknown(BEBOP))),
+                onRetry = {},
+                onLoadMore = {},
+                onAdd = {},
+                onRowClick = {},
+                onSearch = {},
+            )
+        }
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule.onNodeWithText(context.getString(R.string.discover_add_button)).assertDoesNotExist()
+        composeRule
+            .onNodeWithContentDescription(
+                context.getString(R.string.discover_add_content_description, BEBOP.media.title),
+            ).assertDoesNotExist()
+        composeRule.onNodeWithText(context.getString(R.string.discover_details_button)).assertExists()
+    }
+
     @Test
     fun `a failed add of the top pick shows the error on the card`() {
         composeRule.setContent {

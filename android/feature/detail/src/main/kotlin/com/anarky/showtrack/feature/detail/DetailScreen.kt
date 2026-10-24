@@ -235,11 +235,14 @@ private fun TrackingSection(
     val (media, entry) = success.data
     Box(modifier = Modifier.padding(vertical = 12.dp)) {
         if (entry == null) {
-            AddToLibraryButton(
-                saving = success.saving,
-                error = success.actionError as? DetailActionError.Add,
-                onAdd = actions.onAddToLibrary,
-            )
+            // A title from a provider this version doesn't know can't be added; no dead button.
+            if (media.canBeAdded) {
+                AddToLibraryButton(
+                    saving = success.saving,
+                    error = success.actionError as? DetailActionError.Add,
+                    onAdd = actions.onAddToLibrary,
+                )
+            }
         } else {
             TrackingCard(
                 entry = entry,

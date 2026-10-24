@@ -106,12 +106,14 @@ internal fun TopPickCard(
                     horizontalArrangement = Arrangement.spacedBy(space = 8.dp),
                     modifier = Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, bottom = 14.dp),
                 ) {
-                    Button(
-                        onClick = onAdd,
-                        shape = MaterialTheme.shapes.medium,
-                        modifier = Modifier.weight(1f).height(TopPickButtonHeight),
-                    ) {
-                        Text(text = stringResource(R.string.discover_add_button))
+                    if (recommendation.media.canBeAdded) {
+                        Button(
+                            onClick = onAdd,
+                            shape = MaterialTheme.shapes.medium,
+                            modifier = Modifier.weight(1f).height(TopPickButtonHeight),
+                        ) {
+                            Text(text = stringResource(R.string.discover_add_button))
+                        }
                     }
                     OutlinedButton(
                         onClick = onDetails,
