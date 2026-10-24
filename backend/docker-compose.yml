@@ -36,11 +36,43 @@ services:
       timeout: 3s
       retries: 10
 
+  # Encrypted DNS for the api container. Some home ISPs block TMDB at the DNS level: lookups of
+  # api.themoviedb.org / image.tmdb.org answer 127.0.0.1, and plain port-53 queries to public
+  # resolvers (1.1.1.1 and friends) are intercepted, so merely pointing the api at one does
+  # nothing. DNS-over-HTTPS is not touched. The upstreams below are given by IP address, which
+  # needs no bootstrap lookup (the one lookup that would itself be blocked), and both
+  # certificates carry IP SANs.
+  #
+  # Only the api uses this. Docker's embedded resolver still answers service names such as `db`
+  # and forwards every other name to the address in the api's `dns:` list. No published port: it
+  # is reachable only from inside the compose network. If this container is down, the api resolves
+  # nothing external (AniList too) until it restarts, which `restart: unless-stopped` handles.
+  #
+  # The proxy needs a fixed address for `dns:` to point at, hence the fixed subnet under
+  # `networks:` below. Changing the network (first deploy of this, or overriding DNS_SUBNET)
+  # requires a one-time `docker compose -f docker-compose.yml down` before `up -d`; the Postgres
+  # volume survives it.
+  dns:
+    image: adguard/dnsproxy:v0.86.0
+    restart: unless-stopped
+    command:
+      - --listen=0.0.0.0
+      - --port=53
+      - --upstream=https://1.1.1.1/dns-query
+      - --upstream=https://9.9.9.9/dns-query
+      - --cache
+    networks:
+      default:
+        ipv4_address: ${DNS_PROXY_IP:-172.29.53.53}
+
   api:
     build:
       context: .
       target: runtime
     restart: unless-stopped
+    # Resolve external names through the `dns` service above (see the comment there).
+    dns:
+      - ${DNS_PROXY_IP:-172.29.53.53}
     environment:
       # Composed here rather than read from .env, and the distinction matters: .env's own
       # DATABASE_URL points at localhost:5432 for host-run uvicorn/alembic/pytest, while a
@@ -76,6 +108,16 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      dns:
+        condition: service_started
+
+# A fixed subnet so the `dns` service can have a static address. Override DNS_SUBNET and
+# DNS_PROXY_IP together in .env if 172.29.53.0/24 clashes with something on the host.
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: ${DNS_SUBNET:-172.29.53.0/24}
 
 volumes:
   showtrack-pgdata:
