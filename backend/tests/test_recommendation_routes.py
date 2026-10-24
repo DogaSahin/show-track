@@ -71,6 +71,17 @@ async def test_each_item_explains_itself(auth_client, auth_user, db_session):
     assert reason["matched_genres"] == ["mecha"]
 
 
+async def test_a_tmdb_cover_is_emitted_as_the_relay_path(auth_client, auth_user, db_session):
+    await _seeded_user(db_session, auth_user.id, candidates=1)
+    candidate = (await db_session.execute(select(Media).where(Media.external_id == "100"))).scalar_one()
+    candidate.cover_image_url = "https://image.tmdb.org/t/p/w500/abc123.jpg"
+    await db_session.flush()
+
+    body = (await auth_client.get("/v1/recommendations")).json()
+
+    assert body["items"][0]["media"]["cover_image_url"] == "/v1/images/tmdb/w500/abc123.jpg"
+
+
 async def test_the_embedded_media_carries_no_field_that_cannot_be_kept_fresh(auth_client, auth_user, db_session):
     """The item embeds PersistedMedia, NOT MediaDetail, and restoring the difference is a bug.
 

@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 from app.groups.models import GroupRole
 from app.library.models import ActivityKind, UserMediaStatus
-from app.media.schemas import MediaDetail
+from app.media.schemas import CoverImageUrl, MediaDetail
 
 
 class CreateGroupRequest(BaseModel):
@@ -33,7 +33,7 @@ class MemberPreview(BaseModel):
 
 class WatchlistPreview(BaseModel):
     media_id: uuid.UUID
-    cover_image_url: str | None
+    cover_image_url: CoverImageUrl
 
 
 class GroupSummary(GroupRead):
