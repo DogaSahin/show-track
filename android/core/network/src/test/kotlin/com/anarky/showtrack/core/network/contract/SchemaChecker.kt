@@ -14,7 +14,7 @@ import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * Compares kotlinx.serialization descriptors with the `components.schemas` of an OpenAPI 3.1
- * document as FastAPI/pydantic v2 emits it. Every check returns its problems as
+ * document as FastAPI/pydantic v2 emits it, and Retrofit routes with its `paths`. Every check returns its problems as
  * `"<Component>.<field>: <reason>"`; an empty list means the shapes agree.
  *
  * Schema shapes understood: `$ref` to `#/components/schemas/X`; `anyOf: [X, {"type": "null"}]`
@@ -38,6 +38,8 @@ class SchemaChecker(
             .jsonObject
             .getValue("schemas")
             .jsonObject
+
+    private val paths: JsonObject = snapshot["paths"]?.jsonObject ?: JsonObject(emptyMap())
 
     /** What a property schema resolves to once `$ref` and a nullable `anyOf` are unwrapped. */
     private sealed interface Resolved {
@@ -92,6 +94,48 @@ class SchemaChecker(
                 .map { "$component.$it: not in the server schema" }
         return missing + unknown
     }
+
+    /** Every hand-built field name in [fields] is one of [component]'s `properties`. */
+    fun checkFields(
+        component: String,
+        fields: Collection<String>,
+    ): List<String> {
+        val schema = schemas[component]?.jsonObject ?: return listOf("$component: no such component")
+        val properties = schema["properties"]?.jsonObject?.keys.orEmpty()
+        return fields.filterNot { it in properties }.map { "$component.$it: not in the server schema" }
+    }
+
+    /**
+     * [method] [path] is an operation on the server, and every name in [queries] is one of its
+     * query parameters. Path parameters are compared by position only (`{id}` matches
+     * `{entry_id}`): their names are the client's own.
+     */
+    fun checkRoute(
+        method: String,
+        path: String,
+        queries: Collection<String>,
+    ): List<String> {
+        val where = "$method /$path"
+        val operation =
+            paths.entries
+                .firstOrNull { (serverPath, _) -> serverPath.withoutParamNames() == "/$path".withoutParamNames() }
+                ?.value
+                ?.jsonObject
+                ?.get(method.lowercase())
+                ?.jsonObject
+                ?: return listOf("$where: no such operation on the server")
+        val serverQueries =
+            operation["parameters"]
+                ?.jsonArray
+                ?.map { it.jsonObject }
+                ?.filter { it["in"]?.jsonPrimitive?.content == "query" }
+                ?.mapNotNull { it["name"]?.jsonPrimitive?.content }
+                .orEmpty()
+                .toSet()
+        return queries.filterNot { it in serverQueries }.map { "$where: query '$it' is not a server parameter" }
+    }
+
+    private fun String.withoutParamNames(): String = replace(PATH_PARAM, "{}")
 
     /** Every value the client knows is one the server can send for `component.property`. */
     fun checkEnum(
@@ -265,5 +309,6 @@ class SchemaChecker(
             )
         val UNSUPPORTED = listOf("oneOf", "allOf", "not")
         val NULL_SCHEMA = JsonObject(mapOf("type" to JsonPrimitive("null")))
+        val PATH_PARAM = Regex("\\{[^}]*}")
     }
 }

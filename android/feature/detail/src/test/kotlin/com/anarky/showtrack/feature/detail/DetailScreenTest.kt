@@ -1004,6 +1004,29 @@ class DetailScreenTest {
             ).assertExists()
     }
 
+    /** Add can never succeed for a title from a provider this version doesn't know, so it isn't offered. */
+    @Test
+    fun `an untracked title from an unknown provider offers no add button`() {
+        val add = ApplicationProvider.getApplicationContext<Context>().getString(R.string.detail_add_button)
+        var media by mutableStateOf(MEDIA.copy(source = MediaSource.UNKNOWN))
+        composeRule.setContent {
+            DetailScreen(
+                state =
+                    DetailUiState.Success(
+                        data = DetailData(media = media, entry = null),
+                        groupSection = GroupSectionState.Absent,
+                    ),
+                groups = emptyList(),
+                actions = DetailActions(),
+            )
+        }
+
+        composeRule.onNodeWithText(add).assertDoesNotExist()
+
+        media = MEDIA
+        composeRule.onNodeWithText(add).assertExists()
+    }
+
     private fun successState(
         groupSection: GroupSectionState,
         justProposedToGroupId: String? = null,

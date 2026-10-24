@@ -182,24 +182,26 @@ private fun DiscoverPoster(
     ) {
         Box {
             MediaCover(coverImageUrl = media.coverImageUrl, modifier = Modifier.fillMaxWidth())
-            Surface(
-                onClick = onAdd,
-                shape = CircleShape,
-                color = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary,
-                modifier =
-                    Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(all = 5.dp)
-                        .size(AddButtonSize),
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_add),
-                        contentDescription =
-                            stringResource(R.string.discover_add_content_description, media.title),
-                        modifier = Modifier.size(18.dp),
-                    )
+            if (media.canBeAdded) {
+                Surface(
+                    onClick = onAdd,
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                    modifier =
+                        Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(all = 5.dp)
+                            .size(AddButtonSize),
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_add),
+                            contentDescription =
+                                stringResource(R.string.discover_add_content_description, media.title),
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
                 }
             }
         }

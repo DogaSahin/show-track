@@ -25,6 +25,7 @@ import com.anarky.showtrack.core.network.api.ShowTrackApi
 import com.anarky.showtrack.core.network.dto.AddLibraryEntryRequest
 import com.anarky.showtrack.core.network.dto.ImportAniListRequest
 import com.anarky.showtrack.core.network.dto.LibraryEntryDto
+import com.anarky.showtrack.core.network.dto.LibraryPatchFields
 import com.anarky.showtrack.core.network.dto.SetWatchedRequestDto
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
@@ -460,12 +461,12 @@ private fun mapImportFailure(failure: Throwable): ImportFailure =
  */
 private fun LibraryPatch.toJson(): JsonObject =
     buildJsonObject {
-        status?.let { put("status", it.wireValue()) }
-        progress?.let { put("progress", it) }
-        favorite?.let { put("favorite", it) }
+        status?.let { put(LibraryPatchFields.STATUS, it.wireValue()) }
+        progress?.let { put(LibraryPatchFields.PROGRESS, it) }
+        favorite?.let { put(LibraryPatchFields.FAVORITE, it) }
         when (val change = score) {
             null -> Unit
-            is ScoreChange.Clear -> put("score", JsonNull)
-            is ScoreChange.Set -> put("score", change.value.toPlainString())
+            is ScoreChange.Clear -> put(LibraryPatchFields.SCORE, JsonNull)
+            is ScoreChange.Set -> put(LibraryPatchFields.SCORE, change.value.toPlainString())
         }
     }

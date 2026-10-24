@@ -18,4 +18,10 @@ data class Media(
     val daysUntilNextEpisode: Int?,
     /** Regular episodes the server knows of; null until the title's episode list is fetched. */
     val totalEpisodes: Int? = null,
-)
+) {
+    /**
+     * Whether Add can work: the server resolves an add through the title's provider, so a title
+     * from a provider this app version doesn't know ([MediaSource.UNKNOWN]) can never be added.
+     */
+    val canBeAdded: Boolean get() = source != MediaSource.UNKNOWN
+}
