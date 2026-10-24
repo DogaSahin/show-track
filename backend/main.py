@@ -109,6 +109,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(users_routes.auth_router, prefix="/v1")
 
+    # Deliberately unauthenticated, like auth_router and for its own reasons: the phone loads
+    # images on its token-free client, posters are public bytes with no user data, and the route
+    # fetches only a strictly validated TMDB poster path — it is not an open proxy. Outside
+    # DOMAIN_ROUTERS for the same reason as /debug below.
+    app.include_router(media_routes.images_router, prefix="/v1")
+
     # Mounted separately from DOMAIN_ROUTERS, so tests/test_health.py's "eight domain routers with
     # eight domain prefixes" invariant keeps meaning what it says — /debug is not a domain. Explicit
     # dependencies=, because this router does not inherit the mounting loop's auth above.

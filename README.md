@@ -36,9 +36,17 @@ interface. `GET /v1/media/search` fans out to both live with a per-provider time
 provider degrades its own share of results rather than failing the search. Each result says whether
 the title is already stored and whether it is in your library; opening one that isn't stored yet
 (`POST /v1/media/resolve`) fetches that single title, as adding it does. Every other read path is
-database-only. Each tracked title's season and episode list is stored too: fetched when the title is
+database-only, with one deliberate exception: the poster relay below, which moves bytes and
+touches no data. Each tracked title's season and episode list is stored too: fetched when the title is
 added, then kept fresh by the sync job while the show is airing. Progress is tracked per episode,
 so gaps are kept, and a title's progress is the number of episodes ticked.
+
+TV posters never load from TMDB on the phone. The server rewrites TMDB cover URLs on the way out to
+its own `GET /v1/images/tmdb/w500/<file>`, which fetches that one poster from TMDB and returns the
+bytes (cacheable for a month; no database access, no token needed, and it accepts only a strict
+file-name pattern, so it is not an open proxy). Some internet providers block TMDB for everyone on
+their network, and this way the phones need no DNS changes. Anime covers still load from AniList
+directly.
 
 ## Layout
 
@@ -187,6 +195,28 @@ bind-mount a source directory.
 
 The other half is `${VAR:?message}` interpolation on the three secrets — Compose **refuses to
 start** rather than falling back to a placeholder nobody chose.
+
+### Encrypted DNS for the server
+
+Some internet providers block TMDB at the DNS level. The compose stack therefore runs a small `dns` service
+(a DNS-over-HTTPS proxy) that the `api` container uses to resolve external names; Docker still
+answers `db` itself. It listens only inside the compose network and sits on a fixed subnet
+(`172.29.53.0/24`, proxy at `172.29.53.53`). If that subnet clashes with something on the host,
+set `DNS_SUBNET`, `DNS_IP_RANGE` and `DNS_PROXY_IP` in `.env` (see `.env.example`); changing any
+of them needs the one-time `docker compose -f docker-compose.yml down` before `up`. If the proxy is down the api
+cannot resolve external names (AniList included) until it restarts.
+
+**First deploy with this version:** the compose network changes, so run
+`docker compose -f docker-compose.yml down` and then `docker compose -f docker-compose.yml up -d --build`.
+The data volume survives.
+
+**Check it worked:**
+
+```bash
+docker compose -f docker-compose.yml exec api python -c "import socket; print(socket.gethostbyname('api.themoviedb.org'))"
+```
+
+This must print a real address, not `127.0.0.1`.
 
 ### Before the first `up`
 

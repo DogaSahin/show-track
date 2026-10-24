@@ -7,12 +7,14 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from itertools import zip_longest
 
+import httpx
 from sqlalchemy import ColumnElement, Integer, and_, delete, exists, func, literal, or_, select, tuple_, update
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import BULK_INSERT_CHUNK_SIZE, chunked
+from app.http import TOTAL_TIMEOUT_SECONDS
 
 # Module references, not `from ... import`: app.sync.service and app.library.service import
 # this module too, and a module reference is what lets either side be imported first.
@@ -28,6 +30,7 @@ from app.media.providers.base import (
     ProviderSearchPage,
 )
 from app.media.providers.errors import ProviderError, ProviderRateLimited, ProviderTimeout
+from app.media.providers.images import tmdb_upstream_url
 from app.media.schemas import (
     EpisodeItem,
     EpisodeList,
@@ -620,3 +623,66 @@ async def get_episode_list(session: AsyncSession, media_id: uuid.UUID, now: date
             SeasonEpisodes(number=number, episode_count=len(items), episodes=items) for number, items in seasons.items()
         ],
     )
+
+
+# --- Poster relay -------------------------------------------------------------------------------
+#
+# The second deliberate exception to "only search hits providers live": phones on a provider that
+# blocks TMDB by DNS cannot load image.tmdb.org, so TV posters come through this server. It moves
+# public bytes, never data, and touches no database row.
+
+# Far above any w500 poster (tens of KB); the point is a bound, so a misbehaving upstream cannot
+# make one request hold an unbounded body in memory.
+MAX_IMAGE_BYTES = 5 * 1024 * 1024
+IMAGE_MEDIA_TYPES = frozenset({"image/jpeg", "image/png", "image/webp"})
+
+
+class ImageNotFoundError(Exception):
+    """Not a poster this server relays (bad size or file name), or TMDB has no such file."""
+
+
+class ImageUpstreamError(Exception):
+    """TMDB could not be reached, or answered with something that is not a poster."""
+
+
+@dataclass(frozen=True, slots=True)
+class RelayedImage:
+    content: bytes
+    media_type: str
+
+
+async def fetch_tmdb_image(client: httpx.AsyncClient, size: str, file_name: str) -> RelayedImage:
+    """One poster from TMDB, fully buffered. Raises ImageNotFoundError or ImageUpstreamError."""
+    url = tmdb_upstream_url(size, file_name)
+    if url is None:
+        # Before any request: an invalid path never costs an upstream call.
+        raise ImageNotFoundError
+    try:
+        # The wall-clock guard app/http.py asks every caller for: httpx's read timeout alone
+        # resets on each trickled byte.
+        async with asyncio.timeout(TOTAL_TIMEOUT_SECONDS):
+            # follow_redirects=False overrides the shared client's default: a redirect would
+            # send this server to a host the file-name check never vetted.
+            async with client.stream("GET", url, follow_redirects=False) as response:
+                if response.status_code == 404:
+                    raise ImageNotFoundError
+                if response.status_code != 200:
+                    logger.warning("poster relay rejected: upstream status %d", response.status_code)
+                    raise ImageUpstreamError
+                # "image/jpeg; charset=..." is still a JPEG; compare the bare type.
+                media_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+                if media_type not in IMAGE_MEDIA_TYPES:
+                    logger.warning("poster relay rejected: content type %r", media_type)
+                    raise ImageUpstreamError
+                # Counted as it arrives rather than trusting Content-Length, which may be absent.
+                body = bytearray()
+                async for chunk in response.aiter_bytes():
+                    body.extend(chunk)
+                    if len(body) > MAX_IMAGE_BYTES:
+                        logger.warning("poster relay rejected: body over %d bytes", MAX_IMAGE_BYTES)
+                        raise ImageUpstreamError
+    except (TimeoutError, httpx.HTTPError) as exc:
+        # Type only: the transport's message would put the upstream URL into the log stream.
+        logger.warning("poster relay failed: %s", type(exc).__name__)
+        raise ImageUpstreamError from exc
+    return RelayedImage(content=bytes(body), media_type=media_type)
