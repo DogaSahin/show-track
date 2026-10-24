@@ -11,6 +11,7 @@ import com.anarky.showtrack.core.model.UserMediaStatus
 import com.anarky.showtrack.core.network.api.AuthApi
 import com.anarky.showtrack.core.network.api.ShowTrackApi
 import com.anarky.showtrack.core.network.dto.AddLibraryEntryRequest
+import com.anarky.showtrack.core.network.dto.AppReleaseDto
 import com.anarky.showtrack.core.network.dto.CreateGroupRequestDto
 import com.anarky.showtrack.core.network.dto.CreateReviewRequestDto
 import com.anarky.showtrack.core.network.dto.EpisodeDto
@@ -110,6 +111,7 @@ class OpenApiContractTest {
             WatchlistPageDto.serializer().descriptor to "WatchlistPage",
             ProgressEntryDto.serializer().descriptor to "ProgressEntry",
             ImportSummaryDto.serializer().descriptor to "ImportSummary",
+            AppReleaseDto.serializer().descriptor to "AppRelease",
             LibraryEntryDto.serializer().descriptor to "LibraryEntry",
             LibraryPageDto.serializer().descriptor to "LibraryPage",
             LibraryStatsDto.serializer().descriptor to "LibraryStats",

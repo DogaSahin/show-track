@@ -8,6 +8,7 @@ import com.anarky.showtrack.core.model.UserMediaStatus
 import com.anarky.showtrack.core.model.WatchlistCover
 import com.anarky.showtrack.core.network.api.ShowTrackApi
 import com.anarky.showtrack.core.network.dto.AddLibraryEntryRequest
+import com.anarky.showtrack.core.network.dto.AppReleaseDto
 import com.anarky.showtrack.core.network.dto.CreateGroupRequestDto
 import com.anarky.showtrack.core.network.dto.CreateReviewRequestDto
 import com.anarky.showtrack.core.network.dto.EpisodeListDto
@@ -42,6 +43,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import okhttp3.ResponseBody
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -767,6 +769,10 @@ class GroupRepositoryImplTest {
         override suspend fun addLibraryEntry(request: AddLibraryEntryRequest): LibraryEntryDto = error("not used")
 
         override suspend fun libraryStats(): LibraryStatsDto = error("not used")
+
+        override suspend fun latestRelease(): Response<AppReleaseDto> = error("not used")
+
+        override suspend fun downloadRelease(): ResponseBody = error("not used")
 
         override suspend fun importAniList(request: ImportAniListRequest): ImportSummaryDto = error("not used")
 
