@@ -76,6 +76,23 @@ class UpdateUiTest {
     }
 
     @Test
+    fun `a refused file says it was not verified, not that the download failed`() {
+        composeRule.setContent {
+            UpdateBanner(
+                release = RELEASE,
+                progress = null,
+                failed = true,
+                notVerified = true,
+                onInstall = {},
+                onLater = {},
+            )
+        }
+
+        composeRule.onNodeWithText(string(R.string.update_not_verified)).assertExists()
+        composeRule.onNodeWithText(string(R.string.update_failed)).assertDoesNotExist()
+    }
+
+    @Test
     fun `the required screen offers Install and Sign out, and no Later`() {
         var installs = 0
         var signOuts = 0

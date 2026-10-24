@@ -16,17 +16,23 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.File
 import java.io.IOException
+import java.time.Clock
+import java.time.Duration
+import java.time.Instant
 import javax.inject.Inject
 
 /**
- * [progress] is 0..1 while a download runs and null otherwise. [explainPermission] shows the
- * "allow ShowTrack to install updates" explanation before the settings trip. [signedOut] flips once
- * the blocking screen's Sign out has ended the session, so the host can navigate to sign-in.
+ * [progress] is 0..1 while a download runs and null otherwise. [notVerified] narrows [failed]: the
+ * file downloaded but is not a ShowTrack build signed with this app's key, so it was deleted rather
+ * than installed. [explainPermission] shows the "allow ShowTrack to install updates" explanation
+ * before the settings trip. [signedOut] flips once the blocking screen's Sign out has ended the
+ * session, so the host can navigate to sign-in.
  */
 data class UpdateUi(
     val state: UpdateState = UpdateState.Unknown,
     val progress: Float? = null,
     val failed: Boolean = false,
+    val notVerified: Boolean = false,
     val explainPermission: Boolean = false,
     val signOutFailed: Boolean = false,
     val signedOut: Boolean = false,
@@ -57,8 +63,13 @@ interface UpdateActions {
 /**
  * Drives the update banner and the blocking screen. Activity-scoped (resolved in `ShowTrackApp`
  * above any back-stack entry), so a download survives rotation and the check runs once per
- * signed-in session rather than once per composition.
+ * signed-in session rather than once per composition — plus again on a resume once the last answer
+ * is [RECHECK_AFTER] old, so a phone left open for days still learns about a new minimum.
+ *
+ * `TooManyFunctions` is suppressed: eight of the functions are [UpdateActions], and the rest are
+ * the steps of one install flow that read better as named steps than as one long function.
  */
+@Suppress("TooManyFunctions")
 @HiltViewModel
 class UpdateViewModel
     @Inject
@@ -66,33 +77,57 @@ class UpdateViewModel
         private val repository: AppUpdateRepository,
         private val installer: ApkInstaller,
         private val auth: AuthRepository,
+        private val clock: Clock,
     ) : ViewModel(),
         UpdateActions {
         private val mutableUi = MutableStateFlow(UpdateUi())
         val ui: StateFlow<UpdateUi> = mutableUi.asStateFlow()
 
         private var checkStarted = false
+        private var checking: Job? = null
+
+        /** When the last check answered; null until the session's first one has. */
+        private var lastCheckedAt: Instant? = null
+
+        /** The download, or a retry's re-check and download. */
         private var download: Job? = null
 
         /** Set by [confirmPermission]; [resumed] continues the install once, then clears it. */
         private var pendingInstall = false
 
         /**
-         * APKs already downloaded and verified, by `versionCode`, so cancelling the system
-         * installer and tapping Install again re-offers the same file instead of downloading it
-         * again. Checked with `exists()` before use: the cache can be cleared at any time. Kept
-         * across sessions: the file is the same build whoever is signed in.
+         * Set when a download fails for any reason: the release it was for may be what is wrong
+         * (replaced on the server, a size that no longer matches), so the next Install asks the
+         * server again and downloads whatever it offers now.
          */
-        private val verified = mutableMapOf<Int, File>()
+        private var recheckBeforeDownload = false
+
+        /**
+         * APKs already downloaded and verified, by `versionCode` and hash, so cancelling the system
+         * installer and tapping Install again re-offers the same file instead of downloading it
+         * again — and a release republished under the same `versionCode` is not mistaken for it.
+         * Checked with `exists()` before use: the cache can be cleared at any time. Kept across
+         * sessions: the file is the same build whoever is signed in.
+         */
+        private val verified = mutableMapOf<VerifiedKey, File>()
 
         /** Asks the server once per session. `LaunchedEffect` re-fires on recreation; this does not. */
         override fun check() {
             if (checkStarted) return
             checkStarted = true
-            viewModelScope.launch {
-                val state = repository.check()
-                mutableUi.update { it.copy(state = state) }
-            }
+            refresh()
+        }
+
+        private fun refresh() {
+            checking =
+                viewModelScope.launch {
+                    val state = repository.check()
+                    lastCheckedAt = clock.instant()
+                    // A re-check that could not reach the server leaves what the last one said.
+                    if (state != UpdateState.Unknown || mutableUi.value.state == UpdateState.Unknown) {
+                        mutableUi.update { it.copy(state = state) }
+                    }
+                }
         }
 
         override fun install() {
@@ -102,31 +137,67 @@ class UpdateViewModel
                 mutableUi.update { it.copy(explainPermission = true) }
                 return
             }
-            val apk = verified[release.versionCode]?.takeIf(File::exists)
-            if (apk != null) {
-                mutableUi.update { it.copy(failed = false) }
-                handOff(apk)
-                return
+            val cached = verified[VerifiedKey.of(release)]?.takeIf(File::exists)
+            mutableUi.update {
+                it.copy(progress = if (cached == null) 0f else null, failed = false, notVerified = false)
             }
-            mutableUi.update { it.copy(progress = 0f, failed = false) }
-            download = viewModelScope.launch { downloadAndInstall(release) }
+            download =
+                viewModelScope.launch {
+                    if (cached != null) {
+                        handOffIfTrusted(cached, release)
+                    } else {
+                        freshRelease(release)?.let { downloadAndInstall(it) }
+                    }
+                }
         }
 
+        /**
+         * [release], or after a failed download the release the server offers now — which may be
+         * none (already up to date), or unknown (offline: shown as another failure, Retry stays).
+         */
+        private suspend fun freshRelease(release: AppRelease): AppRelease? {
+            if (!recheckBeforeDownload) return release
+            val state = repository.check()
+            lastCheckedAt = clock.instant()
+            if (state == UpdateState.Unknown) {
+                mutableUi.update { it.copy(progress = null, failed = true) }
+                return null
+            }
+            recheckBeforeDownload = false
+            val fresh = state.offeredRelease()
+            mutableUi.update { it.copy(state = state, progress = if (fresh == null) null else 0f) }
+            return fresh
+        }
+
+        // A settings screen that cannot open is a failure line with Retry, not a crash.
+        @Suppress("TooGenericExceptionCaught")
         override fun confirmPermission() {
             mutableUi.update { it.copy(explainPermission = false) }
             pendingInstall = true
-            installer.openInstallPermissionSettings()
+            try {
+                installer.openInstallPermissionSettings()
+            } catch (_: RuntimeException) {
+                pendingInstall = false
+                mutableUi.update { it.copy(failed = true) }
+            }
         }
 
         override fun dismissPermission() {
             mutableUi.update { it.copy(explainPermission = false) }
         }
 
-        /** Back from settings: continue only if the permission was granted; otherwise just forget it. */
+        /**
+         * Back from settings: continue only if the permission was granted; otherwise just forget it.
+         * Any resume also re-checks once the last answer is stale — but never over a download.
+         */
         override fun resumed() {
-            if (!pendingInstall) return
-            pendingInstall = false
-            if (installer.canInstall()) install()
+            if (pendingInstall) {
+                pendingInstall = false
+                if (installer.canInstall()) install()
+            }
+            val checkedAt = lastCheckedAt ?: return
+            if (!checkStarted || checking?.isActive == true || download?.isActive == true) return
+            if (Duration.between(checkedAt, clock.instant()) >= RECHECK_AFTER) refresh()
         }
 
         /** Puts off an optional update for a day. A required one has no Later. */
@@ -138,7 +209,9 @@ class UpdateViewModel
                 } catch (_: IOException) {
                     // The snooze did not persist, so the banner returns next launch; still hide it now.
                 }
-                mutableUi.update { it.copy(state = UpdateState.UpToDate, progress = null, failed = false) }
+                mutableUi.update {
+                    it.copy(state = UpdateState.UpToDate, progress = null, failed = false, notVerified = false)
+                }
             }
         }
 
@@ -166,8 +239,12 @@ class UpdateViewModel
         override fun sessionEnded() {
             download?.cancel()
             download = null
+            checking?.cancel()
+            checking = null
+            lastCheckedAt = null
             pendingInstall = false
             checkStarted = false
+            recheckBeforeDownload = false
             mutableUi.value = UpdateUi()
         }
 
@@ -176,17 +253,39 @@ class UpdateViewModel
         // "Download failed" with Retry, never a crash. Cancellation still propagates.
         @Suppress("TooGenericExceptionCaught")
         private suspend fun downloadAndInstall(release: AppRelease) {
-            try {
-                // onProgress arrives on Dispatchers.IO; a StateFlow update is safe from any thread.
-                val apk = repository.download(release) { fraction -> mutableUi.update { it.copy(progress = fraction) } }
-                verified[release.versionCode] = apk
-                mutableUi.update { it.copy(progress = null) }
-                handOff(apk)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                mutableUi.update { it.copy(progress = null, failed = true) }
+            val apk =
+                try {
+                    // onProgress arrives on Dispatchers.IO; a StateFlow update is safe from any thread.
+                    repository.download(release) { fraction -> mutableUi.update { it.copy(progress = fraction) } }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    recheckBeforeDownload = true
+                    mutableUi.update { it.copy(progress = null, failed = true) }
+                    return
+                }
+            mutableUi.update { it.copy(progress = null) }
+            handOffIfTrusted(apk, release)
+        }
+
+        /**
+         * Only a build of this app signed with its key reaches the installer. Anything else is
+         * deleted, forgotten and reported — and, like a failed download, re-checked before the
+         * next attempt.
+         */
+        private suspend fun handOffIfTrusted(
+            apk: File,
+            release: AppRelease,
+        ) {
+            if (!installer.isTrusted(apk)) {
+                apk.delete()
+                verified.remove(VerifiedKey.of(release))
+                recheckBeforeDownload = true
+                mutableUi.update { it.copy(progress = null, failed = true, notVerified = true) }
+                return
             }
+            verified[VerifiedKey.of(release)] = apk
+            handOff(apk)
         }
 
         // An installer that cannot start (no activity, a revoked grant) is a "Download failed"
@@ -199,7 +298,22 @@ class UpdateViewModel
                 mutableUi.update { it.copy(failed = true) }
             }
         }
+
+        companion object {
+            /** How old the last check may be before a resume asks the server again. */
+            val RECHECK_AFTER: Duration = Duration.ofHours(6)
+        }
     }
+
+/** What a verified download is filed under: the same `versionCode` with a new hash is a new file. */
+private data class VerifiedKey(
+    val versionCode: Int,
+    val sha256: String,
+) {
+    companion object {
+        fun of(release: AppRelease) = VerifiedKey(release.versionCode, release.sha256.lowercase())
+    }
+}
 
 /** The release an Install tap is for, if the state offers one. */
 private fun UpdateState.offeredRelease(): AppRelease? =

@@ -33,7 +33,8 @@ import com.anarky.showtrack.core.model.UpdateState
 /**
  * The optional-update prompt, above the signed-in screens. [progress] non-null means a download is
  * running: the buttons give way to a progress bar so a second tap cannot start a second download
- * (the ViewModel ignores one anyway). [failed] swaps Install for Retry.
+ * (the ViewModel ignores one anyway). [failed] swaps Install for Retry; [notVerified] says the
+ * file was refused rather than that the download failed.
  *
  * `LongParameterList` is suppressed: five inputs plus the conventional modifier, and bundling
  * them would only move the list into a holder class.
@@ -47,6 +48,7 @@ fun UpdateBanner(
     onInstall: () -> Unit,
     onLater: () -> Unit,
     modifier: Modifier = Modifier,
+    notVerified: Boolean = false,
 ) {
     Surface(modifier = modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
         Column(
@@ -75,7 +77,7 @@ fun UpdateBanner(
                 ) {
                     if (failed) {
                         Text(
-                            text = stringResource(R.string.update_failed),
+                            text = stringResource(failureText(notVerified)),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.error,
                             modifier = Modifier.weight(1f),
@@ -107,6 +109,7 @@ fun UpdateRequiredScreen(
     onInstall: () -> Unit,
     onSignOut: () -> Unit,
     modifier: Modifier = Modifier,
+    notVerified: Boolean = false,
 ) {
     // A Surface rather than a bare Column: it is drawn over the app, so it must paint the whole
     // area and take the touches that would otherwise reach the screen underneath.
@@ -136,7 +139,7 @@ fun UpdateRequiredScreen(
             if (progress != null) {
                 DownloadProgress(progress = progress)
             } else {
-                if (failed) ErrorLine(R.string.update_failed)
+                if (failed) ErrorLine(failureText(notVerified))
                 Button(onClick = onInstall) {
                     Text(stringResource(if (failed) R.string.update_retry else R.string.update_install))
                 }
@@ -168,6 +171,11 @@ fun InstallPermissionDialog(
         },
     )
 }
+
+/** A refused file is not a failed download: say which, so Retry is not read as "try the same again". */
+@StringRes
+private fun failureText(notVerified: Boolean): Int =
+    if (notVerified) R.string.update_not_verified else R.string.update_failed
 
 @Composable
 private fun ErrorLine(
@@ -246,6 +254,7 @@ fun UpdatePrompts(
                 release = available.release,
                 progress = ui.progress,
                 failed = ui.failed,
+                notVerified = ui.notVerified,
                 onInstall = actions::install,
                 onLater = actions::later,
             )
@@ -258,6 +267,7 @@ fun UpdatePrompts(
                     progress = ui.progress,
                     failed = ui.failed,
                     signOutFailed = ui.signOutFailed,
+                    notVerified = ui.notVerified,
                     onInstall = actions::install,
                     onSignOut = actions::signOut,
                 )

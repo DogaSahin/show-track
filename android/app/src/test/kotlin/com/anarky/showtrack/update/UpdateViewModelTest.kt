@@ -24,6 +24,11 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
 import java.io.IOException
+import java.time.Clock
+import java.time.Duration
+import java.time.Instant
+import java.time.ZoneId
+import java.time.ZoneOffset
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class UpdateViewModelTest {
@@ -34,6 +39,7 @@ class UpdateViewModelTest {
     private val repository = FakeAppUpdateRepository()
     private val installer = FakeApkInstaller()
     private val auth = FakeAuthRepository()
+    private val clock = MutableClock(Instant.parse("2026-10-24T12:00:00Z"))
 
     @Before
     fun setUp() {
@@ -46,7 +52,7 @@ class UpdateViewModelTest {
     fun tearDown() = Dispatchers.resetMain()
 
     private fun checkedViewModel(): UpdateViewModel {
-        val viewModel = UpdateViewModel(repository, installer, auth)
+        val viewModel = UpdateViewModel(repository, installer, auth, clock)
         viewModel.check()
         return viewModel
     }
@@ -211,6 +217,141 @@ class UpdateViewModelTest {
         }
 
     @Test
+    fun `a file that is not a trusted ShowTrack build is deleted, not installed, and says so`() =
+        runTest(dispatcher) {
+            installer.trusted = false
+            val viewModel = checkedViewModel()
+            advanceUntilIdle()
+
+            viewModel.install()
+            advanceUntilIdle()
+
+            assertTrue(installer.installed.isEmpty())
+            assertFalse(repository.apk.exists())
+            assertTrue(viewModel.ui.value.failed)
+            assertTrue(viewModel.ui.value.notVerified)
+            assertNull(viewModel.ui.value.progress)
+        }
+
+    @Test
+    fun `a retry after a failed download asks the server again and downloads the release it offers now`() =
+        runTest(dispatcher) {
+            repository.downloadResult = { throw IOException("size mismatch") }
+            val viewModel = checkedViewModel()
+            advanceUntilIdle()
+            viewModel.install()
+            advanceUntilIdle()
+            assertTrue(viewModel.ui.value.failed)
+
+            val newer = RELEASE.copy(versionCode = 3, versionName = "1.2", sizeBytes = 2048, sha256 = "cd".repeat(32))
+            repository.state = UpdateState.Available(newer)
+            repository.downloadResult = { repository.apk }
+            viewModel.install()
+            advanceUntilIdle()
+
+            assertEquals(2, repository.checks)
+            assertEquals(listOf(RELEASE, newer), repository.downloaded)
+            assertEquals(UpdateState.Available(newer), viewModel.ui.value.state)
+            assertEquals(listOf(repository.apk), installer.installed)
+            assertFalse(viewModel.ui.value.failed)
+        }
+
+    @Test
+    fun `a retry that finds the app already up to date downloads nothing`() =
+        runTest(dispatcher) {
+            repository.downloadResult = { throw IOException("gone") }
+            val viewModel = checkedViewModel()
+            advanceUntilIdle()
+            viewModel.install()
+            advanceUntilIdle()
+
+            repository.state = UpdateState.UpToDate
+            viewModel.install()
+            advanceUntilIdle()
+
+            assertEquals(1, repository.downloads)
+            assertEquals(UpdateState.UpToDate, viewModel.ui.value.state)
+            assertNull(viewModel.ui.value.progress)
+        }
+
+    @Test
+    fun `a release republished under the same version code is downloaded again`() =
+        runTest(dispatcher) {
+            val viewModel = checkedViewModel()
+            advanceUntilIdle()
+            viewModel.install()
+            advanceUntilIdle()
+
+            // Same versionCode, new file: the next session's check sees the new hash.
+            viewModel.sessionEnded()
+            repository.state = UpdateState.Available(RELEASE.copy(sha256 = "ef".repeat(32)))
+            viewModel.check()
+            advanceUntilIdle()
+            viewModel.install()
+            advanceUntilIdle()
+
+            assertEquals(2, repository.downloads)
+        }
+
+    @Test
+    fun `a resume re-checks only once the last check is six hours old`() =
+        runTest(dispatcher) {
+            val viewModel = checkedViewModel()
+            advanceUntilIdle()
+
+            clock.advance(Duration.ofHours(5))
+            viewModel.resumed()
+            advanceUntilIdle()
+            assertEquals(1, repository.checks)
+
+            // The server has since raised its minimum above the installed build.
+            repository.state = UpdateState.Required(RELEASE)
+            clock.advance(Duration.ofHours(2))
+            viewModel.resumed()
+            advanceUntilIdle()
+
+            assertEquals(2, repository.checks)
+            assertEquals(UpdateState.Required(RELEASE), viewModel.ui.value.state)
+        }
+
+    @Test
+    fun `a resume does not re-check while a download runs`() =
+        runTest(dispatcher) {
+            val gate = CompletableDeferred<File>()
+            repository.downloadResult = { gate.await() }
+            val viewModel = checkedViewModel()
+            advanceUntilIdle()
+            viewModel.install()
+            advanceUntilIdle()
+
+            clock.advance(Duration.ofHours(7))
+            viewModel.resumed()
+            advanceUntilIdle()
+
+            assertEquals(1, repository.checks)
+            gate.complete(repository.apk)
+            advanceUntilIdle()
+        }
+
+    @Test
+    fun `settings that cannot open clear the pending install and show the failure`() =
+        runTest(dispatcher) {
+            installer.allowed = false
+            installer.settingsFailure = IllegalStateException("no activity")
+            val viewModel = checkedViewModel()
+            advanceUntilIdle()
+            viewModel.install()
+
+            viewModel.confirmPermission()
+            installer.allowed = true
+            viewModel.resumed()
+            advanceUntilIdle()
+
+            assertTrue(viewModel.ui.value.failed)
+            assertEquals(0, repository.downloads)
+        }
+
+    @Test
     fun `later snoozes the release and hides the banner`() =
         runTest(dispatcher) {
             val viewModel = checkedViewModel()
@@ -306,6 +447,7 @@ class UpdateViewModelTest {
         var downloadResult: suspend () -> File = { apk }
         var checks = 0
         var downloads = 0
+        val downloaded = mutableListOf<AppRelease>()
         val snoozed = mutableListOf<AppRelease>()
 
         override suspend fun check(): UpdateState {
@@ -318,6 +460,7 @@ class UpdateViewModelTest {
             onProgress: (Float) -> Unit,
         ): File {
             downloads++
+            downloaded += release
             onProgress(0.5f)
             val file = downloadResult()
             // The real download (re)writes the file, so a deleted one comes back.
@@ -332,14 +475,19 @@ class UpdateViewModelTest {
 
     private class FakeApkInstaller : ApkInstaller {
         var allowed = true
+        var trusted = true
+        var settingsFailure: RuntimeException? = null
         var settingsOpened = 0
         val installed = mutableListOf<File>()
 
         override fun canInstall(): Boolean = allowed
 
         override fun openInstallPermissionSettings() {
+            settingsFailure?.let { throw it }
             settingsOpened++
         }
+
+        override suspend fun isTrusted(apk: File): Boolean = trusted
 
         override fun install(apk: File) {
             installed += apk
@@ -372,6 +520,20 @@ class UpdateViewModelTest {
             logouts++
             if (failLogout) throw IOException("offline")
         }
+    }
+
+    private class MutableClock(
+        private var now: Instant,
+    ) : Clock() {
+        fun advance(by: Duration) {
+            now = now.plus(by)
+        }
+
+        override fun instant(): Instant = now
+
+        override fun getZone(): ZoneId = ZoneOffset.UTC
+
+        override fun withZone(zone: ZoneId): Clock = this
     }
 
     private companion object {

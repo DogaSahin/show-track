@@ -78,8 +78,10 @@
         <!--
             Serves downloaded updates to the system installer. Not exported: the installer gets a
             one-off read grant on the single APK URI (ApkInstaller), and update_paths.xml exposes
-            only cacheDir/updates/. The authority is what ApkInstaller asks FileProvider for;
-            MergedManifestTest pins both.
+            only cacheDir/updates/. The authority is what ApkInstaller asks FileProvider for.
+            MergedManifestTest pins the authority, that the provider is private, and that
+            cacheDir/updates/ resolves while the rest of the cache does not; that the directory
+            matches :core:data's UPDATES_DIR is a literal in that test, not a shared constant.
         -->
         <provider
             android:name="androidx.core.content.FileProvider"
