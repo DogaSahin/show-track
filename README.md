@@ -285,6 +285,47 @@ before and one 6 hours before (just one if the episode is first seen less than 6
   notification shade; whoever signs in next opts in for themselves. An alert scheduled before a
   sign-out never shows, for a signed-out phone or for whoever signs in next.
 
+## Releasing
+
+Release builds are signed with your own key, and the server hands the newest one to the apps, which
+offer it as an in-app update.
+
+1. **One time: make a signing key.** Keep the keystore outside the repo and back it up off the
+   machine. Losing it means nobody can update the installed app again.
+
+   ```bash
+   keytool -genkeypair -v -keystore showtrack-release.jks -keyalg RSA -keysize 4096 \
+     -validity 10000 -alias showtrack
+   ```
+
+   Then point Gradle at it in `~/.gradle/gradle.properties` (never the repo's):
+
+   ```properties
+   showtrack.release.storeFile=/path/to/showtrack-release.jks
+   showtrack.release.storePassword=...
+   showtrack.release.keyAlias=showtrack
+   showtrack.release.keyPassword=...
+   ```
+
+2. **Each release.** Bump `versionCode` and `versionName` in `android/app/build.gradle.kts` (and
+   `minVersionCode` only when older apps must stop working until they update), then build and copy
+   the result to the server:
+
+   ```bash
+   cd android
+   ./gradlew :app:assembleRelease     # optionally -Pshowtrack.release.notes="What changed"
+   scp app/build/release-out/* <server>:<path>/backend/releases/
+   ```
+
+   `assembleRelease` refuses to run unless all four signing properties are set. It writes
+   `showtrack-<versionCode>.apk` and `release.json` (version, minimum version, file name, SHA-256,
+   notes) into `android/app/build/release-out/`. The server picks the new release up from
+   `backend/releases/` without a restart.
+
+3. **First install.** Send each friend the APK once. After that they update from inside the app.
+4. **Allow installs.** The first time an update is installed, the phone asks you to allow ShowTrack
+   to install apps.
+
 ## Contributing
 
 Work on a local branch off `dev`, get the gate green, conventional-commit, PR into `dev`,
