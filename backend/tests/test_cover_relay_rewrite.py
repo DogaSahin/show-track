@@ -9,6 +9,7 @@ from app.groups.models import GroupRole
 from app.media.models import Media, MediaSource, MediaType
 from app.media.providers.base import MediaRef, ProviderMediaSummary, ProviderSearchPage
 from app.media.providers.images import relay_cover_url
+from app.media.providers.tmdb.mapper import _cover
 from tests.factories import make_group, make_group_member, make_media, make_user_media, make_watchlist_entry
 from tests.test_media_search_routes import FakeProvider
 
@@ -30,6 +31,12 @@ RELAY = "/v1/images/tmdb/w500/abc123.jpg"
 )
 def test_relay_cover_url(url, expected):
     assert relay_cover_url(url) == expected
+
+
+def test_the_tmdb_mappers_cover_urls_are_relayed():
+    # Ties the mapper's size/prefix to the relay's allow-list: if they drift apart, posters go
+    # blank silently (the URL passes through unrewritten and the phone cannot reach TMDB).
+    assert relay_cover_url(_cover("/abc123.jpg")) == RELAY
 
 
 async def _seed(db_session, auth_user):
