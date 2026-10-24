@@ -9,6 +9,11 @@ plugins {
 android {
     namespace = "com.anarky.showtrack"
 
+    // BuildConfig.VERSION_CODE is what the update check compares against the server's release.
+    buildFeatures {
+        buildConfig = true
+    }
+
     testOptions {
         // NavGraphRegistrationTest builds a REAL NavGraph on the JVM under Robolectric —
         // NavDestination parses its route into a deep link, which needs android.net.Uri — and
