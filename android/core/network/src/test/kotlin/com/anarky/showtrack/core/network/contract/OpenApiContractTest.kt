@@ -2,11 +2,14 @@ package com.anarky.showtrack.core.network.contract
 
 import com.anarky.showtrack.core.model.ActivityKind
 import com.anarky.showtrack.core.model.GroupRole
+import com.anarky.showtrack.core.model.LibrarySort
 import com.anarky.showtrack.core.model.MediaSource
 import com.anarky.showtrack.core.model.MediaStatus
 import com.anarky.showtrack.core.model.MediaType
 import com.anarky.showtrack.core.model.SourceStatus
 import com.anarky.showtrack.core.model.UserMediaStatus
+import com.anarky.showtrack.core.network.api.AuthApi
+import com.anarky.showtrack.core.network.api.ShowTrackApi
 import com.anarky.showtrack.core.network.dto.AddLibraryEntryRequest
 import com.anarky.showtrack.core.network.dto.CreateGroupRequestDto
 import com.anarky.showtrack.core.network.dto.CreateReviewRequestDto
@@ -24,6 +27,7 @@ import com.anarky.showtrack.core.network.dto.JoinGroupRequestDto
 import com.anarky.showtrack.core.network.dto.LibraryEntryDto
 import com.anarky.showtrack.core.network.dto.LibraryEntryRefDto
 import com.anarky.showtrack.core.network.dto.LibraryPageDto
+import com.anarky.showtrack.core.network.dto.LibraryPatchFields
 import com.anarky.showtrack.core.network.dto.LibraryStatsDto
 import com.anarky.showtrack.core.network.dto.LoginRequest
 import com.anarky.showtrack.core.network.dto.MediaDto
@@ -39,6 +43,7 @@ import com.anarky.showtrack.core.network.dto.RefreshRequest
 import com.anarky.showtrack.core.network.dto.RegisterRequest
 import com.anarky.showtrack.core.network.dto.ResolveMediaRequestDto
 import com.anarky.showtrack.core.network.dto.ReviewDto
+import com.anarky.showtrack.core.network.dto.ReviewPatchFields
 import com.anarky.showtrack.core.network.dto.SearchItemDto
 import com.anarky.showtrack.core.network.dto.SeasonDto
 import com.anarky.showtrack.core.network.dto.SetWatchedRequestDto
@@ -56,6 +61,12 @@ import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import retrofit2.http.DELETE
+import retrofit2.http.GET
+import retrofit2.http.PATCH
+import retrofit2.http.POST
+import retrofit2.http.PUT
+import retrofit2.http.Query
 import java.io.File
 
 /**
@@ -67,6 +78,9 @@ import java.io.File
  * field the server requires. Nested DTOs are covered by recursion from their parents; they are
  * listed on their own anyway; the table must list every DTO, so adding one to the `dto` package
  * means adding its row here.
+ *
+ * Also checked: the field names of the two hand-built PATCH bodies, and every Retrofit route in
+ * `ShowTrackApi`/`AuthApi` (method, path, query names) against the snapshot's `paths`.
  */
 class OpenApiContractTest {
     private val snapshotFile: File? = System.getProperty(SNAPSHOT_PROPERTY)?.let(::File)
@@ -143,6 +157,8 @@ class OpenApiContractTest {
             EnumRow("FeedItem", "kind", wire(ActivityKind.entries - ActivityKind.UNKNOWN)),
             // Carried as a map value under MediaSearchResponse.sources, so the component is the enum.
             EnumRow("SourceStatus", null, wire(SourceStatus.entries - SourceStatus.UNKNOWN)),
+            // A query parameter, not a DTO field: `GET /v1/library?sort=`.
+            EnumRow("LibrarySort", null, LibrarySort.entries.map { it.wire }),
         )
 
     @Test
@@ -171,6 +187,49 @@ class OpenApiContractTest {
         val problems = enums.flatMap { checker.checkEnum(it.component, it.property, it.values) }
         assertEquals(emptyList<String>(), problems)
     }
+
+    /** The two PATCH bodies `:core:data` builds by hand; both server models forbid extra fields. */
+    @Test
+    fun `every hand-built patch field exists on the server`() {
+        val problems =
+            checker.checkFields("UpdateLibraryEntryRequest", LibraryPatchFields.ALL) +
+                checker.checkFields("UpdateReviewRequest", ReviewPatchFields.ALL)
+        assertEquals(emptyList<String>(), problems)
+    }
+
+    @Test
+    fun `every api route and query parameter exists on the server`() {
+        val routes = listOf(ShowTrackApi::class.java, AuthApi::class.java).flatMap(::routesOf)
+        assertTrue("no routes found by reflection", routes.size > 30)
+
+        val problems = routes.flatMap { checker.checkRoute(it.method, it.path, it.queries) }
+
+        assertEquals(emptyList<String>(), problems)
+    }
+
+    private data class Route(
+        val method: String,
+        val path: String,
+        val queries: List<String>,
+    )
+
+    /** Retrofit's annotations are runtime-retained, so the interface itself is the route table. */
+    private fun routesOf(api: Class<*>): List<Route> =
+        api.declaredMethods.mapNotNull { method ->
+            val (verb, path) =
+                method.annotations.firstNotNullOfOrNull { annotation ->
+                    when (annotation) {
+                        is GET -> "GET" to annotation.value
+                        is POST -> "POST" to annotation.value
+                        is PUT -> "PUT" to annotation.value
+                        is PATCH -> "PATCH" to annotation.value
+                        is DELETE -> "DELETE" to annotation.value
+                        else -> null
+                    }
+                } ?: return@mapNotNull null
+            val queries = method.parameterAnnotations.flatMap { it.filterIsInstance<Query>() }.map { it.value }
+            Route(verb, path, queries)
+        }
 
     // --- The checker itself, against synthetic schemas -------------------------------------
 
@@ -281,6 +340,36 @@ class OpenApiContractTest {
         val problems = checker.checkEnum("S", null, listOf("ok", "timeout"))
 
         assertEquals(listOf("S: value 'timeout' is not a server value"), problems)
+    }
+
+    @Test
+    fun `a hand-built field the server does not accept is reported`() {
+        val checker = synthetic("P" to obj(""""body": $STRING"""))
+
+        val problems = checker.checkFields("P", listOf("body", "spoilers"))
+
+        assertEquals(listOf("P.spoilers: not in the server schema"), problems)
+    }
+
+    @Test
+    fun `a moved route or renamed query is reported`() {
+        val paths = """{"/v1/library/{entry_id}": {"get": {"parameters": [{"name": "sort", "in": "query"}]}}}"""
+        val checker =
+            SchemaChecker(Json.parseToJsonElement("""{"components": {"schemas": {}}, "paths": $paths}""").jsonObject)
+
+        val problems =
+            checker.checkRoute("GET", "v1/library/{id}", listOf("sort", "order")) +
+                checker.checkRoute("DELETE", "v1/library/{id}", emptyList()) +
+                checker.checkRoute("GET", "v1/books", emptyList())
+
+        assertEquals(
+            listOf(
+                "GET /v1/library/{id}: query 'order' is not a server parameter",
+                "DELETE /v1/library/{id}: no such operation on the server",
+                "GET /v1/books: no such operation on the server",
+            ),
+            problems,
+        )
     }
 
     /** A snapshot holding only [components], each a schema written as JSON. */
