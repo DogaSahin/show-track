@@ -6,9 +6,10 @@ from app.users.dependencies import get_current_user
 from main import app
 
 # Everything a client may reach without a token. `/v1/auth/*` is how you get one in the first
-# place; `/health` is an infrastructure probe, not client contract; the rest is FastAPI's own
-# documentation surface.
-OPEN_PREFIXES = ("/v1/auth/", "/health", "/docs", "/redoc", "/openapi.json")
+# place; `/health` is an infrastructure probe, not client contract; `/v1/images/` relays public TMDB
+# posters to an image loader that by design sends no token (it fetches only validated poster paths,
+# so opening it exposes no user data); the rest is FastAPI's own documentation surface.
+OPEN_PREFIXES = ("/v1/auth/", "/health", "/v1/images/", "/docs", "/redoc", "/openapi.json")
 
 
 def _protected_cases() -> list[tuple[str, str, bool, bool]]:

@@ -2724,6 +2724,62 @@
         ]
       }
     },
+    "/v1/images/tmdb/{size}/{file_name}": {
+      "get": {
+        "description": "A TV poster fetched from TMDB on the caller's behalf, for phones that cannot reach it.",
+        "operationId": "read_tmdb_image_v1_images_tmdb__size___file_name__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "size",
+            "required": true,
+            "schema": {
+              "title": "Size",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "file_name",
+            "required": true,
+            "schema": {
+              "title": "File Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "image/jpeg": {},
+              "image/png": {},
+              "image/webp": {}
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "Not a relayed poster, or TMDB has no such file."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "502": {
+            "description": "TMDB was unreachable or did not answer with an image."
+          }
+        },
+        "summary": "Read Tmdb Image",
+        "tags": [
+          "images"
+        ]
+      }
+    },
     "/v1/library": {
       "get": {
         "operationId": "list_library_v1_library_get",

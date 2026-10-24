@@ -14,7 +14,7 @@ from app.media.providers.errors import (
     ProviderTimeout,
     UserListNotAvailable,
 )
-from app.media.service import MediaNotFound, MediaSourceNotConfigured
+from app.media.service import ImageNotFoundError, ImageUpstreamError, MediaNotFound, MediaSourceNotConfigured
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +50,8 @@ HANDLED: dict[type[Exception], tuple[int, str]] = {
     ProviderTimeout: (504, "the upstream provider timed out"),
     ProviderRateLimited: (429, "the upstream provider rate limited this server"),
     ProviderError: (502, "the upstream provider is unavailable"),
+    ImageNotFoundError: (404, "no such image"),
+    ImageUpstreamError: (502, "the image could not be fetched"),
 }
 
 

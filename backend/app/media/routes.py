@@ -3,11 +3,13 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import clock
 from app.db import get_session
+from app.http import get_http_client
 from app.media import service
 from app.media.models import MediaSource
 from app.media.providers import get_providers
@@ -72,3 +74,29 @@ async def read_episodes(media_id: uuid.UUID, session: SessionDep) -> EpisodeList
     if episodes is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="media not found")
     return episodes
+
+
+# Its own router because it is mounted WITHOUT auth (see main.py): images load on the client that
+# carries no token, and posters are public bytes with no user data in them.
+images_router = APIRouter(prefix="/images", tags=["images"])
+
+HttpClientDep = Annotated[httpx.AsyncClient, Depends(get_http_client)]
+
+# TMDB file names are content-addressed, so a name never changes its bytes: phones may keep a
+# poster for 30 days without asking again.
+POSTER_CACHE_CONTROL = "public, max-age=2592000, immutable"
+
+
+@images_router.get(
+    "/tmdb/{size}/{file_name}",
+    response_class=Response,
+    responses={
+        status.HTTP_200_OK: {"content": {"image/jpeg": {}, "image/png": {}, "image/webp": {}}},
+        status.HTTP_404_NOT_FOUND: {"description": "Not a relayed poster, or TMDB has no such file."},
+        status.HTTP_502_BAD_GATEWAY: {"description": "TMDB was unreachable or did not answer with an image."},
+    },
+)
+async def read_tmdb_image(size: str, file_name: str, client: HttpClientDep) -> Response:
+    """A TV poster fetched from TMDB on the caller's behalf, for phones that cannot reach it."""
+    image = await service.fetch_tmdb_image(client, size, file_name)
+    return Response(image.content, media_type=image.media_type, headers={"Cache-Control": POSTER_CACHE_CONTROL})
