@@ -86,25 +86,34 @@ internal fun DetailHero(
                     maxLines = 3,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Text(
-                    text = stringResource(R.string.detail_hero_meta, media.typeAndYear(), media.status.label()),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                val typeAndYear = media.typeAndYear()
+                val statusLabel = media.status.label()
+                val meta =
+                    when {
+                        statusLabel == null -> typeAndYear
+                        typeAndYear.isEmpty() -> statusLabel
+                        else -> stringResource(R.string.detail_hero_meta, typeAndYear, statusLabel)
+                    }
+                if (meta.isNotEmpty()) {
+                    Text(
+                        text = meta,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
     }
 }
 
 @Composable
-private fun MediaStatus.label(): String =
-    stringResource(
-        when (this) {
-            MediaStatus.AIRING -> R.string.detail_media_status_airing
-            MediaStatus.FINISHED -> R.string.detail_media_status_finished
-            MediaStatus.NOT_YET_AIRED -> R.string.detail_media_status_upcoming
-        },
-    )
+private fun MediaStatus.label(): String? =
+    when (this) {
+        MediaStatus.AIRING -> stringResource(R.string.detail_media_status_airing)
+        MediaStatus.FINISHED -> stringResource(R.string.detail_media_status_finished)
+        MediaStatus.NOT_YET_AIRED -> stringResource(R.string.detail_media_status_upcoming)
+        MediaStatus.UNKNOWN -> null
+    }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable

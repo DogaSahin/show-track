@@ -146,7 +146,7 @@ internal fun RemoveMemberDialog(
 internal fun GroupRole.labelRes(): Int =
     when (this) {
         GroupRole.OWNER -> R.string.groups_detail_role_owner
-        GroupRole.MEMBER -> R.string.groups_detail_role_member
+        GroupRole.MEMBER, GroupRole.UNKNOWN -> R.string.groups_detail_role_member
     }
 
 /**

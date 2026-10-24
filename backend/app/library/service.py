@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
 
+from app import clock
 from app.db import BULK_INSERT_CHUNK_SIZE, FOREIGN_KEY_VIOLATION, UNIQUE_VIOLATION, chunked
 from app.library import activity
 from app.library.models import Activity, ActivityKind, Review, UserMedia, UserMediaStatus, WatchedEpisode
@@ -584,7 +585,7 @@ async def _added_this_month(session: AsyncSession, *, user_id: uuid.UUID) -> int
     (decision S-A), so it carries no per-title adds to count, and treating its payload count as
     adds would make a ten-thousand-entry AniList import read as ten thousand deliberate additions.
     """
-    month_start = datetime.now(UTC).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    month_start = clock.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     return (
         await session.execute(
             select(func.count())

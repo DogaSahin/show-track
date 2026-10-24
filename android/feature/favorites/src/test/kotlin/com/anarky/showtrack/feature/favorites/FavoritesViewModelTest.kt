@@ -2,6 +2,7 @@ package com.anarky.showtrack.feature.favorites
 
 import app.cash.turbine.test
 import com.anarky.showtrack.core.data.paging.Page
+import com.anarky.showtrack.core.model.LibraryEntry
 import com.anarky.showtrack.core.model.LibraryPatch
 import com.anarky.showtrack.core.model.LibrarySort
 import com.anarky.showtrack.core.model.MediaType
@@ -177,6 +178,32 @@ class FavoritesViewModelTest {
             assertEquals(listOf(FRIEREN, SEVERANCE), viewModel.success().podium)
             assertEquals(listOf(FRIEREN, UNSCORED), viewModel.success().anime.entries)
             assertEquals(LibraryPatch(favorite = true), repository.updates.last().second)
+        }
+
+    @Test
+    fun `undoing an unknown-type podium title puts it back on the podium and leaves both shelves alone`() =
+        runTest(dispatcher) {
+            val mystery = favourite(id = "mystery", type = MediaType.UNKNOWN, score = "9.9")
+            val repository =
+                FakeLibraryRepository(
+                    mutableMapOf(
+                        (null to null) to Page(listOf(mystery, FRIEREN), null),
+                        (MediaType.ANIME to null) to Page(listOf(FRIEREN), null),
+                        (MediaType.TV to null) to Page(emptyList(), null),
+                    ),
+                )
+            val viewModel = FavoritesViewModel(repository)
+            viewModel.refresh()
+            advanceUntilIdle()
+            viewModel.remove(mystery)
+            advanceUntilIdle()
+
+            viewModel.undo(mystery)
+            advanceUntilIdle()
+
+            assertEquals(listOf(mystery, FRIEREN), viewModel.success().podium)
+            assertEquals(listOf(FRIEREN), viewModel.success().anime.entries)
+            assertEquals(emptyList<LibraryEntry>(), viewModel.success().tv.entries)
         }
 
     /**

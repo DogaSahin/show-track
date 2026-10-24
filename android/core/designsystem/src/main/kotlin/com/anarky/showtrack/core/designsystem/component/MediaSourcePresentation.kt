@@ -16,12 +16,13 @@ import com.anarky.showtrack.core.model.MediaSource
  * `:feature:search` for this one, `:feature:profile` for that one — and a feature module
  * re-implementing either mapping itself would be exactly the shared-presentation duplication
  * decision C-T exists to prevent.
+ *
+ * `null` for [MediaSource.UNKNOWN]: there is no brand to name, so callers leave it out.
  */
 @Composable
-fun MediaSource.displayName(): String =
-    stringResource(
-        when (this) {
-            MediaSource.ANILIST -> R.string.media_source_anilist
-            MediaSource.TMDB -> R.string.media_source_tmdb
-        },
-    )
+fun MediaSource.displayName(): String? =
+    when (this) {
+        MediaSource.ANILIST -> stringResource(R.string.media_source_anilist)
+        MediaSource.TMDB -> stringResource(R.string.media_source_tmdb)
+        MediaSource.UNKNOWN -> null
+    }

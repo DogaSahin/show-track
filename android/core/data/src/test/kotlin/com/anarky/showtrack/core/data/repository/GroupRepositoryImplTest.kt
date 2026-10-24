@@ -190,7 +190,7 @@ class GroupRepositoryImplTest {
             assertEquals(listOf(GroupActor(id = "user-1", username = "mira")), home.memberPreview)
             assertEquals(6, home.watchlistCount)
             assertEquals(listOf(WatchlistCover(mediaId = "media-1", coverImageUrl = null)), home.watchlistPreview)
-            assertNull(club.myRole)
+            assertEquals(GroupRole.UNKNOWN, club.myRole)
             assertNull(club.memberCount)
         }
 

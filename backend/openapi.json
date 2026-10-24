@@ -1,0 +1,3599 @@
+{
+  "components": {
+    "schemas": {
+      "ActivityKind": {
+        "enum": [
+          "added",
+          "imported",
+          "progressed",
+          "rated",
+          "completed",
+          "dropped"
+        ],
+        "title": "ActivityKind",
+        "type": "string"
+      },
+      "AddLibraryEntryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "external_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "title": "External Id",
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/MediaSource"
+          }
+        },
+        "required": [
+          "source",
+          "external_id"
+        ],
+        "title": "AddLibraryEntryRequest",
+        "type": "object"
+      },
+      "CreateGroupRequest": {
+        "properties": {
+          "name": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "CreateGroupRequest",
+        "type": "object"
+      },
+      "CreateReviewRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "body": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Body",
+            "type": "string"
+          },
+          "contains_spoilers": {
+            "default": false,
+            "title": "Contains Spoilers",
+            "type": "boolean"
+          },
+          "media_id": {
+            "format": "uuid",
+            "title": "Media Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "media_id",
+          "body"
+        ],
+        "title": "CreateReviewRequest",
+        "type": "object"
+      },
+      "EpisodeItem": {
+        "properties": {
+          "air_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Air Date"
+          },
+          "aired": {
+            "title": "Aired",
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "number": {
+            "title": "Number",
+            "type": "integer"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "id",
+          "number",
+          "title",
+          "air_date",
+          "aired"
+        ],
+        "title": "EpisodeItem",
+        "type": "object"
+      },
+      "EpisodeList": {
+        "description": "`synced_at: null` with no seasons means the list has not been fetched yet, which a client\nshows as \"not available yet\" rather than as a show with no episodes.",
+        "properties": {
+          "seasons": {
+            "items": {
+              "$ref": "#/components/schemas/SeasonEpisodes"
+            },
+            "title": "Seasons",
+            "type": "array"
+          },
+          "synced_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Synced At"
+          },
+          "total_episodes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Episodes"
+          }
+        },
+        "required": [
+          "synced_at",
+          "total_episodes",
+          "seasons"
+        ],
+        "title": "EpisodeList",
+        "type": "object"
+      },
+      "FeedActor": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "username"
+        ],
+        "title": "FeedActor",
+        "type": "object"
+      },
+      "FeedItem": {
+        "description": "`media` is optional because an `imported` row is about N titles (S-A/S-D). A client must\nhandle null rather than assuming every item has a title attached.",
+        "properties": {
+          "actor": {
+            "$ref": "#/components/schemas/FeedActor"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ActivityKind"
+          },
+          "media": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MediaDetail"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          }
+        },
+        "required": [
+          "id",
+          "actor",
+          "kind",
+          "media",
+          "payload",
+          "created_at"
+        ],
+        "title": "FeedItem",
+        "type": "object"
+      },
+      "FeedPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/FeedItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "FeedPage",
+        "type": "object"
+      },
+      "GenreCount": {
+        "description": "One row of the top-genres ranking. An object rather than a `dict[str, int]` because the\nORDER is the point — a JSON object's key order is not something a client may rely on, and the\nranking is exactly what makes this list worth sending.",
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "genre": {
+            "title": "Genre",
+            "type": "string"
+          }
+        },
+        "required": [
+          "genre",
+          "count"
+        ],
+        "title": "GenreCount",
+        "type": "object"
+      },
+      "GroupRole": {
+        "enum": [
+          "owner",
+          "member"
+        ],
+        "title": "GroupRole",
+        "type": "string"
+      },
+      "GroupSummary": {
+        "description": "One card of the groups list: enough to draw it without a request per group. A separate\nschema rather than new GroupRead fields, so create, join and rotate keep their exact shape.\nCarries no invite code: that stays a credential only an owner reads.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "member_count": {
+            "title": "Member Count",
+            "type": "integer"
+          },
+          "member_preview": {
+            "items": {
+              "$ref": "#/components/schemas/MemberPreview"
+            },
+            "title": "Member Preview",
+            "type": "array"
+          },
+          "my_role": {
+            "$ref": "#/components/schemas/GroupRole"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "watchlist_count": {
+            "title": "Watchlist Count",
+            "type": "integer"
+          },
+          "watchlist_preview": {
+            "items": {
+              "$ref": "#/components/schemas/WatchlistPreview"
+            },
+            "title": "Watchlist Preview",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "created_at",
+          "my_role",
+          "member_count",
+          "member_preview",
+          "watchlist_count",
+          "watchlist_preview"
+        ],
+        "title": "GroupSummary",
+        "type": "object"
+      },
+      "GroupWithInvite": {
+        "description": "Returned only to a member — on create, join and rotate. The invite code is a\ncredential, so it is never part of the plain group representation.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "invite_code": {
+            "title": "Invite Code",
+            "type": "string"
+          },
+          "invite_code_expires_at": {
+            "format": "date-time",
+            "title": "Invite Code Expires At",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "created_at",
+          "invite_code",
+          "invite_code_expires_at"
+        ],
+        "title": "GroupWithInvite",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "ImportRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "username": {
+            "maxLength": 50,
+            "minLength": 1,
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "username"
+        ],
+        "title": "ImportRequest",
+        "type": "object"
+      },
+      "ImportSummary": {
+        "properties": {
+          "failed": {
+            "title": "Failed",
+            "type": "integer"
+          },
+          "imported": {
+            "title": "Imported",
+            "type": "integer"
+          },
+          "skipped": {
+            "title": "Skipped",
+            "type": "integer"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "imported",
+          "skipped",
+          "failed"
+        ],
+        "title": "ImportSummary",
+        "type": "object"
+      },
+      "JoinGroupRequest": {
+        "properties": {
+          "invite_code": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Invite Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "invite_code"
+        ],
+        "title": "JoinGroupRequest",
+        "type": "object"
+      },
+      "LibraryEntry": {
+        "description": "Media is embedded rather than referenced by id: a list screen needs titles and cover art,\nand an id-only response makes rendering one page N+1 requests. Reusing MediaDetail rather\nthan flattening its fields gives the client one media model across search, detail and library.\n\n`score` serialises as a JSON STRING (\"8.5\"), not a number — decision 4-N. A JSON number is an\nIEEE 754 double, and routing a score through one reintroduces exactly the drift NUMERIC(3,1)\nexists to prevent.",
+        "properties": {
+          "favorite": {
+            "title": "Favorite",
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "media": {
+            "$ref": "#/components/schemas/MediaDetail"
+          },
+          "progress": {
+            "title": "Progress",
+            "type": "integer"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score"
+          },
+          "status": {
+            "$ref": "#/components/schemas/UserMediaStatus"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "score",
+          "progress",
+          "favorite",
+          "updated_at",
+          "media"
+        ],
+        "title": "LibraryEntry",
+        "type": "object"
+      },
+      "LibraryEntryRef": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/UserMediaStatus"
+          }
+        },
+        "required": [
+          "id",
+          "status"
+        ],
+        "title": "LibraryEntryRef",
+        "type": "object"
+      },
+      "LibraryPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LibraryEntry"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "LibraryPage",
+        "type": "object"
+      },
+      "LibrarySort": {
+        "description": "The `sort=` vocabulary.\n\nA StrEnum rather than a validated string so an unknown value is FastAPI's own 422 listing the\nlegal ones, and so OpenAPI documents them. Direction is a fixed property of each field\n(decision 4-J) — there is no `order=` parameter.",
+        "enum": [
+          "score",
+          "next_episode_date",
+          "title"
+        ],
+        "title": "LibrarySort",
+        "type": "string"
+      },
+      "LibraryStats": {
+        "description": "Aggregates computed in SQL, not by paging the library client-side: the client holds one page\n(decision C-B), and re-downloading everything to show these numbers gets worse as the library\ngrows.\n\nThere is deliberately NO \"hours watched\" here. It would need a per-episode runtime, and the\nschema has none: `episodes` is (media_id, season_number, number, air_date) and neither provider\nclient fetches a duration. Deriving one from a per-type constant (24 minutes for anime, 45 for\nTV) would render a guess in the same typeface as the measured numbers beside it. Adding it\nproperly means a `media.duration_minutes` column, provider support on both sides, and a re-sync\nbackfill — a task, not a field.",
+        "properties": {
+          "added_this_month": {
+            "title": "Added This Month",
+            "type": "integer"
+          },
+          "average_score": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Average Score"
+          },
+          "by_status": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "propertyNames": {
+              "$ref": "#/components/schemas/UserMediaStatus"
+            },
+            "title": "By Status",
+            "type": "object"
+          },
+          "episodes_watched": {
+            "title": "Episodes Watched",
+            "type": "integer"
+          },
+          "favorites": {
+            "title": "Favorites",
+            "type": "integer"
+          },
+          "rated_count": {
+            "title": "Rated Count",
+            "type": "integer"
+          },
+          "top_genres": {
+            "items": {
+              "$ref": "#/components/schemas/GenreCount"
+            },
+            "title": "Top Genres",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "by_status",
+          "average_score",
+          "rated_count",
+          "episodes_watched",
+          "top_genres",
+          "added_this_month",
+          "favorites"
+        ],
+        "title": "LibraryStats",
+        "type": "object"
+      },
+      "LoginRequest": {
+        "properties": {
+          "email": {
+            "format": "email",
+            "title": "Email",
+            "type": "string"
+          },
+          "password": {
+            "maxLength": 256,
+            "title": "Password",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "password"
+        ],
+        "title": "LoginRequest",
+        "type": "object"
+      },
+      "MediaDetail": {
+        "description": "A persisted title plus its airing state.\n\nOnly correct where something refreshes that state. The sync job's worklist is scoped to titles\nthat are in at least one user's library, so those fields are current for a library entry and\nfor a title the user went looking for — and would be frozen at seed time anywhere else.",
+        "properties": {
+          "cover_image_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cover Image Url"
+          },
+          "days_until_next_episode": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Days Until Next Episode"
+          },
+          "external_id": {
+            "title": "External Id",
+            "type": "string"
+          },
+          "genres": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Genres",
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "next_episode_date": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Episode Date"
+          },
+          "next_episode_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Episode Number"
+          },
+          "next_episode_season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Episode Season"
+          },
+          "source": {
+            "$ref": "#/components/schemas/MediaSource"
+          },
+          "status": {
+            "$ref": "#/components/schemas/MediaStatus"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "total_episodes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Episodes"
+          },
+          "type": {
+            "$ref": "#/components/schemas/MediaType"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
+          }
+        },
+        "required": [
+          "source",
+          "external_id",
+          "type",
+          "title",
+          "year",
+          "genres",
+          "cover_image_url",
+          "id",
+          "status",
+          "next_episode_season",
+          "next_episode_number",
+          "next_episode_date",
+          "days_until_next_episode"
+        ],
+        "title": "MediaDetail",
+        "type": "object"
+      },
+      "MediaSearchResponse": {
+        "description": "Page-based, not cursor-based — the one documented exception to this API's pagination.\nMerging two independently-paginated upstreams gives no stable total order to cursor over\nwithout materialising both result sets first.",
+        "properties": {
+          "has_more": {
+            "title": "Has More",
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SearchItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "sources": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/SourceStatus"
+            },
+            "propertyNames": {
+              "$ref": "#/components/schemas/MediaSource"
+            },
+            "title": "Sources",
+            "type": "object"
+          }
+        },
+        "required": [
+          "items",
+          "page",
+          "has_more",
+          "sources"
+        ],
+        "title": "MediaSearchResponse",
+        "type": "object"
+      },
+      "MediaSource": {
+        "enum": [
+          "anilist",
+          "tmdb"
+        ],
+        "title": "MediaSource",
+        "type": "string"
+      },
+      "MediaStatus": {
+        "enum": [
+          "airing",
+          "finished",
+          "not_yet_aired"
+        ],
+        "title": "MediaStatus",
+        "type": "string"
+      },
+      "MediaType": {
+        "enum": [
+          "anime",
+          "tv"
+        ],
+        "title": "MediaType",
+        "type": "string"
+      },
+      "MemberPreview": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "username"
+        ],
+        "title": "MemberPreview",
+        "type": "object"
+      },
+      "MemberRead": {
+        "properties": {
+          "joined_at": {
+            "format": "date-time",
+            "title": "Joined At",
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/GroupRole"
+          },
+          "user_id": {
+            "format": "uuid",
+            "title": "User Id",
+            "type": "string"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "username",
+          "role",
+          "joined_at"
+        ],
+        "title": "MemberRead",
+        "type": "object"
+      },
+      "PersistedMedia": {
+        "description": "A title that has a row. Unlike MediaSummary it carries an internal id, because a row\nexists — and a client needs that id to act on the title (add it to the library, open it).\n\nEverything a title always knows about itself, and nothing that goes stale. Served wherever a\nrow is referenced but its airing state is NOT kept fresh, which is why recommendations embed\nthis rather than MediaDetail.",
+        "properties": {
+          "cover_image_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cover Image Url"
+          },
+          "external_id": {
+            "title": "External Id",
+            "type": "string"
+          },
+          "genres": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Genres",
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/MediaSource"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "type": {
+            "$ref": "#/components/schemas/MediaType"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
+          }
+        },
+        "required": [
+          "source",
+          "external_id",
+          "type",
+          "title",
+          "year",
+          "genres",
+          "cover_image_url",
+          "id"
+        ],
+        "title": "PersistedMedia",
+        "type": "object"
+      },
+      "ProgressEntry": {
+        "description": "One member's position on one title. `member` NESTS FeedActor rather than carrying flat\n`user_id`/`username`, so all three group-scoped reads — feed, reviews and this — attribute a\nrow the same way and the client needs one shape, not three.\n\nReuses FeedActor rather than minting a structurally identical third DTO: there is no import\ncycle to dodge inside the groups domain, which is the only reason library.ReviewAuthor is a\nseparate class at all.",
+        "properties": {
+          "member": {
+            "$ref": "#/components/schemas/FeedActor"
+          },
+          "progress": {
+            "title": "Progress",
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/UserMediaStatus"
+          }
+        },
+        "required": [
+          "member",
+          "status",
+          "progress"
+        ],
+        "title": "ProgressEntry",
+        "type": "object"
+      },
+      "ProposeTitleRequest": {
+        "properties": {
+          "media_id": {
+            "format": "uuid",
+            "title": "Media Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "media_id"
+        ],
+        "title": "ProposeTitleRequest",
+        "type": "object"
+      },
+      "RecommendationItem": {
+        "description": "The media is embedded rather than referenced, exactly as LibraryEntry does it: a list\nscreen needs titles and cover art, and an id-only response makes rendering one page N+1\nrequests.\n\nPersistedMedia, NOT MediaDetail, and that is the load-bearing part. MediaDetail adds `status`\nand the next-episode block, which only the sync job keeps fresh — and its worklist is scoped\nto titles that are in at least one user's library (`app/sync/service.py`), deliberately, so\nprovider budget is not spent on titles nobody watches. A recommendation candidate is by\nconstruction NOT in the reader's library, so those fields would be frozen at the moment the\nseed job created the row and would go on claiming a months-old episode \"airs today\" forever.\nShipping fewer fields beats shipping wrong ones, and the asymmetry settles it: adding a field\nlater is additive, removing one after a client ships is a coordinated change on both sides.\n\nThere is deliberately NO score field. Publishing the blended float would let clients render a\nnumber whose scale was never defined, making every retune of the weights a visible,\nunexplainable change (decision 7-K). The ordering IS the score.",
+        "properties": {
+          "media": {
+            "$ref": "#/components/schemas/PersistedMedia"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/RecommendationReason"
+          }
+        },
+        "required": [
+          "media",
+          "reason"
+        ],
+        "title": "RecommendationItem",
+        "type": "object"
+      },
+      "RecommendationPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RecommendationItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "RecommendationPage",
+        "type": "object"
+      },
+      "RecommendationReason": {
+        "description": "Why this title is here. The single most valuable thing a small recommender can offer:\nit turns an unexplained list into one the user can disagree with.\n\nONE seed, not all of them — the ranking sums every seed's contribution, but \"because you liked\nthese four things a little\" is not something anyone can act on, so the reason names the\nstrongest single contributor.",
+        "properties": {
+          "matched_genres": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Matched Genres",
+            "type": "array"
+          },
+          "seed_media_id": {
+            "format": "uuid",
+            "title": "Seed Media Id",
+            "type": "string"
+          },
+          "seed_title": {
+            "title": "Seed Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "seed_media_id",
+          "seed_title",
+          "matched_genres"
+        ],
+        "title": "RecommendationReason",
+        "type": "object"
+      },
+      "RefreshRequest": {
+        "properties": {
+          "refresh_token": {
+            "title": "Refresh Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "refresh_token"
+        ],
+        "title": "RefreshRequest",
+        "type": "object"
+      },
+      "RegisterRequest": {
+        "properties": {
+          "email": {
+            "format": "email",
+            "title": "Email",
+            "type": "string"
+          },
+          "invite_code": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Invite Code",
+            "type": "string"
+          },
+          "password": {
+            "maxLength": 256,
+            "minLength": 8,
+            "title": "Password",
+            "type": "string"
+          },
+          "username": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "email",
+          "password",
+          "invite_code"
+        ],
+        "title": "RegisterRequest",
+        "type": "object"
+      },
+      "ResolveMediaRequest": {
+        "properties": {
+          "external_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "External Id",
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/MediaSource"
+          }
+        },
+        "required": [
+          "source",
+          "external_id"
+        ],
+        "title": "ResolveMediaRequest",
+        "type": "object"
+      },
+      "ReviewAuthor": {
+        "description": "Structurally identical to groups.schemas.FeedActor, and duplicated on purpose.\n\napp/groups/routes.py already imports from this module, so importing FeedActor back the other\nway would close an import cycle. Two two-field DTOs pointing in opposite directions is the\ncheaper problem — but they are one concept, so a change to either should be made to both.",
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "username"
+        ],
+        "title": "ReviewAuthor",
+        "type": "object"
+      },
+      "ReviewRead": {
+        "properties": {
+          "author": {
+            "$ref": "#/components/schemas/ReviewAuthor"
+          },
+          "body": {
+            "title": "Body",
+            "type": "string"
+          },
+          "contains_spoilers": {
+            "title": "Contains Spoilers",
+            "type": "boolean"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "media_id": {
+            "format": "uuid",
+            "title": "Media Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "author",
+          "media_id",
+          "body",
+          "contains_spoilers",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ReviewRead",
+        "type": "object"
+      },
+      "SearchItem": {
+        "description": "A search result, plus what the caller already has of it. Both extras are null for a title\nnobody has stored; `library_entry` is null unless THIS caller tracks it.",
+        "properties": {
+          "cover_image_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cover Image Url"
+          },
+          "external_id": {
+            "title": "External Id",
+            "type": "string"
+          },
+          "genres": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Genres",
+            "type": "array"
+          },
+          "library_entry": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LibraryEntryRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "media_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Media Id"
+          },
+          "source": {
+            "$ref": "#/components/schemas/MediaSource"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "type": {
+            "$ref": "#/components/schemas/MediaType"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
+          }
+        },
+        "required": [
+          "source",
+          "external_id",
+          "type",
+          "title",
+          "year",
+          "genres",
+          "cover_image_url"
+        ],
+        "title": "SearchItem",
+        "type": "object"
+      },
+      "SeasonEpisodes": {
+        "properties": {
+          "episode_count": {
+            "title": "Episode Count",
+            "type": "integer"
+          },
+          "episodes": {
+            "items": {
+              "$ref": "#/components/schemas/EpisodeItem"
+            },
+            "title": "Episodes",
+            "type": "array"
+          },
+          "number": {
+            "title": "Number",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "number",
+          "episode_count",
+          "episodes"
+        ],
+        "title": "SeasonEpisodes",
+        "type": "object"
+      },
+      "SetWatchedRequest": {
+        "description": "One request per action: a tapped episode, a catch-up range, or a whole season.",
+        "properties": {
+          "episode_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 3000,
+            "minItems": 1,
+            "title": "Episode Ids",
+            "type": "array"
+          },
+          "watched": {
+            "title": "Watched",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "episode_ids",
+          "watched"
+        ],
+        "title": "SetWatchedRequest",
+        "type": "object"
+      },
+      "SourceStatus": {
+        "description": "Per-provider health for one search. Reported for EVERY MediaSource, so a client can tell\n\"this provider returned nothing\" from \"this server has no key for it\".",
+        "enum": [
+          "ok",
+          "timeout",
+          "rate_limited",
+          "error",
+          "not_configured"
+        ],
+        "title": "SourceStatus",
+        "type": "string"
+      },
+      "SyncSummary": {
+        "description": "`ran` is False exactly when the advisory lock was held elsewhere, and every count is then\nzero. It is a separate field rather than a sentinel count because \"another instance is doing\nit\" and \"there was nothing to do\" are different answers that must not look alike in a log or\na debug response.",
+        "properties": {
+          "checked": {
+            "default": 0,
+            "title": "Checked",
+            "type": "integer"
+          },
+          "episodes_failed": {
+            "default": 0,
+            "title": "Episodes Failed",
+            "type": "integer"
+          },
+          "episodes_refreshed": {
+            "default": 0,
+            "title": "Episodes Refreshed",
+            "type": "integer"
+          },
+          "failed": {
+            "default": 0,
+            "title": "Failed",
+            "type": "integer"
+          },
+          "missing": {
+            "default": 0,
+            "title": "Missing",
+            "type": "integer"
+          },
+          "ran": {
+            "title": "Ran",
+            "type": "boolean"
+          },
+          "unchanged": {
+            "default": 0,
+            "title": "Unchanged",
+            "type": "integer"
+          },
+          "updated": {
+            "default": 0,
+            "title": "Updated",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "ran"
+        ],
+        "title": "SyncSummary",
+        "type": "object"
+      },
+      "TokenPair": {
+        "properties": {
+          "access_token": {
+            "title": "Access Token",
+            "type": "string"
+          },
+          "refresh_token": {
+            "title": "Refresh Token",
+            "type": "string"
+          },
+          "token_type": {
+            "default": "bearer",
+            "title": "Token Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "access_token",
+          "refresh_token"
+        ],
+        "title": "TokenPair",
+        "type": "object"
+      },
+      "UpdateLibraryEntryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "favorite": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Favorite"
+          },
+          "progress": {
+            "anyOf": [
+              {
+                "maximum": 100000.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Progress"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "maximum": 10.0,
+                "minimum": 1.0,
+                "type": "number"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UserMediaStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "UpdateLibraryEntryRequest",
+        "type": "object"
+      },
+      "UpdateReviewRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "body": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Body"
+          },
+          "contains_spoilers": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contains Spoilers"
+          }
+        },
+        "title": "UpdateReviewRequest",
+        "type": "object"
+      },
+      "UserMediaStatus": {
+        "enum": [
+          "watching",
+          "completed",
+          "dropped",
+          "planned",
+          "paused"
+        ],
+        "title": "UserMediaStatus",
+        "type": "string"
+      },
+      "UserOut": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "username",
+          "email",
+          "created_at"
+        ],
+        "title": "UserOut",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      },
+      "WatchedEpisodes": {
+        "properties": {
+          "episode_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Episode Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "episode_ids"
+        ],
+        "title": "WatchedEpisodes",
+        "type": "object"
+      },
+      "WatchlistItem": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "media": {
+            "$ref": "#/components/schemas/MediaDetail"
+          },
+          "proposed_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proposed By"
+          }
+        },
+        "required": [
+          "id",
+          "media",
+          "proposed_by",
+          "created_at"
+        ],
+        "title": "WatchlistItem",
+        "type": "object"
+      },
+      "WatchlistPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/WatchlistItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "WatchlistPage",
+        "type": "object"
+      },
+      "WatchlistPreview": {
+        "properties": {
+          "cover_image_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cover Image Url"
+          },
+          "media_id": {
+            "format": "uuid",
+            "title": "Media Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "media_id",
+          "cover_image_url"
+        ],
+        "title": "WatchlistPreview",
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "HTTPBearer": {
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  },
+  "info": {
+    "title": "ShowTrack API",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/health": {
+      "get": {
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Health Health Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health",
+        "tags": [
+          "infra"
+        ]
+      }
+    },
+    "/v1/auth/login": {
+      "post": {
+        "operationId": "login_v1_auth_login_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenPair"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Login",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/v1/auth/logout": {
+      "post": {
+        "operationId": "logout_v1_auth_logout_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Logout",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/v1/auth/refresh": {
+      "post": {
+        "operationId": "refresh_v1_auth_refresh_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenPair"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Refresh",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/v1/auth/register": {
+      "post": {
+        "description": "One code, two meanings: the server's REGISTRATION_CODE, or any group's invite code —\nwhich also joins you to that group.\n\nOrchestrated HERE rather than inside register_user, so the auth domain never imports the\nsocial one for a feature auth does not own. library/routes.py::add_to_library already sets\nthis precedent, calling media_service and then library service for the same reason. Both\nwrites share one transaction, so a failed join cannot leave an orphaned account that\nconsumed an invite.",
+        "operationId": "register_v1_auth_register_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Register",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/v1/debug/sync": {
+      "post": {
+        "description": "Run the sync job now, outside its schedule.\n\nCalls run_sync, which takes the same advisory lock the scheduler does — so a manual trigger\ncannot run concurrently with a scheduled one, which is the entire point of the lock. If the\nscheduled job holds it, this answers `ran: false` rather than doing the work twice.",
+        "operationId": "trigger_sync_v1_debug_sync_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Trigger Sync",
+        "tags": [
+          "debug"
+        ]
+      }
+    },
+    "/v1/groups": {
+      "get": {
+        "description": "A plain list, not {items, next_cursor} (decision G-H). Architecture rule 4 governs\ncollections that grow without bound; the number of groups one person belongs to does not.\n\nEach item is a GroupSummary (role, counts, previews), so the groups list draws its cards\nwithout a request per group.",
+        "operationId": "list_my_groups_v1_groups_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/GroupSummary"
+                  },
+                  "title": "Response List My Groups V1 Groups Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List My Groups",
+        "tags": [
+          "groups"
+        ]
+      },
+      "post": {
+        "operationId": "create_group_v1_groups_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateGroupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroupWithInvite"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Group",
+        "tags": [
+          "groups"
+        ]
+      }
+    },
+    "/v1/groups/join": {
+      "post": {
+        "operationId": "join_group_v1_groups_join_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JoinGroupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroupWithInvite"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Join Group",
+        "tags": [
+          "groups"
+        ]
+      }
+    },
+    "/v1/groups/{group_id}/feed": {
+      "get": {
+        "description": "`member` is unused in the body and that is the point: taking GroupMemberDep is what\nauthorizes this route, and 7.5a's route-table walk asserts it is present on every path under\n/v1/groups/{group_id}.",
+        "operationId": "group_feed_v1_groups__group_id__feed_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Group Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 2048,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "unusable cursor"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Group Feed",
+        "tags": [
+          "groups"
+        ]
+      }
+    },
+    "/v1/groups/{group_id}/invite": {
+      "get": {
+        "description": "The current code and its expiry, for the owner to share again. Read-only: it never\nrotates and never extends the expiry, and an expired code comes back as it is, so the\nclient can say so and offer rotation. The same owner gate as rotate (members 403, others\n404), and the same re-check, since the group can vanish after the dependency ran.",
+        "operationId": "current_invite_v1_groups__group_id__invite_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Group Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroupWithInvite"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Current Invite",
+        "tags": [
+          "groups"
+        ]
+      }
+    },
+    "/v1/groups/{group_id}/invite/rotate": {
+      "post": {
+        "description": "require_ownership proves the group existed and that the caller owned it when the\ndependency ran — not that it still exists now. The last member leaving deletes the group\noutright (G-E), so between the dependency's SELECT and this one the row can be gone, and an\nunchecked load would 500 with an AttributeError inside rotate_invite_code. Same 404, same\nbody as the dependency's: a group that no longer exists is indistinguishable from one the\ncaller was never in, which is the answer G-D wants anyway.",
+        "operationId": "rotate_invite_v1_groups__group_id__invite_rotate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Group Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroupWithInvite"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Rotate Invite",
+        "tags": [
+          "groups"
+        ]
+      }
+    },
+    "/v1/groups/{group_id}/media/{media_id}/progress": {
+      "get": {
+        "description": "A plain list, not a cursor page: the result is bounded by group membership (S-J), the same\nreasoning as group_reviews above.\n\n`member` is unused in the body and that is the point: taking GroupMemberDep is what authorizes\nthis route, and 7.5a's walk asserts it is present on every path under /v1/groups/{group_id}.",
+        "operationId": "compare_group_progress_v1_groups__group_id__media__media_id__progress_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Group Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "media_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Media Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ProgressEntry"
+                  },
+                  "title": "Response Compare Group Progress V1 Groups  Group Id  Media  Media Id  Progress Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Compare Group Progress",
+        "tags": [
+          "groups"
+        ]
+      }
+    },
+    "/v1/groups/{group_id}/media/{media_id}/reviews": {
+      "get": {
+        "description": "`member` is unused in the body for the same reason it is on group_feed above: taking\nGroupMemberDep is what authorizes this route, and 7.5a's walk asserts it is present on every\npath under /v1/groups/{group_id}.",
+        "operationId": "group_reviews_v1_groups__group_id__media__media_id__reviews_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Group Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "media_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Media Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ReviewRead"
+                  },
+                  "title": "Response Group Reviews V1 Groups  Group Id  Media  Media Id  Reviews Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Group Reviews",
+        "tags": [
+          "groups"
+        ]
+      }
+    },
+    "/v1/groups/{group_id}/members": {
+      "get": {
+        "operationId": "list_members_v1_groups__group_id__members_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Group Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MemberRead"
+                  },
+                  "title": "Response List Members V1 Groups  Group Id  Members Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Members",
+        "tags": [
+          "groups"
+        ]
+      }
+    },
+    "/v1/groups/{group_id}/members/{user_id}": {
+      "delete": {
+        "description": "Any member may remove themselves; only the owner may remove anybody else.\n\nTakes GroupMemberDep, not GroupOwnerDep — the role check is conditional on WHO is being\nremoved, so it belongs in the service beside the lifecycle rules rather than in a\ndependency that cannot see the target.",
+        "operationId": "remove_member_v1_groups__group_id__members__user_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Group Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Remove Member",
+        "tags": [
+          "groups"
+        ]
+      }
+    },
+    "/v1/groups/{group_id}/watchlist": {
+      "get": {
+        "description": "`member` is unused in the body for the same reason it is on group_feed: taking\nGroupMemberDep is what authorizes this route, and 7.5a's walk asserts it is present on every\npath under /v1/groups/{group_id}.\n\nReuses the feed's `parse_created_at` rather than defining a second one — both sorts are the\nsame timestamptz column shape, and two parsers that drift make every issued cursor unreadable.",
+        "operationId": "list_group_watchlist_v1_groups__group_id__watchlist_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Group Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 2048,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WatchlistPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "unusable cursor"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Group Watchlist",
+        "tags": [
+          "groups"
+        ]
+      },
+      "post": {
+        "description": "200, not 201, because it is idempotent (S-I) — the same call as decision 4-D's\nPOST /v1/library, which returns 200 for a title already tracked.",
+        "operationId": "propose_to_watchlist_v1_groups__group_id__watchlist_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Group Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProposeTitleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WatchlistItem"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "no such title"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Propose To Watchlist",
+        "tags": [
+          "groups"
+        ]
+      }
+    },
+    "/v1/groups/{group_id}/watchlist/{entry_id}": {
+      "delete": {
+        "description": "Any member may remove any entry (S-L): it is a shared list, and §5.3's whole moderation\nmodel is removing members.",
+        "operationId": "remove_from_watchlist_v1_groups__group_id__watchlist__entry_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Group Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "entry_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Entry Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Remove From Watchlist",
+        "tags": [
+          "groups"
+        ]
+      }
+    },
+    "/v1/library": {
+      "get": {
+        "operationId": "list_library_v1_library_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/UserMediaStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "media_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Media Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "favorite",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Favorite"
+            }
+          },
+          {
+            "in": "query",
+            "name": "type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/MediaType"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Type"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/LibrarySort",
+              "default": "title"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 2048,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "unusable cursor"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Library",
+        "tags": [
+          "library"
+        ]
+      },
+      "post": {
+        "description": "Idempotent (decision 4-D): adding a title already tracked returns it untouched with 200.\n\nNothing here is caught. app/errors.py turns MediaNotFound into 404, MediaSourceNotConfigured\ninto 503, and the ProviderError family into 502/504/429.",
+        "operationId": "add_to_library_v1_library_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddLibraryEntryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "already in the library, returned untouched"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryEntry"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "no such title upstream"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "description": "the upstream provider rate limited this server"
+          },
+          "502": {
+            "description": "the upstream provider is unavailable"
+          },
+          "503": {
+            "description": "no provider configured for that source"
+          },
+          "504": {
+            "description": "the upstream provider timed out"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Add To Library",
+        "tags": [
+          "library"
+        ]
+      }
+    },
+    "/v1/library/import/anilist": {
+      "post": {
+        "description": "Synchronous (decision 4-H). A typical list is a few hundred titles: one or two GraphQL\nrequests plus a handful of INSERTs. A background job would need a task table, a polling\nendpoint and a status model to shave seconds off something run roughly once.\n\nuser_id comes from the token, never the body, so the import can only ever write to the\ncaller's own library. Read before the call for the same reason as add_to_library: 4-M's\nrollback expires the identity map.",
+        "operationId": "import_from_anilist_v1_library_import_anilist_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "no public AniList list for that username"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "description": "the upstream provider rate limited this server"
+          },
+          "502": {
+            "description": "the upstream provider is unavailable"
+          },
+          "503": {
+            "description": "no provider configured for that source"
+          },
+          "504": {
+            "description": "the upstream provider timed out"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Import From Anilist",
+        "tags": [
+          "library"
+        ]
+      }
+    },
+    "/v1/library/stats": {
+      "get": {
+        "description": "Declared before the `/{entry_id}` routes below for consistency with app/media/routes.py,\nwhich documents the same ordering for a case where it is load-bearing. This module has no\n`GET /{entry_id}` — only PATCH and DELETE — so a `GET /stats` cannot collide with a path\nparameter whatever the declaration order here.",
+        "operationId": "get_library_stats_v1_library_stats_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryStats"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Library Stats",
+        "tags": [
+          "library"
+        ]
+      }
+    },
+    "/v1/library/{entry_id}": {
+      "delete": {
+        "operationId": "remove_from_library_v1_library__entry_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "entry_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Entry Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "library entry not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Remove From Library",
+        "tags": [
+          "library"
+        ]
+      },
+      "patch": {
+        "operationId": "update_library_entry_v1_library__entry_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "entry_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Entry Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateLibraryEntryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryEntry"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "library entry not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Library Entry",
+        "tags": [
+          "library"
+        ]
+      }
+    },
+    "/v1/library/{entry_id}/episodes/watched": {
+      "get": {
+        "operationId": "read_watched_episodes_v1_library__entry_id__episodes_watched_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "entry_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Entry Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WatchedEpisodes"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "library entry not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read Watched Episodes",
+        "tags": [
+          "library"
+        ]
+      },
+      "put": {
+        "description": "Returns the updated entry, so the client has the new progress in the same round trip.",
+        "operationId": "set_watched_episodes_v1_library__entry_id__episodes_watched_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "entry_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Entry Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetWatchedRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryEntry"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "library entry not found"
+          },
+          "409": {
+            "description": "episodes not loaded yet"
+          },
+          "422": {
+            "description": "an episode of another title, or one not aired yet"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Set Watched Episodes",
+        "tags": [
+          "library"
+        ]
+      }
+    },
+    "/v1/media/resolve": {
+      "post": {
+        "description": "Opens a search result without adding it: the title's stored row, created if need be.\nPOST because it can write a media row. Errors map as for POST /v1/library (app/errors.py):\nunknown title 404, provider not configured 503, provider failures 502/504/429.",
+        "operationId": "resolve_media_v1_media_resolve_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolveMediaRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MediaDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Resolve Media",
+        "tags": [
+          "media"
+        ]
+      }
+    },
+    "/v1/media/search": {
+      "get": {
+        "description": "Each item says whether it is stored (`media_id`) and whether the caller tracks it\n(`library_entry`). Read the id before the service ends the auth read (decision 4-M).",
+        "operationId": "search_media_v1_media_search_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "maxLength": 100,
+              "minLength": 1,
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MediaSearchResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Search Media",
+        "tags": [
+          "media"
+        ]
+      }
+    },
+    "/v1/media/{media_id}": {
+      "get": {
+        "operationId": "read_media_v1_media__media_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "media_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Media Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MediaDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read Media",
+        "tags": [
+          "media"
+        ]
+      }
+    },
+    "/v1/media/{media_id}/episodes": {
+      "get": {
+        "description": "Seasons and episodes from the database; never a provider call.",
+        "operationId": "read_episodes_v1_media__media_id__episodes_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "media_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Media Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EpisodeList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read Episodes",
+        "tags": [
+          "media"
+        ]
+      }
+    },
+    "/v1/recommendations": {
+      "get": {
+        "description": "The ranking is rebuilt here, and ONLY when no cursor was supplied.\n\nThat single condition is the whole of the cursor-stability guarantee: a paginating client\ncannot reach the recompute branch, so THIS request cannot move the ranking it is walking. No\ngeneration column, no cleanup job, no expiring cursors.\n\nIt is not immutability, and the difference matters. A concurrent cursor-less read from the\nsame user — a second device, a pull-to-refresh in another tab — does reach the recompute\nbranch, and recompute is DELETE-then-INSERT over that user's whole ranking, so a cursor issued\nbefore it can still land mid-rebuild. That residual race is accepted rather than closed: doing\nbetter needs a generation column and cursors that expire with it.",
+        "operationId": "list_recommendations_v1_recommendations_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 2048,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecommendationPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "unusable cursor"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Recommendations",
+        "tags": [
+          "recommendations"
+        ]
+      }
+    },
+    "/v1/reviews": {
+      "post": {
+        "operationId": "create_review_v1_reviews_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateReviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "no such title"
+          },
+          "409": {
+            "description": "you have already reviewed this title"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Review",
+        "tags": [
+          "reviews"
+        ]
+      }
+    },
+    "/v1/reviews/{review_id}": {
+      "delete": {
+        "operationId": "delete_review_v1_reviews__review_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "review_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Review Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "no such review"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Review",
+        "tags": [
+          "reviews"
+        ]
+      },
+      "patch": {
+        "operationId": "update_review_v1_reviews__review_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "review_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Review Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateReviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "no such review"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Review",
+        "tags": [
+          "reviews"
+        ]
+      }
+    },
+    "/v1/users/me": {
+      "get": {
+        "operationId": "read_current_user_v1_users_me_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read Current User",
+        "tags": [
+          "users"
+        ]
+      }
+    }
+  }
+}

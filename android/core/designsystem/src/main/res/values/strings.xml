@@ -1,11 +1,12 @@
 <resources>
-    <!-- Library statuses. These are the five tab labels AND the badge on every card, so they
+    <!-- Library statuses. These are the tab labels AND the badge on every card, so they
          must stay short enough for a tab at 360dp (decision C-J). -->
     <string name="status_watching">Watching</string>
     <string name="status_completed">Completed</string>
     <string name="status_dropped">Dropped</string>
     <string name="status_planned">Planned</string>
     <string name="status_paused">Paused</string>
+    <string name="status_other">Other</string>
     <!-- The library screen's unfiltered tab — StatusTabRow's `selected == null` case. -->
     <string name="status_all">All</string>
 
