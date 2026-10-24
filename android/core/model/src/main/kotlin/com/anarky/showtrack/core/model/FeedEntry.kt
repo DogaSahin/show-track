@@ -51,6 +51,8 @@ data class FeedEntry(
     val mediaId: String?,
     val payload: Map<String, String>,
     val createdAt: Instant,
+    // The title's episode count, for the "15 of 28" bar; null when unknown or there is no title.
+    val totalEpisodes: Int? = null,
 ) {
     init {
         // Structural enforcement of E-H (see [media]'s own KDoc above): "null exactly when media

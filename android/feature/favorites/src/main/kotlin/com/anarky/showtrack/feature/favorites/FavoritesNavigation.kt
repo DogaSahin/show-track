@@ -5,6 +5,7 @@ import androidx.navigation.compose.composable
 import com.anarky.showtrack.core.model.LibraryEntry
 import com.anarky.showtrack.core.navigation.AppRoute
 import com.anarky.showtrack.core.navigation.DetailRoute
+import com.anarky.showtrack.core.navigation.FavoritesGridRoute
 import com.anarky.showtrack.core.navigation.FavoritesRoute
 
 /**
@@ -28,6 +29,20 @@ import com.anarky.showtrack.core.navigation.FavoritesRoute
 fun NavGraphBuilder.favoritesEntry(onNavigate: (AppRoute) -> Unit) {
     composable<FavoritesRoute> {
         FavoritesScreen(
+            onEntryClick = { entry: LibraryEntry -> onNavigate(DetailRoute(mediaId = entry.media.id)) },
+            onSeeAll = { type -> onNavigate(FavoritesGridRoute(type = type.wire())) },
+        )
+    }
+}
+
+/**
+ * The See all grid for one media type, reached from a Favorites shelf. Its own entry point so
+ * `:app` registers it beside [favoritesEntry] like any other route; the grid's back arrow is the
+ * system Back, so it needs no route of its own to return to.
+ */
+fun NavGraphBuilder.favoritesGridEntry(onNavigate: (AppRoute) -> Unit) {
+    composable<FavoritesGridRoute> {
+        FavoritesGridScreen(
             onEntryClick = { entry: LibraryEntry -> onNavigate(DetailRoute(mediaId = entry.media.id)) },
         )
     }

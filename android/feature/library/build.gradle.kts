@@ -7,7 +7,7 @@ android {
         // LibraryScreenTest drives LibraryScreen()'s stringResource()/painterResource() calls
         // through a real Compose test rule on the JVM, which needs this module's own
         // res/values/strings.xml and res/drawable to resolve — same requirement as
-        // :core:designsystem's StatusPresentationTest and :feature:profile's PushNotifierTest.
+        // :core:designsystem's StatusPresentationTest and :feature:profile's EpisodeAlertNotifierTest.
         unitTests {
             isIncludeAndroidResources = true
         }

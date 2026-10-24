@@ -4,14 +4,21 @@ import android.content.Context
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsOff
+import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isToggleable
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
+import com.anarky.showtrack.core.model.CurrentUser
 import com.anarky.showtrack.core.model.LibraryStats
 import com.anarky.showtrack.core.model.UserMediaStatus
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -59,15 +66,17 @@ class ProfileScreenTest {
     fun `an unrated library shows no average rather than zero`() {
         composeRule.setContent {
             ProfileScreen(
-                pushState = PushState.NoDistributor,
+                user = null,
+                groupNames = null,
                 statsState = LibraryStatsUiState.Success(UNRATED_STATS),
                 signOutError = false,
-                onEnablePush = {},
-                onDisablePush = {},
+                alerts = AlertsRowState.Off,
+                onAlertsClick = {},
                 onStatsRetry = {},
                 onSignOut = {},
                 onGroupsClick = {},
                 onImportClick = {},
+                onSearchClick = {},
             )
         }
 
@@ -105,15 +114,17 @@ class ProfileScreenTest {
             )
         composeRule.setContent {
             ProfileScreen(
-                pushState = PushState.NoDistributor,
+                user = null,
+                groupNames = null,
                 statsState = LibraryStatsUiState.Success(stats),
                 signOutError = false,
-                onEnablePush = {},
-                onDisablePush = {},
+                alerts = AlertsRowState.Off,
+                onAlertsClick = {},
                 onStatsRetry = {},
                 onSignOut = {},
                 onGroupsClick = {},
                 onImportClick = {},
+                onSearchClick = {},
             )
         }
 
@@ -123,7 +134,7 @@ class ProfileScreenTest {
         // which is the exact regression this test exists for.
         val caption = context.resources.getQuantityString(R.plurals.profile_stats_average_label, 12, 12)
 
-        composeRule.onNodeWithText("8.4").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("8.4", substring = true).performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText(caption).performScrollTo().assertIsDisplayed()
     }
 
@@ -143,15 +154,17 @@ class ProfileScreenTest {
     fun `an absent status renders as absent, not as zero`() {
         composeRule.setContent {
             ProfileScreen(
-                pushState = PushState.NoDistributor,
+                user = null,
+                groupNames = null,
                 statsState = LibraryStatsUiState.Success(PARTIAL_STATS),
                 signOutError = false,
-                onEnablePush = {},
-                onDisablePush = {},
+                alerts = AlertsRowState.Off,
+                onAlertsClick = {},
                 onStatsRetry = {},
                 onSignOut = {},
                 onGroupsClick = {},
                 onImportClick = {},
+                onSearchClick = {},
             )
         }
 
@@ -169,7 +182,7 @@ class ProfileScreenTest {
      * `@Config(qualifiers = ...)` widens the Robolectric virtual display for this one test, and
      * this is a test-environment fact worth recording rather than a stylistic pick:
      * `createComposeRule()`'s default Robolectric root measured a fixed 320x470px in this project
-     * — NOT auto-sized to content — and `ProfileScreen`'s full stack (push card, stats card, then
+     * — NOT auto-sized to content — and `ProfileScreen`'s full stack (stats card, settings card, then
      * `ImportSection`) genuinely exceeds that height. Confirmed by printing the semantics tree, not
      * guessed: the button's own node reported `Actions = […, OnClick, …]` — present, genuinely
      * clickable, and unambiguously matched (`onNodeWithText` found exactly one node) — with
@@ -188,15 +201,17 @@ class ProfileScreenTest {
         var clicked = false
         composeRule.setContent {
             ProfileScreen(
-                pushState = PushState.NoDistributor,
+                user = null,
+                groupNames = null,
                 statsState = LibraryStatsUiState.Success(UNRATED_STATS),
                 signOutError = false,
-                onEnablePush = {},
-                onDisablePush = {},
+                alerts = AlertsRowState.Off,
+                onAlertsClick = {},
                 onStatsRetry = {},
                 onSignOut = {},
                 onGroupsClick = {},
                 onImportClick = { clicked = true },
+                onSearchClick = {},
             )
         }
 
@@ -207,7 +222,7 @@ class ProfileScreenTest {
         // `assertTrue(clicked)` alone — this line is what tells a future reader which one they are
         // looking at if a later section change pushes the button off-window again.
         composeRule
-            .onNodeWithText(context.getString(R.string.profile_import_action))
+            .onNodeWithText(context.getString(R.string.profile_import_title))
             .performScrollTo()
             .assertIsDisplayed()
             .performClick()
@@ -219,8 +234,9 @@ class ProfileScreenTest {
      * Round 3, task 9b.6 fix round: round 2's own disclosure said there was "no lightweight way"
      * to test `ProfileScreen`'s `.verticalScroll` under Robolectric. There is — this test, using
      * the same trick `` `tapping the import action invokes onImportClick` `` diagnosed by accident:
-     * a Robolectric root does not auto-size to content, so `Modifier.heightIn(max = 40.dp)` here
-     * constrains the SAME `Column` to a genuinely too-short viewport on purpose, and
+     * a Robolectric root does not auto-size to content, so `Modifier.heightIn(max = 260.dp)` here
+     * (room for the large title bar and a sliver of content) constrains the screen to a genuinely
+     * too-short viewport on purpose, and
      * `performScrollTo()` is what a real finger drag does. Sign-out is chosen because it is the
      * functional necessity `.verticalScroll` exists to protect (this class's own KDoc) — a scroll
      * that could reach some OTHER row but not this one would still be a real regression.
@@ -229,16 +245,18 @@ class ProfileScreenTest {
     fun `sign-out is reachable by scrolling when the viewport is too short to show everything at once`() {
         composeRule.setContent {
             ProfileScreen(
-                pushState = PushState.NoDistributor,
+                user = null,
+                groupNames = null,
                 statsState = LibraryStatsUiState.Success(UNRATED_STATS),
                 signOutError = false,
-                onEnablePush = {},
-                onDisablePush = {},
+                alerts = AlertsRowState.Off,
+                onAlertsClick = {},
                 onStatsRetry = {},
                 onSignOut = {},
                 onGroupsClick = {},
                 onImportClick = {},
-                modifier = Modifier.heightIn(max = 40.dp),
+                onSearchClick = {},
+                modifier = Modifier.heightIn(max = 260.dp),
             )
         }
 
@@ -247,6 +265,113 @@ class ProfileScreenTest {
             .onNodeWithText(context.getString(R.string.profile_sign_out))
             .performScrollTo()
             .assertIsDisplayed()
+    }
+
+    @Test
+    fun `the header shows who you are and since when`() {
+        setScreen(user = FakeAuthRepository.USER)
+
+        composeRule.onNodeWithText(FakeAuthRepository.USER.username).assertIsDisplayed()
+        composeRule.onNodeWithText(FakeAuthRepository.USER.email).assertIsDisplayed()
+        composeRule.onNodeWithText("2025", substring = true).assertIsDisplayed()
+    }
+
+    @Test
+    fun `the groups row names your groups, or invites you to make one`() {
+        setScreen(groupNames = listOf("Home", "Anime club"))
+        composeRule.onNodeWithText("Home, Anime club").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun `with no groups the groups row invites you to create or join one`() {
+        setScreen(groupNames = emptyList())
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule
+            .onNodeWithText(context.getString(R.string.profile_groups_subtitle_none))
+            .performScrollTo()
+            .assertIsDisplayed()
+    }
+
+    @Test
+    fun `an empty library offers search instead of stats`() {
+        var searched = false
+        setScreen(stats = UNRATED_STATS.copy(total = 0, byStatus = emptyMap()), onSearchClick = { searched = true })
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule.onNodeWithText(context.getString(R.string.profile_stats_empty)).assertIsDisplayed()
+        composeRule.onNodeWithText(context.getString(R.string.profile_stats_episodes_label)).assertDoesNotExist()
+        composeRule.onNodeWithText(context.getString(R.string.profile_stats_empty_action)).performClick()
+
+        assertTrue(searched)
+    }
+
+    @Test
+    fun `the status bar reads as a list of statuses and counts`() {
+        setScreen(
+            stats =
+                UNRATED_STATS.copy(
+                    total = 9,
+                    byStatus =
+                        mapOf(
+                            UserMediaStatus.WATCHING to 6,
+                            UserMediaStatus.DROPPED to 3,
+                        ),
+                ),
+        )
+
+        composeRule.onNodeWithContentDescription("Watching 6, Dropped 3").assertIsDisplayed()
+    }
+
+    @Test
+    fun `the alerts row is one switch whose label says what it does`() {
+        var clicks = 0
+        setScreen(alerts = AlertsRowState.On, onAlertsClick = { clicks++ })
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule
+            .onNode(hasText(context.getString(R.string.profile_alerts_on)) and isToggleable())
+            .performScrollTo()
+            .assertIsOn()
+            .performClick()
+        assertEquals(1, clicks)
+    }
+
+    @Test
+    fun `alerts never read as on without permission`() {
+        setScreen(alerts = AlertsRowState.NeedsPermission)
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule
+            .onNode(hasText(context.getString(R.string.profile_alerts_needs_permission)) and isToggleable())
+            .performScrollTo()
+            .assertIsOff()
+    }
+
+    @Suppress("LongParameterList")
+    private fun setScreen(
+        user: CurrentUser? = null,
+        groupNames: List<String>? = null,
+        stats: LibraryStats = UNRATED_STATS,
+        onSearchClick: () -> Unit = {},
+        alerts: AlertsRowState = AlertsRowState.Off,
+        onAlertsClick: () -> Unit = {},
+    ) {
+        composeRule.setContent {
+            ProfileScreen(
+                user = user,
+                groupNames = groupNames,
+                statsState = LibraryStatsUiState.Success(stats),
+                signOutError = false,
+                alerts = alerts,
+                onAlertsClick = onAlertsClick,
+                onStatsRetry = {},
+                onSignOut = {},
+                onGroupsClick = {},
+                onImportClick = {},
+                onSearchClick = onSearchClick,
+            )
+        }
     }
 
     private companion object {

@@ -1,11 +1,19 @@
 from functools import lru_cache
+from pathlib import Path
+from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Every value .env.example has ever shipped for a secret. Matched exactly, after the length checks
+# would already catch most of them, because "showtrack" in a 16+ field is still a known value.
+_PLACEHOLDER_SECRETS = frozenset({"change-me-use-openssl-rand-hex-32", "change-me", "showtrack"})
+_GENERATE_HINT = "generate one with: openssl rand -hex 32"
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    # hide_input_in_errors: a rejected secret must not be echoed into startup logs.
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", hide_input_in_errors=True)
 
     database_url: str
     # Required, no default. A default here would work perfectly and silently make every
@@ -17,8 +25,9 @@ class Settings(BaseSettings):
     # 64, so a longer code here would brick the only bootstrap path with a 422 blaming the client's
     # invite_code. The documented `openssl rand -hex 32` produces EXACTLY 64 characters — the
     # recommended value sits on the boundary with zero slack, which is what makes this worth a
-    # constraint rather than a comment.
-    registration_code: str = Field(min_length=1, max_length=64)
+    # constraint rather than a comment. The minimum lives in the validator below so its message
+    # carries the generate hint.
+    registration_code: str = Field(max_length=64)
     # Optional, unlike SECRET_KEY. Absent means the TMDB provider is never registered and
     # /v1/media/search returns AniList results only, reporting `not_configured` for TMDB in its
     # `sources` map. Required would mean CI and docker-compose both need a value or every
@@ -43,21 +52,6 @@ class Settings(BaseSettings):
     # tightest tier in SYNC_TIERS silently widens every tier to this value — the job cannot
     # refresh a title it is not awake to look at.
     sync_interval_hours: int = Field(default=1, ge=1)
-    threshold_scan_minutes: int = Field(default=15, ge=1)
-    # The lead time for the AIRING_SOON notification threshold. le=24 is not decoration: the
-    # threshold scan's SQL prefilter is a hard 24-hour window, so a larger lead time would
-    # silently drop candidates the threshold should have caught — the same "never enqueued and
-    # indistinguishable from a healthy quiet scan" failure the lead-time rule replaced.
-    notify_soon_hours: int = Field(default=6, ge=1, le=24)
-    # Optional, like TMDB_API_KEY and for the same recorded reason: a required setting breaks
-    # backend-ci on every subsequent PR. Absent means no transport is registered, the dispatch
-    # job is never scheduled, and tasks queue harmlessly.
-    ntfy_base_url: str | None = None
-    # A CREDENTIAL. Same category as SECRET_KEY: never logged, never echoed in an error body.
-    ntfy_token: str | None = None
-    # The dispatcher is a single indexed query when the queue is empty, which is almost always,
-    # and its latency sits directly on top of the threshold scan's 15-minute granularity.
-    notification_dispatch_minutes: int = Field(default=1, ge=1)
     # How long a group's invite code stays usable. Defaulted, never required — CLAUDE.md records
     # that Phase 2 added two REQUIRED settings and broke backend-ci on every subsequent PR.
     # 168 = seven days: a household joins within days, and since the code can create an account
@@ -71,8 +65,31 @@ class Settings(BaseSettings):
     # no cheap trigger — a sync refresh changing a candidate's genres, and the global genre counts
     # behind IDF drifting as `media` grows. Both move slowly.
     recommendations_ttl_hours: int = Field(default=24, ge=1)
+    # Where the owner drops release.json + the APK (a read-only volume in compose). Defaulted, never
+    # required; an empty or missing directory just means "no update available".
+    releases_dir: Path = Path("/app/releases")
     log_level: str = "INFO"
-    environment: str = "local"
+    # Read by main.create_app: "production" serves no docs or debug routes. A Literal, so a typo
+    # fails startup instead of silently leaving the docs open.
+    environment: Literal["local", "production"] = "local"
+
+    @field_validator("secret_key")
+    @classmethod
+    def _secret_key_is_real(cls, value: str) -> str:
+        if value in _PLACEHOLDER_SECRETS:
+            raise ValueError(f"SECRET_KEY is the example placeholder; {_GENERATE_HINT}")
+        if len(value) < 32:
+            raise ValueError(f"SECRET_KEY must be at least 32 characters; {_GENERATE_HINT}")
+        return value
+
+    @field_validator("registration_code")
+    @classmethod
+    def _registration_code_is_real(cls, value: str) -> str:
+        if value in _PLACEHOLDER_SECRETS:
+            raise ValueError(f"REGISTRATION_CODE is the example placeholder; {_GENERATE_HINT}")
+        if len(value) < 16:
+            raise ValueError(f"REGISTRATION_CODE must be at least 16 characters; {_GENERATE_HINT}")
+        return value
 
 
 @lru_cache

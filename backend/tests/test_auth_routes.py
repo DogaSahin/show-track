@@ -1,3 +1,5 @@
+import asyncio
+import threading
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -6,7 +8,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.users import service
+from app.users import security, service, throttle
 from app.users.models import RefreshToken
 
 VALID = {"username": "doga", "email": "doga@example.com", "password": "correct horse battery staple"}
@@ -195,6 +197,31 @@ async def test_logout_is_idempotent_and_does_not_leak(client: AsyncClient) -> No
     assert unknown.status_code == 204
 
 
+async def test_logout_with_a_rotated_token_ends_the_session(client: AsyncClient) -> None:
+    """The app can read its pair a moment before a refresh rotates it, and then log out with the
+    old one. Logout must still end the session: the successor dies with it.
+    """
+    first = await _login(client)
+    second = (await client.post("/v1/auth/refresh", json={"refresh_token": first["refresh_token"]})).json()
+
+    logout = await client.post("/v1/auth/logout", json={"refresh_token": first["refresh_token"]})
+    assert logout.status_code == 204
+
+    after = await client.post("/v1/auth/refresh", json={"refresh_token": second["refresh_token"]})
+    assert after.status_code == 401
+
+
+async def test_logout_leaves_other_sessions_alone(client: AsyncClient) -> None:
+    """Each login is its own family, so signing out on one device must not sign out another."""
+    phone = await _login(client)
+    tablet = await _login(client)
+
+    await client.post("/v1/auth/logout", json={"refresh_token": phone["refresh_token"]})
+
+    still_signed_in = await client.post("/v1/auth/refresh", json={"refresh_token": tablet["refresh_token"]})
+    assert still_signed_in.status_code == 200
+
+
 async def test_the_cascade_is_scoped_to_the_replayed_tokens_family(client: AsyncClient) -> None:
     """The cascade must revoke only the family the replayed token belongs to, not every
     unrevoked refresh token in the table. With a single account in play, "this family" and
@@ -253,3 +280,128 @@ async def test_an_expired_token_is_refused_without_revoking_its_family(
 
     sibling = await client.post("/v1/auth/refresh", json={"refresh_token": sibling_raw})
     assert sibling.status_code == 200
+
+
+async def test_the_sixth_attempt_is_refused_even_with_the_right_password(client: AsyncClient) -> None:
+    await client.post("/v1/auth/register", json=_register_body())
+    for _ in range(5):
+        wrong = await client.post("/v1/auth/login", json={"email": VALID["email"], "password": "wrong-password"})
+        assert wrong.status_code == 401
+
+    response = await client.post("/v1/auth/login", json={"email": VALID["email"], "password": VALID["password"]})
+
+    assert response.status_code == 429
+    assert int(response.headers["Retry-After"]) >= 1
+
+
+async def test_the_lockout_looks_the_same_for_known_and_unknown_emails(client: AsyncClient) -> None:
+    """The throttle must not become an account-existence oracle: an email with no account is
+    counted and refused exactly like one that has an account."""
+    await client.post("/v1/auth/register", json=_register_body())
+
+    async def six_wrong(email: str) -> list:
+        return [
+            await client.post("/v1/auth/login", json={"email": email, "password": "wrong-password"}) for _ in range(6)
+        ]
+
+    known, unknown = await six_wrong(VALID["email"]), await six_wrong("nobody@example.com")
+
+    assert [r.status_code for r in known] == [r.status_code for r in unknown] == [401] * 5 + [429]
+    assert known[-1].json()["detail"] == unknown[-1].json()["detail"]
+    assert int(known[-1].headers["Retry-After"]) >= 1
+    assert int(unknown[-1].headers["Retry-After"]) >= 1
+
+
+async def test_a_successful_login_clears_earlier_failures(client: AsyncClient) -> None:
+    await client.post("/v1/auth/register", json=_register_body())
+    bad = {"email": VALID["email"], "password": "wrong-password"}
+    for _ in range(4):
+        await client.post("/v1/auth/login", json=bad)
+    assert (
+        await client.post("/v1/auth/login", json={"email": VALID["email"], "password": VALID["password"]})
+    ).status_code == 200
+    for _ in range(5):
+        assert (await client.post("/v1/auth/login", json=bad)).status_code == 401
+
+
+async def test_an_overlong_login_password_is_a_422(client: AsyncClient) -> None:
+    response = await client.post("/v1/auth/login", json={"email": VALID["email"], "password": "p" * 257})
+    assert response.status_code == 422
+
+
+async def test_argon2_never_runs_on_the_event_loop_thread(client: AsyncClient, monkeypatch) -> None:
+    """Register (hash), a known login (verify) and an unknown one (the dummy verify) — the last is
+    the path most likely to be left on the loop.
+    """
+    threads: list[threading.Thread] = []
+    real = security._hasher
+
+    class Spy:
+        def hash(self, *args):
+            threads.append(threading.current_thread())
+            return real.hash(*args)
+
+        def verify(self, *args):
+            threads.append(threading.current_thread())
+            return real.verify(*args)
+
+    monkeypatch.setattr(security, "_hasher", Spy())
+
+    await client.post("/v1/auth/register", json=_register_body())
+    await client.post("/v1/auth/login", json={"email": VALID["email"], "password": VALID["password"]})
+    await client.post("/v1/auth/login", json={"email": "nobody@example.com", "password": "whatever"})
+
+    assert len(threads) == 3
+    assert all(thread is not threading.main_thread() for thread in threads)
+
+
+async def test_a_busy_hashing_queue_is_a_503_and_does_not_count_as_an_attempt(client: AsyncClient, monkeypatch) -> None:
+    monkeypatch.setattr(security, "ARGON2_MAX_PENDING", 0)
+    for _ in range(6):
+        response = await client.post("/v1/auth/login", json={"email": VALID["email"], "password": "x"})
+        assert response.status_code == 503
+        assert response.headers["Retry-After"] == "1"
+
+
+async def test_concurrent_attempts_cannot_overrun_the_limit(monkeypatch) -> None:
+    """Service level: the `client` fixture shares one DB connection, so route calls can't run
+    concurrently. The property is synchronous (begin() has no await), so a stub is enough.
+    """
+    calls = 0
+
+    async def stub_authenticate(session, *, email, password):
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0)
+        return None
+
+    monkeypatch.setattr(service, "authenticate", stub_authenticate)
+
+    results = await asyncio.gather(
+        *(service.login(None, email="a@example.com", password="x", now=1000.0) for _ in range(20)),
+        return_exceptions=True,
+    )
+
+    assert calls == 5
+    assert sum(isinstance(result, service.LoginThrottled) for result in results) == 15
+
+
+async def test_a_login_cancelled_before_its_answer_does_not_count_as_an_attempt(monkeypatch) -> None:
+    """A client that disconnects while its request waits for an argon2 slot never had a password
+    checked, so the attempt it recorded is given back."""
+    monkeypatch.setattr(throttle, "login_throttle", throttle.LoginThrottle(max_attempts=1))
+    entered = asyncio.Event()
+
+    async def stub_authenticate(session, *, email, password):
+        entered.set()
+        await asyncio.Event().wait()  # never answers: stands in for waiting on a hashing slot
+
+    monkeypatch.setattr(service, "authenticate", stub_authenticate)
+
+    task = asyncio.create_task(service.login(None, email="a@example.com", password="x", now=1000.0))
+    await entered.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert throttle.login_throttle.begin(throttle.key_for("a@example.com"), 1000.0) is None

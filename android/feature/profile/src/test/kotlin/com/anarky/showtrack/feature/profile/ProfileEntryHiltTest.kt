@@ -20,6 +20,7 @@ import com.anarky.showtrack.core.navigation.ProfileRoute
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
 import dagger.hilt.android.testing.HiltTestApplication
+import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -61,7 +62,7 @@ class ProfileEntryHiltTest {
                     }
                 }
             NavHost(navController = navController, startDestination = ProfileRoute) {
-                profileEntry(onNavigate = navController::navigate)
+                profileEntry(activeGroup = MutableStateFlow(NO_GROUPS), onNavigate = navController::navigate)
                 composable<ImportRoute> { }
             }
         }
@@ -70,7 +71,7 @@ class ProfileEntryHiltTest {
         // `performScrollTo()` first — see `confirming sign-out navigates to AuthRoute`'s own note:
         // Robolectric's default root does not auto-size to this screen's content.
         composeRule
-            .onNodeWithText(context.getString(R.string.profile_import_action))
+            .onNodeWithText(context.getString(R.string.profile_import_title))
             .performScrollTo()
             .performClick()
 
@@ -98,7 +99,7 @@ class ProfileEntryHiltTest {
                     }
                 }
             NavHost(navController = navController, startDestination = ProfileRoute) {
-                profileEntry(onNavigate = navController::navigate)
+                profileEntry(activeGroup = MutableStateFlow(NO_GROUPS), onNavigate = navController::navigate)
                 composable<GroupsRoute> { }
             }
         }
@@ -108,7 +109,7 @@ class ProfileEntryHiltTest {
         // Robolectric's default root does not auto-size to this screen's content, and a click on a
         // node scrolled out of view succeeds at the semantics-tree level while doing nothing.
         composeRule
-            .onNodeWithText(context.getString(R.string.profile_groups_action))
+            .onNodeWithText(context.getString(R.string.profile_groups_title))
             .performScrollTo()
             .performClick()
 
@@ -127,7 +128,7 @@ class ProfileEntryHiltTest {
                     }
                 }
             NavHost(navController = navController, startDestination = ProfileRoute) {
-                profileEntry(onNavigate = navController::navigate)
+                profileEntry(activeGroup = MutableStateFlow(NO_GROUPS), onNavigate = navController::navigate)
                 composable<AuthRoute> { }
             }
         }

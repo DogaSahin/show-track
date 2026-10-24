@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -67,6 +67,16 @@ class Media(UUIDPrimaryKeyMixin, Base):
     # it would mark rows fresh that had never been synced at all, idling them for a full tier
     # interval.
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # When the episode list was last fetched; NULL means never, which clients show as "not
+    # available yet" rather than as a show with no episodes.
+    episodes_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Denormalised count of the stored episodes, written with them, so every list that embeds a
+    # title ("15 of 19") reads a column rather than counting a join per row. NULL until synced.
+    total_episodes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Set when something suggests the stored list moved (the title's status changed), so the sync
+    # job refreshes it once more. A flag rather than clearing episodes_synced_at, which would make
+    # a stored list read as "not fetched yet" until that refresh succeeds.
+    episodes_refresh_due: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
 
     __table_args__ = (UniqueConstraint("source", "external_id"),)
 
@@ -91,5 +101,7 @@ class Episode(UUIDPrimaryKeyMixin, Base):
     # `AiringSchedule.airingAt` (a Unix timestamp with time-of-day) has its time discarded
     # here. The countdown UI reads Media.next_episode_date, which does carry a time.
     air_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # NULL when the provider has none (AniList never does).
+    title: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (UniqueConstraint("media_id", "season_number", "number"),)

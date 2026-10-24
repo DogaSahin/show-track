@@ -4,12 +4,16 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.anarky.showtrack.core.data.repository.LibraryRepository
 import com.anarky.showtrack.core.data.repository.RecommendationRepository
+import com.anarky.showtrack.core.model.Media
 import com.anarky.showtrack.core.model.Recommendation
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -116,6 +120,13 @@ class DiscoverViewModel
         private val mutableState = MutableStateFlow<DiscoverUiState>(DiscoverUiState.Loading)
         val state: StateFlow<DiscoverUiState> = mutableState.asStateFlow()
 
+        // One event per title a successful [add] put in the library, for the screen's "added to
+        // Planned" snackbar. A Channel, not state: a snackbar is shown once, and a StateFlow would
+        // replay the last one to every new collector, re-announcing it after rotation or a return
+        // from Detail. The same reasoning as `SearchViewModel.navigateToDetail`.
+        private val addedChannel = Channel<Media>(Channel.BUFFERED)
+        val added: Flow<Media> = addedChannel.receiveAsFlow()
+
         // A ViewModel-wide guard, independent of [state]'s shape — [addInFlight] below's identical
         // reasoning, applied to [refresh] instead of [add] (task 9c.8, E-M): once a resume effect
         // can call [refresh] over an already-[DiscoverUiState.Success] screen, a manual retry from
@@ -217,14 +228,13 @@ class DiscoverViewModel
         private val optimisticallyRemovedIds = mutableSetOf<String>()
 
         // Set by [loadMore] when it drops itself because [refreshInFlight] (task 9c.8 round 2,
-        // review finding "B3 guard can stall paging"). `EndOfListTrigger` only emits
-        // [DiscoverScreen]'s `onTriggered` on the false -> true edge of its own `shouldTrigger`
-        // (that composable's own KDoc); a `loadMore()` dropped here changes neither `itemCount`
-        // nor scroll position, so `shouldTrigger` never toggles and the trigger never re-fires on
-        // its own — without this flag, Discover would stop paging silently until the user
-        // scrolled up past the threshold and back down. [refresh]'s own `finally` checks this once
-        // [refreshInFlight] is clear and re-issues the dropped [loadMore] itself, restoring paging
-        // without any Compose-layer involvement.
+        // review finding "B3 guard can stall paging"). `ScrollEndTrigger` asks for more only when a
+        // user scroll FINISHES near an end (that composable's own KDoc) — never when items change
+        // and never on its own; a `loadMore()` dropped here leaves the user already parked at the
+        // end with no further scroll coming, so the trigger never re-fires — without this flag,
+        // Discover would stop paging silently until the user scrolled again. [refresh]'s own
+        // `finally` checks this once [refreshInFlight] is clear and re-issues the dropped
+        // [loadMore] itself, restoring paging without any Compose-layer involvement.
         //
         // **Cleared only when the re-issued [loadMore] actually commits to a fetch, not merely
         // called (task 9c.8 round 3, review finding).** An earlier version of this mechanism
@@ -258,12 +268,12 @@ class DiscoverViewModel
          * when [refresh] was reachable only from [DiscoverUiState.Error] (nothing to lose there),
          * but not once a resume can land [refresh] OVER a populated screen: a concurrent [loadMore]
          * mid-flight would have its own [DiscoverUiState.Success.loadingMore] flag silently flipped
-         * back to `false` here while the page fetch was still genuinely running, freeing
-         * `EndOfListTrigger` to fire a SECOND, concurrent `loadMore()` — `FeedViewModel.reload`'s
-         * identical lesson (see its own KDoc), applied here. [pageError] is explicitly cleared
-         * (not merely carried forward), matching `GroupDetailViewModel.reloadWatchlist`'s own
-         * precedent: a successful refresh is a strictly newer, authoritative read, so a stale
-         * page-fetch error must not survive it.
+         * back to `false` here while the page fetch was still genuinely running, freeing the next
+         * scroll that ends near the end (`ScrollEndTrigger`) to fire a SECOND, concurrent
+         * `loadMore()` — `FeedViewModel.reload`'s identical lesson (see its own KDoc), applied
+         * here. [pageError] is explicitly cleared (not merely carried forward), matching
+         * `GroupDetailViewModel.reloadWatchlist`'s own precedent: a successful refresh is a
+         * strictly newer, authoritative read, so a stale page-fetch error must not survive it.
          *
          * On failure: if [state] is still [DiscoverUiState.Success] when the failure lands, this
          * marks [DiscoverUiState.Success.isStale] instead of replacing it with
@@ -306,7 +316,7 @@ class DiscoverViewModel
          *
          * **Re-issues a [loadMore] dropped by [refreshInFlight] once this call actually finishes**
          * (task 9c.8 round 2, review finding "B3 guard can stall paging") — see
-         * [pendingLoadMoreAfterRefresh]'s own KDoc for why `EndOfListTrigger` cannot be trusted to
+         * [pendingLoadMoreAfterRefresh]'s own KDoc for why `ScrollEndTrigger` cannot be trusted to
          * do this on its own.
          */
         @Suppress("TooGenericExceptionCaught")
@@ -378,7 +388,7 @@ class DiscoverViewModel
          * — never a duplicate — so there is nothing here for [refresh] to defer to.
          *
          * A call dropped here sets [pendingLoadMoreAfterRefresh] so [refresh] can re-issue it once
-         * it actually finishes — see that field's own KDoc for why `EndOfListTrigger` on its own
+         * it actually finishes — see that field's own KDoc for why `ScrollEndTrigger` on its own
          * would otherwise leave Discover silently stuck. Against the dropped-call rule (this
          * class's KDoc) that satisfies clause 1 outright: this is a DEFERRAL, not a discard. The
          * other early return here — [DiscoverUiState.Success.loadingMore] already `true` — is
@@ -551,6 +561,7 @@ class DiscoverViewModel
                         source = recommendation.media.source,
                         externalId = recommendation.media.externalId,
                     )
+                    addedChannel.send(recommendation.media)
                 } catch (cancellation: CancellationException) {
                     throw cancellation
                 } catch (failure: Exception) {

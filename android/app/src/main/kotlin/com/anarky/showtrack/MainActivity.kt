@@ -32,6 +32,7 @@ import androidx.navigation.compose.rememberNavController
 import com.anarky.showtrack.core.data.auth.AuthEventSource
 import com.anarky.showtrack.core.designsystem.theme.ShowTrackTheme
 import com.anarky.showtrack.core.model.AuthEvent
+import com.anarky.showtrack.core.model.UpdateState
 import com.anarky.showtrack.core.navigation.AppRoute
 import com.anarky.showtrack.core.navigation.AuthRoute
 import com.anarky.showtrack.core.navigation.DiscoverRoute
@@ -40,6 +41,9 @@ import com.anarky.showtrack.core.navigation.FeedRoute
 import com.anarky.showtrack.core.navigation.GroupsRoute
 import com.anarky.showtrack.core.navigation.LibraryRoute
 import com.anarky.showtrack.core.navigation.ProfileRoute
+import com.anarky.showtrack.update.UpdatePrompts
+import com.anarky.showtrack.update.UpdateSession
+import com.anarky.showtrack.update.UpdateViewModel
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
@@ -145,27 +149,22 @@ fun ShowTrackApp(authEvents: Flow<AuthEvent>) {
     // refresh() on Feed or Groups: a group created or left on one tab is reflected in the switcher
     // the next time either tab is visited, without either feature module knowing this ViewModel
     // exists. Plus a load-once on any OTHER authenticated destination — see activeGroupActionFor's
-    // own KDoc for why Detail (and the push deep link into it) otherwise never loaded at all.
+    // own KDoc for why Detail (and the alert deep link into it) otherwise never loaded at all.
     val activeGroupViewModel: ActiveGroupViewModel = hiltViewModel()
     val currentDestination = currentBackStackEntry?.destination
     ActiveGroupDestinationEffect(destination = currentDestination, viewModel = activeGroupViewModel)
 
+    // In-app updates: the check, banner and blocking screen all wait for a signed-in session, so
+    // none of them runs from, or covers, the sign-in screen. UpdatePrompts' KDoc has the rest.
+    val updateViewModel: UpdateViewModel = hiltViewModel()
+    val updateUi by updateViewModel.ui.collectAsStateWithLifecycle()
+    val updateSession = updateSessionFor(start, currentDestination)
+    val updateRequired = updateSession == UpdateSession.SignedIn && updateUi.state is UpdateState.Required
+
     // Hoisted out of navigationSuiteItems below, which is a plain builder DSL rather than a
     // composable scope (its own KDoc, further down, explains the same constraint for
-    // stringResource). Material's default indicator is `secondaryContainer`, which in this palette
-    // is the deep navy that means PLANNED — a colour with a meaning elsewhere in the app, and not
-    // the accent. Selection is the accent everywhere else, so it is the accent here.
-    val itemColors =
-        NavigationSuiteDefaults.itemColors(
-            navigationBarItemColors =
-                NavigationBarItemDefaults.colors(
-                    selectedIconColor = MaterialTheme.colorScheme.onPrimary,
-                    selectedTextColor = MaterialTheme.colorScheme.primary,
-                    indicatorColor = MaterialTheme.colorScheme.primary,
-                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                ),
-        )
+    // stringResource).
+    val itemColors = navigationItemColors()
 
     NavigationSuiteScaffold(
         // An empty navigationSuiteItems block does not remove the bar: NavigationSuiteScaffold
@@ -178,8 +177,9 @@ fun ShowTrackApp(authEvents: Flow<AuthEvent>) {
         // NavigationSuiteScaffold's own default `layoutType` expression exactly (confirmed from
         // the same bytecode), so the adaptive rail/bar/drawer choice is unchanged from before
         // this parameter was ever passed explicitly.
+        // No tabs under the blocking update screen either: there is nowhere to go but the update.
         layoutType =
-            if (showNavigationTabs) {
+            if (showNavigationTabs && !updateRequired) {
                 NavigationSuiteScaffoldDefaults.calculateFromAdaptiveInfo(currentWindowAdaptiveInfo())
             } else {
                 NavigationSuiteType.None
@@ -231,11 +231,15 @@ fun ShowTrackApp(authEvents: Flow<AuthEvent>) {
         },
     ) {
         Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-            ShowTrackNavHost(
-                navController = navController,
-                authEvents = authEvents,
+            UpdatePrompts(
+                ui = updateUi,
+                session = updateSession,
+                actions = updateViewModel,
+                onSignedOut = navController::navigateToAuthClearingStack,
                 modifier = Modifier.padding(innerPadding),
-            )
+            ) { contentModifier ->
+                ShowTrackNavHost(navController = navController, authEvents = authEvents, modifier = contentModifier)
+            }
         }
     }
 }
@@ -288,7 +292,7 @@ internal fun ActiveGroupDestinationEffect(
  * group created or left on one tab visible on the other. Everything else that is not [AuthRoute]
  * gets a LOAD-ONCE: the first authenticated destination of the session issues the fetch, and every
  * later one answers `None`. Without it, the ordinary path into Detail — Library, tap a title, or a
- * `showtrack://detail/<id>` push deep link — never issued a groups fetch at all, and Detail's group
+ * `showtrack://detail/<id>` alert deep link — never issued a groups fetch at all, and Detail's group
  * section rendered nothing for the life of the Activity. With a naive `DetailRoute -> Refresh`
  * branch instead, every single Detail open would cost a `GET /v1/groups`, since
  * [ActiveGroupViewModel.refresh] fetches unconditionally.
@@ -461,3 +465,39 @@ enum class TopLevelDestination(
         ProfileRoute,
     ),
 }
+
+/**
+ * Where the session stands, for the in-app update check and prompts. The same two signals
+ * [shouldShowNavigationTabs] reads, for the same reasons: [start] says a session was decided (it
+ * never moves back on a sign-out), and [currentDestination] says whether it is still current (it
+ * lands on [AuthRoute] for a sign-out or an expired session). `null` is "not known yet" — the one
+ * frame a configuration change re-seeds — so [UpdateSession.Unknown], which resets nothing.
+ */
+internal fun updateSessionFor(
+    start: AppStart,
+    currentDestination: NavDestination?,
+): UpdateSession =
+    when {
+        currentDestination == null -> UpdateSession.Unknown
+        currentDestination.hasRoute(AuthRoute::class) -> UpdateSession.SignedOut
+        start == AppStart.Library || start == AppStart.Onboarding -> UpdateSession.SignedIn
+        else -> UpdateSession.Unknown
+    }
+
+/**
+ * The tab items' colours. Material's default indicator is `secondaryContainer`, which in this
+ * palette is the deep navy that means PLANNED — a colour with a meaning elsewhere in the app, and
+ * not the accent. Selection is the accent everywhere else, so it is the accent here.
+ */
+@Composable
+private fun navigationItemColors() =
+    NavigationSuiteDefaults.itemColors(
+        navigationBarItemColors =
+            NavigationBarItemDefaults.colors(
+                selectedIconColor = MaterialTheme.colorScheme.onPrimary,
+                selectedTextColor = MaterialTheme.colorScheme.primary,
+                indicatorColor = MaterialTheme.colorScheme.primary,
+                unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            ),
+    )

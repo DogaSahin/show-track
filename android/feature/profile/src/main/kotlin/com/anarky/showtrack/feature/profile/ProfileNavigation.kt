@@ -2,11 +2,14 @@ package com.anarky.showtrack.feature.profile
 
 import androidx.navigation.NavGraphBuilder
 import androidx.navigation.compose.composable
+import com.anarky.showtrack.core.model.ActiveGroupState
 import com.anarky.showtrack.core.navigation.AppRoute
 import com.anarky.showtrack.core.navigation.AuthRoute
 import com.anarky.showtrack.core.navigation.GroupsRoute
 import com.anarky.showtrack.core.navigation.ImportRoute
 import com.anarky.showtrack.core.navigation.ProfileRoute
+import com.anarky.showtrack.core.navigation.SearchRoute
+import kotlinx.coroutines.flow.StateFlow
 
 /**
  * This module's contribution to the app's nav graph. `:app` calls it; nothing else can, because
@@ -30,14 +33,22 @@ import com.anarky.showtrack.core.navigation.ProfileRoute
  * `:core:navigation`, and `:app` is what maps it to that module's registered destination — the
  * identical shape [ImportRoute] already has. Before it existed, `FeedScreen`'s zero-groups empty
  * state was the only production door to [GroupsRoute], so an account that reached one group could
- * never reach the groups screen again — see [GroupsSection]'s own KDoc in `ProfileScreen.kt`.
+ * never reach the groups screen again.
+ *
+ * The empty-library note's Search goes to `SearchRoute` the same way. [activeGroup] is the same
+ * value Feed and Groups receive from `:app`; the Groups row names your groups from it.
  */
-fun NavGraphBuilder.profileEntry(onNavigate: (AppRoute) -> Unit) {
+fun NavGraphBuilder.profileEntry(
+    activeGroup: StateFlow<ActiveGroupState>,
+    onNavigate: (AppRoute) -> Unit,
+) {
     composable<ProfileRoute> {
         ProfileScreen(
+            activeGroup = activeGroup,
             onSignedOut = signOutNavigation(onNavigate),
             onGroupsClick = groupsNavigation(onNavigate),
             onImportClick = importNavigation(onNavigate),
+            onSearchClick = { onNavigate(SearchRoute) },
         )
     }
 }

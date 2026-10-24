@@ -18,17 +18,13 @@
     <exclude domain="file" path="datastore/showtrack_tokens.preferences_pb" />
 
     <!--
-        The push registration. `endpoint` is a BEARER SECRET in the same sense the ntfy topic is
-        (backend 6-L): whoever holds it can post arbitrary notifications to this device. It is
-        withheld by the list endpoint, never written to a log line, and guarded from logcat in
-        PushRegistrar — so a cloud backup was the one route by which it left the device, in
-        plaintext, while every other surface treated it as a credential.
-
-        A second, quieter reason, independent of secrecy: `targetId` identifies a row on the
-        server that belongs to THE DEVICE THAT REGISTERED IT. Restored onto a different phone, the
-        next `unregister()` would delete the OLD device's target and silently stop its
-        notifications. Neither field survives a restore usefully — the distributor mints a fresh
-        endpoint on first run anyway — so excluding the file costs nothing at all.
+        Episode alerts: the switch and which alerts already fired. Both belong to this phone (the
+        notification permission does not come back with a restore), so a copy is never useful.
     -->
-    <exclude domain="file" path="datastore/showtrack_push.preferences_pb" />
+    <exclude domain="file" path="datastore/showtrack_episode_alerts.preferences_pb" />
+    <!--
+        Recent searches: personal history, cleared at every sign-in anyway, so a cloud copy would
+        only ever be a copy of someone's searches and never something a restore needs.
+    -->
+    <exclude domain="file" path="datastore/showtrack_recent_searches.preferences_pb" />
 </full-backup-content>

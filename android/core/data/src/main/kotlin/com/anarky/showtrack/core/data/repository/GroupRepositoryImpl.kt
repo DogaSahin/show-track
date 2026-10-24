@@ -12,6 +12,7 @@ import com.anarky.showtrack.core.network.dto.CreateGroupRequestDto
 import com.anarky.showtrack.core.network.dto.CreateReviewRequestDto
 import com.anarky.showtrack.core.network.dto.JoinGroupRequestDto
 import com.anarky.showtrack.core.network.dto.ProposeTitleRequestDto
+import com.anarky.showtrack.core.network.dto.ReviewPatchFields
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -63,6 +64,8 @@ class GroupRepositoryImpl
 
         override suspend fun rotateInvite(groupId: String): GroupWithInvite =
             guarded { api.rotateGroupInvite(groupId).toDomain() }
+
+        override suspend fun invite(groupId: String): GroupWithInvite = guarded { api.groupInvite(groupId).toDomain() }
 
         override suspend fun removeMember(
             groupId: String,
@@ -162,10 +165,15 @@ class GroupRepositoryImpl
             guarded(notFound = GroupFailure.NoSuchEntry) {
                 val patch =
                     buildJsonObject {
-                        body?.let { put("body", it) }
-                        containsSpoilers?.let { put("contains_spoilers", it) }
+                        body?.let { put(ReviewPatchFields.BODY, it) }
+                        containsSpoilers?.let { put(ReviewPatchFields.CONTAINS_SPOILERS, it) }
                     }
                 api.updateReview(reviewId, patch).toDomain()
+            }
+
+        override suspend fun deleteReview(reviewId: String) =
+            guarded(notFound = GroupFailure.NoSuchEntry) {
+                api.deleteReview(reviewId)
             }
     }
 

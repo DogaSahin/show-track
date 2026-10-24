@@ -18,7 +18,7 @@ from app.config import get_settings
 # time and renders a working `op.drop_constraint(op.f('<reflected name>'), ...)`.
 #
 # What the convention actually buys is a name readable off the model itself — the way
-# `tests/test_users_model.py` asserts on `uq_users_username` — without needing to query
+# `tests/test_media_model.py` asserts on `uq_media_source_external_id` — without needing to query
 # Postgres or trust what autogenerate happened to reflect. For a CHECK
 # constraint from `enum_column`, the name always comes from that function's own `name=`
 # argument regardless of this convention; the convention's contribution there is the
@@ -141,6 +141,13 @@ async def dispose_engine() -> None:
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
     async with get_sessionmaker()() as session:
         yield session
+
+
+def get_session_factory() -> async_sessionmaker[AsyncSession]:
+    """For work that outlives a request (a background task), which must not borrow the request's
+    session. A dependency so tests can hand it their own transaction-bound session instead.
+    """
+    return get_sessionmaker()
 
 
 # Postgres' Bind message encodes the parameter count as an int16, so one statement carries at

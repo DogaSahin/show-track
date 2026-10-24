@@ -30,7 +30,6 @@ from app.db import Base  # noqa: E402
 from app.groups import models as _groups_models  # noqa: F401,E402
 from app.library import models as _library_models  # noqa: F401,E402
 from app.media import models as _media_models  # noqa: F401,E402
-from app.notifications import models as _notifications_models  # noqa: F401,E402
 from app.recommendations import models as _recommendations_models  # noqa: F401,E402
 from app.sync import models as _sync_models  # noqa: F401,E402
 from app.users import models as _users_models  # noqa: F401,E402

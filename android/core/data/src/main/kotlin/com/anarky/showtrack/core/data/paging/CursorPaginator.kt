@@ -102,4 +102,26 @@ class CursorPaginator<T>(
             _items.value = page.items
             page.items
         }
+
+    /**
+     * Back to "not begun" (sign-out). Under the lock, so a fetch already in flight lands first
+     * and is then cleared, never after.
+     */
+    suspend fun reset() {
+        mutex.withLock {
+            cursor = null
+            started = false
+            _hasMore.value = true
+            _items.value = emptyList()
+        }
+    }
+
+    /**
+     * Applies [transform] to the loaded items under the same lock as the page loads, so an edit
+     * can never interleave with a page being appended or replaced. Cursor and [hasMore] are left
+     * alone: an edit changes rows already fetched, not where the next page starts.
+     */
+    suspend fun edit(transform: (List<T>) -> List<T>) {
+        mutex.withLock { _items.value = transform(_items.value) }
+    }
 }

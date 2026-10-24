@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+from app import clock
 from app.library.models import ActivityKind, UserMediaStatus
 from tests.factories import make_activity, make_media, make_user, make_user_media
 
@@ -131,32 +132,55 @@ async def test_stats_cap_the_genre_ranking_and_break_ties_deterministically(auth
     assert [row["genre"] for row in body["top_genres"]] == ["action", "alpha", "beta", "comedy", "drama"]
 
 
-async def test_stats_count_this_months_adds_and_ignore_imports_and_older_months(auth_client, db_session, auth_user):
+async def test_stats_count_this_months_adds_and_ignore_imports_and_older_months(
+    auth_client, db_session, auth_user, monkeypatch
+):
     """added_this_month reads the activity log, so it must skip an IMPORTED row (one row for N
     titles, decision S-A) and anything written before the month boundary.
     """
-    now = datetime.now(UTC)
-    last_month = (now.replace(day=1) - timedelta(days=1)).replace(hour=12)
+    fixed = datetime(2026, 10, 31, 23, 59, 59, tzinfo=UTC)
+    monkeypatch.setattr(clock, "utcnow", lambda: fixed)
+    this_month = fixed - timedelta(hours=1)
     db_session.add_all(
         [
-            make_activity(auth_user.id, kind=ActivityKind.ADDED),
-            make_activity(auth_user.id, kind=ActivityKind.ADDED),
+            make_activity(auth_user.id, kind=ActivityKind.ADDED, created_at=this_month),
+            make_activity(auth_user.id, kind=ActivityKind.ADDED, created_at=this_month),
             # Not an add: one row standing in for a whole import.
-            make_activity(auth_user.id, kind=ActivityKind.IMPORTED, payload={"count": 400}),
+            make_activity(auth_user.id, kind=ActivityKind.IMPORTED, payload={"count": 400}, created_at=this_month),
             # An add, but last month.
-            make_activity(auth_user.id, kind=ActivityKind.ADDED, created_at=last_month),
-            # An add by someone else, this month.
+            make_activity(
+                auth_user.id,
+                kind=ActivityKind.ADDED,
+                created_at=datetime(2026, 9, 30, 23, 59, 59, tzinfo=UTC),
+            ),
         ]
     )
+    # An add by someone else, this month.
     other = make_user(username="other-adder", email="other-adder@example.com")
     db_session.add(other)
     await db_session.flush()
-    db_session.add(make_activity(other.id, kind=ActivityKind.ADDED))
+    db_session.add(make_activity(other.id, kind=ActivityKind.ADDED, created_at=this_month))
     await db_session.flush()
 
     body = (await auth_client.get("/v1/library/stats")).json()
 
     assert body["added_this_month"] == 2
+
+
+async def test_stats_month_starts_at_midnight_utc_on_the_first(auth_client, db_session, auth_user, monkeypatch):
+    fixed = datetime(2026, 11, 1, 0, 0, 0, tzinfo=UTC)
+    monkeypatch.setattr(clock, "utcnow", lambda: fixed)
+    db_session.add_all(
+        [
+            make_activity(auth_user.id, kind=ActivityKind.ADDED, created_at=fixed),
+            make_activity(auth_user.id, kind=ActivityKind.ADDED, created_at=fixed - timedelta(seconds=1)),
+        ]
+    )
+    await db_session.flush()
+
+    body = (await auth_client.get("/v1/library/stats")).json()
+
+    assert body["added_this_month"] == 1
 
 
 async def test_stats_on_an_empty_library_report_zero_rather_than_null_aggregates(auth_client, auth_user):

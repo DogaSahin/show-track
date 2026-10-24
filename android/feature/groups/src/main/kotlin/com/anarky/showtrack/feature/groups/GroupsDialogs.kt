@@ -33,6 +33,7 @@ internal fun CreateGroupDialog(
     onDismiss: () -> Unit,
 ) {
     var name by remember { mutableStateOf("") }
+    val limitError = groupNameError(name)
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(text = stringResource(R.string.groups_create_title)) },
@@ -44,6 +45,8 @@ internal fun CreateGroupDialog(
                     label = { Text(text = stringResource(R.string.groups_create_name_label)) },
                     singleLine = true,
                     enabled = !submitting,
+                    isError = limitError != null,
+                    supportingText = limitError?.let { { Text(text = stringResource(it)) } },
                     modifier = Modifier.fillMaxWidth(),
                 )
                 error?.let {
@@ -59,7 +62,7 @@ internal fun CreateGroupDialog(
             // Decision C-S: the error is cleared the moment GroupsViewModel.createGroup launches a
             // retry, so this can safely re-invoke onCreate straight away — mirroring ImportForm's
             // primary button guard.
-            TextButton(onClick = { onCreate(name) }, enabled = !submitting && name.isNotBlank()) {
+            TextButton(onClick = { onCreate(name) }, enabled = !submitting && name.isNotBlank() && limitError == null) {
                 Text(
                     text =
                         stringResource(
@@ -88,6 +91,7 @@ internal fun JoinGroupDialog(
     onDismiss: () -> Unit,
 ) {
     var code by remember { mutableStateOf("") }
+    val limitError = inviteCodeError(code)
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(text = stringResource(R.string.groups_join_title)) },
@@ -99,6 +103,8 @@ internal fun JoinGroupDialog(
                     label = { Text(text = stringResource(R.string.groups_join_code_label)) },
                     singleLine = true,
                     enabled = !submitting,
+                    isError = limitError != null,
+                    supportingText = limitError?.let { { Text(text = stringResource(it)) } },
                     modifier = Modifier.fillMaxWidth(),
                 )
                 // GroupFailure.InvalidInviteCode (fix round 2; renamed from BadRequest in fix
@@ -117,7 +123,7 @@ internal fun JoinGroupDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = { onJoin(code) }, enabled = !submitting && code.isNotBlank()) {
+            TextButton(onClick = { onJoin(code) }, enabled = !submitting && code.isNotBlank() && limitError == null) {
                 Text(
                     text =
                         stringResource(

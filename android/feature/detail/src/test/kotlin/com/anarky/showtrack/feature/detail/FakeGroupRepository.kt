@@ -108,6 +108,8 @@ internal class FakeGroupRepository(
 
     override suspend fun rotateInvite(groupId: String): GroupWithInvite = error("not exercised by DetailViewModel")
 
+    override suspend fun invite(groupId: String): GroupWithInvite = error("not exercised by DetailViewModel")
+
     override suspend fun removeMember(
         groupId: String,
         userId: String,
@@ -137,6 +139,14 @@ internal class FakeGroupRepository(
         createReviewGate?.await()
         createReviewFailure?.let { throw GroupOperationException(it) }
         return createReviewResult ?: error("no createReviewResult configured")
+    }
+
+    val deletedReviews = mutableListOf<String>()
+    var deleteReviewFailure: GroupFailure? = null
+
+    override suspend fun deleteReview(reviewId: String) {
+        deleteReviewFailure?.let { throw GroupOperationException(it) }
+        deletedReviews += reviewId
     }
 
     override suspend fun updateReview(

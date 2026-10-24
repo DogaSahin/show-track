@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Looper
 import androidx.compose.runtime.remember
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
@@ -15,12 +16,14 @@ import androidx.navigation.toRoute
 import androidx.test.core.app.ApplicationProvider
 import com.anarky.showtrack.core.data.repository.LibraryRepository
 import com.anarky.showtrack.core.data.repository.MediaRepository
+import com.anarky.showtrack.core.data.search.RecentSearchStore
 import com.anarky.showtrack.core.model.LibraryEntry
 import com.anarky.showtrack.core.model.Media
 import com.anarky.showtrack.core.model.MediaSource
 import com.anarky.showtrack.core.model.MediaStatus
 import com.anarky.showtrack.core.model.MediaSummary
 import com.anarky.showtrack.core.model.MediaType
+import com.anarky.showtrack.core.model.SearchResult
 import com.anarky.showtrack.core.model.SearchResults
 import com.anarky.showtrack.core.model.UserMediaStatus
 import com.anarky.showtrack.core.navigation.DetailRoute
@@ -29,6 +32,8 @@ import dagger.hilt.android.testing.BindValue
 import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
 import dagger.hilt.android.testing.HiltTestApplication
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Rule
@@ -63,18 +68,34 @@ class SearchEntryHiltTest {
     @JvmField
     val mediaRepository: MediaRepository =
         EntryFakeMediaRepository(
-            searchResult = SearchResults(items = listOf(searchSummary()), hasMore = false, degraded = emptyList()),
+            searchResult =
+                SearchResults(
+                    items = listOf(SearchResult(searchSummary(), mediaId = "media-1")),
+                    hasMore = false,
+                    degraded = emptyList(),
+                ),
         )
 
     @BindValue
     @JvmField
     val libraryRepository: LibraryRepository = EntryFakeLibraryRepository(addResult = addedEntry())
 
+    @BindValue
+    @JvmField
+    val recentSearchStore: RecentSearchStore =
+        object : RecentSearchStore {
+            override val recent: Flow<List<String>> = flowOf(emptyList())
+
+            override suspend fun record(query: String) = Unit
+
+            override suspend fun clear() = Unit
+        }
+
     @Before
     fun setUp() = hiltRule.inject()
 
     @Test
-    fun `adding a result navigates to DetailRoute for the id the add call minted`() {
+    fun `tapping a result opens DetailRoute for its id and adds nothing`() {
         lateinit var navController: TestNavHostController
 
         composeRule.setContent {
@@ -92,7 +113,7 @@ class SearchEntryHiltTest {
 
         val context = ApplicationProvider.getApplicationContext<Context>()
         composeRule
-            .onNodeWithText(context.getString(R.string.search_field_label))
+            .onNodeWithText(context.getString(R.string.search_field_placeholder))
             .performTextInput("frieren")
 
         // The real 300ms debounce (`SearchViewModel.SEARCH_DEBOUNCE_MS`) has to actually elapse:
@@ -104,15 +125,54 @@ class SearchEntryHiltTest {
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(500))
         composeRule.waitForIdle()
 
-        composeRule.onNodeWithText("Frieren").performClick()
+        composeRule.onNodeWithText("Frieren", useUnmergedTree = true).performClick()
         composeRule.waitForIdle()
 
-        // Not just `hasRoute(DetailRoute::class)`: `addedEntry()` below carries its own `id`
-        // ("entry-1", the library row) distinct from `media.id` ("media-1", the title) — the exact
-        // kind of in-scope, same-type mix-up `FavoritesEntryHiltTest`'s own KDoc measured stays
-        // green under a route-type-only assertion (round 1 fix, applied uniformly here too).
+        // The id the result already carried, read off the route itself rather than just its type.
         val mediaId = navController.currentBackStackEntry?.toRoute<DetailRoute>()?.mediaId
         assertEquals("media-1", mediaId)
+        // Opening is not adding: the behaviour this screen flipped.
+        assertEquals(0, (libraryRepository as EntryFakeLibraryRepository).addCalls)
+    }
+
+    /** The "added" snackbar waits for a tap; it must not hold up opening a title meanwhile. */
+    @Test
+    fun `a title opens while the added snackbar is still up`() {
+        val navController = setGraph()
+        typeAndSettle("frieren")
+
+        composeRule.onNodeWithContentDescription("Add Frieren to your library").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Frieren added to Planned").assertExists()
+
+        composeRule.onNodeWithText("Frieren", useUnmergedTree = true).performClick()
+        composeRule.waitForIdle()
+
+        assertEquals("media-1", navController.currentBackStackEntry?.toRoute<DetailRoute>()?.mediaId)
+    }
+
+    private fun setGraph(): TestNavHostController {
+        lateinit var navController: TestNavHostController
+        composeRule.setContent {
+            navController =
+                remember {
+                    TestNavHostController(ApplicationProvider.getApplicationContext<Context>()).apply {
+                        navigatorProvider.addNavigator(ComposeNavigator())
+                    }
+                }
+            NavHost(navController = navController, startDestination = SearchRoute) {
+                searchEntry(onNavigate = navController::navigate)
+                composable<DetailRoute> { }
+            }
+        }
+        return navController
+    }
+
+    private fun typeAndSettle(text: String) {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule.onNodeWithText(context.getString(R.string.search_field_placeholder)).performTextInput(text)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(500))
+        composeRule.waitForIdle()
     }
 
     private companion object {

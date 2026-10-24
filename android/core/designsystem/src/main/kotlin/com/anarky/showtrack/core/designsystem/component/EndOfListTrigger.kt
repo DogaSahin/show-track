@@ -1,6 +1,7 @@
 package com.anarky.showtrack.core.designsystem.component
 
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -65,6 +66,34 @@ fun EndOfListTrigger(
             derivedStateOf {
                 val visibleItems = listState.layoutInfo.visibleItemsInfo
                 val lastVisibleIndex = visibleItems.lastOrNull()?.index ?: -1
+                itemCount > 0 && lastVisibleIndex >= itemCount - threshold
+            }
+        }
+    LaunchedEffect(shouldTrigger) {
+        if (shouldTrigger) onTriggered()
+    }
+}
+
+/**
+ * [EndOfListTrigger] for a lazy grid: the same edge-triggered "near the end" signal, read from a
+ * [LazyGridState]. [threshold] counts items, not rows, so a three-column grid asks for the next
+ * page about one row before its end.
+ */
+@Composable
+fun EndOfGridTrigger(
+    gridState: LazyGridState,
+    itemCount: Int,
+    threshold: Int = DEFAULT_THRESHOLD,
+    rearmKey: Any = itemCount,
+    onTriggered: () -> Unit,
+) {
+    val shouldTrigger by
+        remember(itemCount, rearmKey) {
+            derivedStateOf {
+                val lastVisibleIndex =
+                    gridState.layoutInfo.visibleItemsInfo
+                        .lastOrNull()
+                        ?.index ?: -1
                 itemCount > 0 && lastVisibleIndex >= itemCount - threshold
             }
         }

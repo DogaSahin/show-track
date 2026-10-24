@@ -5,6 +5,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.lifecycle.Lifecycle
+import com.anarky.showtrack.core.data.paging.Page
 import com.anarky.showtrack.core.model.LibraryEntry
 import com.anarky.showtrack.core.model.Media
 import com.anarky.showtrack.core.model.MediaSource
@@ -46,11 +47,16 @@ class FavoritesResumeTest {
 
     @Test
     fun `resuming the screen re-fetches favourites, the way returning from Detail actually does`() {
-        val repository = FakeLibraryRepository(refreshResult = listOf(FRIEREN, BEBOP))
+        val repository =
+            FakeLibraryRepository(
+                mutableMapOf(
+                    (MediaType.ANIME to null) to Page(listOf(FRIEREN, BEBOP), null),
+                ),
+            )
         val viewModel = FavoritesViewModel(repository)
 
         composeRule.setContent {
-            FavoritesScreen(onEntryClick = {}, viewModel = viewModel)
+            FavoritesScreen(onEntryClick = {}, onSeeAll = {}, viewModel = viewModel)
         }
         composeRule.waitForIdle()
         composeRule.onNodeWithText(FRIEREN.media.title).assertIsDisplayed()
@@ -61,12 +67,12 @@ class FavoritesResumeTest {
         // `Lifecycle` replays ON_CREATE/ON_START/ON_RESUME to a freshly-registered observer) is
         // the ONLY thing that loads this screen at all — there is no second, redundant call to
         // land on top of it any more.
-        val callsAfterInitialCompose = repository.refreshCalls
+        val callsAfterInitialCompose = repository.podiumRequests
         assertEquals(1, callsAfterInitialCompose)
 
         // FRIEREN was unfavourited from Detail while this screen sat backgrounded on the back
         // stack — the server no longer returns it under favorite=true.
-        repository.refreshResult = listOf(BEBOP)
+        repository.pages[MediaType.ANIME to null] = Page(listOf(BEBOP), null)
         composeRule.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
         composeRule.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
         composeRule.waitForIdle()
@@ -77,7 +83,7 @@ class FavoritesResumeTest {
         // Android dispatches for an actual Favorites -> Detail -> Back trip, triggers exactly one
         // more `refresh()` — proving `LifecycleResumeEffect` is wired to a live Lifecycle, not
         // merely present in the source.
-        assertEquals(callsAfterInitialCompose + 1, repository.refreshCalls)
+        assertEquals(callsAfterInitialCompose + 1, repository.podiumRequests)
     }
 
     private companion object {

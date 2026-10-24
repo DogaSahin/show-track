@@ -309,10 +309,11 @@ class DiscoverViewModelTest {
      * Review finding B2, round 1: a successful [DiscoverViewModel.refresh] used to rebuild
      * [DiscoverUiState.Success] field-by-field (`Success(items = ...)`), silently defaulting
      * [DiscoverUiState.Success.loadingMore] back to `false` even while a concurrent [DiscoverViewModel.loadMore]
-     * was genuinely still in flight — freeing `EndOfListTrigger` to fire a SECOND, concurrent
-     * `loadMore()`. `recommendations.loadMoreGate` is what makes "still in flight" observable:
-     * `loadMore()` is called first and gated open, `refresh()` is driven to completion while it is
-     * still suspended, and the assertion below is taken BEFORE the gate is ever released.
+     * was genuinely still in flight — freeing the next scroll that ends near the end
+     * (`ScrollEndTrigger`) to fire a SECOND, concurrent `loadMore()`.
+     * `recommendations.loadMoreGate` is what makes "still in flight" observable: `loadMore()` is
+     * called first and gated open, `refresh()` is driven to completion while it is still
+     * suspended, and the assertion below is taken BEFORE the gate is ever released.
      */
     @Test
     fun `a successful refresh preserves loadingMore from a loadMore still genuinely in flight`() =
@@ -383,14 +384,15 @@ class DiscoverViewModelTest {
         }
 
     /**
-     * Review finding, round 2 ("B3 guard can stall paging"): `EndOfListTrigger` only emits on the
-     * FALSE -> TRUE edge of its own `shouldTrigger` (that composable's own KDoc) — a `loadMore()`
-     * dropped by [DiscoverViewModel.loadMore]'s `refreshInFlight` guard changes neither `itemCount`
-     * nor scroll position, so nothing re-fires it on its own once the refresh lands. This test pins
-     * [pendingLoadMoreAfterRefresh]'s repair: the dropped call is re-issued automatically by
-     * [DiscoverViewModel.refresh]'s own `finally`, with NO second [DiscoverViewModel.loadMore] call
-     * from this test at all — the previous test above still drives a manual second call too, to
-     * pin that manual paging still works afterward, but this one isolates the automatic re-fire.
+     * Review finding, round 2 ("B3 guard can stall paging"): `ScrollEndTrigger` asks for more only
+     * when a user scroll finishes near an end (that composable's own KDoc), never when items
+     * change — a `loadMore()` dropped by [DiscoverViewModel.loadMore]'s `refreshInFlight` guard
+     * leaves the user parked at the end with no further scroll coming, so nothing re-fires it on
+     * its own once the refresh lands. This test pins [pendingLoadMoreAfterRefresh]'s repair: the
+     * dropped call is re-issued automatically by [DiscoverViewModel.refresh]'s own `finally`, with
+     * NO second [DiscoverViewModel.loadMore] call from this test at all — the previous test above
+     * still drives a manual second call too, to pin that manual paging still works afterward, but
+     * this one isolates the automatic re-fire.
      */
     @Test
     fun `a loadMore dropped by an in-flight refresh is re-issued automatically once the refresh lands`() =
@@ -667,8 +669,9 @@ class DiscoverViewModelTest {
      * absent from page 1 for the ordinary reason that it was never on it — so the prune dropped a
      * live suppression, and the very next page fetch brought the added row back.
      *
-     * The last `loadMore` needs no extra user action in production: the refresh truncates 40 rows
-     * to 20 under a user scrolled near row 25, so `EndOfListTrigger` fires it by itself.
+     * The last `loadMore` stands for the user scrolling again in production: the refresh truncates
+     * 40 rows to 20 under a user scrolled near row 25, and `ScrollEndTrigger` asks for more only
+     * once a scroll ends near the end — the feed does not refill by itself.
      */
     @Test
     fun `a row added from a later page is not resurrected by the next page fetch`() =
@@ -866,6 +869,39 @@ class DiscoverViewModelTest {
                 viewModel.state.value,
             )
             assertEquals(listOf("media-frieren"), recommendations.removedIds)
+        }
+
+    /** The "added to Planned" snackbar's source: one event per title that actually got added. */
+    @Test
+    fun `a successful add announces the added title once`() =
+        runTest(dispatcher) {
+            val recommendations = FakeRecommendationRepository(refreshResult = listOf(FRIEREN, BEBOP))
+            val viewModel = DiscoverViewModel(recommendations, FakeLibraryRepository())
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            viewModel.added.test {
+                viewModel.add(FRIEREN)
+                advanceUntilIdle()
+                assertEquals(FRIEREN.media, awaitItem())
+                expectNoEvents()
+            }
+        }
+
+    @Test
+    fun `a failed add announces nothing`() =
+        runTest(dispatcher) {
+            val recommendations = FakeRecommendationRepository(refreshResult = listOf(FRIEREN, BEBOP))
+            val viewModel =
+                DiscoverViewModel(recommendations, FakeLibraryRepository(addFailure = IOException("offline")))
+            viewModel.refresh()
+            advanceUntilIdle()
+
+            viewModel.added.test {
+                viewModel.add(FRIEREN)
+                advanceUntilIdle()
+                expectNoEvents()
+            }
         }
 
     /**

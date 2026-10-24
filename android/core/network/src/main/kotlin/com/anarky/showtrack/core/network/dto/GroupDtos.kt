@@ -14,11 +14,26 @@ data class JoinGroupRequestDto(
     @SerialName("invite_code") val inviteCode: String,
 )
 
+/**
+ * One item of `GET /v1/groups` (`GroupSummary` on the backend). The summary fields default so a
+ * server without them still decodes; the domain then reads them as "not known".
+ */
 @Serializable
 data class GroupDto(
     val id: String,
     val name: String,
     @SerialName("created_at") val createdAt: String,
+    @SerialName("my_role") val myRole: String? = null,
+    @SerialName("member_count") val memberCount: Int? = null,
+    @SerialName("member_preview") val memberPreview: List<GroupActorDto> = emptyList(),
+    @SerialName("watchlist_count") val watchlistCount: Int? = null,
+    @SerialName("watchlist_preview") val watchlistPreview: List<WatchlistPreviewDto> = emptyList(),
+)
+
+@Serializable
+data class WatchlistPreviewDto(
+    @SerialName("media_id") val mediaId: String,
+    @SerialName("cover_image_url") val coverImageUrl: String? = null,
 )
 
 /**

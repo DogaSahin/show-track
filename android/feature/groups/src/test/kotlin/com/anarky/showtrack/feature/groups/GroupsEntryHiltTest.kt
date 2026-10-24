@@ -3,11 +3,7 @@ package com.anarky.showtrack.feature.groups
 import android.content.Context
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
-import androidx.compose.ui.test.assertCountEquals
-import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.ui.test.onAllNodesWithText
-import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
@@ -116,7 +112,6 @@ class GroupsEntryHiltTest {
                 // own null check), keeping BETA.name unambiguous — the plain list row only.
                 groupsEntry(
                     activeGroup = MutableStateFlow(ActiveGroupState.Loading),
-                    onSwitchGroup = {},
                     onRetryGroups = {},
                     onNavigate = navController::navigate,
                 )
@@ -131,14 +126,13 @@ class GroupsEntryHiltTest {
     }
 
     /**
-     * BLOCKING B1's proof for `groupsEntry`: the REAL screen, through Hilt, reacts to the
-     * `activeGroup` flow changing — no navigation involved — by moving which switcher tab reports
-     * itself selected.
+     * BLOCKING B1's proof for `groupsEntry`, on the redesigned list: the REAL screen, through Hilt,
+     * reacts to the `activeGroup` flow changing — no navigation involved — by moving which card says
+     * "Active".
      */
     @Test
-    fun `changing the activeGroup flow moves which switcher tab is selected, without navigating`() {
-        // groupsResult stays [ALPHA, BETA] from the field above: this test is about the flow moving
-        // the SELECTION. Which list the tabs come from is the next test's job.
+    fun `changing the activeGroup flow moves the Active mark, without navigating`() {
+        fakeGroups.groupsResult = listOf(ALPHA.copy(memberCount = 4), BETA.copy(memberCount = 2))
         val activeGroup =
             MutableStateFlow<ActiveGroupState>(
                 ActiveGroupState.Success(groups = listOf(ALPHA, BETA), activeGroupId = ALPHA.id),
@@ -150,7 +144,6 @@ class GroupsEntryHiltTest {
             NavHost(navController = navController, startDestination = GroupsRoute) {
                 groupsEntry(
                     activeGroup = activeGroup,
-                    onSwitchGroup = {},
                     onRetryGroups = {},
                     onNavigate = navController::navigate,
                 )
@@ -158,55 +151,16 @@ class GroupsEntryHiltTest {
             }
         }
         composeRule.waitForIdle()
-
-        // ALPHA.name is genuinely ambiguous with two groups active (the switcher tab AND the list
-        // row both render it) — .onFirst() is the switcher's own tab, GroupsScreen's own ordering
-        // (the switcher renders above GroupsContent).
-        composeRule.onAllNodesWithText(ALPHA.name).onFirst().assertIsSelected()
+        composeRule.onNodeWithText("4 members · Active").assertExists()
+        composeRule.onNodeWithText("2 members").assertExists()
 
         activeGroup.value = ActiveGroupState.Success(groups = listOf(ALPHA, BETA), activeGroupId = BETA.id)
         composeRule.waitForIdle()
 
-        composeRule.onAllNodesWithText(BETA.name).onFirst().assertIsSelected()
+        composeRule.onNodeWithText("4 members").assertExists()
+        composeRule.onNodeWithText("2 members · Active").assertExists()
         // No navigation happened — still on GroupsRoute alone.
         assertEquals(listOf(null, GroupsRoute::class.qualifiedName), navController.backStackRoutes())
-    }
-
-    /**
-     * BLOCKING 3 at the `groupsEntry` seam (whole-branch fix round). `GroupsScreenTest` pins the
-     * stateless overload's use of `activeGroup.groups`; this pins that the REAL entry actually feeds it
-     * from `activeGroup` rather than from `GroupsViewModel`'s own list, through Hilt, with the two
-     * deliberately disagreeing: the repository (and therefore `GroupsUiState.Success.groups`) has
-     * ALPHA alone, while the active-group flow has ALPHA and BETA. That is not a contrived state —
-     * it is exactly what a create or join produces on the OTHER side, and the reverse of it is what
-     * shipped: a tab offered from a list `ActiveGroupViewModel.recompute` would then reject.
-     *
-     * `BETA.name` can only come from a switcher tab here, since no list row exists for it.
-     */
-    @Test
-    fun `the switcher's tabs come from the active-group flow, not this screen's own list`() {
-        fakeGroups.groupsResult = listOf(ALPHA)
-        val activeGroup =
-            MutableStateFlow<ActiveGroupState>(
-                ActiveGroupState.Success(groups = listOf(ALPHA, BETA), activeGroupId = ALPHA.id),
-            )
-        lateinit var navController: TestNavHostController
-
-        composeRule.setContent {
-            navController = rememberTestNavController()
-            NavHost(navController = navController, startDestination = GroupsRoute) {
-                groupsEntry(
-                    activeGroup = activeGroup,
-                    onSwitchGroup = {},
-                    onRetryGroups = {},
-                    onNavigate = navController::navigate,
-                )
-                composable<GroupDetailRoute> { }
-            }
-        }
-        composeRule.waitForIdle()
-
-        composeRule.onAllNodesWithText(BETA.name).assertCountEquals(1)
     }
 
     /**
@@ -233,7 +187,6 @@ class GroupsEntryHiltTest {
             NavHost(navController = navController, startDestination = GroupsRoute) {
                 groupsEntry(
                     activeGroup = MutableStateFlow(ActiveGroupState.Loading),
-                    onSwitchGroup = {},
                     onRetryGroups = { changed++ },
                     onNavigate = navController::navigate,
                 )

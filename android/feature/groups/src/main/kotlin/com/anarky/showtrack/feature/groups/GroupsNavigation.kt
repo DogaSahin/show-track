@@ -32,11 +32,8 @@ import kotlinx.coroutines.flow.StateFlow
  * KDoc): this registration runs far less often than the active group can change, so a plain
  * captured value would go stale.
  *
- * **The [ActiveGroupState.Success.groups] list it carries IS consumed here now (whole-branch fix
- * round, BLOCKING 3)** — an earlier version of this KDoc said the opposite, and that was the bug:
- * `GroupSwitcher` read [GroupsViewModel]'s separate list while `ActiveGroupViewModel` validated the
- * selection against its own, so a group created or joined on this screen was offered as a tab and
- * then rejected on tap. See [GroupsScreen]'s stateful overload for the full account.
+ * The active group is marked "Active" on its card; switching groups happens in the Feed's title
+ * bar, so this screen takes no switch callback.
  *
  * [onRetryGroups] is `ActiveGroupViewModel::refresh`, the same value under the same name
  * `feedEntry` already receives — this entry was the one groups-shaped row in `appDestinations` that
@@ -48,16 +45,14 @@ import kotlinx.coroutines.flow.StateFlow
  */
 fun NavGraphBuilder.groupsEntry(
     activeGroup: StateFlow<ActiveGroupState>,
-    onSwitchGroup: (String) -> Unit,
     onRetryGroups: () -> Unit,
     onNavigate: (AppRoute) -> Unit,
 ) {
     composable<GroupsRoute> {
         GroupsScreen(
             activeGroup = activeGroup,
-            onSwitchGroup = onSwitchGroup,
             onRetryGroups = onRetryGroups,
-            onGroupClick = { group: Group -> onNavigate(GroupDetailRoute(groupId = group.id)) },
+            onGroupClick = { group: Group -> onNavigate(GroupDetailRoute(groupId = group.id, groupName = group.name)) },
         )
     }
 }

@@ -1,24 +1,23 @@
 package com.anarky.showtrack
 
-import com.anarky.showtrack.core.data.push.PUSH_DATASTORE_NAME
+import com.anarky.showtrack.core.data.alerts.ALERT_SETTINGS_DATASTORE_NAME
+import com.anarky.showtrack.core.data.search.RECENT_SEARCH_DATASTORE_NAME
 import com.anarky.showtrack.core.network.auth.TOKEN_DATASTORE_NAME
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
 /**
- * Neither of the app's two secret-bearing DataStore files may reach Auto Backup or a device
- * transfer. The class is named for the token store because that was the first of them; it now
- * covers both, and any third one belongs here too.
+ * Two DataStore files may not reach Auto Backup or a device transfer. The class is named for the
+ * token store because that was the first of them; it now covers both, and any third one belongs
+ * here too.
  *
  * The TOKEN store: its AES-GCM key lives in the Android Keystore and does not travel, so a
  * restored file is a permanently undecryptable credential-shaped blob.
  *
- * The PUSH store: `endpoint` is a bearer secret in the same sense the ntfy topic is — whoever
- * holds it can post arbitrary notifications to that device — and it is the only surface that ever
- * let it leave the phone in plaintext, while `PushRegistrar` will not even put it in logcat. Its
- * `targetId` adds a second, non-secrecy reason: it names a server row belonging to the device that
- * registered it, so a restored copy makes the next `unregister()` delete the OLD device's target.
+ * The EPISODE ALERTS store: the switch and which alerts fired belong to this phone (notification
+ * permission does not come back with a restore), and its alert key must NOT travel: a fresh key on
+ * the new phone is what stops alerts restored from the old one's WorkManager database from showing.
  *
  * The exclusion is a path string in `res/xml` and each file name is a Kotlin constant in another
  * module. Nothing but this test connects the two — rename a constant and the exclusion silently
@@ -30,7 +29,8 @@ import java.io.File
  */
 class TokenBackupExclusionTest {
     private val tokenPath = "datastore/$TOKEN_DATASTORE_NAME.preferences_pb"
-    private val pushPath = "datastore/$PUSH_DATASTORE_NAME.preferences_pb"
+    private val alertsPath = "datastore/$ALERT_SETTINGS_DATASTORE_NAME.preferences_pb"
+    private val recentSearchPath = "datastore/$RECENT_SEARCH_DATASTORE_NAME.preferences_pb"
 
     @Test
     fun `pre-31 backup rules exclude the token store`() {
@@ -38,8 +38,8 @@ class TokenBackupExclusionTest {
     }
 
     @Test
-    fun `pre-31 backup rules exclude the push registration store`() {
-        assertOccurrences("backup_rules.xml", pushPath, expected = 1)
+    fun `pre-31 backup rules exclude the episode alerts store`() {
+        assertOccurrences("backup_rules.xml", alertsPath, expected = 1)
     }
 
     @Test
@@ -50,8 +50,14 @@ class TokenBackupExclusionTest {
     }
 
     @Test
-    fun `api-31 rules exclude the push registration store from both cloud backup and device transfer`() {
-        assertOccurrences("data_extraction_rules.xml", pushPath, expected = 2)
+    fun `api-31 rules exclude the episode alerts store from both cloud backup and device transfer`() {
+        assertOccurrences("data_extraction_rules.xml", alertsPath, expected = 2)
+    }
+
+    @Test
+    fun `recent searches are excluded from every kind of backup`() {
+        assertOccurrences("backup_rules.xml", recentSearchPath, expected = 1)
+        assertOccurrences("data_extraction_rules.xml", recentSearchPath, expected = 2)
     }
 
     private fun assertOccurrences(

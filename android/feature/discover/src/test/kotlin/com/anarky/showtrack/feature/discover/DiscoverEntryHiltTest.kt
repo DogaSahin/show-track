@@ -3,7 +3,6 @@ package com.anarky.showtrack.feature.discover
 import android.content.Context
 import androidx.compose.runtime.remember
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.navigation.compose.ComposeNavigator
 import androidx.navigation.compose.NavHost
@@ -77,7 +76,7 @@ class DiscoverEntryHiltTest {
             }
         }
 
-        composeRule.onNodeWithText("Frieren").performClick()
+        composeRule.onNode(hasTitle("Frieren")).performClick()
 
         // Not just `hasRoute(DetailRoute::class)`: asserting the actual `mediaId` is what proves
         // the tapped ROW's id reached `DetailRoute`, not merely that some navigation happened —

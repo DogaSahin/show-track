@@ -136,6 +136,47 @@ async def test_the_lifecycle_rules_read_the_role_the_lock_just_revealed(auth_cli
     assert actor.role == GroupRole.MEMBER
     await db_session.execute(text("UPDATE group_members SET role = 'owner' WHERE id = :id"), {"id": actor.id})
 
-    await service.remove_member(db_session, group_id=group.id, actor=actor, target_user_id=auth_user.id)
+    await service.remove_member(
+        db_session, group_id=group.id, actor=actor, target_user_id=auth_user.id, now=datetime.now(tz=UTC)
+    )
 
     assert await db_session.scalar(select(Group.id).where(Group.id == group.id)) is None
+
+
+NOW = datetime(2026, 10, 11, 12, 0, tzinfo=UTC)
+
+
+async def test_removing_a_member_kills_the_code_they_hold(auth_client, auth_user, db_session):
+    group, (other,) = await _group_with(db_session, auth_user, my_role=GroupRole.OWNER, others=[("other", 10)])
+    old_code = group.invite_code
+
+    assert (await auth_client.delete(f"/v1/groups/{group.id}/members/{other.id}")).status_code == 204
+
+    # The removed member can't come back through join...
+    assert await service.join_by_code(db_session, code=old_code, user=other, now=NOW) == (None, False)
+    # ...nor make a new account with it.
+    register = await auth_client.post(
+        "/v1/auth/register",
+        json={
+            "username": "sneaky",
+            "email": "sneaky@example.com",
+            "password": "long enough pw",
+            "invite_code": old_code,
+        },
+    )
+    assert register.status_code == 400
+    # The owner sees a fresh code to share.
+    invite = (await auth_client.get(f"/v1/groups/{group.id}/invite")).json()
+    assert invite["invite_code"] != old_code
+
+
+async def test_leaving_on_your_own_keeps_the_code(auth_client, auth_user, db_session):
+    group, _ = await _group_with(db_session, auth_user, my_role=GroupRole.MEMBER, others=[("owner2", 10)])
+    old_code = group.invite_code
+
+    assert (await auth_client.delete(f"/v1/groups/{group.id}/members/{auth_user.id}")).status_code == 204
+
+    refreshed = await db_session.scalar(
+        select(Group).where(Group.id == group.id).execution_options(populate_existing=True)
+    )
+    assert refreshed.invite_code == old_code

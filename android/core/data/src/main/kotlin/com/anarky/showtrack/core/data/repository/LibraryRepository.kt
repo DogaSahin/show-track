@@ -1,13 +1,15 @@
 package com.anarky.showtrack.core.data.repository
 
+import com.anarky.showtrack.core.data.paging.Page
 import com.anarky.showtrack.core.model.ImportSummary
 import com.anarky.showtrack.core.model.LibraryEntry
 import com.anarky.showtrack.core.model.LibraryFilter
 import com.anarky.showtrack.core.model.LibraryPatch
+import com.anarky.showtrack.core.model.LibrarySort
 import com.anarky.showtrack.core.model.LibraryStats
 import com.anarky.showtrack.core.model.MediaSource
+import com.anarky.showtrack.core.model.MediaType
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.StateFlow
 
 /**
  * The only data-layer type any `:feature:*` module ever sees. Everything behind it — Retrofit,
@@ -57,6 +59,27 @@ interface LibraryRepository {
         externalId: String,
     ): LibraryEntry
 
+    /**
+     * Removes a title from the library (its watched episodes and review stay with the server's
+     * rules: watched episodes go with the entry). The cached row goes at once; the list refresh that
+     * follows is best effort. Throws if the removal itself fails.
+     */
+    suspend fun remove(entryId: String)
+
+    /** The ids of the episodes this entry has marked watched. Throws on failure. */
+    suspend fun watchedEpisodes(entryId: String): Set<String>
+
+    /**
+     * Marks or unmarks a batch of episodes in one request and returns the entry with its recounted
+     * progress, which also replaces the cached row. Throws on failure, so the caller can undo an
+     * optimistic change.
+     */
+    suspend fun setWatched(
+        entryId: String,
+        episodeIds: Collection<String>,
+        watched: Boolean,
+    ): LibraryEntry
+
     suspend fun update(
         entryId: String,
         patch: LibraryPatch,
@@ -66,30 +89,39 @@ interface LibraryRepository {
     suspend fun entryForMedia(mediaId: String): LibraryEntry?
 
     /**
-     * `GET /v1/library?favorite=true`'s accumulated pages, for `:feature:favorites` (task 9b.4,
-     * decision D-H). Backed by its OWN [com.anarky.showtrack.core.data.paging.CursorPaginator]
-     * instance, entirely separate from the one behind [observeLibrary]/[refresh]/[loadMore]/
-     * [applyFilter]: Library and Favorites are both `TopLevelDestination`s with saved state and
-     * can be open at once, so sharing one paginator would make switching tabs reset the OTHER
-     * screen's scroll position and page counter.
-     *
-     * Network-only, no Room cache — see [LibraryRepositoryImpl]'s KDoc on the field backing this.
+     * One page of your favourites, optionally only anime or only TV ([type]), in [sort] order.
+     * Stateless: the caller keeps the cursor, so Favorites' podium, its two shelves and the See all
+     * grid each page on their own without resetting one another. Network-only, like every
+     * favourites read: Room caches only the default library view.
      */
-    val favoriteEntries: StateFlow<List<LibraryEntry>>
-
-    /** Reload the favourites view from the first page, replacing whatever [favoriteEntries] holds. */
-    suspend fun refreshFavorites()
-
-    /** Appends the next page of [favoriteEntries], or does nothing once it is exhausted. */
-    suspend fun loadMoreFavorites()
+    suspend fun favoritesPage(
+        type: MediaType?,
+        sort: LibrarySort,
+        cursor: String?,
+        limit: Int,
+    ): Page<LibraryEntry>
 
     /**
      * `GET /v1/library/stats` (task 9b.5, decision D-F's stats half). No cache and no `StateFlow`
-     * upstream, unlike [observeLibrary]/[favoriteEntries] — this is a one-shot read the caller
+     * upstream, unlike [observeLibrary] — this is a one-shot read the caller
      * (`ProfileViewModel`) drives itself and re-issues on its own schedule, the same shape
      * [add]/[update]/[entryForMedia] already have.
      */
     suspend fun libraryStats(): LibraryStats
+
+    /**
+     * The first [limit] Watching entries ordered by next episode, soonest first (titles with no
+     * known next episode sort last on the server). One-shot and uncached, like [libraryStats]:
+     * Library's "Airing soon" row re-reads it on its own schedule, and it never touches the main
+     * list's paginator or the Room cache.
+     */
+    suspend fun upcomingWatching(limit: Int): List<LibraryEntry>
+
+    /**
+     * Every Watching entry, all pages, straight from the server (episode alerts are planned from
+     * these). Uncached like [upcomingWatching]; it never touches the paginator or Room.
+     */
+    suspend fun allWatching(): List<LibraryEntry>
 
     /**
      * `POST /v1/library/import/anilist` (task 9b.6, backend decision 4-H). One-shot, the same

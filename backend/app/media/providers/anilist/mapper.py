@@ -1,5 +1,5 @@
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -8,6 +8,7 @@ from app.media.providers.base import (
     ListEntryStatus,
     MediaRef,
     NextEpisode,
+    ProviderEpisode,
     ProviderListEntry,
     ProviderMedia,
     ProviderMediaSummary,
@@ -217,3 +218,25 @@ def to_list_entries(raw_collection: dict[str, Any], seen: set[str]) -> tuple[tup
             )
 
     return tuple(entries), dropped
+
+
+def to_episodes(total: Any, schedule: list[dict[str, Any]]) -> tuple[ProviderEpisode, ...]:
+    """Season 1, always: an AniList entry is one cour. Episodes come from the airing schedule, with
+    the date its timestamp falls on in UTC; any number up to the known total that the schedule
+    lacks (common for older finished shows, whose schedule is empty) is added without a date.
+    AniList has no episode titles.
+    """
+    dates: dict[int, date | None] = {}
+    for node in schedule:
+        number = node.get("episode") if isinstance(node, dict) else None
+        if not isinstance(number, int) or number < 1:
+            continue
+        airs_at = _airs_at(node.get("airingAt"))
+        dates[number] = airs_at.date() if airs_at is not None else None
+    if isinstance(total, int) and total > 0:
+        for number in range(1, total + 1):
+            dates.setdefault(number, None)
+    return tuple(
+        ProviderEpisode(season_number=1, number=number, title=None, air_date=air_date)
+        for number, air_date in sorted(dates.items())
+    )

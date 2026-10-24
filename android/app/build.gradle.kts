@@ -1,3 +1,6 @@
+import com.android.build.api.artifact.SingleArtifact
+import java.security.MessageDigest
+
 plugins {
     id("showtrack.android.application")
     id("showtrack.android.compose")
@@ -6,8 +9,96 @@ plugins {
     id("showtrack.android.hilt")
 }
 
+// The oldest versionCode still allowed to run. Raise it only for a release that older installs must
+// not keep using: the app then makes the update mandatory instead of dismissable.
+val minVersionCode = 1
+
+// Release signing comes from ~/.gradle/gradle.properties (or -P), never from the repo.
+val releaseSigningKeys = listOf("storeFile", "storePassword", "keyAlias", "keyPassword")
+val releaseSigningValues =
+    releaseSigningKeys.associateWith {
+        providers.gradleProperty("showtrack.release.$it").orNull
+    }
+val releaseSigningConfigured = releaseSigningValues.values.all { !it.isNullOrBlank() }
+
+/** Copies the signed release APK next to a `release.json` describing it, ready to upload. */
+abstract class WriteReleaseInfo : DefaultTask() {
+    @get:InputDirectory
+    abstract val apkDir: DirectoryProperty
+
+    @get:Input
+    abstract val versionCode: Property<Int>
+
+    @get:Input
+    abstract val versionName: Property<String>
+
+    @get:Input
+    abstract val minVersionCode: Property<Int>
+
+    @get:Input
+    abstract val notes: Property<String>
+
+    @get:OutputDirectory
+    abstract val outDir: DirectoryProperty
+
+    @TaskAction
+    fun write() {
+        val apk =
+            apkDir
+                .get()
+                .asFile
+                .listFiles { f -> f.extension == "apk" }
+                .orEmpty()
+                .singleOrNull()
+                ?: error("Expected exactly one release APK in ${apkDir.get().asFile}")
+        val out = outDir.get().asFile
+        out.deleteRecursively()
+        out.mkdirs()
+        val name = "showtrack-${versionCode.get()}.apk"
+        val copy = apk.copyTo(out.resolve(name))
+        val sha256 =
+            MessageDigest
+                .getInstance("SHA-256")
+                .digest(copy.readBytes())
+                .joinToString("") { "%02x".format(it) }
+
+        fun quote(s: String) =
+            buildString {
+                append('"')
+                for (c in s) {
+                    when (c) {
+                        '"' -> append("\\\"")
+                        '\\' -> append("\\\\")
+                        '\n' -> append("\\n")
+                        '\r' -> append("\\r")
+                        '\t' -> append("\\t")
+                        else -> append(c)
+                    }
+                }
+                append('"')
+            }
+        out.resolve("release.json").writeText(
+            """
+            {
+              "version_code": ${versionCode.get()},
+              "version_name": ${quote(versionName.get())},
+              "min_version_code": ${minVersionCode.get()},
+              "apk": ${quote(name)},
+              "sha256": "$sha256",
+              "notes": ${quote(notes.get())}
+            }
+            """.trimIndent() + "\n",
+        )
+    }
+}
+
 android {
     namespace = "com.anarky.showtrack"
+
+    // BuildConfig.VERSION_CODE is what the update check compares against the server's release.
+    buildFeatures {
+        buildConfig = true
+    }
 
     testOptions {
         // NavGraphRegistrationTest builds a REAL NavGraph on the JVM under Robolectric —
@@ -22,13 +113,58 @@ android {
         applicationId = "com.anarky.showtrack"
         versionCode = 1
         versionName = "1.0"
+        check(minVersionCode <= versionCode!!) {
+            "minVersionCode ($minVersionCode) must not exceed versionCode ($versionCode)"
+        }
+    }
+
+    signingConfigs {
+        create("release") {
+            if (releaseSigningConfigured) {
+                storeFile = file(releaseSigningValues.getValue("storeFile")!!)
+                storePassword = releaseSigningValues.getValue("storePassword")
+                keyAlias = releaseSigningValues.getValue("keyAlias")
+                keyPassword = releaseSigningValues.getValue("keyPassword")
+            }
+        }
     }
 
     buildTypes {
         release {
+            if (releaseSigningConfigured) signingConfig = signingConfigs.getByName("release")
             optimization {
                 enable = false
             }
+        }
+    }
+}
+
+val checkReleaseSigning by tasks.registering {
+    val configured = releaseSigningConfigured
+    doLast {
+        check(configured) {
+            "Release signing is not configured: set showtrack.release.storeFile, storePassword, " +
+                "keyAlias and keyPassword in ~/.gradle/gradle.properties"
+        }
+    }
+}
+
+androidComponents {
+    onVariants(selector().withBuildType("release")) { variant ->
+        val output = variant.outputs.single()
+        val minCode = minVersionCode
+        val writeReleaseInfo =
+            tasks.register<WriteReleaseInfo>("writeReleaseInfo") {
+                apkDir.set(variant.artifacts.get(SingleArtifact.APK))
+                versionCode.set(output.versionCode.map { it })
+                versionName.set(output.versionName.map { it })
+                minVersionCode.set(minCode)
+                notes.set(providers.gradleProperty("showtrack.release.notes").orElse(""))
+                outDir.set(layout.buildDirectory.dir("release-out"))
+            }
+        tasks.matching { it.name == "assembleRelease" }.configureEach {
+            dependsOn(checkReleaseSigning)
+            finalizedBy(writeReleaseInfo)
         }
     }
 }
@@ -79,6 +215,10 @@ dependencies {
     // Every :feature:* module gets this from showtrack.android.feature; :app applies
     // showtrack.android.application instead, so it is declared here explicitly.
     implementation(libs.androidx.hilt.navigation.compose)
+    // The Application hands WorkManager Hilt's worker factory, so episode-alert workers get their
+    // dependencies injected (the workers themselves live in :feature:profile).
+    implementation(libs.androidx.work.runtime.ktx)
+    implementation(libs.androidx.hilt.work)
     // collectAsStateWithLifecycle for AppViewModel.start, same reasoning.
     implementation(libs.androidx.lifecycle.runtime.compose)
 

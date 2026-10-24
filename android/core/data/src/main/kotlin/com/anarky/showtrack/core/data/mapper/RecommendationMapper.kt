@@ -23,9 +23,9 @@ import com.anarky.showtrack.core.network.dto.RecommendationReasonDto
 fun PersistedMediaDto.toDomain(): Media =
     Media(
         id = id,
-        source = MediaSource.valueOf(source.uppercase()),
+        source = wireEnum(source, MediaSource.UNKNOWN),
         externalId = externalId,
-        type = MediaType.valueOf(type.uppercase()),
+        type = wireEnum(type, MediaType.UNKNOWN),
         title = title,
         year = year,
         genres = genres,

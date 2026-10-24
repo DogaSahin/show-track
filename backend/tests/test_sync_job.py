@@ -3,15 +3,14 @@ from datetime import UTC, datetime, timedelta
 from typing import ClassVar
 
 from app.media.models import Media, MediaSource, MediaStatus, MediaType
-from app.media.providers.base import MediaProvider, MediaRef, NextEpisode, ProviderMedia
-from app.media.providers.errors import ProviderRateLimited, ProviderUnavailable
+from app.media.providers.base import MediaProvider, MediaRef, NextEpisode, ProviderBatch, ProviderMedia
 from app.sync import service
 from tests.factories import make_media, make_user, make_user_media
 
 FRESH_AIR_DATE = datetime(2026, 12, 1, 15, 0, tzinfo=UTC)
-# A fixed "now" for the cadence tests. Passed in rather than read from the clock, for the same
-# reason scan_thresholds takes one: a test whose expected counts depend on the wall clock is a
-# test that fails on a slow CI runner and nowhere else.
+# A fixed "now" for the cadence tests. Passed in rather than read from the clock: a test whose
+# expected counts depend on the wall clock is a test that fails on a slow CI runner and nowhere
+# else.
 NOW = datetime(2026, 8, 21, 12, 0, tzinfo=UTC)
 
 
@@ -29,16 +28,22 @@ def _detail(external_id: str, *, source=MediaSource.ANILIST, status=MediaStatus.
 
 
 class BatchProvider(MediaProvider):
-    """Answers get_many from a canned mapping, or raises. Counts calls, so a test can prove the
-    job batched instead of looping.
+    """Answers get_many from a canned mapping (plus canned per-title failures), or raises.
+    Counts calls, so a test can prove the job batched instead of looping.
     """
 
     source: ClassVar[MediaSource] = MediaSource.ANILIST
     media_type: ClassVar[MediaType] = MediaType.ANIME
 
-    def __init__(self, results: dict[str, ProviderMedia] | None = None, error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        results: dict[str, ProviderMedia] | None = None,
+        error: Exception | None = None,
+        failed: set[str] | None = None,
+    ) -> None:
         self._results = results or {}
         self._error = error
+        self._failed = failed or set()
         self.calls = 0
 
     async def search(self, query: str, page: int):
@@ -46,6 +51,9 @@ class BatchProvider(MediaProvider):
 
     async def get_by_id(self, external_id: str):
         raise AssertionError("the sync job must use get_many, not get_by_id")
+
+    async def get_episodes(self, external_id: str):
+        return ()
 
     async def fetch_similar(self, external_id: str):
         raise AssertionError("not used in these tests")
@@ -55,7 +63,9 @@ class BatchProvider(MediaProvider):
         if self._error is not None:
             raise self._error
         wanted = set(external_ids)
-        return {k: v for k, v in self._results.items() if k in wanted}
+        return ProviderBatch(
+            found={k: v for k, v in self._results.items() if k in wanted}, failed=frozenset(self._failed & wanted)
+        )
 
 
 async def _run(db_session, providers, *, now=NOW):
@@ -66,8 +76,8 @@ async def _run(db_session, providers, *, now=NOW):
     making three tests fail and two pass for the wrong reason.
     """
     worklist = await service.collect_worklist(db_session, now=now)
-    fetched, failed_sources = await service.fetch_all(providers, worklist)
-    return await service.apply_refresh(db_session, worklist, fetched, failed_sources, now=now)
+    fetched, failed_refs = await service.fetch_all(providers, worklist)
+    return await service.apply_refresh(db_session, worklist, fetched, failed_refs, now=now)
 
 
 async def _tracked_media(db_session, **overrides) -> Media:
@@ -142,10 +152,12 @@ async def test_a_title_in_nobody_s_library_is_not_synced(db_session):
     assert summary.checked == 0
 
 
-async def test_one_provider_failing_does_not_stop_the_other(db_session):
-    """Nothing above this catches anything — app/errors.py is registered on the FastAPI app and a
-    scheduled job has no request. A provider failure must be a counted outcome, not an exception
-    escaping into APScheduler.
+async def test_a_provider_that_breaks_its_contract_is_contained_to_its_source(db_session):
+    """Contract-breach containment. get_many reports upstream failures in `failed` and never
+    raises, so an exception out of it is a bug — and nothing above this catches anything:
+    app/errors.py is registered on the FastAPI app and a scheduled job has no request. The job must
+    count that source's titles as failed and still refresh the other source, not let the
+    exception escape into APScheduler.
     """
     await _tracked_media(db_session, external_id="1", source=MediaSource.ANILIST, status=MediaStatus.AIRING)
     await _tracked_media(
@@ -156,7 +168,7 @@ async def test_one_provider_failing_does_not_stop_the_other(db_session):
     summary = await _run(
         db_session,
         {
-            MediaSource.ANILIST: BatchProvider(error=ProviderUnavailable("down")),
+            MediaSource.ANILIST: BatchProvider(error=RuntimeError("a bug in the provider")),
             MediaSource.TMDB: healthy,
         },
     )
@@ -165,15 +177,17 @@ async def test_one_provider_failing_does_not_stop_the_other(db_session):
     assert summary.updated == 1
 
 
-async def test_a_rate_limited_provider_is_counted_not_slept_on(db_session):
-    """The job abandons that source for the cycle rather than sleeping: the next cycle is six
-    hours away, the data is not urgent, and the threshold scan is unaffected either way.
+async def test_titles_a_rate_limited_provider_failed_are_counted_not_slept_on(db_session):
+    """A rate limit reaches the job as ids in the batch's `failed` set — the provider fails every
+    id it had not asked for yet — not as an exception. The job counts those titles and leaves them
+    for the next cycle rather than sleeping, while the titles that did come back are applied.
     """
     await _tracked_media(db_session, external_id="1", status=MediaStatus.AIRING)
+    await _tracked_media(db_session, external_id="2", status=MediaStatus.AIRING)
 
-    summary = await _run(db_session, {MediaSource.ANILIST: BatchProvider(error=ProviderRateLimited(retry_after=30))})
+    summary = await _run(db_session, {MediaSource.ANILIST: BatchProvider({"1": _detail("1")}, failed={"2"})})
 
-    assert summary.failed == 1
+    assert (summary.updated, summary.failed) == (1, 1)
 
 
 async def test_a_title_the_provider_no_longer_knows_is_counted_missing(db_session):
@@ -237,7 +251,7 @@ async def test_a_title_airing_soon_is_due_sooner_than_a_distant_one(db_session):
 
     A flat interval polls these two at the same rate, which is wrong in both directions at once —
     it wastes provider budget on the distant title and under-samples the one whose date is about
-    to drive a notification.
+    to drive a phone's episode alert.
     """
     await _tracked_media(
         db_session,
@@ -304,9 +318,9 @@ async def test_a_title_with_no_air_date_is_polled_at_the_lost_pointer_cadence(db
     """A NULL next_episode_date on an AIRING title gets its own 6h tier, not the 24h default.
 
     AniList returns `nextAiringEpisode: null` transiently — a mid-season break, a delay
-    announcement — so a NULL is not proof the season ended. While it is NULL, scan_thresholds
-    cannot enqueue anything, so a title that blips null 23 hours before an airing and is not
-    re-polled for 24 loses BOTH notifications for that episode, and the summary never counts it.
+    announcement — so a NULL is not proof the season ended. While it is NULL, the phone
+    cannot schedule an alert, so a title that blips null 23 hours before an airing and is not
+    re-polled for 24 loses BOTH alerts for that episode.
     """
     await _tracked_media(
         db_session,
@@ -330,17 +344,17 @@ async def test_a_title_with_no_air_date_is_polled_at_the_lost_pointer_cadence(db
     assert [external_id for _, _, external_id in worklist] == ["lost-pointer"]
 
 
-async def test_a_source_level_failure_does_not_start_a_cooldown(db_session):
+async def test_a_failed_title_does_not_start_a_cooldown(db_session):
     """Stamping last_synced_at on a failure would put titles into cooldown BECAUSE the provider
     was down — an outage would then render as "everything looks fresh", which is the one reading
     that makes it invisible.
 
-    Also pins the failed/missing split: a title whose whole source fell over is not a title the
-    provider disowned.
+    Also pins the failed/missing split: a title the provider could not answer for is not a title
+    the provider disowned.
     """
     media = await _tracked_media(db_session, external_id="1", status=MediaStatus.AIRING)
 
-    summary = await _run(db_session, {MediaSource.ANILIST: BatchProvider(error=ProviderUnavailable("down"))})
+    summary = await _run(db_session, {MediaSource.ANILIST: BatchProvider(failed={"1"})})
 
     assert (summary.failed, summary.missing) == (1, 0)
     await db_session.refresh(media)
@@ -366,3 +380,51 @@ async def test_a_title_the_provider_disowned_is_stamped_as_answered(db_session):
     assert (summary.missing, summary.failed) == (1, 0)
     await db_session.refresh(media)
     assert media.last_synced_at == NOW
+
+
+async def test_a_title_stamped_a_few_ms_late_is_still_due_next_hour(db_session):
+    """The scheduler fires on the hour but the stamp is wall-clock after the lock: without slack a
+    title stamped 4 ms into one run is "not due" 3 ms into the next and waits a whole extra hour.
+    """
+    media = await _tracked_media(
+        db_session,
+        external_id="jitter",
+        status=MediaStatus.AIRING,
+        next_episode_date=NOW + timedelta(hours=3),
+        last_synced_at=NOW + timedelta(milliseconds=4),
+    )
+
+    worklist = await service.collect_worklist(db_session, now=NOW + timedelta(hours=1, milliseconds=3))
+
+    assert media.id in {media_id for media_id, _, _ in worklist}
+
+
+async def test_slack_does_not_make_a_fresh_title_due(db_session):
+    media = await _tracked_media(
+        db_session,
+        external_id="fresh",
+        status=MediaStatus.AIRING,
+        next_episode_date=NOW + timedelta(hours=3),
+        last_synced_at=NOW,
+    )
+
+    worklist = await service.collect_worklist(db_session, now=NOW + timedelta(minutes=54))
+
+    assert media.id not in {media_id for media_id, _, _ in worklist}
+
+
+async def test_one_failed_title_does_not_cost_the_others_their_refresh(db_session):
+    ok = await _tracked_media(
+        db_session, external_id="ok", status=MediaStatus.AIRING, next_episode_date=datetime(2020, 1, 1, tzinfo=UTC)
+    )
+    bad = await _tracked_media(
+        db_session, external_id="bad", status=MediaStatus.AIRING, next_episode_date=datetime(2020, 1, 1, tzinfo=UTC)
+    )
+
+    summary = await _run(db_session, {MediaSource.ANILIST: BatchProvider({"ok": _detail("ok")}, failed={"bad"})})
+
+    assert (summary.updated, summary.failed) == (1, 1)
+    await db_session.refresh(ok)
+    await db_session.refresh(bad)
+    assert ok.last_synced_at == NOW
+    assert bad.last_synced_at is None

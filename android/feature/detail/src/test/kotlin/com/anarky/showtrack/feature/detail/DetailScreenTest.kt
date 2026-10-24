@@ -10,6 +10,7 @@ import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -31,6 +32,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import java.math.BigDecimal
 import java.time.Instant
 import com.anarky.showtrack.core.designsystem.R as DesignSystemR
@@ -49,6 +51,8 @@ import com.anarky.showtrack.core.designsystem.R as DesignSystemR
  */
 @Suppress("LargeClass")
 @RunWith(RobolectricTestRunner::class)
+// Tall, so every row of the screen's lazy list is composed and findable.
+@Config(qualifiers = "w411dp-h3000dp")
 class DetailScreenTest {
     @get:Rule
     val composeRule = createComposeRule()
@@ -67,19 +71,21 @@ class DetailScreenTest {
                         groupSection = GroupSectionState.Loaded(progress = emptyList(), reviews = emptyList()),
                     ),
                 groups = listOf(ALPHA),
-                onRetry = {},
-                onAddToLibrary = {},
-                onScoreSelected = {},
-                onScoreCleared = {},
-                onProgressChange = {},
-                onStatusSelected = {},
-                onFavoriteToggle = {},
-                onProposeToGroup = {},
-                onRetryGroupSection = {},
-                onOpenReviewEditor = {},
-                onSaveReview = { _, _ -> },
-                onCancelReviewEditor = {},
-                onClearReviewError = {},
+                actions =
+                    DetailActions(
+                        onRetry = {},
+                        onAddToLibrary = {},
+                        onScoreSelected = {},
+                        onScoreCleared = {},
+                        onStatusSelected = {},
+                        onFavoriteToggle = {},
+                        onProposeToGroup = {},
+                        onRetryGroupSection = {},
+                        onOpenReviewEditor = {},
+                        onSaveReview = { _, _ -> },
+                        onCancelReviewEditor = {},
+                        onClearReviewError = {},
+                    ),
             )
         }
 
@@ -99,24 +105,26 @@ class DetailScreenTest {
             DetailScreen(
                 state = successState(groupSection = GroupSectionState.Absent),
                 groups = emptyList(),
-                onRetry = {},
-                onAddToLibrary = {},
-                onScoreSelected = {},
-                onScoreCleared = {},
-                onProgressChange = {},
-                onStatusSelected = {},
-                onFavoriteToggle = {},
-                onProposeToGroup = {},
-                onRetryGroupSection = {},
-                onOpenReviewEditor = {},
-                onSaveReview = { _, _ -> },
-                onCancelReviewEditor = {},
-                onClearReviewError = {},
+                actions =
+                    DetailActions(
+                        onRetry = {},
+                        onAddToLibrary = {},
+                        onScoreSelected = {},
+                        onScoreCleared = {},
+                        onStatusSelected = {},
+                        onFavoriteToggle = {},
+                        onProposeToGroup = {},
+                        onRetryGroupSection = {},
+                        onOpenReviewEditor = {},
+                        onSaveReview = { _, _ -> },
+                        onCancelReviewEditor = {},
+                        onClearReviewError = {},
+                    ),
             )
         }
 
         val context = ApplicationProvider.getApplicationContext<Context>()
-        composeRule.onNodeWithText(context.getString(R.string.detail_group_section_title)).assertDoesNotExist()
+        composeRule.onNodeWithText(context.getString(R.string.detail_group_heading_fallback)).assertDoesNotExist()
         composeRule.onNodeWithText(context.getString(R.string.detail_group_propose_button)).assertDoesNotExist()
     }
 
@@ -136,19 +144,21 @@ class DetailScreenTest {
                         groupSection = GroupSectionState.Loaded(progress = progress, reviews = emptyList()),
                     ),
                 groups = listOf(ALPHA),
-                onRetry = {},
-                onAddToLibrary = {},
-                onScoreSelected = {},
-                onScoreCleared = {},
-                onProgressChange = {},
-                onStatusSelected = {},
-                onFavoriteToggle = {},
-                onProposeToGroup = {},
-                onRetryGroupSection = {},
-                onOpenReviewEditor = {},
-                onSaveReview = { _, _ -> },
-                onCancelReviewEditor = {},
-                onClearReviewError = {},
+                actions =
+                    DetailActions(
+                        onRetry = {},
+                        onAddToLibrary = {},
+                        onScoreSelected = {},
+                        onScoreCleared = {},
+                        onStatusSelected = {},
+                        onFavoriteToggle = {},
+                        onProposeToGroup = {},
+                        onRetryGroupSection = {},
+                        onOpenReviewEditor = {},
+                        onSaveReview = { _, _ -> },
+                        onCancelReviewEditor = {},
+                        onClearReviewError = {},
+                    ),
             )
         }
 
@@ -156,9 +166,9 @@ class DetailScreenTest {
         // here; asserting each member's username (unique per row) is present is what actually
         // proves three DISTINCT rows rendered, without coupling this test to that mapping's exact
         // wording.
-        composeRule.onNodeWithText("alice", substring = true).assertExists()
-        composeRule.onNodeWithText("bob", substring = true).assertExists()
-        composeRule.onNodeWithText("cara", substring = true).assertExists()
+        composeRule.onNodeWithContentDescription("alice", substring = true).assertExists()
+        composeRule.onNodeWithContentDescription("bob", substring = true).assertExists()
+        composeRule.onNodeWithContentDescription("cara", substring = true).assertExists()
     }
 
     /** E-K's own "a picker over one option is noise" precedent, extended to the propose control. */
@@ -169,19 +179,21 @@ class DetailScreenTest {
             DetailScreen(
                 state = successState(groupSection = GroupSectionState.Absent),
                 groups = listOf(ALPHA),
-                onRetry = {},
-                onAddToLibrary = {},
-                onScoreSelected = {},
-                onScoreCleared = {},
-                onProgressChange = {},
-                onStatusSelected = {},
-                onFavoriteToggle = {},
-                onProposeToGroup = { proposedTo = it },
-                onRetryGroupSection = {},
-                onOpenReviewEditor = {},
-                onSaveReview = { _, _ -> },
-                onCancelReviewEditor = {},
-                onClearReviewError = {},
+                actions =
+                    DetailActions(
+                        onRetry = {},
+                        onAddToLibrary = {},
+                        onScoreSelected = {},
+                        onScoreCleared = {},
+                        onStatusSelected = {},
+                        onFavoriteToggle = {},
+                        onProposeToGroup = { proposedTo = it },
+                        onRetryGroupSection = {},
+                        onOpenReviewEditor = {},
+                        onSaveReview = { _, _ -> },
+                        onCancelReviewEditor = {},
+                        onClearReviewError = {},
+                    ),
             )
         }
         val context = ApplicationProvider.getApplicationContext<Context>()
@@ -209,19 +221,21 @@ class DetailScreenTest {
             DetailScreen(
                 state = successState(groupSection = GroupSectionState.Absent),
                 groups = listOf(ALPHA, BETA),
-                onRetry = {},
-                onAddToLibrary = {},
-                onScoreSelected = {},
-                onScoreCleared = {},
-                onProgressChange = {},
-                onStatusSelected = {},
-                onFavoriteToggle = {},
-                onProposeToGroup = { proposedTo = it },
-                onRetryGroupSection = {},
-                onOpenReviewEditor = {},
-                onSaveReview = { _, _ -> },
-                onCancelReviewEditor = {},
-                onClearReviewError = {},
+                actions =
+                    DetailActions(
+                        onRetry = {},
+                        onAddToLibrary = {},
+                        onScoreSelected = {},
+                        onScoreCleared = {},
+                        onStatusSelected = {},
+                        onFavoriteToggle = {},
+                        onProposeToGroup = { proposedTo = it },
+                        onRetryGroupSection = {},
+                        onOpenReviewEditor = {},
+                        onSaveReview = { _, _ -> },
+                        onCancelReviewEditor = {},
+                        onClearReviewError = {},
+                    ),
             )
         }
         val context = ApplicationProvider.getApplicationContext<Context>()
@@ -247,19 +261,21 @@ class DetailScreenTest {
             DetailScreen(
                 state = successState(groupSection = GroupSectionState.Error(GroupFailure.Network)),
                 groups = listOf(ALPHA),
-                onRetry = { titleRetryCalls++ },
-                onAddToLibrary = {},
-                onScoreSelected = {},
-                onScoreCleared = {},
-                onProgressChange = {},
-                onStatusSelected = {},
-                onFavoriteToggle = {},
-                onProposeToGroup = {},
-                onRetryGroupSection = { groupRetryCalls++ },
-                onOpenReviewEditor = {},
-                onSaveReview = { _, _ -> },
-                onCancelReviewEditor = {},
-                onClearReviewError = {},
+                actions =
+                    DetailActions(
+                        onRetry = { titleRetryCalls++ },
+                        onAddToLibrary = {},
+                        onScoreSelected = {},
+                        onScoreCleared = {},
+                        onStatusSelected = {},
+                        onFavoriteToggle = {},
+                        onProposeToGroup = {},
+                        onRetryGroupSection = { groupRetryCalls++ },
+                        onOpenReviewEditor = {},
+                        onSaveReview = { _, _ -> },
+                        onCancelReviewEditor = {},
+                        onClearReviewError = {},
+                    ),
             )
         }
         val context = ApplicationProvider.getApplicationContext<Context>()
@@ -286,25 +302,30 @@ class DetailScreenTest {
             DetailScreen(
                 state = successState(groupSection = GroupSectionState.Error(GroupFailure.Network)),
                 groups = listOf(ALPHA),
-                onRetry = {},
-                onAddToLibrary = {},
-                onScoreSelected = {},
-                onScoreCleared = {},
-                onProgressChange = {},
-                onStatusSelected = {},
-                onFavoriteToggle = {},
-                onProposeToGroup = {},
-                onRetryGroupSection = {},
-                onOpenReviewEditor = {},
-                onSaveReview = { _, _ -> },
-                onCancelReviewEditor = {},
-                onClearReviewError = {},
+                actions =
+                    DetailActions(
+                        onRetry = {},
+                        onAddToLibrary = {},
+                        onScoreSelected = {},
+                        onScoreCleared = {},
+                        onStatusSelected = {},
+                        onFavoriteToggle = {},
+                        onProposeToGroup = {},
+                        onRetryGroupSection = {},
+                        onOpenReviewEditor = {},
+                        onSaveReview = { _, _ -> },
+                        onCancelReviewEditor = {},
+                        onClearReviewError = {},
+                    ),
             )
         }
 
         val context = ApplicationProvider.getApplicationContext<Context>()
         composeRule.onNodeWithText(MEDIA.title).assertExists()
-        composeRule.onNodeWithText(context.getString(R.string.detail_favorite_label)).assertExists()
+        composeRule
+            .onNodeWithContentDescription(
+                context.getString(R.string.detail_favorite_content_description),
+            ).assertExists()
     }
 
     /**
@@ -318,19 +339,21 @@ class DetailScreenTest {
             DetailScreen(
                 state = successState(groupSection = GroupSectionState.Absent, justProposedToGroupId = ALPHA.id),
                 groups = listOf(ALPHA),
-                onRetry = {},
-                onAddToLibrary = {},
-                onScoreSelected = {},
-                onScoreCleared = {},
-                onProgressChange = {},
-                onStatusSelected = {},
-                onFavoriteToggle = {},
-                onProposeToGroup = {},
-                onRetryGroupSection = {},
-                onOpenReviewEditor = {},
-                onSaveReview = { _, _ -> },
-                onCancelReviewEditor = {},
-                onClearReviewError = {},
+                actions =
+                    DetailActions(
+                        onRetry = {},
+                        onAddToLibrary = {},
+                        onScoreSelected = {},
+                        onScoreCleared = {},
+                        onStatusSelected = {},
+                        onFavoriteToggle = {},
+                        onProposeToGroup = {},
+                        onRetryGroupSection = {},
+                        onOpenReviewEditor = {},
+                        onSaveReview = { _, _ -> },
+                        onCancelReviewEditor = {},
+                        onClearReviewError = {},
+                    ),
             )
         }
 
@@ -355,19 +378,21 @@ class DetailScreenTest {
             DetailScreen(
                 state = successState(groupSection = GroupSectionState.Absent, justProposedToGroupId = "group-gone"),
                 groups = listOf(ALPHA),
-                onRetry = {},
-                onAddToLibrary = {},
-                onScoreSelected = {},
-                onScoreCleared = {},
-                onProgressChange = {},
-                onStatusSelected = {},
-                onFavoriteToggle = {},
-                onProposeToGroup = {},
-                onRetryGroupSection = {},
-                onOpenReviewEditor = {},
-                onSaveReview = { _, _ -> },
-                onCancelReviewEditor = {},
-                onClearReviewError = {},
+                actions =
+                    DetailActions(
+                        onRetry = {},
+                        onAddToLibrary = {},
+                        onScoreSelected = {},
+                        onScoreCleared = {},
+                        onStatusSelected = {},
+                        onFavoriteToggle = {},
+                        onProposeToGroup = {},
+                        onRetryGroupSection = {},
+                        onOpenReviewEditor = {},
+                        onSaveReview = { _, _ -> },
+                        onCancelReviewEditor = {},
+                        onClearReviewError = {},
+                    ),
             )
         }
 
@@ -390,19 +415,21 @@ class DetailScreenTest {
             DetailScreen(
                 state = successState(groupSection = GroupSectionState.Absent, proposing = true),
                 groups = listOf(ALPHA),
-                onRetry = {},
-                onAddToLibrary = {},
-                onScoreSelected = {},
-                onScoreCleared = {},
-                onProgressChange = {},
-                onStatusSelected = {},
-                onFavoriteToggle = {},
-                onProposeToGroup = {},
-                onRetryGroupSection = {},
-                onOpenReviewEditor = {},
-                onSaveReview = { _, _ -> },
-                onCancelReviewEditor = {},
-                onClearReviewError = {},
+                actions =
+                    DetailActions(
+                        onRetry = {},
+                        onAddToLibrary = {},
+                        onScoreSelected = {},
+                        onScoreCleared = {},
+                        onStatusSelected = {},
+                        onFavoriteToggle = {},
+                        onProposeToGroup = {},
+                        onRetryGroupSection = {},
+                        onOpenReviewEditor = {},
+                        onSaveReview = { _, _ -> },
+                        onCancelReviewEditor = {},
+                        onClearReviewError = {},
+                    ),
             )
         }
 
@@ -414,16 +441,16 @@ class DetailScreenTest {
     }
 
     /**
-     * Fix round 1, coordinator finding 2: `GroupSectionContent` renders reviews in a plain
+     * Fix round 1, coordinator finding 2: `ReviewsSection` renders reviews in a plain
      * `Column.forEach` — not a `LazyColumn` — so a reload that swaps in a DIFFERENT review at the
      * SAME list position risks the new review inheriting whatever composition state (SpoilerReview's
-     * own `revealed`) the old occupant of that slot left behind. Drives [GroupSection] directly,
+     * own `revealed`) the old occupant of that slot left behind. Drives [ReviewsSection] directly,
      * through ONE composition (a single `setContent`, `reviews` mutated afterward) rather than two
      * independent `setContent` calls — two calls would each start a brand-new composition and could
      * never observe a slot-reuse bug at all.
      *
      * **Measured, not assumed, for THIS test's own path — recomposition, not process death.**
-     * `GroupSection.kt`'s `key(review.id)` wrapper and `SpoilerReview.kt`'s own
+     * `ReviewsSection`'s `key(review.id)` wrapper and `SpoilerReview.kt`'s own
      * `rememberSaveable(review.id)` each individually held this test green when mutated alone —
      * either one on its own already prevents a recomposition leak. Only removing BOTH at once
      * reddens it, confirmed by mutating both together before writing this KDoc's claim.
@@ -440,18 +467,18 @@ class DetailScreenTest {
     fun `a new review replacing an old one at the same position starts collapsed, not still revealed`() {
         var reviews by mutableStateOf(listOf(SPOILER_A))
         composeRule.setContent {
-            GroupSection(
-                groupSection = GroupSectionState.Loaded(progress = emptyList(), reviews = reviews),
-                groups = listOf(ALPHA),
-                proposing = false,
-                proposeError = null,
-                justProposedToGroupId = null,
-                onProposeToGroup = {},
-                onRetry = {},
+            ReviewsSection(
+                reviews = reviews,
+                reviewsKnown = true,
+                meId = null,
+                reviewEditor = ReviewEditorState.Closed,
+                deleting = false,
+                deleteError = null,
+                actions = DetailActions(),
             )
         }
         val context = ApplicationProvider.getApplicationContext<Context>()
-        // No performScrollTo() here — unlike DetailScreen's own tests, GroupSection is driven
+        // No performScrollTo() here — unlike DetailScreen's own tests, ReviewsSection is driven
         // directly with no surrounding DetailContent scroll container, and this small a tree fits
         // the viewport outright.
         composeRule
@@ -475,19 +502,21 @@ class DetailScreenTest {
             DetailScreen(
                 state = successState(groupSection = GroupSectionState.Absent),
                 groups = emptyList(),
-                onRetry = {},
-                onAddToLibrary = {},
-                onScoreSelected = {},
-                onScoreCleared = {},
-                onProgressChange = {},
-                onStatusSelected = {},
-                onFavoriteToggle = {},
-                onProposeToGroup = {},
-                onRetryGroupSection = {},
-                onOpenReviewEditor = { opened++ },
-                onSaveReview = { _, _ -> },
-                onCancelReviewEditor = {},
-                onClearReviewError = {},
+                actions =
+                    DetailActions(
+                        onRetry = {},
+                        onAddToLibrary = {},
+                        onScoreSelected = {},
+                        onScoreCleared = {},
+                        onStatusSelected = {},
+                        onFavoriteToggle = {},
+                        onProposeToGroup = {},
+                        onRetryGroupSection = {},
+                        onOpenReviewEditor = { opened++ },
+                        onSaveReview = { _, _ -> },
+                        onCancelReviewEditor = {},
+                        onClearReviewError = {},
+                    ),
             )
         }
 
@@ -518,22 +547,24 @@ class DetailScreenTest {
                             ReviewEditorState.Open(reviewId = null, seedBody = "", seedContainsSpoilers = false),
                     ),
                 groups = emptyList(),
-                onRetry = {},
-                onAddToLibrary = {},
-                onScoreSelected = {},
-                onScoreCleared = {},
-                onProgressChange = {},
-                onStatusSelected = {},
-                onFavoriteToggle = {},
-                onProposeToGroup = {},
-                onRetryGroupSection = {},
-                onOpenReviewEditor = {},
-                onSaveReview = { body, spoilers ->
-                    savedBody = body
-                    savedSpoilers = spoilers
-                },
-                onCancelReviewEditor = {},
-                onClearReviewError = {},
+                actions =
+                    DetailActions(
+                        onRetry = {},
+                        onAddToLibrary = {},
+                        onScoreSelected = {},
+                        onScoreCleared = {},
+                        onStatusSelected = {},
+                        onFavoriteToggle = {},
+                        onProposeToGroup = {},
+                        onRetryGroupSection = {},
+                        onOpenReviewEditor = {},
+                        onSaveReview = { body, spoilers ->
+                            savedBody = body
+                            savedSpoilers = spoilers
+                        },
+                        onCancelReviewEditor = {},
+                        onClearReviewError = {},
+                    ),
             )
         }
 
@@ -580,19 +611,21 @@ class DetailScreenTest {
                             ),
                     ),
                 groups = emptyList(),
-                onRetry = {},
-                onAddToLibrary = {},
-                onScoreSelected = {},
-                onScoreCleared = {},
-                onProgressChange = {},
-                onStatusSelected = {},
-                onFavoriteToggle = {},
-                onProposeToGroup = {},
-                onRetryGroupSection = {},
-                onOpenReviewEditor = {},
-                onSaveReview = { _, _ -> },
-                onCancelReviewEditor = {},
-                onClearReviewError = {},
+                actions =
+                    DetailActions(
+                        onRetry = {},
+                        onAddToLibrary = {},
+                        onScoreSelected = {},
+                        onScoreCleared = {},
+                        onStatusSelected = {},
+                        onFavoriteToggle = {},
+                        onProposeToGroup = {},
+                        onRetryGroupSection = {},
+                        onOpenReviewEditor = {},
+                        onSaveReview = { _, _ -> },
+                        onCancelReviewEditor = {},
+                        onClearReviewError = {},
+                    ),
             )
         }
 
@@ -619,19 +652,21 @@ class DetailScreenTest {
                             ),
                     ),
                 groups = emptyList(),
-                onRetry = {},
-                onAddToLibrary = {},
-                onScoreSelected = {},
-                onScoreCleared = {},
-                onProgressChange = {},
-                onStatusSelected = {},
-                onFavoriteToggle = {},
-                onProposeToGroup = {},
-                onRetryGroupSection = {},
-                onOpenReviewEditor = {},
-                onSaveReview = { _, _ -> },
-                onCancelReviewEditor = {},
-                onClearReviewError = {},
+                actions =
+                    DetailActions(
+                        onRetry = {},
+                        onAddToLibrary = {},
+                        onScoreSelected = {},
+                        onScoreCleared = {},
+                        onStatusSelected = {},
+                        onFavoriteToggle = {},
+                        onProposeToGroup = {},
+                        onRetryGroupSection = {},
+                        onOpenReviewEditor = {},
+                        onSaveReview = { _, _ -> },
+                        onCancelReviewEditor = {},
+                        onClearReviewError = {},
+                    ),
             )
         }
 
@@ -654,19 +689,21 @@ class DetailScreenTest {
                             ReviewEditorState.Open(reviewId = null, seedBody = "", seedContainsSpoilers = false),
                     ),
                 groups = emptyList(),
-                onRetry = {},
-                onAddToLibrary = {},
-                onScoreSelected = {},
-                onScoreCleared = {},
-                onProgressChange = {},
-                onStatusSelected = {},
-                onFavoriteToggle = {},
-                onProposeToGroup = {},
-                onRetryGroupSection = {},
-                onOpenReviewEditor = {},
-                onSaveReview = { _, _ -> },
-                onCancelReviewEditor = { cancelled++ },
-                onClearReviewError = {},
+                actions =
+                    DetailActions(
+                        onRetry = {},
+                        onAddToLibrary = {},
+                        onScoreSelected = {},
+                        onScoreCleared = {},
+                        onStatusSelected = {},
+                        onFavoriteToggle = {},
+                        onProposeToGroup = {},
+                        onRetryGroupSection = {},
+                        onOpenReviewEditor = {},
+                        onSaveReview = { _, _ -> },
+                        onCancelReviewEditor = { cancelled++ },
+                        onClearReviewError = {},
+                    ),
             )
         }
 
@@ -702,19 +739,21 @@ class DetailScreenTest {
                             ),
                     ),
                 groups = emptyList(),
-                onRetry = {},
-                onAddToLibrary = {},
-                onScoreSelected = {},
-                onScoreCleared = {},
-                onProgressChange = {},
-                onStatusSelected = {},
-                onFavoriteToggle = {},
-                onProposeToGroup = {},
-                onRetryGroupSection = {},
-                onOpenReviewEditor = {},
-                onSaveReview = { _, _ -> },
-                onCancelReviewEditor = {},
-                onClearReviewError = {},
+                actions =
+                    DetailActions(
+                        onRetry = {},
+                        onAddToLibrary = {},
+                        onScoreSelected = {},
+                        onScoreCleared = {},
+                        onStatusSelected = {},
+                        onFavoriteToggle = {},
+                        onProposeToGroup = {},
+                        onRetryGroupSection = {},
+                        onOpenReviewEditor = {},
+                        onSaveReview = { _, _ -> },
+                        onCancelReviewEditor = {},
+                        onClearReviewError = {},
+                    ),
             )
         }
 
@@ -750,19 +789,21 @@ class DetailScreenTest {
                             ),
                     ),
                 groups = emptyList(),
-                onRetry = {},
-                onAddToLibrary = {},
-                onScoreSelected = {},
-                onScoreCleared = {},
-                onProgressChange = {},
-                onStatusSelected = {},
-                onFavoriteToggle = {},
-                onProposeToGroup = {},
-                onRetryGroupSection = {},
-                onOpenReviewEditor = {},
-                onSaveReview = { _, _ -> },
-                onCancelReviewEditor = {},
-                onClearReviewError = {},
+                actions =
+                    DetailActions(
+                        onRetry = {},
+                        onAddToLibrary = {},
+                        onScoreSelected = {},
+                        onScoreCleared = {},
+                        onStatusSelected = {},
+                        onFavoriteToggle = {},
+                        onProposeToGroup = {},
+                        onRetryGroupSection = {},
+                        onOpenReviewEditor = {},
+                        onSaveReview = { _, _ -> },
+                        onCancelReviewEditor = {},
+                        onClearReviewError = {},
+                    ),
             )
         }
 
@@ -793,19 +834,21 @@ class DetailScreenTest {
                             ),
                     ),
                 groups = emptyList(),
-                onRetry = {},
-                onAddToLibrary = {},
-                onScoreSelected = {},
-                onScoreCleared = {},
-                onProgressChange = {},
-                onStatusSelected = {},
-                onFavoriteToggle = {},
-                onProposeToGroup = {},
-                onRetryGroupSection = {},
-                onOpenReviewEditor = {},
-                onSaveReview = { _, _ -> },
-                onCancelReviewEditor = {},
-                onClearReviewError = {},
+                actions =
+                    DetailActions(
+                        onRetry = {},
+                        onAddToLibrary = {},
+                        onScoreSelected = {},
+                        onScoreCleared = {},
+                        onStatusSelected = {},
+                        onFavoriteToggle = {},
+                        onProposeToGroup = {},
+                        onRetryGroupSection = {},
+                        onOpenReviewEditor = {},
+                        onSaveReview = { _, _ -> },
+                        onCancelReviewEditor = {},
+                        onClearReviewError = {},
+                    ),
             )
         }
 
@@ -839,19 +882,21 @@ class DetailScreenTest {
                             ),
                     ),
                 groups = emptyList(),
-                onRetry = {},
-                onAddToLibrary = {},
-                onScoreSelected = {},
-                onScoreCleared = {},
-                onProgressChange = {},
-                onStatusSelected = {},
-                onFavoriteToggle = {},
-                onProposeToGroup = {},
-                onRetryGroupSection = {},
-                onOpenReviewEditor = {},
-                onSaveReview = { _, _ -> },
-                onCancelReviewEditor = {},
-                onClearReviewError = { cleared++ },
+                actions =
+                    DetailActions(
+                        onRetry = {},
+                        onAddToLibrary = {},
+                        onScoreSelected = {},
+                        onScoreCleared = {},
+                        onStatusSelected = {},
+                        onFavoriteToggle = {},
+                        onProposeToGroup = {},
+                        onRetryGroupSection = {},
+                        onOpenReviewEditor = {},
+                        onSaveReview = { _, _ -> },
+                        onCancelReviewEditor = {},
+                        onClearReviewError = { cleared++ },
+                    ),
             )
         }
 
@@ -887,19 +932,21 @@ class DetailScreenTest {
                             ),
                     ),
                 groups = emptyList(),
-                onRetry = {},
-                onAddToLibrary = {},
-                onScoreSelected = {},
-                onScoreCleared = {},
-                onProgressChange = {},
-                onStatusSelected = {},
-                onFavoriteToggle = {},
-                onProposeToGroup = {},
-                onRetryGroupSection = {},
-                onOpenReviewEditor = {},
-                onSaveReview = { _, _ -> },
-                onCancelReviewEditor = {},
-                onClearReviewError = {},
+                actions =
+                    DetailActions(
+                        onRetry = {},
+                        onAddToLibrary = {},
+                        onScoreSelected = {},
+                        onScoreCleared = {},
+                        onStatusSelected = {},
+                        onFavoriteToggle = {},
+                        onProposeToGroup = {},
+                        onRetryGroupSection = {},
+                        onOpenReviewEditor = {},
+                        onSaveReview = { _, _ -> },
+                        onCancelReviewEditor = {},
+                        onClearReviewError = {},
+                    ),
             )
         }
 
@@ -931,19 +978,21 @@ class DetailScreenTest {
                             ReviewEditorState.Open(reviewId = null, seedBody = "", seedContainsSpoilers = false),
                     ),
                 groups = emptyList(),
-                onRetry = {},
-                onAddToLibrary = {},
-                onScoreSelected = {},
-                onScoreCleared = {},
-                onProgressChange = {},
-                onStatusSelected = {},
-                onFavoriteToggle = {},
-                onProposeToGroup = {},
-                onRetryGroupSection = {},
-                onOpenReviewEditor = {},
-                onSaveReview = { _, _ -> },
-                onCancelReviewEditor = {},
-                onClearReviewError = {},
+                actions =
+                    DetailActions(
+                        onRetry = {},
+                        onAddToLibrary = {},
+                        onScoreSelected = {},
+                        onScoreCleared = {},
+                        onStatusSelected = {},
+                        onFavoriteToggle = {},
+                        onProposeToGroup = {},
+                        onRetryGroupSection = {},
+                        onOpenReviewEditor = {},
+                        onSaveReview = { _, _ -> },
+                        onCancelReviewEditor = {},
+                        onClearReviewError = {},
+                    ),
             )
         }
 
@@ -953,6 +1002,29 @@ class DetailScreenTest {
                 hasText(context.getString(R.string.detail_review_spoiler_label)) and
                     SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Checkbox),
             ).assertExists()
+    }
+
+    /** Add can never succeed for a title from a provider this version doesn't know, so it isn't offered. */
+    @Test
+    fun `an untracked title from an unknown provider offers no add button`() {
+        val add = ApplicationProvider.getApplicationContext<Context>().getString(R.string.detail_add_button)
+        var media by mutableStateOf(MEDIA.copy(source = MediaSource.UNKNOWN))
+        composeRule.setContent {
+            DetailScreen(
+                state =
+                    DetailUiState.Success(
+                        data = DetailData(media = media, entry = null),
+                        groupSection = GroupSectionState.Absent,
+                    ),
+                groups = emptyList(),
+                actions = DetailActions(),
+            )
+        }
+
+        composeRule.onNodeWithText(add).assertDoesNotExist()
+
+        media = MEDIA
+        composeRule.onNodeWithText(add).assertExists()
     }
 
     private fun successState(

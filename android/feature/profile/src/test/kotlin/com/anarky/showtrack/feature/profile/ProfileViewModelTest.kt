@@ -20,8 +20,6 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import java.io.IOException
 
-private const val NTFY = "io.heckel.ntfy"
-
 /**
  * Robolectric for the same reason `core/data`'s `AuthRepositoryTest` needs it: `signOut()`'s
  * caught-failure path now logs through `android.util.Log`, which a plain JVM test answers with
@@ -33,9 +31,7 @@ private const val NTFY = "io.heckel.ntfy"
 @RunWith(RobolectricTestRunner::class)
 class ProfileViewModelTest {
     // viewModelScope is hard-wired to Dispatchers.Main, which has no implementation on a plain
-    // JVM. Substituting a TestDispatcher is what makes the launch inside `signOut` run at all —
-    // the push tests below don't need it (enablePush/disablePush/refresh are synchronous), but
-    // setting it unconditionally costs nothing and keeps this class' setup uniform.
+    // JVM. Substituting a TestDispatcher is what makes the launches inside the ViewModel run.
     private val dispatcher = StandardTestDispatcher()
 
     @Before
@@ -45,102 +41,42 @@ class ProfileViewModelTest {
     fun tearDown() = Dispatchers.resetMain()
 
     @Test
-    fun `no installed distributor is reported as NoDistributor`() {
-        // The state the whole prompt exists for. A user here receives nothing, forever, and the
-        // only conclusion available without the prompt is "push is broken" rather than "push
-        // needs one more app" (decision A-A).
-        val state = ProfileViewModel(FakeDistributors(), FakeAuthRepository(), FakeLibraryRepository()).pushState.value
+    fun `the alerts switch shows what is stored, and a toggle writes it`() =
+        runTest(dispatcher) {
+            val alerts = FakeAlertSwitch()
+            val viewModel = ProfileViewModel(alerts, FakeAuthRepository(), FakeLibraryRepository())
+            advanceUntilIdle()
+            assertFalse(viewModel.alertsEnabled.value)
 
-        assertEquals(PushState.NoDistributor, state)
-    }
+            viewModel.setAlertsEnabled(true)
+            advanceUntilIdle()
+            assertTrue(viewModel.alertsEnabled.value)
+            assertEquals(listOf(true), alerts.writes)
 
-    @Test
-    fun `an installed but unchosen distributor is offered`() {
-        val state =
-            ProfileViewModel(
-                FakeDistributors(installed = listOf(NTFY)),
-                FakeAuthRepository(),
-                FakeLibraryRepository(),
-            ).pushState.value
-
-        assertEquals(PushState.Available(listOf(NTFY)), state)
-    }
+            viewModel.setAlertsEnabled(false)
+            advanceUntilIdle()
+            assertFalse(viewModel.alertsEnabled.value)
+        }
 
     @Test
-    fun `choosing a distributor moves to Registered`() {
-        val viewModel =
-            ProfileViewModel(FakeDistributors(installed = listOf(NTFY)), FakeAuthRepository(), FakeLibraryRepository())
+    fun `a failed alerts write leaves the switch as it was`() =
+        runTest(dispatcher) {
+            val alerts = FakeAlertSwitch(failure = IOException("disk full"))
+            val viewModel = ProfileViewModel(alerts, FakeAuthRepository(), FakeLibraryRepository())
 
-        viewModel.enablePush(NTFY)
+            viewModel.setAlertsEnabled(true)
+            advanceUntilIdle()
 
-        assertEquals(PushState.Registered(NTFY), viewModel.pushState.value)
-    }
-
-    @Test
-    fun `a saved distributor that is no longer installed is not reported as registered`() {
-        // The connector keeps the saved choice after the app is uninstalled. Trusting it would
-        // show "episode alerts are on" for an app that is gone — the silent failure this state
-        // machine exists to prevent, wearing a green tick.
-        val state =
-            ProfileViewModel(
-                FakeDistributors(installed = emptyList(), saved = NTFY),
-                FakeAuthRepository(),
-                FakeLibraryRepository(),
-            ).pushState.value
-
-        assertEquals(PushState.NoDistributor, state)
-    }
-
-    @Test
-    fun `a saved distributor is ignored when a DIFFERENT one is installed`() {
-        val state =
-            ProfileViewModel(
-                FakeDistributors(installed = listOf("org.other.distributor"), saved = NTFY),
-                FakeAuthRepository(),
-                FakeLibraryRepository(),
-            ).pushState.value
-
-        assertEquals(PushState.Available(listOf("org.other.distributor")), state)
-    }
-
-    @Test
-    fun `turning push off returns to Available rather than NoDistributor`() {
-        // The distinction matters to the user: the app is still installed, so the screen must
-        // offer to turn it back on rather than tell them to go and install something.
-        val distributors = FakeDistributors(installed = listOf(NTFY), saved = NTFY)
-        val viewModel = ProfileViewModel(distributors, FakeAuthRepository(), FakeLibraryRepository())
-
-        viewModel.disablePush()
-
-        assertEquals(PushState.Available(listOf(NTFY)), viewModel.pushState.value)
-        assertEquals(true, distributors.unregistered)
-    }
-
-    @Test
-    fun `refresh picks up a distributor installed while the app was in the background`() {
-        // The state the NoDistributor prompt creates and must be able to leave. The prompt sends
-        // the user out of the app to install ntfy; the ViewModel is scoped to the
-        // NavBackStackEntry and survives that trip, so `init` does not run again. If nothing
-        // re-reads on the way back, the screen still says "push needs one more app" after the
-        // user did exactly what it asked — A-A's failure mode wearing its own prompt.
-        val distributors = FakeDistributors()
-        val viewModel = ProfileViewModel(distributors, FakeAuthRepository(), FakeLibraryRepository())
-        assertEquals(PushState.NoDistributor, viewModel.pushState.value)
-
-        distributors.installed = listOf(NTFY)
-        viewModel.refresh()
-
-        assertEquals(PushState.Available(listOf(NTFY)), viewModel.pushState.value)
-    }
+            assertFalse(viewModel.alertsEnabled.value)
+        }
 
     @Test
     fun `signing out calls AuthRepository logout`() =
         runTest(dispatcher) {
-            // Gap 2, Phase 9a device walkthroughs: AuthRepository.logout() was hardened to delete
-            // the server-side push target BEFORE clearing tokens, and none of that was reachable
-            // from any screen. This is the regression guard for the door this task adds.
+            // AuthRepository.logout() cancels this phone's alerts before clearing tokens; this is
+            // the regression guard for the screen's door to it.
             val authRepository = FakeAuthRepository()
-            val viewModel = ProfileViewModel(FakeDistributors(), authRepository, FakeLibraryRepository())
+            val viewModel = ProfileViewModel(FakeAlertSwitch(), authRepository, FakeLibraryRepository())
 
             viewModel.signOut()
             advanceUntilIdle()
@@ -162,7 +98,7 @@ class ProfileViewModelTest {
             // point is what actually falsifies the wrong ordering.
             val gate = CompletableDeferred<Unit>()
             val authRepository = FakeAuthRepository(onLogout = { gate.await() })
-            val viewModel = ProfileViewModel(FakeDistributors(), authRepository, FakeLibraryRepository())
+            val viewModel = ProfileViewModel(FakeAlertSwitch(), authRepository, FakeLibraryRepository())
 
             viewModel.signOut()
             advanceUntilIdle()
@@ -183,7 +119,7 @@ class ProfileViewModelTest {
             // signedOut anyway would send the user back to the login screen while a valid session
             // is still on the device — a lie a relaunch would immediately expose.
             val authRepository = FakeAuthRepository(onLogout = { throw IOException("token store unwritable") })
-            val viewModel = ProfileViewModel(FakeDistributors(), authRepository, FakeLibraryRepository())
+            val viewModel = ProfileViewModel(FakeAlertSwitch(), authRepository, FakeLibraryRepository())
 
             viewModel.signOut()
             advanceUntilIdle()
@@ -198,7 +134,7 @@ class ProfileViewModelTest {
             var shouldFail = true
             val authRepository =
                 FakeAuthRepository(onLogout = { if (shouldFail) throw IOException("token store unwritable") })
-            val viewModel = ProfileViewModel(FakeDistributors(), authRepository, FakeLibraryRepository())
+            val viewModel = ProfileViewModel(FakeAlertSwitch(), authRepository, FakeLibraryRepository())
             viewModel.signOut()
             advanceUntilIdle()
             assertTrue(viewModel.signOutError.value)
@@ -228,24 +164,23 @@ class ProfileViewModelTest {
     @Test
     fun `a failed stats load leaves the rest of the profile usable`() =
         runTest(dispatcher) {
-            // Decision C-S. Profile already owns push opt-in and sign-out; a stats failure must
+            // Decision C-S. Profile also owns the alerts switch and sign-out; a stats failure must
             // not take them down with it. Its own error channel.
             val failure = IOException("stats offline")
             val repository = FakeLibraryRepository(statsFailure = failure)
-            val distributors = FakeDistributors(installed = listOf(NTFY))
             val authRepository = FakeAuthRepository()
-            val viewModel = ProfileViewModel(distributors, authRepository, repository)
+            val viewModel = ProfileViewModel(FakeAlertSwitch(), authRepository, repository)
             viewModel.refreshStats() // stands in for LifecycleResumeEffect's call — refreshStats()
             // is no longer folded into init{}'s refresh() (round 1, blocking 2).
             advanceUntilIdle()
 
             assertEquals(LibraryStatsUiState.Error(failure), viewModel.statsState.value)
 
-            // Push is untouched by the stats failure — including a later refresh() re-triggering
-            // it. refresh() no longer touches stats at all (round 1), so this also proves a push
-            // toggle does not re-issue the failing stats GET.
-            viewModel.enablePush(NTFY)
-            assertEquals(PushState.Registered(NTFY), viewModel.pushState.value)
+            // The alerts switch is untouched by the stats failure, and toggling it does not
+            // re-issue the failing stats GET.
+            viewModel.setAlertsEnabled(true)
+            advanceUntilIdle()
+            assertTrue(viewModel.alertsEnabled.value)
             assertEquals(LibraryStatsUiState.Error(failure), viewModel.statsState.value)
 
             // Sign-out is untouched too.
@@ -276,7 +211,7 @@ class ProfileViewModelTest {
                     favorites = 0,
                 )
             val repository = FakeLibraryRepository(initial)
-            val viewModel = ProfileViewModel(FakeDistributors(), FakeAuthRepository(), repository)
+            val viewModel = ProfileViewModel(FakeAlertSwitch(), FakeAuthRepository(), repository)
             viewModel.refreshStats() // stands in for LifecycleResumeEffect's first call (round 1)
             advanceUntilIdle()
             assertEquals(LibraryStatsUiState.Success(initial), viewModel.statsState.value)
@@ -328,7 +263,7 @@ class ProfileViewModelTest {
                     favorites = 0,
                 )
             val repository = FakeLibraryRepository(initial)
-            val viewModel = ProfileViewModel(FakeDistributors(), FakeAuthRepository(), repository)
+            val viewModel = ProfileViewModel(FakeAlertSwitch(), FakeAuthRepository(), repository)
             viewModel.refreshStats() // stands in for LifecycleResumeEffect's first call (round 1)
             advanceUntilIdle()
             assertEquals(LibraryStatsUiState.Success(initial), viewModel.statsState.value)
@@ -364,7 +299,7 @@ class ProfileViewModelTest {
                     favorites = 0,
                 )
             val repository = FakeLibraryRepository(initial)
-            val viewModel = ProfileViewModel(FakeDistributors(), FakeAuthRepository(), repository)
+            val viewModel = ProfileViewModel(FakeAlertSwitch(), FakeAuthRepository(), repository)
             viewModel.refreshStats() // stands in for LifecycleResumeEffect's first call (round 1)
             advanceUntilIdle()
 
@@ -414,7 +349,7 @@ class ProfileViewModelTest {
                     favorites = 0,
                 )
             val repository = FakeLibraryRepository(initial)
-            val viewModel = ProfileViewModel(FakeDistributors(), FakeAuthRepository(), repository)
+            val viewModel = ProfileViewModel(FakeAlertSwitch(), FakeAuthRepository(), repository)
             viewModel.refreshStats() // stands in for LifecycleResumeEffect's first call (round 1)
             advanceUntilIdle()
             assertEquals(1, repository.statsCalls)
@@ -435,10 +370,7 @@ class ProfileViewModelTest {
         }
 
     /**
-     * Round 1's own regression guard (blocking 2): `init` must stay a push-only, synchronous read
-     * — several tests above (e.g. `no installed distributor is reported as NoDistributor`) read
-     * `pushState.value` straight after construction with no `advanceUntilIdle()`, which only works
-     * if `init` never launches a coroutine. This pins the OTHER half: `init` must NOT also start
+     * Round 1's own regression guard (blocking 2): `init` must NOT start
      * fetching stats, because `ProfileScreen`'s `LifecycleResumeEffect` already calls
      * [ProfileViewModel.refreshStats] once on the very first composition (the same `Lifecycle`
      * replay `FavoritesViewModel`'s own KDoc measures) — if `init` fetched too, cold start would
@@ -448,31 +380,25 @@ class ProfileViewModelTest {
     fun `init does not fetch stats — only an explicit refreshStats call does`() =
         runTest(dispatcher) {
             val repository = FakeLibraryRepository()
-            ProfileViewModel(FakeDistributors(), FakeAuthRepository(), repository)
+            ProfileViewModel(FakeAlertSwitch(), FakeAuthRepository(), repository)
             advanceUntilIdle()
 
             assertEquals(0, repository.statsCalls)
         }
 
-    /**
-     * The push-toggle half of the same finding: [ProfileViewModel.enablePush]/[ProfileViewModel.disablePush]
-     * call [ProfileViewModel.refresh] to re-read push state, and before round 1 that function also
-     * fetched stats — so every push toggle silently re-issued `GET /v1/library/stats`, a regression
-     * against pre-9b.5 behaviour. `enablePush`/`disablePush` share one `refresh()` call, so exercising
-     * either is enough to pin that neither reaches [LibraryRepository.libraryStats] any more.
-     */
     @Test
-    fun `toggling push does not fetch stats`() =
+    fun `refreshUser loads the account, and a failure keeps the last one shown`() =
         runTest(dispatcher) {
-            val distributors = FakeDistributors(installed = listOf(NTFY))
-            val repository = FakeLibraryRepository()
-            val viewModel = ProfileViewModel(distributors, FakeAuthRepository(), repository)
-            advanceUntilIdle()
+            val auth = FakeAuthRepository()
+            val viewModel = ProfileViewModel(FakeAlertSwitch(), auth, FakeLibraryRepository())
 
-            viewModel.enablePush(NTFY)
-            viewModel.disablePush()
+            viewModel.refreshUser()
             advanceUntilIdle()
+            assertEquals(FakeAuthRepository.USER, viewModel.user.value)
 
-            assertEquals(0, repository.statsCalls)
+            auth.currentUserFailure = IOException("offline")
+            viewModel.refreshUser()
+            advanceUntilIdle()
+            assertEquals(FakeAuthRepository.USER, viewModel.user.value)
         }
 }

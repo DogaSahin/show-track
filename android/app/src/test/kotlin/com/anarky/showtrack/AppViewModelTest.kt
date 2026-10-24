@@ -1,6 +1,7 @@
 package com.anarky.showtrack
 
 import com.anarky.showtrack.core.data.repository.AuthRepository
+import com.anarky.showtrack.core.model.CurrentUser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -168,6 +169,8 @@ class AppViewModelTest {
         private val hasSession: Boolean,
     ) : AuthRepository {
         override suspend fun hasSession(): Boolean = hasSession
+
+        override suspend fun currentUser(): CurrentUser = error("not exercised by AppViewModelTest")
 
         override suspend fun currentUserId(): String = error("not exercised by AppViewModelTest")
 

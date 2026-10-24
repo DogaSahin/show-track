@@ -14,7 +14,7 @@ import dagger.hilt.testing.TestInstallIn
  * one stands in), but `@TestInstallIn` needs no matching annotation on the test class itself.
  *
  * Only [LibraryRepository] is bound, not the other five interfaces [DataModule] provides
- * (`AuthRepository`, `MediaRepository`, `PushRepository`, `PushRegistrationStore`,
+ * (`AuthRepository`, `MediaRepository`, `EpisodeAlerts`, `AlertSettingsStore`,
  * `AuthEventSource`). That is deliberate, not an oversight: Dagger only has to satisfy a binding
  * that is actually REQUESTED somewhere in the compiled graph, and nothing [LibraryEntryHiltTest]
  * composes asks for any of the other five — `LibraryViewModel`'s constructor names only

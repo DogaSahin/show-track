@@ -4,7 +4,7 @@ plugins {
 
 android {
     testOptions {
-        // PushNotifierTest builds a real Intent and a real Uri under Robolectric, which cannot
+        // EpisodeAlertNotifierTest builds a real Intent and a real Uri under Robolectric, which cannot
         // load the merged manifest/resources it shadows without this. Same call :core:network,
         // :core:data, :core:database and :app already made.
         unitTests {
@@ -24,14 +24,14 @@ dependencies {
     // build over it).
     implementation(project(":core:navigation"))
 
-    // The ONLY data dependency a feature module declares. PushRepository is an interface; the
-    // Retrofit call and the JSON decode behind it are `implementation`-scoped inside :core:data
-    // and are not on this module's compile classpath (architecture rule 2).
+    // The ONLY data dependency a feature module declares (architecture rule 2).
     implementation(project(":core:data"))
 
-    // The distributor-facing half: MessagingReceiver, PushEndpoint, PushMessage, and the
-    // UnifiedPush entry points the profile screen drives.
-    implementation(libs.unifiedpush.connector)
+    // Episode alerts are scheduled on the phone: WorkManager runs them (it survives reboots and
+    // needs no exact-alarm permission), and hilt-work lets its workers take injected repositories.
+    implementation(libs.androidx.work.runtime.ktx)
+    implementation(libs.androidx.hilt.work)
+    ksp(libs.androidx.hilt.compiler)
 
     // NotificationCompat / NotificationManagerCompat / ContextCompat, and androidx.core.net.toUri
     // for the deep-link Uri.
@@ -57,4 +57,7 @@ dependencies {
     // same three lines :feature:library's build file carries.
     testImplementation(libs.hilt.android.testing)
     kspTest(libs.hilt.compiler)
+
+    // WorkManager's test driver: run scheduled work synchronously and inspect what is enqueued.
+    testImplementation(libs.androidx.work.testing)
 }

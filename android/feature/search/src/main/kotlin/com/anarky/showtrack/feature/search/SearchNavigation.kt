@@ -15,10 +15,8 @@ import com.anarky.showtrack.core.navigation.SearchRoute
  * `libraryEntry`/`authEntry` already use — naming `DetailRoute` here is not a dependency on
  * `:feature:detail`; this module's build file names only `:core:navigation`.
  *
- * The `mediaId` is `SearchScreen`'s own `onNavigateToDetail: (String) -> Unit` callback argument,
- * which is only ever invoked with the id `SearchViewModel.navigateToDetail` emits AFTER
- * `POST /v1/library` creates the row — never a raw tap on a search result, which carries no id at
- * all (decision C-N; see `SearchViewModel`'s KDoc).
+ * The `mediaId` is the one `SearchViewModel` emits when a result is opened: the id the result
+ * already carried, or the one `POST /v1/media/resolve` returned for it.
  */
 fun NavGraphBuilder.searchEntry(onNavigate: (AppRoute) -> Unit) {
     composable<SearchRoute> {

@@ -9,7 +9,7 @@ enum class SourceStatus { OK, TIMEOUT, RATE_LIMITED, ERROR, NOT_CONFIGURED, UNKN
  * all there is" unless the client reads the per-source map (decision C-O).
  */
 data class SearchResults(
-    val items: List<MediaSummary>,
+    val items: List<SearchResult>,
     val hasMore: Boolean,
     val degraded: List<MediaSource>,
 ) {
@@ -19,3 +19,15 @@ data class SearchResults(
         val EMPTY = SearchResults(items = emptyList(), hasMore = false, degraded = emptyList())
     }
 }
+
+/**
+ * One search result and what the signed-in user already has of it. [mediaId] is set when the
+ * title is stored, so it can be opened without resolving it first; [libraryStatus] is set when the
+ * user tracks it (null for an unknown status as well as for "not tracked": the screen then offers
+ * Add, which is idempotent, rather than guessing a status).
+ */
+data class SearchResult(
+    val media: MediaSummary,
+    val mediaId: String? = null,
+    val libraryStatus: UserMediaStatus? = null,
+)

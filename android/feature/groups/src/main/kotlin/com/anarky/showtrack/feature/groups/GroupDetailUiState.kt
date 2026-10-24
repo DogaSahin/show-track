@@ -97,6 +97,8 @@ sealed interface GroupDetailUiState {
         val watchlistLoadingMore: Boolean = false,
         val watchlistPageError: GroupFailure? = null,
         val watchlistIsStale: Boolean = false,
+        /** True once the last watchlist page has loaded, so the tab can show an exact count. */
+        val watchlistComplete: Boolean = false,
         val rotatedInvite: GroupWithInvite? = null,
         val isStale: Boolean = false,
     ) : GroupDetailUiState
@@ -163,3 +165,19 @@ data class GroupDetailActionState(
     val removingEntryId: String? = null,
     val removeEntryError: GroupFailure? = null,
 )
+
+/**
+ * The owner's view of the group's invite code, for the invite strip. Only ever loaded once the
+ * screen knows the viewer is the owner; a member never triggers it, so never sees a strip.
+ */
+sealed interface InviteState {
+    /** Not loaded yet (or the viewer is not the owner): no strip content to show. */
+    data object Unknown : InviteState
+
+    data class Ready(
+        val invite: GroupWithInvite,
+    ) : InviteState
+
+    /** The read failed: the strip falls back to "Invite people" with New code, today's flow. */
+    data object Unavailable : InviteState
+}

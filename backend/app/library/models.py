@@ -71,6 +71,22 @@ class UserMedia(UUIDPrimaryKeyMixin, Base):
     )
 
 
+class WatchedEpisode(Base):
+    """One episode a library entry has ticked. Exact episodes rather than a count, because the user
+    can leave gaps (watch E6 before E4). `user_media.progress` is kept equal to the number of rows
+    here for an entry, so everything that reads progress keeps working unchanged.
+    """
+
+    __tablename__ = "watched_episodes"
+
+    user_media_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("user_media.id", ondelete="CASCADE"), primary_key=True)
+    # Indexed for the cascade: a TMDB renumbering deletes episodes, and each delete looks here.
+    episode_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("episodes.id", ondelete="CASCADE"), primary_key=True, index=True
+    )
+    watched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
 class ActivityKind(enum.StrEnum):
     ADDED = "added"
     # A sixth kind beyond the task breakdown's five (decision S-A). The AniList importer is

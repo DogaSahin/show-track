@@ -26,4 +26,6 @@ data class MediaDto(
     @SerialName("next_episode_number") val nextEpisodeNumber: Int?,
     @SerialName("next_episode_date") val nextEpisodeDate: String?,
     @SerialName("days_until_next_episode") val daysUntilNextEpisode: Int?,
+    // Defaulted: a server without episode lists still decodes.
+    @SerialName("total_episodes") val totalEpisodes: Int? = null,
 )

@@ -1,25 +1,34 @@
 package com.anarky.showtrack.feature.groups
 
-import androidx.compose.foundation.layout.Arrangement
+import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -66,15 +75,21 @@ fun GroupDetailScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val actionState by viewModel.actionState.collectAsStateWithLifecycle()
     val currentUserId by viewModel.currentUserId.collectAsStateWithLifecycle()
+    val invite by viewModel.invite.collectAsStateWithLifecycle()
+    val backDispatcher = LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
     GroupDetailScreen(
+        groupId = viewModel.groupId,
+        groupName = viewModel.groupName,
         state = state,
         actionState = actionState,
         currentUserId = currentUserId,
+        invite = invite,
+        onLoadInvite = viewModel::loadInvite,
+        onBack = { backDispatcher?.onBackPressed() },
         onRetry = viewModel::refresh,
         onRotateInvite = viewModel::rotateInvite,
         onLeaveGroup = viewModel::leaveGroup,
         onRemoveMember = viewModel::removeMember,
-        onDismissRotatedInvite = viewModel::dismissRotatedInvite,
         onRotateDialogOpened = viewModel::clearRotateError,
         onLeaveDialogOpened = viewModel::clearLeaveError,
         onRemoveDialogOpened = viewModel::clearRemoveError,
@@ -159,14 +174,18 @@ fun GroupDetailScreen(
 @Suppress("LongParameterList")
 @Composable
 internal fun GroupDetailScreen(
+    groupId: String,
+    groupName: String?,
     state: GroupDetailUiState,
     actionState: GroupDetailActionState,
     currentUserId: String?,
+    invite: InviteState,
+    onLoadInvite: () -> Unit,
+    onBack: () -> Unit,
     onRetry: () -> Unit,
     onRotateInvite: () -> Unit,
     onLeaveGroup: () -> Unit,
     onRemoveMember: (String) -> Unit,
-    onDismissRotatedInvite: () -> Unit,
     onRotateDialogOpened: () -> Unit,
     onLeaveDialogOpened: () -> Unit,
     onRemoveDialogOpened: () -> Unit,
@@ -185,8 +204,12 @@ internal fun GroupDetailScreen(
     var removeEntryAttempted by dialogState.removeEntryAttempted
 
     GroupDetailBody(
+        header = GroupHeaderData(groupId = groupId, name = groupName ?: stringResource(R.string.groups_detail_title)),
         state = state,
         currentUserId = currentUserId,
+        invite = invite,
+        onLoadInvite = onLoadInvite,
+        onBack = onBack,
         onRetry = onRetry,
         onRotateClick = {
             onRotateDialogOpened()
@@ -201,7 +224,6 @@ internal fun GroupDetailScreen(
             pendingRemoveTarget = member
             removeAttempted = false
         },
-        onDismissRotatedInvite = onDismissRotatedInvite,
         onLoadMoreWatchlist = onLoadMoreWatchlist,
         onRemoveEntryClick = { entry ->
             onRemoveEntryDialogOpened()
@@ -447,238 +469,234 @@ private fun GroupDetailActionDialogs(
     )
 }
 
+/** The page's identity for its header and share text. */
+internal data class GroupHeaderData(
+    val groupId: String,
+    val name: String,
+)
+
 /**
- * The `Column` [GroupDetailScreen] renders — pulled out purely to keep that function's own length
- * under detekt's `LongMethod` threshold; no behaviour moved with it that a caller could observe
- * differently. "Leave group" lives HERE, a sibling of [GroupDetailContent] rather than nested
- * inside its `Success`-only branch — [GroupDetailScreen]'s own KDoc explains why.
+ * The page frame: back and ⋯ in the top bar, then the state-dependent body. "Leave group" lives in
+ * the ⋯ menu, which renders in EVERY state, Error included — leaving a group has nothing to do
+ * with whether its own member list loaded ([GroupDetailScreen]'s own KDoc). "New invite code" is in
+ * the same menu, for the owner only.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Suppress("LongParameterList")
 @Composable
 private fun GroupDetailBody(
+    header: GroupHeaderData,
     state: GroupDetailUiState,
     currentUserId: String?,
+    invite: InviteState,
+    onLoadInvite: () -> Unit,
+    onBack: () -> Unit,
     onRetry: () -> Unit,
     onRotateClick: () -> Unit,
     onLeaveClick: () -> Unit,
     onRemoveClick: (GroupMember) -> Unit,
-    onDismissRotatedInvite: () -> Unit,
     onLoadMoreWatchlist: () -> Unit,
     onRemoveEntryClick: (WatchlistEntry) -> Unit,
     onEntryClick: (WatchlistEntry) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier = modifier.fillMaxSize()) {
-        Text(
-            text = stringResource(R.string.groups_detail_title),
-            style = MaterialTheme.typography.titleLarge,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-        )
-        GroupDetailContent(
-            state = state,
-            currentUserId = currentUserId,
-            onRetry = onRetry,
-            onRotateClick = onRotateClick,
-            onRemoveClick = onRemoveClick,
-            onDismissRotatedInvite = onDismissRotatedInvite,
-            onLoadMoreWatchlist = onLoadMoreWatchlist,
-            onRemoveEntryClick = onRemoveEntryClick,
-            onEntryClick = onEntryClick,
-            modifier = Modifier.weight(weight = 1f).fillMaxWidth(),
-        )
-        TextButton(onClick = onLeaveClick, modifier = Modifier.padding(all = 16.dp)) {
-            Text(text = stringResource(R.string.groups_detail_leave_action))
-        }
-    }
-}
-
-/**
- * The body below the title — pulled out of the stateless [GroupDetailScreen] overload purely to
- * keep that function's own length under detekt's `LongMethod` threshold, `GroupsScreen.kt`'s
- * `GroupsContent` precedent. "Leave group" is NOT here — [GroupDetailScreen]'s own KDoc explains
- * why it renders outside this state-dependent body entirely.
- */
-@Suppress("LongParameterList")
-@Composable
-private fun GroupDetailContent(
-    state: GroupDetailUiState,
-    currentUserId: String?,
-    onRetry: () -> Unit,
-    onRotateClick: () -> Unit,
-    onRemoveClick: (GroupMember) -> Unit,
-    onDismissRotatedInvite: () -> Unit,
-    onLoadMoreWatchlist: () -> Unit,
-    onRemoveEntryClick: (WatchlistEntry) -> Unit,
-    onEntryClick: (WatchlistEntry) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Box(modifier = modifier) {
-        when (state) {
-            is GroupDetailUiState.Loading -> LoadingState(modifier = Modifier.fillMaxSize())
-            is GroupDetailUiState.Error ->
-                ErrorState(
-                    message = stringResource(state.cause.messageRes()),
-                    onRetry = onRetry,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            is GroupDetailUiState.Success ->
-                GroupDetailSuccessContent(
-                    state = state,
-                    currentUserId = currentUserId,
-                    onRetry = onRetry,
-                    onRotateClick = onRotateClick,
-                    onRemoveClick = onRemoveClick,
-                    onDismissRotatedInvite = onDismissRotatedInvite,
-                    onLoadMoreWatchlist = onLoadMoreWatchlist,
-                    onRemoveEntryClick = onRemoveEntryClick,
-                    onEntryClick = onEntryClick,
-                )
-        }
-    }
-}
-
-/**
- * [GroupDetailUiState.Success]'s own rendering (minus "Leave group", which
- * [GroupDetailScreen] now renders itself, unconditionally — see that function's own KDoc).
- * Owner-ness (E-F) is derived HERE, every recomposition, from
- * [GroupDetailUiState.Success.members]/[currentUserId] — never cached, never a field on
- * [GroupDetailUiState] itself (round 1 review moved [currentUserId] to its own ViewModel field;
- * [GroupDetailUiState.Success]'s own KDoc has the full reasoning) — E-F's own stated mitigation
- * made literal: [self] below is looked up fresh from the LIVE member list this render is showing,
- * so a stale cached role can never diverge from what the rest of this composable already displays.
- *
- * [self] can be `null` for two reasons now, not one: [currentUserId] itself can still be `null`
- * (identity has not resolved yet, or its own background fetch failed —
- * `GroupDetailViewModel.currentUserId`'s own KDoc), or the signed-in member can be briefly missing
- * from their OWN member list (the moment between an owner removing themselves elsewhere — another
- * device, the API directly — and this screen's next reload). Both read `isOwner` as `false`, which
- * hides rotate/remove rather than crashing — E-F's own "hidden, not disabled" applied to an
- * UNKNOWN role, not only a known non-owner one.
- *
- * **Task 9c.3 adds the shared watchlist below the member list, in the SAME `LazyColumn`** as
- * [membersItems] (`GroupMembersSection.kt`) and [watchlistItems] (`GroupWatchlistSection.kt`) — one
- * scrollable region for the whole screen, rather than members and watchlist each owning a separate
- * one: whichever section has more rows simply scrolls further, the same as any ordinary list screen.
- * `GroupWatchlistSection.kt`'s own KDoc has the fuller reasoning, including a Robolectric testing
- * characteristic this choice does NOT by itself fix — `GroupDetailScreenTest` scrolls explicitly for
- * rows a `LazyColumn` does not reach on its first layout pass.
- *
- * `onRetry` is now passed all the way into [GroupDetailList] too (fix round 1) — it is what a
- * [StaleDataBanner] over a stale watchlist section calls, `viewModel::refresh`'s identical mapping
- * the TOP-level banner above already uses, not a second bespoke retry function; see
- * [GroupDetailUiState.Success.watchlistIsStale]'s own KDoc for why a reload failure gets this
- * treatment rather than the page-fetch footer.
- */
-@Suppress("LongParameterList")
-@Composable
-private fun GroupDetailSuccessContent(
-    state: GroupDetailUiState.Success,
-    currentUserId: String?,
-    onRetry: () -> Unit,
-    onRotateClick: () -> Unit,
-    onRemoveClick: (GroupMember) -> Unit,
-    onDismissRotatedInvite: () -> Unit,
-    onLoadMoreWatchlist: () -> Unit,
-    onRemoveEntryClick: (WatchlistEntry) -> Unit,
-    onEntryClick: (WatchlistEntry) -> Unit,
-) {
-    val self = state.members.firstOrNull { it.userId == currentUserId }
-    val isOwner = self?.role == GroupRole.OWNER
-
-    Column(modifier = Modifier.fillMaxSize()) {
-        if (state.isStale) {
-            StaleDataBanner(onRetry = onRetry, messageRes = R.string.groups_detail_stale_notice)
-        }
-        state.rotatedInvite?.let { invite ->
-            InviteCodeCard(
-                invite = invite,
-                title = stringResource(R.string.groups_detail_rotated_title),
-                onDismiss = onDismissRotatedInvite,
+    val isOwner = (state as? GroupDetailUiState.Success)?.isOwner(currentUserId) == true
+    Scaffold(
+        modifier = modifier.fillMaxSize(),
+        topBar = {
+            TopAppBar(
+                title = {},
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_arrow_back),
+                            contentDescription = stringResource(R.string.groups_back),
+                        )
+                    }
+                },
+                actions = { GroupMenu(isOwner = isOwner, onRotateClick = onRotateClick, onLeaveClick = onLeaveClick) },
+                windowInsets = WindowInsets(0),
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
             )
-        }
-        if (isOwner) {
-            TextButton(onClick = onRotateClick, modifier = Modifier.padding(horizontal = 16.dp)) {
-                Text(text = stringResource(R.string.groups_detail_rotate_action))
+        },
+        contentWindowInsets = WindowInsets(0),
+    ) { padding ->
+        Box(modifier = Modifier.padding(padding).fillMaxSize()) {
+            when (state) {
+                is GroupDetailUiState.Loading -> LoadingState(modifier = Modifier.fillMaxSize())
+                is GroupDetailUiState.Error ->
+                    ErrorState(
+                        message = stringResource(state.cause.messageRes()),
+                        onRetry = onRetry,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                is GroupDetailUiState.Success ->
+                    GroupDetailList(
+                        header = header,
+                        state = state,
+                        currentUserId = currentUserId,
+                        isOwner = isOwner,
+                        invite = invite,
+                        onLoadInvite = onLoadInvite,
+                        onRetry = onRetry,
+                        onRotateClick = onRotateClick,
+                        onRemoveClick = onRemoveClick,
+                        onLoadMoreWatchlist = onLoadMoreWatchlist,
+                        onRemoveEntryClick = onRemoveEntryClick,
+                        onEntryClick = onEntryClick,
+                    )
             }
         }
-        GroupDetailList(
-            state = state,
-            currentUserId = currentUserId,
-            isOwner = isOwner,
-            onRetry = onRetry,
-            onRemoveClick = onRemoveClick,
-            onLoadMoreWatchlist = onLoadMoreWatchlist,
-            onRemoveEntryClick = onRemoveEntryClick,
-            onEntryClick = onEntryClick,
-            modifier = Modifier.weight(weight = 1f).fillMaxWidth(),
-        )
     }
 }
 
 /**
- * The ONE `LazyColumn` [GroupDetailSuccessContent] renders — pulled out purely to keep that
- * function's own length under detekt's `LongMethod` threshold; no behaviour moved with it that a
- * caller could observe differently. [GroupDetailSuccessContent]'s own KDoc has the full reasoning
- * for why members and watchlist rows now share this one scrollable region.
- *
- * **Fix round 1, finding "smaller item 1":** [itemCount] is `0` whenever the watchlist is empty,
- * not `coerceAtLeast(1)` counting the empty-state row round 0 fed [EndOfListTrigger]. Round 0's
- * shape meant "nothing has loaded yet" and "near the end of a loaded list" were indistinguishable
- * to the trigger — the FIRST composition after `refresh()` sets `Success` (watchlist still empty,
- * `reloadWatchlist` not yet landed) had `itemCount == 1` trivially "near its own end", so the
- * trigger fired on the very first laid-out frame, racing `reloadWatchlist`'s own initial fetch —
- * see [GroupDetailViewModel.watchlistPaginator]'s own KDoc for the crash that produced (finding
- * B1). [EndOfListTrigger]'s own `itemCount > 0` guard now means the trigger simply cannot fire
- * while there is nothing to page from, closing the most common way that race was reached even
- * before [CursorPaginator]'s own `Mutex` closes the rest of it structurally.
+ * Owner-ness (E-F), derived every recomposition from the LIVE member list and [currentUserId] —
+ * never cached. Unknown identity, or the viewer briefly missing from their own list, reads as "not
+ * the owner", which hides owner-only controls rather than flashing them.
  */
-@Suppress("LongParameterList")
+private fun GroupDetailUiState.Success.isOwner(currentUserId: String?): Boolean =
+    members.firstOrNull { it.userId == currentUserId }?.role == GroupRole.OWNER
+
+@Composable
+private fun GroupMenu(
+    isOwner: Boolean,
+    onRotateClick: () -> Unit,
+    onLeaveClick: () -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { open = true }) {
+            Icon(
+                painter = painterResource(R.drawable.ic_more),
+                contentDescription = stringResource(R.string.groups_detail_more),
+            )
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            if (isOwner) {
+                DropdownMenuItem(
+                    text = { Text(text = stringResource(R.string.groups_detail_rotate_action)) },
+                    onClick = {
+                        open = false
+                        onRotateClick()
+                    },
+                )
+            }
+            DropdownMenuItem(
+                text = {
+                    Text(
+                        text = stringResource(R.string.groups_detail_leave_action),
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                },
+                onClick = {
+                    open = false
+                    onLeaveClick()
+                },
+            )
+        }
+    }
+}
+
+/**
+ * The one `LazyColumn` for the page: header, the owner's invite strip, the tabs (pinned once they
+ * reach the top), then the selected tab's rows. One scrollable region, so the header scrolls away
+ * and whichever tab is longer simply scrolls further.
+ *
+ * The invite is loaded the first time this page knows the viewer is the owner — never for a member.
+ *
+ * Paging: [EndOfListTrigger] counts this LazyColumn's own items. It only arms on the Watchlist tab
+ * with a non-empty list, so it cannot fire before the first page has landed (the race the
+ * paginator's own lock exists for).
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Suppress("LongParameterList", "LongMethod")
 @Composable
 private fun GroupDetailList(
+    header: GroupHeaderData,
     state: GroupDetailUiState.Success,
     currentUserId: String?,
     isOwner: Boolean,
+    invite: InviteState,
+    onLoadInvite: () -> Unit,
     onRetry: () -> Unit,
+    onRotateClick: () -> Unit,
     onRemoveClick: (GroupMember) -> Unit,
     onLoadMoreWatchlist: () -> Unit,
     onRemoveEntryClick: (WatchlistEntry) -> Unit,
     onEntryClick: (WatchlistEntry) -> Unit,
-    modifier: Modifier = Modifier,
 ) {
+    LaunchedEffect(isOwner) {
+        if (isOwner) onLoadInvite()
+    }
+    var tab by rememberSaveable { mutableStateOf(GroupTab.WATCHLIST) }
     val listState = rememberLazyListState()
-    val itemCount =
-        if (state.watchlist.isEmpty()) 0 else state.members.size + 1 + state.watchlist.size
-    EndOfListTrigger(listState = listState, itemCount = itemCount, onTriggered = onLoadMoreWatchlist)
+    val leadingItems = if (isOwner) TOP_ITEMS_WITH_STRIP else TOP_ITEMS
+    val watchlistRows = (state.watchlist.size + WATCHLIST_COLUMNS - 1) / WATCHLIST_COLUMNS
+    val itemCount = if (tab == GroupTab.WATCHLIST && state.watchlist.isNotEmpty()) leadingItems + watchlistRows else 0
+    EndOfListTrigger(
+        listState = listState,
+        itemCount = itemCount,
+        rearmKey = state.watchlist.size,
+        onTriggered = onLoadMoreWatchlist,
+    )
 
-    LazyColumn(
-        state = listState,
-        modifier = modifier,
-        contentPadding = PaddingValues(all = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(space = 8.dp),
-    ) {
-        membersItems(
-            members = state.members,
-            currentUserId = currentUserId,
-            isOwner = isOwner,
-            onRemoveClick = onRemoveClick,
-        )
-        item(key = "watchlist-header") {
-            WatchlistHeader(modifier = Modifier.fillMaxWidth())
-        }
-        if (state.watchlistIsStale) {
-            item(key = "watchlist-stale-banner") {
-                StaleDataBanner(onRetry = onRetry, messageRes = R.string.groups_watchlist_stale_notice)
+    LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
+        item(key = "header") { GroupHeader(groupId = header.groupId, name = header.name, members = state.members) }
+        if (isOwner) {
+            item(key = "invite-strip") {
+                InviteStrip(
+                    groupName = header.name,
+                    invite = invite,
+                    onNewCode = onRotateClick,
+                    modifier = Modifier.padding(vertical = 8.dp),
+                )
             }
         }
-        watchlistItems(
-            entries = state.watchlist,
-            members = state.members,
-            loadingMore = state.watchlistLoadingMore,
-            pageError = state.watchlistPageError != null,
-            isStale = state.watchlistIsStale,
-            onLoadMore = onLoadMoreWatchlist,
-            onRemoveClick = onRemoveEntryClick,
-            onEntryClick = onEntryClick,
-        )
+        stickyHeader(key = "tabs") {
+            GroupTabs(
+                selected = tab,
+                watchlistCount = if (state.watchlistComplete) state.watchlist.size else null,
+                memberCount = state.members.size,
+                onSelect = { tab = it },
+            )
+        }
+        if (state.isStale) {
+            item(key = "stale-banner") {
+                StaleDataBanner(onRetry = onRetry, messageRes = R.string.groups_detail_stale_notice)
+            }
+        }
+        when (tab) {
+            GroupTab.WATCHLIST -> {
+                if (state.watchlistIsStale) {
+                    item(key = "watchlist-stale-banner") {
+                        StaleDataBanner(onRetry = onRetry, messageRes = R.string.groups_watchlist_stale_notice)
+                    }
+                }
+                watchlistItems(
+                    entries = state.watchlist,
+                    members = state.members,
+                    loadingMore = state.watchlistLoadingMore,
+                    pageError = state.watchlistPageError != null,
+                    isStale = state.watchlistIsStale,
+                    onLoadMore = onLoadMoreWatchlist,
+                    onRemoveClick = onRemoveEntryClick,
+                    onEntryClick = onEntryClick,
+                )
+            }
+            GroupTab.MEMBERS ->
+                membersItems(
+                    members = state.members,
+                    currentUserId = currentUserId,
+                    isOwner = isOwner,
+                    onRemoveClick = onRemoveClick,
+                )
+        }
     }
 }
+
+private const val WATCHLIST_COLUMNS = 3
+
+// Header and tabs; plus the invite strip for the owner.
+private const val TOP_ITEMS = 2
+private const val TOP_ITEMS_WITH_STRIP = 3

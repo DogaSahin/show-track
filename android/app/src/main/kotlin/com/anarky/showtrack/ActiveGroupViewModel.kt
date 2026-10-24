@@ -44,7 +44,7 @@ import javax.inject.Inject
  * ordinary cold-start path is Library (the start destination) -> tap a title -> Detail, and on that
  * path no fetch was ever issued, so [state] stayed [ActiveGroupState.Loading] for the life of the
  * Activity and Detail's whole group section and propose control rendered nothing — indistinguishable
- * from an account in no groups, and identical for the `showtrack://detail/<id>` push deep link,
+ * from an account in no groups, and identical for the `showtrack://detail/<id>` alert deep link,
  * which cannot pass through a tab at all. [activeGroupActionFor] now answers `Refresh` for ANY
  * authenticated destination while [hasRequestedGroups] is `false`, keeping Feed and Groups as the
  * two explicit re-refresh points; see [hasRequestedGroups] for why that flag rather than
@@ -146,7 +146,7 @@ class ActiveGroupViewModel
             }
         }
 
-        /** [GroupSwitcher][com.anarky.showtrack.core.designsystem.component.GroupSwitcher]'s own callback. */
+        /** The Feed group switcher's own callback. */
         fun selectGroup(groupId: String) {
             viewModelScope.launch { activeGroupStore.setActiveGroup(groupId) }
         }

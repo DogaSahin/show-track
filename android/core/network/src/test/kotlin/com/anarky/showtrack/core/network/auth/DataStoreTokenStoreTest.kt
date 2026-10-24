@@ -2,6 +2,7 @@ package com.anarky.showtrack.core.network.auth
 
 import android.content.Context
 import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.mutablePreferencesOf
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -10,10 +11,13 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import java.io.File
 import java.io.IOException
 import javax.crypto.KeyGenerator
 
@@ -94,6 +98,48 @@ class DataStoreTokenStoreTest {
             // The call must COMPLETE, returning "no tokens", rather than throwing.
             assertNull(store.tokens())
         }
+
+    /**
+     * The compare-and-set the refresh path saves through. A refresh that finishes after sign-out
+     * cleared the store, or after a new login replaced it, must not write its pair back.
+     * A fresh file per test, through the constructor seam (see the class KDoc for why the
+     * delegate is off limits).
+     */
+    @Test
+    fun `replace writes only over the refresh token it expects`() =
+        runBlocking {
+            val store = DataStoreTokenStore(fileStore("replace-match"), TokenCrypto { fixedKey })
+            store.save(access = "access-1", refresh = "refresh-1")
+
+            assertTrue(store.replace(expectedRefresh = "refresh-1", access = "access-2", refresh = "refresh-2"))
+            assertEquals(TokenPair("access-2", "refresh-2"), store.tokens())
+
+            assertFalse(
+                "a stale expectation must not overwrite the current pair",
+                store.replace(expectedRefresh = "refresh-1", access = "access-3", refresh = "refresh-3"),
+            )
+            assertEquals(TokenPair("access-2", "refresh-2"), store.tokens())
+        }
+
+    @Test
+    fun `replace never writes into a cleared store`() =
+        runBlocking {
+            val store = DataStoreTokenStore(fileStore("replace-cleared"), TokenCrypto { fixedKey })
+            store.save(access = "access-1", refresh = "refresh-1")
+            store.clear()
+
+            assertFalse(store.replace(expectedRefresh = "refresh-1", access = "access-2", refresh = "refresh-2"))
+            assertNull(store.tokens())
+        }
+
+    private val fixedKey = newKey()
+
+    private fun fileStore(name: String) =
+        PreferenceDataStoreFactory.create(
+            produceFile = {
+                File(ApplicationProvider.getApplicationContext<Context>().filesDir, "$name.preferences_pb")
+            },
+        )
 
     /** Reads back a fixed snapshot; every write fails the way a full disk would. */
     private class WriteFailingDataStore(

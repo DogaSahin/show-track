@@ -1,9 +1,12 @@
 package com.anarky.showtrack.core.data.repository
 
+import com.anarky.showtrack.core.model.Recommendation
 import com.anarky.showtrack.core.network.api.ShowTrackApi
 import com.anarky.showtrack.core.network.dto.AddLibraryEntryRequest
+import com.anarky.showtrack.core.network.dto.AppReleaseDto
 import com.anarky.showtrack.core.network.dto.CreateGroupRequestDto
 import com.anarky.showtrack.core.network.dto.CreateReviewRequestDto
+import com.anarky.showtrack.core.network.dto.EpisodeListDto
 import com.anarky.showtrack.core.network.dto.FeedPageDto
 import com.anarky.showtrack.core.network.dto.GroupDto
 import com.anarky.showtrack.core.network.dto.GroupWithInviteDto
@@ -19,23 +22,77 @@ import com.anarky.showtrack.core.network.dto.MemberDto
 import com.anarky.showtrack.core.network.dto.PersistedMediaDto
 import com.anarky.showtrack.core.network.dto.ProgressEntryDto
 import com.anarky.showtrack.core.network.dto.ProposeTitleRequestDto
-import com.anarky.showtrack.core.network.dto.PushTargetDto
 import com.anarky.showtrack.core.network.dto.RecommendationDto
 import com.anarky.showtrack.core.network.dto.RecommendationPageDto
 import com.anarky.showtrack.core.network.dto.RecommendationReasonDto
-import com.anarky.showtrack.core.network.dto.RegisterTargetRequest
+import com.anarky.showtrack.core.network.dto.ResolveMediaRequestDto
 import com.anarky.showtrack.core.network.dto.ReviewDto
+import com.anarky.showtrack.core.network.dto.SetWatchedRequestDto
 import com.anarky.showtrack.core.network.dto.UserDto
+import com.anarky.showtrack.core.network.dto.WatchedEpisodesDto
 import com.anarky.showtrack.core.network.dto.WatchlistItemDto
 import com.anarky.showtrack.core.network.dto.WatchlistPageDto
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
+import okhttp3.ResponseBody
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import retrofit2.Response
 import java.io.IOException
 
 class RecommendationRepositoryTest {
+    @Test
+    fun `sign-out empties the feed, even with a page in flight`() =
+        runTest {
+            val api = FakeApi(mapOf(null to page(titles = listOf("Frieren"), nextCursor = null)))
+            val repository = RecommendationRepositoryImpl(api)
+            repository.refresh()
+            val gate = CompletableDeferred<Unit>().also { api.gate = it }
+            val refresh = launch { repository.refresh() }
+            runCurrent()
+
+            val clear = launch { repository.clearUserData() }
+            runCurrent()
+            gate.complete(Unit)
+            refresh.join()
+            clear.join()
+
+            assertEquals(emptyList<Recommendation>(), repository.feed.value)
+        }
+
+    @Test
+    fun `an add that fails after sign-out does not bring the old account's row back`() =
+        runTest {
+            val api = FakeApi(mapOf(null to page(titles = listOf("Frieren"), nextCursor = null)))
+            val repository = RecommendationRepositoryImpl(api)
+            repository.refresh()
+            val row = repository.feed.value.single()
+            repository.remove(row.media.id)
+
+            repository.clearUserData()
+            repository.restore(0, row)
+
+            assertEquals(emptyList<Recommendation>(), repository.feed.value)
+        }
+
+    @Test
+    fun `an add that fails in the same session puts the row back`() =
+        runTest {
+            val api = FakeApi(mapOf(null to page(titles = listOf("Frieren"), nextCursor = null)))
+            val repository = RecommendationRepositoryImpl(api)
+            repository.refresh()
+            val row = repository.feed.value.single()
+            repository.remove(row.media.id)
+
+            repository.restore(0, row)
+
+            assertEquals(listOf(row), repository.feed.value)
+        }
+
     @Test
     fun `refresh publishes the first page`() =
         runTest {
@@ -311,6 +368,7 @@ class RecommendationRepositoryTest {
         val requestedCursors = mutableListOf<String?>()
         val requestedLimits = mutableListOf<Int>()
         var nextFailure: Throwable? = null
+        var gate: CompletableDeferred<Unit>? = null
 
         override suspend fun recommendations(
             cursor: String?,
@@ -318,6 +376,7 @@ class RecommendationRepositoryTest {
         ): RecommendationPageDto {
             requestedCursors += cursor
             requestedLimits += limit
+            gate?.await()
             nextFailure?.let {
                 nextFailure = null
                 throw it
@@ -332,12 +391,17 @@ class RecommendationRepositoryTest {
             sort: String?,
             mediaId: String?,
             favorite: Boolean?,
+            type: String?,
         ): LibraryPageDto = error("this fake only serves refresh/loadMore/remove")
 
         override suspend fun addLibraryEntry(request: AddLibraryEntryRequest): LibraryEntryDto =
             error("this fake only serves refresh/loadMore/remove")
 
         override suspend fun libraryStats(): LibraryStatsDto = error("this fake only serves refresh/loadMore/remove")
+
+        override suspend fun latestRelease(): Response<AppReleaseDto> = error("not used")
+
+        override suspend fun downloadRelease(): ResponseBody = error("not used")
 
         override suspend fun importAniList(request: ImportAniListRequest): ImportSummaryDto =
             error("this fake only serves refresh/loadMore/remove")
@@ -354,12 +418,23 @@ class RecommendationRepositoryTest {
 
         override suspend fun mediaDetail(id: String): MediaDto = error("this fake only serves refresh/loadMore/remove")
 
-        override suspend fun me(): UserDto = error("this fake only serves refresh/loadMore/remove")
-
-        override suspend fun registerPushTarget(request: RegisterTargetRequest): PushTargetDto =
+        override suspend fun resolveMedia(request: ResolveMediaRequestDto): MediaDto =
             error("this fake only serves refresh/loadMore/remove")
 
-        override suspend fun deletePushTarget(id: String): Unit = error("this fake only serves refresh/loadMore/remove")
+        override suspend fun mediaEpisodes(id: String): EpisodeListDto =
+            error("this fake only serves refresh/loadMore/remove")
+
+        override suspend fun deleteLibraryEntry(id: String): Unit = error("not used here")
+
+        override suspend fun watchedEpisodes(id: String): WatchedEpisodesDto =
+            error("this fake only serves refresh/loadMore/remove")
+
+        override suspend fun setWatchedEpisodes(
+            id: String,
+            request: SetWatchedRequestDto,
+        ): LibraryEntryDto = error("this fake only serves refresh/loadMore/remove")
+
+        override suspend fun me(): UserDto = error("this fake only serves refresh/loadMore/remove")
 
         override suspend fun createGroup(request: CreateGroupRequestDto): GroupWithInviteDto =
             error("this fake only serves refresh/loadMore/remove")
@@ -371,6 +446,8 @@ class RecommendationRepositoryTest {
 
         override suspend fun groupMembers(groupId: String): List<MemberDto> =
             error("this fake only serves refresh/loadMore/remove")
+
+        override suspend fun groupInvite(groupId: String): GroupWithInviteDto = error("not used")
 
         override suspend fun rotateGroupInvite(groupId: String): GroupWithInviteDto =
             error("this fake only serves refresh/loadMore/remove")
@@ -414,6 +491,8 @@ class RecommendationRepositoryTest {
 
         override suspend fun createReview(request: CreateReviewRequestDto): ReviewDto =
             error("this fake only serves refresh/loadMore/remove")
+
+        override suspend fun deleteReview(id: String): Unit = error("not used here")
 
         override suspend fun updateReview(
             id: String,

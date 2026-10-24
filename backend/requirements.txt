@@ -1,4 +1,6 @@
-fastapi>=0.115
+# fastapi and pydantic are pinned because they shape the committed OpenAPI snapshot (openapi.json).
+fastapi==0.143.0
+pydantic==2.14.1
 uvicorn[standard]>=0.32
 sqlalchemy[asyncio]>=2.0.36
 asyncpg>=0.30

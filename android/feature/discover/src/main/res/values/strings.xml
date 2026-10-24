@@ -30,5 +30,19 @@
     <!-- add() failed and the row has already been put back on screen (D-I's restore-on-failure),
          so this reports BESIDE the row rather than replacing it. Tapping it retries via the same
          add action. -->
+    <!-- The top pick card. The label is stored in normal case and uppercased in the layout, so
+         TalkBack reads words rather than letters. %1$s in the reason is the seed title. -->
+    <string name="discover_top_pick_label">Top pick for you</string>
+    <string name="discover_top_pick_reason">Because you watched %1$s</string>
+    <string name="discover_add_button">Add to library</string>
+    <string name="discover_details_button">Details</string>
+
+    <!-- After a successful add, from the top pick or a shelf. Adds always land as Planned. -->
+    <string name="discover_added_snackbar">%1$s added to Planned</string>
+    <string name="discover_added_snackbar_action">Open</string>
+
+    <!-- Under discover_empty_message: adding shows is how recommendations appear. -->
+    <string name="discover_empty_search_button">Search shows</string>
+
     <string name="discover_add_error">Couldn\'t add this title. Tap to try again.</string>
 </resources>

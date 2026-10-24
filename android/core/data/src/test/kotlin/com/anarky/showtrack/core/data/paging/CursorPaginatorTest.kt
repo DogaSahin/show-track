@@ -48,11 +48,11 @@ class CursorPaginatorTest {
     /**
      * BLOCKING 4 (whole-branch fix round). `loadMore()` answers the page it fetched, or `null` when
      * it fetched nothing — the decision made INSIDE the lock and carried out with its own answer,
-     * so a caller that appends only new rows (`LibraryRepositoryImpl.loadMoreFavorites`,
-     * `RecommendationRepositoryImpl.loadMore`) needs neither a `hasMore` read before the suspension
-     * nor a `lastFetchedPage` field read after it. Deleting the `return null` and letting the
-     * function fall through would make this return an empty list instead, which those callers would
-     * append harmlessly — so the assertion is on `null` specifically, not on emptiness.
+     * so a caller that appends only new rows (`RecommendationRepositoryImpl.loadMore`) needs
+     * neither a `hasMore` read before the suspension nor a `lastFetchedPage` field read after it.
+     * Deleting the `return null` and letting the function fall through would make this return an
+     * empty list instead, which those callers would append harmlessly — so the assertion is on
+     * `null` specifically, not on emptiness.
      */
     @Test
     fun `loadMore returns the page it fetched, and null once exhausted`() =
@@ -179,6 +179,21 @@ class CursorPaginatorTest {
             failing = false
             paginator.loadMore()
             assertEquals(listOf("a", "b"), paginator.items.value)
+        }
+
+    @Test
+    fun `edit transforms the loaded items and leaves paging state alone`() =
+        runTest {
+            val pages = mapOf(null to Page(listOf("a", "b"), "c1"), "c1" to Page(listOf("c"), null))
+            val paginator = CursorPaginator<String> { cursor -> pages.getValue(cursor) }
+            paginator.loadMore()
+
+            paginator.edit { items -> items.map { if (it == "b") "B" else it } }
+
+            assertEquals(listOf("a", "B"), paginator.items.value)
+            assertTrue("an edit must not touch hasMore", paginator.hasMore.value)
+            paginator.loadMore()
+            assertEquals("the cursor survives an edit", listOf("a", "B", "c"), paginator.items.value)
         }
 
     private val threePages =

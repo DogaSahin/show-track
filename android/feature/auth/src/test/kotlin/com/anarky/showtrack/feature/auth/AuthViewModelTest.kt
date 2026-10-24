@@ -3,6 +3,7 @@ package com.anarky.showtrack.feature.auth
 import com.anarky.showtrack.core.data.repository.AuthRepository
 import com.anarky.showtrack.core.data.repository.RegisteredButNotLoggedIn
 import com.anarky.showtrack.core.model.AuthFailure
+import com.anarky.showtrack.core.model.CurrentUser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -60,6 +61,33 @@ class AuthViewModelTest {
             advanceUntilIdle()
 
             assertEquals(AuthUiState.Authenticated(isNewAccount = true), viewModel.state.value)
+        }
+
+    @Test
+    fun `a throttled login says to try again later`() =
+        runTest(dispatcher) {
+            val viewModel = AuthViewModel(FakeAuthRepository(loginFailure = AuthFailure.Throttled(IOException())))
+
+            viewModel.submitLogin("a@example.com", "hunter2hunter2")
+            advanceUntilIdle()
+
+            assertEquals(
+                AuthUiState.Form(mode = AuthMode.LOGIN, error = AuthError.TooManyAttempts),
+                viewModel.state.value,
+            )
+        }
+
+    @Test
+    fun `a busy server says so on login and register`() =
+        runTest(dispatcher) {
+            val login = AuthViewModel(FakeAuthRepository(loginFailure = AuthFailure.ServerBusy(IOException())))
+            login.submitLogin("a@example.com", "hunter2hunter2")
+            val register = AuthViewModel(FakeAuthRepository(registerOutcome = AuthFailure.ServerBusy(IOException())))
+            register.submitRegister("someone", "a@example.com", "hunter2hunter2", "CODE")
+            advanceUntilIdle()
+
+            assertEquals(AuthUiState.Form(mode = AuthMode.LOGIN, error = AuthError.ServerBusy), login.state.value)
+            assertEquals(AuthUiState.Form(mode = AuthMode.REGISTER, error = AuthError.ServerBusy), register.state.value)
         }
 
     @Test
@@ -170,6 +198,8 @@ class AuthViewModelTest {
         var registerOutcome: Throwable? = null,
     ) : AuthRepository {
         override suspend fun hasSession(): Boolean = true
+
+        override suspend fun currentUser(): CurrentUser = error("not exercised by AuthViewModelTest")
 
         override suspend fun currentUserId(): String = error("not exercised by AuthViewModelTest")
 

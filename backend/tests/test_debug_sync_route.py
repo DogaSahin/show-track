@@ -6,7 +6,7 @@ from sqlalchemy import delete
 
 from app.db import get_sessionmaker
 from app.media.models import Media, MediaSource, MediaStatus, MediaType
-from app.media.providers.base import MediaProvider, MediaRef, NextEpisode, ProviderMedia
+from app.media.providers.base import MediaProvider, MediaRef, NextEpisode, ProviderBatch, ProviderMedia
 from app.users.models import User
 from tests.factories import make_media, make_user, make_user_media
 
@@ -23,11 +23,14 @@ class OneTitleProvider(MediaProvider):
     async def get_by_id(self, external_id: str):
         raise AssertionError("the sync job must use get_many")
 
+    async def get_episodes(self, external_id: str):
+        return ()
+
     async def fetch_similar(self, external_id: str):
         raise AssertionError("not used in these tests")
 
     async def get_many(self, external_ids):
-        return {
+        found = {
             external_id: ProviderMedia(
                 ref=MediaRef(source=MediaSource.ANILIST, external_id=external_id),
                 type=MediaType.ANIME,
@@ -40,6 +43,7 @@ class OneTitleProvider(MediaProvider):
             )
             for external_id in external_ids
         }
+        return ProviderBatch(found=found, failed=frozenset())
 
 
 @pytest.fixture

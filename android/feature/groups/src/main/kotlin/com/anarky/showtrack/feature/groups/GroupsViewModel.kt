@@ -320,7 +320,9 @@ class GroupsViewModel
             val previousGroups = previous?.groups.orEmpty()
             val groups =
                 if (previousGroups.any { it.id == invite.group.id }) {
-                    previousGroups.map { if (it.id == invite.group.id) invite.group else it }
+                    // `copy(name = …)`, not the invite's group: create/join/rotate carry no summary
+                    // fields, and swapping the row would blank its counts and previews.
+                    previousGroups.map { if (it.id == invite.group.id) it.copy(name = invite.group.name) else it }
                 } else {
                     previousGroups + invite.group
                 }

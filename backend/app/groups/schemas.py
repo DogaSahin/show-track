@@ -26,6 +26,31 @@ class GroupRead(BaseModel):
     created_at: datetime
 
 
+class MemberPreview(BaseModel):
+    id: uuid.UUID
+    username: str
+
+
+class WatchlistPreview(BaseModel):
+    media_id: uuid.UUID
+    cover_image_url: str | None
+
+
+class GroupSummary(GroupRead):
+    """One card of the groups list: enough to draw it without a request per group. A separate
+    schema rather than new GroupRead fields, so create, join and rotate keep their exact shape.
+    Carries no invite code: that stays a credential only an owner reads.
+    """
+
+    my_role: GroupRole
+    member_count: int
+    # The owner first, then by joined_at; at most MEMBER_PREVIEW_SIZE.
+    member_preview: list[MemberPreview]
+    watchlist_count: int
+    # The newest entries first; at most WATCHLIST_PREVIEW_SIZE.
+    watchlist_preview: list[WatchlistPreview]
+
+
 class GroupWithInvite(GroupRead):
     """Returned only to a member — on create, join and rotate. The invite code is a
     credential, so it is never part of the plain group representation.

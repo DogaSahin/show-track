@@ -11,11 +11,9 @@ logger = logging.getLogger(__name__)
 # Explicit constants, not hashes of a job name: a readable number in pg_locks is worth more than
 # a clever derivation, and a hash collision between two job names would be invisible.
 SYNC_LOCK_KEY = 5_000_001
-THRESHOLD_LOCK_KEY = 5_000_002
-# A third key, not a shared one: a slow dispatch must never stall the threshold scan. Same
-# reasoning as 5-D, which split the jobs in the first place.
-DISPATCH_LOCK_KEY = 5_000_003
-# A fourth key. The seed job makes provider calls and must not stall — or be stalled by — the
+# 5_000_002 and 5_000_003 belonged to the retired notification jobs; not reused, so an old
+# replica still running during a deploy can never contend with a new job on the same key.
+# A separate key. The seed job makes provider calls and must not stall — or be stalled by — the
 # airing sync, for the same reason 5-D split the jobs in the first place.
 SEED_LOCK_KEY = 5_000_004
 # NOT used with advisory_lock() above. This one is taken as pg_try_advisory_xact_lock on the
@@ -47,10 +45,10 @@ async def advisory_lock(key: int) -> AsyncIterator[bool]:
     transaction, and neither connection gives it one that lasts the job. On this connection there
     is no enclosing transaction at all — AUTOCOMMIT (see below) makes the acquiring SELECT its own
     transaction, so the lock would be released the instant it was taken, before the job body runs
-    a single statement. Moving it onto the caller's work session instead does not rescue it:
-    notifications.service.dispatch_once commits MID-FUNCTION to make the attempt durable (6-G),
-    which ends that transaction and drops the lock while the send loop is still running. Either
-    placement lets a second replica acquire it and double-send.
+    a single statement. Moving it onto the caller's work session instead does not rescue it: any
+    job that commits MID-FUNCTION (run_sync commits per phase) ends that transaction and drops the
+    lock while the job is still running. Either placement lets a second replica acquire it and
+    run the job twice.
 
     A dying connection releases the lock automatically, which is what makes this safe against a
     crashed replica — where a table-based "is it running" flag would strand a stale `true`. Note

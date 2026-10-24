@@ -6,15 +6,18 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
-import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.longClick
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performTouchInput
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.espresso.Espresso
 import com.anarky.showtrack.core.data.repository.GroupWithInvite
@@ -32,6 +35,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import java.time.Instant
 import com.anarky.showtrack.core.designsystem.R as DesignSystemR
 
@@ -64,6 +68,7 @@ import com.anarky.showtrack.core.designsystem.R as DesignSystemR
  */
 @Suppress("LargeClass")
 @RunWith(RobolectricTestRunner::class)
+@Config(qualifiers = "w411dp-h1400dp")
 class GroupDetailScreenTest {
     @get:Rule
     val composeRule = createComposeRule()
@@ -75,6 +80,11 @@ class GroupDetailScreenTest {
     fun `a non-owner sees no rotate and no remove controls`() {
         composeRule.setContent {
             GroupDetailScreen(
+                groupId = "group-1",
+                groupName = "Home",
+                invite = InviteState.Unknown,
+                onLoadInvite = {},
+                onBack = {},
                 state = successState(members = listOf(OWNER, MEMBER, MEMBER2)),
                 actionState = GroupDetailActionState(),
                 currentUserId = MEMBER.userId,
@@ -82,7 +92,6 @@ class GroupDetailScreenTest {
                 onRotateInvite = {},
                 onLeaveGroup = {},
                 onRemoveMember = {},
-                onDismissRotatedInvite = {},
                 onRotateDialogOpened = {},
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
@@ -93,8 +102,10 @@ class GroupDetailScreenTest {
             )
         }
 
+        openMembersTab()
+        composeRule.onAllNodes(hasContentDescription("More options for", substring = true)).assertCountEquals(0)
+        openPageMenu()
         composeRule.onNodeWithText(context.getString(R.string.groups_detail_rotate_action)).assertDoesNotExist()
-        composeRule.onAllNodesWithText(context.getString(R.string.groups_detail_remove_action)).assertCountEquals(0)
     }
 
     /**
@@ -105,6 +116,11 @@ class GroupDetailScreenTest {
     fun `an owner sees rotate and remove`() {
         composeRule.setContent {
             GroupDetailScreen(
+                groupId = "group-1",
+                groupName = "Home",
+                invite = InviteState.Unknown,
+                onLoadInvite = {},
+                onBack = {},
                 state = successState(members = listOf(OWNER, MEMBER, MEMBER2)),
                 actionState = GroupDetailActionState(),
                 currentUserId = OWNER.userId,
@@ -112,7 +128,6 @@ class GroupDetailScreenTest {
                 onRotateInvite = {},
                 onLeaveGroup = {},
                 onRemoveMember = {},
-                onDismissRotatedInvite = {},
                 onRotateDialogOpened = {},
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
@@ -123,8 +138,10 @@ class GroupDetailScreenTest {
             )
         }
 
+        openMembersTab()
+        composeRule.onAllNodes(hasContentDescription("More options for", substring = true)).assertCountEquals(2)
+        openPageMenu()
         composeRule.onNodeWithText(context.getString(R.string.groups_detail_rotate_action)).assertIsDisplayed()
-        composeRule.onAllNodesWithText(context.getString(R.string.groups_detail_remove_action)).assertCountEquals(2)
     }
 
     /**
@@ -137,6 +154,11 @@ class GroupDetailScreenTest {
     fun `an unresolved currentUserId hides rotate and remove, the same as a non-owner`() {
         composeRule.setContent {
             GroupDetailScreen(
+                groupId = "group-1",
+                groupName = "Home",
+                invite = InviteState.Unknown,
+                onLoadInvite = {},
+                onBack = {},
                 state = successState(members = listOf(OWNER, MEMBER, MEMBER2)),
                 actionState = GroupDetailActionState(),
                 currentUserId = null,
@@ -144,7 +166,6 @@ class GroupDetailScreenTest {
                 onRotateInvite = {},
                 onLeaveGroup = {},
                 onRemoveMember = {},
-                onDismissRotatedInvite = {},
                 onRotateDialogOpened = {},
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
@@ -155,8 +176,10 @@ class GroupDetailScreenTest {
             )
         }
 
+        openMembersTab()
+        composeRule.onAllNodes(hasContentDescription("More options for", substring = true)).assertCountEquals(0)
+        openPageMenu()
         composeRule.onNodeWithText(context.getString(R.string.groups_detail_rotate_action)).assertDoesNotExist()
-        composeRule.onAllNodesWithText(context.getString(R.string.groups_detail_remove_action)).assertCountEquals(0)
     }
 
     /**
@@ -169,6 +192,11 @@ class GroupDetailScreenTest {
     fun `leaving is offered to every member and removing is not offered for yourself`() {
         composeRule.setContent {
             GroupDetailScreen(
+                groupId = "group-1",
+                groupName = "Home",
+                invite = InviteState.Unknown,
+                onLoadInvite = {},
+                onBack = {},
                 state = successState(members = listOf(OWNER, MEMBER, MEMBER2)),
                 actionState = GroupDetailActionState(),
                 currentUserId = OWNER.userId,
@@ -176,7 +204,6 @@ class GroupDetailScreenTest {
                 onRotateInvite = {},
                 onLeaveGroup = {},
                 onRemoveMember = {},
-                onDismissRotatedInvite = {},
                 onRotateDialogOpened = {},
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
@@ -187,8 +214,10 @@ class GroupDetailScreenTest {
             )
         }
 
+        openMembersTab()
+        composeRule.onAllNodes(hasContentDescription("More options for", substring = true)).assertCountEquals(2)
+        openPageMenu()
         composeRule.onNodeWithText(context.getString(R.string.groups_detail_leave_action)).assertIsDisplayed()
-        composeRule.onAllNodesWithText(context.getString(R.string.groups_detail_remove_action)).assertCountEquals(2)
     }
 
     /**
@@ -203,6 +232,11 @@ class GroupDetailScreenTest {
         var left = false
         composeRule.setContent {
             GroupDetailScreen(
+                groupId = "group-1",
+                groupName = "Home",
+                invite = InviteState.Unknown,
+                onLoadInvite = {},
+                onBack = {},
                 state = successState(members = listOf(OWNER, MEMBER)),
                 actionState = GroupDetailActionState(),
                 currentUserId = MEMBER.userId,
@@ -210,7 +244,6 @@ class GroupDetailScreenTest {
                 onRotateInvite = {},
                 onLeaveGroup = { left = true },
                 onRemoveMember = {},
-                onDismissRotatedInvite = {},
                 onRotateDialogOpened = {},
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
@@ -221,6 +254,7 @@ class GroupDetailScreenTest {
             )
         }
 
+        openPageMenu()
         composeRule.onNodeWithText(context.getString(R.string.groups_detail_leave_action)).performClick()
         composeRule.onNodeWithText(context.getString(R.string.groups_detail_leave_confirm_button)).performClick()
 
@@ -235,6 +269,11 @@ class GroupDetailScreenTest {
     fun `Leave group is offered even when the member list failed to load`() {
         composeRule.setContent {
             GroupDetailScreen(
+                groupId = "group-1",
+                groupName = "Home",
+                invite = InviteState.Unknown,
+                onLoadInvite = {},
+                onBack = {},
                 state = GroupDetailUiState.Error(GroupFailure.Network),
                 actionState = GroupDetailActionState(),
                 currentUserId = OWNER.userId,
@@ -242,7 +281,6 @@ class GroupDetailScreenTest {
                 onRotateInvite = {},
                 onLeaveGroup = {},
                 onRemoveMember = {},
-                onDismissRotatedInvite = {},
                 onRotateDialogOpened = {},
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
@@ -253,6 +291,7 @@ class GroupDetailScreenTest {
             )
         }
 
+        openPageMenu()
         composeRule.onNodeWithText(context.getString(R.string.groups_detail_leave_action)).assertIsDisplayed()
     }
 
@@ -267,6 +306,11 @@ class GroupDetailScreenTest {
         var removedUserId: String? = null
         composeRule.setContent {
             GroupDetailScreen(
+                groupId = "group-1",
+                groupName = "Home",
+                invite = InviteState.Unknown,
+                onLoadInvite = {},
+                onBack = {},
                 state = successState(members = listOf(OWNER, MEMBER, MEMBER2)),
                 actionState = GroupDetailActionState(),
                 currentUserId = OWNER.userId,
@@ -274,7 +318,6 @@ class GroupDetailScreenTest {
                 onRotateInvite = {},
                 onLeaveGroup = {},
                 onRemoveMember = { removedUserId = it },
-                onDismissRotatedInvite = {},
                 onRotateDialogOpened = {},
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
@@ -288,7 +331,8 @@ class GroupDetailScreenTest {
         // Both other rows' Remove buttons render the identical label — target the one on
         // MEMBER2's row specifically by walking up from their username, matching GroupsScreenTest's
         // own "no ambiguous onNodeWithText" discipline for repeated labels.
-        composeRule.onAllNodesWithText(context.getString(R.string.groups_detail_remove_action))[1].performClick()
+        openMembersTab()
+        removeMemberVia(MEMBER2)
         composeRule
             .onNodeWithText(context.getString(R.string.groups_detail_remove_confirm_title, MEMBER2.username))
             .assertIsDisplayed()
@@ -312,6 +356,11 @@ class GroupDetailScreenTest {
         var actionState by mutableStateOf(GroupDetailActionState())
         composeRule.setContent {
             GroupDetailScreen(
+                groupId = "group-1",
+                groupName = "Home",
+                invite = InviteState.Unknown,
+                onLoadInvite = {},
+                onBack = {},
                 state = successState(members = listOf(OWNER, MEMBER, MEMBER2)),
                 actionState = actionState,
                 currentUserId = OWNER.userId,
@@ -319,7 +368,6 @@ class GroupDetailScreenTest {
                 onRotateInvite = {},
                 onLeaveGroup = {},
                 onRemoveMember = {},
-                onDismissRotatedInvite = {},
                 onRotateDialogOpened = {},
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = { actionState = actionState.copy(removeError = null) },
@@ -331,7 +379,8 @@ class GroupDetailScreenTest {
         }
 
         // Remove sam (the first "other" row): open, confirm, fail.
-        composeRule.onAllNodesWithText(context.getString(R.string.groups_detail_remove_action))[0].performClick()
+        openMembersTab()
+        removeMemberVia(MEMBER)
         actionState = actionState.copy(removingUserId = MEMBER.userId)
         composeRule.onNodeWithText(context.getString(R.string.groups_detail_remove_confirm_button)).performClick()
         actionState = actionState.copy(removingUserId = null, removeError = GroupFailure.NotPermitted)
@@ -344,7 +393,7 @@ class GroupDetailScreenTest {
         // live in actionState until onRemoveDialogOpened (wired above, matching production) clears
         // it on this very open.
         composeRule.onNodeWithText(context.getString(R.string.groups_detail_remove_cancel)).performClick()
-        composeRule.onAllNodesWithText(context.getString(R.string.groups_detail_remove_action))[1].performClick()
+        removeMemberVia(MEMBER2)
         composeRule.waitForIdle()
 
         // Must still be showing — a self-dismiss here is BLOCKING 1 reproduced.
@@ -378,6 +427,11 @@ class GroupDetailScreenTest {
         val removeCalls = mutableListOf<String>()
         composeRule.setContent {
             GroupDetailScreen(
+                groupId = "group-1",
+                groupName = "Home",
+                invite = InviteState.Unknown,
+                onLoadInvite = {},
+                onBack = {},
                 state = successState(members = listOf(OWNER, MEMBER, MEMBER2)),
                 actionState = actionState,
                 currentUserId = OWNER.userId,
@@ -396,7 +450,6 @@ class GroupDetailScreenTest {
                         actionState = actionState.copy(removingUserId = userId, removeError = null)
                     }
                 },
-                onDismissRotatedInvite = {},
                 onRotateDialogOpened = {},
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = { actionState = actionState.copy(removeError = null) },
@@ -409,7 +462,8 @@ class GroupDetailScreenTest {
 
         // Start removing sam: open, confirm — the fake onRemoveMember above sets
         // removingUserId synchronously, the same call the confirm click makes.
-        composeRule.onAllNodesWithText(context.getString(R.string.groups_detail_remove_action))[0].performClick()
+        openMembersTab()
+        removeMemberVia(MEMBER)
         composeRule.onNodeWithText(context.getString(R.string.groups_detail_remove_confirm_button)).performClick()
         composeRule.waitForIdle()
 
@@ -424,7 +478,7 @@ class GroupDetailScreenTest {
         // Open and confirm kai's dialog. Sam's remove is STILL in flight — actionState carries no
         // change from the dismissal above — so a real ViewModel's re-entrancy guard would drop
         // this call. This fake still records it; what the screen reacts to is actionState alone.
-        composeRule.onAllNodesWithText(context.getString(R.string.groups_detail_remove_action))[1].performClick()
+        removeMemberVia(MEMBER2)
         composeRule
             .onNodeWithText(context.getString(R.string.groups_detail_remove_confirm_title, MEMBER2.username))
             .assertIsDisplayed()
@@ -446,6 +500,11 @@ class GroupDetailScreenTest {
         var left = false
         composeRule.setContent {
             GroupDetailScreen(
+                groupId = "group-1",
+                groupName = "Home",
+                invite = InviteState.Unknown,
+                onLoadInvite = {},
+                onBack = {},
                 state = successState(members = listOf(OWNER, MEMBER)),
                 actionState = GroupDetailActionState(),
                 currentUserId = OWNER.userId,
@@ -453,7 +512,6 @@ class GroupDetailScreenTest {
                 onRotateInvite = {},
                 onLeaveGroup = { left = true },
                 onRemoveMember = {},
-                onDismissRotatedInvite = {},
                 onRotateDialogOpened = {},
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
@@ -464,6 +522,7 @@ class GroupDetailScreenTest {
             )
         }
 
+        openPageMenu()
         composeRule.onNodeWithText(context.getString(R.string.groups_detail_leave_action)).performClick()
         composeRule.onNodeWithText(context.getString(R.string.groups_detail_leave_confirm_title)).assertIsDisplayed()
         composeRule.onNodeWithText(context.getString(R.string.groups_detail_leave_confirm_button)).performClick()
@@ -476,6 +535,11 @@ class GroupDetailScreenTest {
         var left = false
         composeRule.setContent {
             GroupDetailScreen(
+                groupId = "group-1",
+                groupName = "Home",
+                invite = InviteState.Unknown,
+                onLoadInvite = {},
+                onBack = {},
                 state = successState(members = listOf(OWNER, MEMBER)),
                 actionState = GroupDetailActionState(),
                 currentUserId = OWNER.userId,
@@ -483,7 +547,6 @@ class GroupDetailScreenTest {
                 onRotateInvite = {},
                 onLeaveGroup = { left = true },
                 onRemoveMember = {},
-                onDismissRotatedInvite = {},
                 onRotateDialogOpened = {},
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
@@ -494,6 +557,7 @@ class GroupDetailScreenTest {
             )
         }
 
+        openPageMenu()
         composeRule.onNodeWithText(context.getString(R.string.groups_detail_leave_action)).performClick()
         composeRule.onNodeWithText(context.getString(R.string.groups_detail_leave_cancel)).performClick()
 
@@ -506,6 +570,11 @@ class GroupDetailScreenTest {
         var rotated = false
         composeRule.setContent {
             GroupDetailScreen(
+                groupId = "group-1",
+                groupName = "Home",
+                invite = InviteState.Unknown,
+                onLoadInvite = {},
+                onBack = {},
                 state = successState(members = listOf(OWNER, MEMBER)),
                 actionState = GroupDetailActionState(),
                 currentUserId = OWNER.userId,
@@ -513,7 +582,6 @@ class GroupDetailScreenTest {
                 onRotateInvite = { rotated = true },
                 onLeaveGroup = {},
                 onRemoveMember = {},
-                onDismissRotatedInvite = {},
                 onRotateDialogOpened = {},
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
@@ -524,6 +592,7 @@ class GroupDetailScreenTest {
             )
         }
 
+        openPageMenu()
         composeRule.onNodeWithText(context.getString(R.string.groups_detail_rotate_action)).performClick()
         composeRule.onNodeWithText(context.getString(R.string.groups_detail_rotate_confirm_message)).assertIsDisplayed()
         composeRule.onNodeWithText(context.getString(R.string.groups_detail_rotate_confirm_button)).performClick()
@@ -537,10 +606,15 @@ class GroupDetailScreenTest {
      * ViewModel half, "rotating replaces the displayed code" itself, is `GroupDetailViewModelTest`'s).
      */
     @Test
-    fun `a successful rotate closes the dialog and shows the new code`() {
+    fun `a successful rotate closes the dialog`() {
         var state by mutableStateOf(successState(members = listOf(OWNER)))
         composeRule.setContent {
             GroupDetailScreen(
+                groupId = "group-1",
+                groupName = "Home",
+                invite = InviteState.Unknown,
+                onLoadInvite = {},
+                onBack = {},
                 state = state,
                 actionState = GroupDetailActionState(),
                 currentUserId = OWNER.userId,
@@ -548,7 +622,6 @@ class GroupDetailScreenTest {
                 onRotateInvite = {},
                 onLeaveGroup = {},
                 onRemoveMember = {},
-                onDismissRotatedInvite = {},
                 onRotateDialogOpened = {},
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
@@ -559,13 +632,11 @@ class GroupDetailScreenTest {
             )
         }
 
+        openPageMenu()
         composeRule.onNodeWithText(context.getString(R.string.groups_detail_rotate_action)).performClick()
         state = (state as GroupDetailUiState.Success).copy(rotatedInvite = INVITE)
         composeRule.waitForIdle()
 
-        composeRule
-            .onNodeWithText(context.getString(R.string.groups_invite_code_label, INVITE.inviteCode))
-            .assertIsDisplayed()
         // The dialog closed (LaunchedEffect(rotatedInvite)) — its own confirm copy is gone.
         composeRule
             .onNodeWithText(context.getString(R.string.groups_detail_rotate_confirm_message))
@@ -577,6 +648,11 @@ class GroupDetailScreenTest {
         var actionState by mutableStateOf(GroupDetailActionState())
         composeRule.setContent {
             GroupDetailScreen(
+                groupId = "group-1",
+                groupName = "Home",
+                invite = InviteState.Unknown,
+                onLoadInvite = {},
+                onBack = {},
                 state = successState(members = listOf(OWNER)),
                 actionState = actionState,
                 currentUserId = OWNER.userId,
@@ -584,7 +660,6 @@ class GroupDetailScreenTest {
                 onRotateInvite = {},
                 onLeaveGroup = {},
                 onRemoveMember = {},
-                onDismissRotatedInvite = {},
                 onRotateDialogOpened = {},
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
@@ -595,6 +670,7 @@ class GroupDetailScreenTest {
             )
         }
 
+        openPageMenu()
         composeRule.onNodeWithText(context.getString(R.string.groups_detail_rotate_action)).performClick()
         actionState = GroupDetailActionState(rotateError = GroupFailure.NotPermitted)
         composeRule.waitForIdle()
@@ -609,6 +685,11 @@ class GroupDetailScreenTest {
         var actionState by mutableStateOf(GroupDetailActionState())
         composeRule.setContent {
             GroupDetailScreen(
+                groupId = "group-1",
+                groupName = "Home",
+                invite = InviteState.Unknown,
+                onLoadInvite = {},
+                onBack = {},
                 state = successState(members = listOf(OWNER, MEMBER)),
                 actionState = actionState,
                 currentUserId = OWNER.userId,
@@ -616,7 +697,6 @@ class GroupDetailScreenTest {
                 onRotateInvite = {},
                 onLeaveGroup = {},
                 onRemoveMember = {},
-                onDismissRotatedInvite = {},
                 onRotateDialogOpened = {},
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
@@ -627,7 +707,8 @@ class GroupDetailScreenTest {
             )
         }
 
-        composeRule.onNodeWithText(context.getString(R.string.groups_detail_remove_action)).performClick()
+        openMembersTab()
+        removeMemberVia(MEMBER)
         actionState = GroupDetailActionState(removeError = GroupFailure.NotPermitted)
         composeRule.waitForIdle()
 
@@ -642,6 +723,11 @@ class GroupDetailScreenTest {
     fun `an error state shows NotAMember's dedicated message, not the generic one`() {
         composeRule.setContent {
             GroupDetailScreen(
+                groupId = "group-1",
+                groupName = "Home",
+                invite = InviteState.Unknown,
+                onLoadInvite = {},
+                onBack = {},
                 state = GroupDetailUiState.Error(GroupFailure.NotAMember),
                 actionState = GroupDetailActionState(),
                 currentUserId = OWNER.userId,
@@ -649,7 +735,6 @@ class GroupDetailScreenTest {
                 onRotateInvite = {},
                 onLeaveGroup = {},
                 onRemoveMember = {},
-                onDismissRotatedInvite = {},
                 onRotateDialogOpened = {},
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
@@ -669,6 +754,11 @@ class GroupDetailScreenTest {
         var opened = false
         composeRule.setContent {
             GroupDetailScreen(
+                groupId = "group-1",
+                groupName = "Home",
+                invite = InviteState.Unknown,
+                onLoadInvite = {},
+                onBack = {},
                 state = successState(members = listOf(OWNER)),
                 actionState = GroupDetailActionState(),
                 currentUserId = OWNER.userId,
@@ -676,7 +766,6 @@ class GroupDetailScreenTest {
                 onRotateInvite = {},
                 onLeaveGroup = {},
                 onRemoveMember = {},
-                onDismissRotatedInvite = {},
                 onRotateDialogOpened = { opened = true },
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
@@ -687,6 +776,7 @@ class GroupDetailScreenTest {
             )
         }
 
+        openPageMenu()
         composeRule.onNodeWithText(context.getString(R.string.groups_detail_rotate_action)).performClick()
 
         assertTrue(opened)
@@ -697,6 +787,11 @@ class GroupDetailScreenTest {
         var retried = false
         composeRule.setContent {
             GroupDetailScreen(
+                groupId = "group-1",
+                groupName = "Home",
+                invite = InviteState.Unknown,
+                onLoadInvite = {},
+                onBack = {},
                 state = GroupDetailUiState.Error(GroupFailure.Network),
                 actionState = GroupDetailActionState(),
                 currentUserId = OWNER.userId,
@@ -704,7 +799,6 @@ class GroupDetailScreenTest {
                 onRotateInvite = {},
                 onLeaveGroup = {},
                 onRemoveMember = {},
-                onDismissRotatedInvite = {},
                 onRotateDialogOpened = {},
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
@@ -726,6 +820,11 @@ class GroupDetailScreenTest {
         var retried = false
         composeRule.setContent {
             GroupDetailScreen(
+                groupId = "group-1",
+                groupName = "Home",
+                invite = InviteState.Unknown,
+                onLoadInvite = {},
+                onBack = {},
                 state = successState(members = listOf(OWNER), isStale = true),
                 actionState = GroupDetailActionState(),
                 currentUserId = OWNER.userId,
@@ -733,7 +832,6 @@ class GroupDetailScreenTest {
                 onRotateInvite = {},
                 onLeaveGroup = {},
                 onRemoveMember = {},
-                onDismissRotatedInvite = {},
                 onRotateDialogOpened = {},
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
@@ -744,8 +842,9 @@ class GroupDetailScreenTest {
             )
         }
 
+        openMembersTab()
         val banner = composeRule.onNodeWithText(context.getString(R.string.groups_detail_stale_notice))
-        val memberRow = composeRule.onNodeWithText(OWNER.username)
+        val memberRow = composeRule.onNodeWithText(context.getString(R.string.groups_member_name_you, OWNER.username))
         banner.assertIsDisplayed()
         memberRow.assertIsDisplayed()
 
@@ -768,6 +867,11 @@ class GroupDetailScreenTest {
     fun `an entry proposed by a deleted account renders without a proposer, not a blank name`() {
         composeRule.setContent {
             GroupDetailScreen(
+                groupId = "group-1",
+                groupName = "Home",
+                invite = InviteState.Unknown,
+                onLoadInvite = {},
+                onBack = {},
                 state = successState(members = listOf(OWNER), watchlist = listOf(ENTRY_1, ENTRY_2)),
                 actionState = GroupDetailActionState(),
                 currentUserId = OWNER.userId,
@@ -775,7 +879,6 @@ class GroupDetailScreenTest {
                 onRotateInvite = {},
                 onLeaveGroup = {},
                 onRemoveMember = {},
-                onDismissRotatedInvite = {},
                 onRotateDialogOpened = {},
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
@@ -787,16 +890,17 @@ class GroupDetailScreenTest {
         }
 
         composeRule
-            .onNodeWithText(context.getString(R.string.groups_watchlist_proposed_by, OWNER.username))
-            .assertIsDisplayed()
+            .onNodeWithContentDescription(context.getString(R.string.groups_watchlist_proposed_by, OWNER.username))
+            .assertExists()
         // ENTRY_2's row is not composed at all on first layout (GroupWatchlistSection.kt's own
         // KDoc — a Robolectric root does not reach a second poster-sized watchlist row the way it
         // reaches several text-only member rows), so scroll the LIST to ENTRY_2's own remove
         // button (a stable anchor within its row) before asserting on its proposer text.
+        composeRule.onNode(hasScrollAction()).performScrollToNode(hasText(ENTRY_2.media.title))
         composeRule
-            .onNode(hasScrollAction())
-            .performScrollToNode(hasTestTag("watchlist-remove-${ENTRY_2.id}"))
-        composeRule.onNodeWithText(context.getString(R.string.groups_watchlist_no_proposer)).assertIsDisplayed()
+            .onNodeWithContentDescription(
+                context.getString(R.string.groups_watchlist_no_proposer),
+            ).assertExists()
     }
 
     /**
@@ -816,6 +920,11 @@ class GroupDetailScreenTest {
         var entryClicks = 0
         composeRule.setContent {
             GroupDetailScreen(
+                groupId = "group-1",
+                groupName = "Home",
+                invite = InviteState.Unknown,
+                onLoadInvite = {},
+                onBack = {},
                 state = successState(members = listOf(OWNER), watchlist = listOf(ENTRY_1, ENTRY_2)),
                 actionState = GroupDetailActionState(),
                 currentUserId = OWNER.userId,
@@ -823,7 +932,6 @@ class GroupDetailScreenTest {
                 onRotateInvite = {},
                 onLeaveGroup = {},
                 onRemoveMember = {},
-                onDismissRotatedInvite = {},
                 onRotateDialogOpened = {},
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
@@ -839,9 +947,7 @@ class GroupDetailScreenTest {
         // not yet composed at all (Robolectric's default viewport does not reach a second
         // poster-sized row on first layout; `GroupWatchlistSection.kt`'s own KDoc), unlike chaining
         // `performScrollTo()` onto a query that has already failed to find the node.
-        val entry2RemoveTag = "watchlist-remove-${ENTRY_2.id}"
-        composeRule.onNode(hasScrollAction()).performScrollToNode(hasTestTag(entry2RemoveTag))
-        composeRule.onNodeWithTag(entry2RemoveTag).performClick()
+        removeEntryVia(ENTRY_2)
         composeRule
             .onNodeWithText(context.getString(R.string.groups_watchlist_remove_confirm_title, ENTRY_2.media.title))
             .assertIsDisplayed()
@@ -860,6 +966,11 @@ class GroupDetailScreenTest {
         var actionState by mutableStateOf(GroupDetailActionState())
         composeRule.setContent {
             GroupDetailScreen(
+                groupId = "group-1",
+                groupName = "Home",
+                invite = InviteState.Unknown,
+                onLoadInvite = {},
+                onBack = {},
                 state = successState(members = listOf(OWNER), watchlist = listOf(ENTRY_1, ENTRY_2)),
                 actionState = actionState,
                 currentUserId = OWNER.userId,
@@ -867,7 +978,6 @@ class GroupDetailScreenTest {
                 onRotateInvite = {},
                 onLeaveGroup = {},
                 onRemoveMember = {},
-                onDismissRotatedInvite = {},
                 onRotateDialogOpened = {},
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
@@ -879,7 +989,7 @@ class GroupDetailScreenTest {
         }
 
         // Remove ENTRY_1: open, confirm, fail.
-        composeRule.onAllNodesWithText(context.getString(R.string.groups_watchlist_remove_action))[0].performClick()
+        removeEntryVia(ENTRY_1)
         actionState = actionState.copy(removingEntryId = ENTRY_1.id)
         composeRule.onNodeWithText(context.getString(R.string.groups_watchlist_remove_confirm_button)).performClick()
         actionState = actionState.copy(removingEntryId = null, removeEntryError = GroupFailure.NoSuchEntry)
@@ -894,9 +1004,7 @@ class GroupDetailScreenTest {
         // performScrollToNode — GroupWatchlistSection.kt's own KDoc on why a second poster-sized
         // row is not guaranteed composed on Robolectric's first layout pass.
         composeRule.onNodeWithText(context.getString(R.string.groups_watchlist_remove_cancel)).performClick()
-        val entry2RemoveTag = "watchlist-remove-${ENTRY_2.id}"
-        composeRule.onNode(hasScrollAction()).performScrollToNode(hasTestTag(entry2RemoveTag))
-        composeRule.onNodeWithTag(entry2RemoveTag).performClick()
+        removeEntryVia(ENTRY_2)
         composeRule.waitForIdle()
 
         // Must still be showing — a self-dismiss here is BLOCKING 1's class of bug reproduced.
@@ -914,6 +1022,11 @@ class GroupDetailScreenTest {
     fun `a watchlist page error renders as an inline footer, with the members still visible`() {
         composeRule.setContent {
             GroupDetailScreen(
+                groupId = "group-1",
+                groupName = "Home",
+                invite = InviteState.Unknown,
+                onLoadInvite = {},
+                onBack = {},
                 state =
                     successState(
                         members = listOf(OWNER),
@@ -926,7 +1039,6 @@ class GroupDetailScreenTest {
                 onRotateInvite = {},
                 onLeaveGroup = {},
                 onRemoveMember = {},
-                onDismissRotatedInvite = {},
                 onRotateDialogOpened = {},
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
@@ -937,7 +1049,7 @@ class GroupDetailScreenTest {
             )
         }
 
-        composeRule.onNodeWithText(OWNER.username).assertIsDisplayed()
+        composeRule.onNodeWithText("Home").assertIsDisplayed()
         composeRule.onNodeWithText(ENTRY_1.media.title).assertIsDisplayed()
         // The footer is the LAST row and is not composed at all on first layout — scroll the list
         // to its own testTag first (GroupWatchlistSection.kt's own KDoc on why Robolectric's
@@ -952,6 +1064,11 @@ class GroupDetailScreenTest {
     fun `an empty watchlist shows its own empty state, not a blank scroll area`() {
         composeRule.setContent {
             GroupDetailScreen(
+                groupId = "group-1",
+                groupName = "Home",
+                invite = InviteState.Unknown,
+                onLoadInvite = {},
+                onBack = {},
                 state = successState(members = listOf(OWNER), watchlist = emptyList()),
                 actionState = GroupDetailActionState(),
                 currentUserId = OWNER.userId,
@@ -959,7 +1076,6 @@ class GroupDetailScreenTest {
                 onRotateInvite = {},
                 onLeaveGroup = {},
                 onRemoveMember = {},
-                onDismissRotatedInvite = {},
                 onRotateDialogOpened = {},
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
@@ -990,6 +1106,11 @@ class GroupDetailScreenTest {
         var loadMoreCalls = 0
         composeRule.setContent {
             GroupDetailScreen(
+                groupId = "group-1",
+                groupName = "Home",
+                invite = InviteState.Unknown,
+                onLoadInvite = {},
+                onBack = {},
                 state = successState(members = listOf(OWNER), watchlist = emptyList()),
                 actionState = GroupDetailActionState(),
                 currentUserId = OWNER.userId,
@@ -997,7 +1118,6 @@ class GroupDetailScreenTest {
                 onRotateInvite = {},
                 onLeaveGroup = {},
                 onRemoveMember = {},
-                onDismissRotatedInvite = {},
                 onRotateDialogOpened = {},
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
@@ -1017,6 +1137,11 @@ class GroupDetailScreenTest {
     fun `the loading-more footer shows a spinner while a page fetch is in flight`() {
         composeRule.setContent {
             GroupDetailScreen(
+                groupId = "group-1",
+                groupName = "Home",
+                invite = InviteState.Unknown,
+                onLoadInvite = {},
+                onBack = {},
                 state =
                     successState(
                         members = listOf(OWNER),
@@ -1029,7 +1154,6 @@ class GroupDetailScreenTest {
                 onRotateInvite = {},
                 onLeaveGroup = {},
                 onRemoveMember = {},
-                onDismissRotatedInvite = {},
                 onRotateDialogOpened = {},
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
@@ -1061,6 +1185,11 @@ class GroupDetailScreenTest {
         var retried = false
         composeRule.setContent {
             GroupDetailScreen(
+                groupId = "group-1",
+                groupName = "Home",
+                invite = InviteState.Unknown,
+                onLoadInvite = {},
+                onBack = {},
                 state =
                     successState(
                         members = listOf(OWNER),
@@ -1073,7 +1202,6 @@ class GroupDetailScreenTest {
                 onRotateInvite = {},
                 onLeaveGroup = {},
                 onRemoveMember = {},
-                onDismissRotatedInvite = {},
                 onRotateDialogOpened = {},
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
@@ -1109,6 +1237,11 @@ class GroupDetailScreenTest {
         var clicked: WatchlistEntry? = null
         composeRule.setContent {
             GroupDetailScreen(
+                groupId = "group-1",
+                groupName = "Home",
+                invite = InviteState.Unknown,
+                onLoadInvite = {},
+                onBack = {},
                 state = successState(members = listOf(OWNER), watchlist = listOf(ENTRY_1, ENTRY_2)),
                 actionState = GroupDetailActionState(),
                 currentUserId = OWNER.userId,
@@ -1116,7 +1249,6 @@ class GroupDetailScreenTest {
                 onRotateInvite = {},
                 onLeaveGroup = {},
                 onRemoveMember = {},
-                onDismissRotatedInvite = {},
                 onRotateDialogOpened = {},
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
@@ -1148,6 +1280,11 @@ class GroupDetailScreenTest {
         val removeCalls = mutableListOf<String>()
         composeRule.setContent {
             GroupDetailScreen(
+                groupId = "group-1",
+                groupName = "Home",
+                invite = InviteState.Unknown,
+                onLoadInvite = {},
+                onBack = {},
                 state = successState(members = listOf(OWNER), watchlist = listOf(ENTRY_1, ENTRY_2)),
                 actionState = actionState,
                 currentUserId = OWNER.userId,
@@ -1155,7 +1292,6 @@ class GroupDetailScreenTest {
                 onRotateInvite = {},
                 onLeaveGroup = {},
                 onRemoveMember = {},
-                onDismissRotatedInvite = {},
                 onRotateDialogOpened = {},
                 onLeaveDialogOpened = {},
                 onRemoveDialogOpened = {},
@@ -1176,8 +1312,7 @@ class GroupDetailScreenTest {
 
         // Start removing ENTRY_1: open, confirm — the fake onRemoveWatchlistEntry above sets
         // removingEntryId synchronously, the same call the confirm click makes.
-        composeRule.onNode(hasScrollAction()).performScrollToNode(hasTestTag("watchlist-remove-${ENTRY_1.id}"))
-        composeRule.onNodeWithTag("watchlist-remove-${ENTRY_1.id}").performClick()
+        removeEntryVia(ENTRY_1)
         composeRule.onNodeWithText(context.getString(R.string.groups_watchlist_remove_confirm_button)).performClick()
         composeRule.waitForIdle()
 
@@ -1193,8 +1328,7 @@ class GroupDetailScreenTest {
         // carries no change from the dismissal above — so a real ViewModel's re-entrancy guard
         // would drop this call. This fake still records it; what the screen reacts to is
         // actionState alone.
-        composeRule.onNode(hasScrollAction()).performScrollToNode(hasTestTag("watchlist-remove-${ENTRY_2.id}"))
-        composeRule.onNodeWithTag("watchlist-remove-${ENTRY_2.id}").performClick()
+        removeEntryVia(ENTRY_2)
         composeRule
             .onNodeWithText(context.getString(R.string.groups_watchlist_remove_confirm_title, ENTRY_2.media.title))
             .assertIsDisplayed()
@@ -1214,6 +1348,28 @@ class GroupDetailScreenTest {
     // @Suppress("LongParameterList"): a test fixture builder with one named default per
     // GroupDetailUiState.Success field a test might want to vary — splitting it further would only
     // move the same six knobs into a second type built solely to hold them.
+    private fun openPageMenu() {
+        composeRule.onNodeWithContentDescription(context.getString(R.string.groups_detail_more)).performClick()
+    }
+
+    private fun openMembersTab() {
+        composeRule.onNode(hasText("Members ", substring = true)).performClick()
+    }
+
+    private fun removeMemberVia(member: GroupMember) {
+        composeRule
+            .onNodeWithContentDescription(
+                context.getString(R.string.groups_member_more, member.username),
+            ).performClick()
+        composeRule.onNodeWithText(context.getString(R.string.groups_detail_remove_action)).performClick()
+    }
+
+    private fun removeEntryVia(entry: WatchlistEntry) {
+        composeRule.onNode(hasScrollAction()).performScrollToNode(hasText(entry.media.title))
+        composeRule.onNodeWithText(entry.media.title).performTouchInput { longClick() }
+        composeRule.onNodeWithTag("watchlist-remove-${entry.id}").performClick()
+    }
+
     @Suppress("LongParameterList")
     private fun successState(
         members: List<GroupMember>,

@@ -3,6 +3,7 @@ package com.anarky.showtrack.feature.groups
 import android.content.Context
 import androidx.compose.runtime.remember
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.navigation.NavDestination.Companion.hasRoute
@@ -110,6 +111,7 @@ class GroupDetailEntryHiltTest {
         }
 
         val context = ApplicationProvider.getApplicationContext<Context>()
+        composeRule.onNodeWithContentDescription(context.getString(R.string.groups_detail_more)).performClick()
         composeRule.onNodeWithText(context.getString(R.string.groups_detail_leave_action)).performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithText(context.getString(R.string.groups_detail_leave_confirm_button)).performClick()

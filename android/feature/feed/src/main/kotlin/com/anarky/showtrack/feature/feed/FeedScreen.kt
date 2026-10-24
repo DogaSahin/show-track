@@ -1,15 +1,21 @@
 package com.anarky.showtrack.feature.feed
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -25,8 +31,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.anarky.showtrack.core.designsystem.component.EmptyState
 import com.anarky.showtrack.core.designsystem.component.EndOfListTrigger
 import com.anarky.showtrack.core.designsystem.component.ErrorState
-import com.anarky.showtrack.core.designsystem.component.GroupSwitcher
+import com.anarky.showtrack.core.designsystem.component.LargeTitleScaffold
 import com.anarky.showtrack.core.designsystem.component.LoadingState
+import com.anarky.showtrack.core.designsystem.component.SkeletonBlock
 import com.anarky.showtrack.core.designsystem.component.StaleDataBanner
 import com.anarky.showtrack.core.model.ActiveGroupState
 import com.anarky.showtrack.core.model.FeedEntry
@@ -38,6 +45,8 @@ import kotlinx.coroutines.flow.StateFlow
 import java.time.LocalDate
 import java.time.ZoneId
 
+private const val SKELETON_ROWS = 5
+
 /**
  * The stateful entry point, and the fifth top-level tab (task 9c.4). `hiltViewModel()` is the
  * only line here that touches DI — `GroupsScreen`/`FavoritesScreen`'s shape.
@@ -47,7 +56,7 @@ import java.time.ZoneId
  * satisfied by construction: nothing in this module names `ActiveGroupStore` at all.
  *
  * [activeGroup] is a `StateFlow<ActiveGroupState>`, not a plain value (task 9c.5) — collected here,
- * inside this composable's own body, so this screen reacts to a switch (`GroupSwitcher`'s own
+ * inside this composable's own body, so this screen reacts to a switch (`FeedGroupSwitcher`'s own
  * callback, ultimately `ActiveGroupViewModel.selectGroup`) even though `feedEntry`'s registration
  * itself runs far less often than that — see `FeedNavigation.kt`'s own KDoc for why a plain value
  * could not do this. [LifecycleResumeEffect] is keyed on the COLLECTED, resolved group id (only
@@ -96,7 +105,7 @@ fun FeedScreen(
         onEntryClick = { entry -> entry.mediaId?.let { mediaId -> onNavigate(DetailRoute(mediaId = mediaId)) } },
         onSwitchGroup = onSwitchGroup,
         onRetryGroups = onRetryGroups,
-        onCreateOrJoinGroup = { onNavigate(GroupsRoute) },
+        onOpenGroups = { onNavigate(GroupsRoute) },
         modifier = modifier,
     )
 }
@@ -120,10 +129,13 @@ fun FeedScreen(
  *   genuinely has zero groups, so [EmptyState] renders WITH an action (fix round 1, BLOCKING B2:
  *   §9.11's acceptance criterion is "reaches create-or-join", which a text-only message cannot do
  *   on a screen with no other door to Groups — Groups is reached from Profile, not a tab).
- * - [ActiveGroupState.Success] with a non-null `activeGroupId` → the switcher (E-B, gated on 2+
- *   groups inside [GroupSwitcher] itself) plus the ordinary [FeedContent] rendering.
+ * - [ActiveGroupState.Success] with a non-null `activeGroupId` → the group switcher in the title
+ *   bar plus the ordinary [FeedContent] rendering.
  *
- * **[onSwitchGroup]/[onRetryGroups]/[onCreateOrJoinGroup] carry no default (fix round 2, BLOCKING
+ * [onOpenGroups] serves both doors to Groups: the no-group empty state's "Create or join a group"
+ * and the switcher menu's "Manage groups".
+ *
+ * **[onSwitchGroup]/[onRetryGroups]/[onOpenGroups] carry no default (fix round 2, BLOCKING
  * F2).** They did, briefly — `= {}` on all three, purely so pre-existing tests kept compiling — and
  * a reviewer measured the actual cost: dropping BOTH real callbacks from the stateful overload's
  * own call just above still compiled, and the switcher/groups-retry silently did nothing. A default
@@ -140,38 +152,40 @@ internal fun FeedScreen(
     onEntryClick: (FeedEntry) -> Unit,
     onSwitchGroup: (String) -> Unit,
     onRetryGroups: () -> Unit,
-    onCreateOrJoinGroup: () -> Unit,
+    onOpenGroups: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier = modifier.fillMaxSize()) {
-        Text(
-            text = stringResource(R.string.feed_title),
-            style = MaterialTheme.typography.titleLarge,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-        )
-        when (activeGroupState) {
-            is ActiveGroupState.Loading -> LoadingState(modifier = Modifier.weight(weight = 1f).fillMaxWidth())
-            is ActiveGroupState.Error ->
-                ErrorState(
-                    message = stringResource(R.string.feed_groups_error_retry),
-                    onRetry = onRetryGroups,
-                    modifier = Modifier.weight(weight = 1f).fillMaxWidth(),
+    val success = activeGroupState as? ActiveGroupState.Success
+    val activeGroupId = success?.activeGroupId
+    LargeTitleScaffold(
+        title = stringResource(R.string.feed_title),
+        modifier = modifier.fillMaxSize(),
+        actions = {
+            if (success != null && activeGroupId != null) {
+                FeedGroupSwitcher(
+                    groups = success.groups,
+                    activeGroupId = activeGroupId,
+                    onSwitchGroup = onSwitchGroup,
+                    onManageGroups = onOpenGroups,
                 )
-            is ActiveGroupState.Success -> {
-                val activeGroupId = activeGroupState.activeGroupId
-                if (activeGroupId != null) {
-                    GroupSwitcher(
-                        groups = activeGroupState.groups,
-                        activeGroupId = activeGroupId,
-                        onGroupSelected = onSwitchGroup,
+            }
+        },
+    ) { padding ->
+        Box(modifier = Modifier.padding(padding).fillMaxSize()) {
+            when (activeGroupState) {
+                is ActiveGroupState.Loading -> FeedSkeleton()
+                is ActiveGroupState.Error ->
+                    ErrorState(
+                        message = stringResource(R.string.feed_groups_error_retry),
+                        onRetry = onRetryGroups,
+                        modifier = Modifier.fillMaxSize(),
                     )
-                }
-                Box(modifier = Modifier.weight(weight = 1f).fillMaxWidth()) {
+                is ActiveGroupState.Success ->
                     if (activeGroupId == null) {
                         EmptyState(
                             message = stringResource(R.string.feed_no_group_message),
                             actionLabel = stringResource(R.string.feed_no_group_action),
-                            onAction = onCreateOrJoinGroup,
+                            onAction = onOpenGroups,
                             modifier = Modifier.fillMaxSize(),
                         )
                     } else {
@@ -182,7 +196,6 @@ internal fun FeedScreen(
                             onEntryClick = onEntryClick,
                         )
                     }
-                }
             }
         }
     }
@@ -198,7 +211,7 @@ private fun FeedContent(
 ) {
     Box(modifier = modifier.fillMaxSize()) {
         when (state) {
-            is FeedUiState.Loading -> LoadingState(modifier = Modifier.fillMaxSize())
+            is FeedUiState.Loading -> FeedSkeleton()
             is FeedUiState.Error ->
                 ErrorState(
                     message = stringResource(state.cause.messageRes()),
@@ -244,6 +257,30 @@ private fun FeedSuccessContent(
     }
 }
 
+/** Five grey event rows standing in for the feed while it loads. */
+@Composable
+private fun FeedSkeleton() {
+    Column(modifier = Modifier.fillMaxSize().padding(top = 8.dp)) {
+        repeat(SKELETON_ROWS) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(space = 12.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+            ) {
+                SkeletonBlock(shape = CircleShape, modifier = Modifier.size(32.dp))
+                Column(verticalArrangement = Arrangement.spacedBy(space = 6.dp), modifier = Modifier.weight(1f)) {
+                    SkeletonBlock(modifier = Modifier.fillMaxWidth(fraction = 0.8f).height(12.dp))
+                    SkeletonBlock(modifier = Modifier.width(72.dp).height(16.dp), shape = CircleShape)
+                    SkeletonBlock(modifier = Modifier.width(48.dp).height(8.dp))
+                }
+                SkeletonBlock(
+                    shape = MaterialTheme.shapes.extraSmall,
+                    modifier = Modifier.size(width = 36.dp, height = 54.dp),
+                )
+            }
+        }
+    }
+}
+
 /**
  * The list itself, plus paging — `LibraryList`'s identical shape (end-of-list detection via
  * [EndOfListTrigger], a footer spinner while [FeedUiState.Success.loadingMore], a tap-to-retry
@@ -277,7 +314,7 @@ private fun FeedList(
     LazyColumn(
         state = listState,
         modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 16.dp),
+        contentPadding = PaddingValues(bottom = 16.dp),
     ) {
         // Keyed by the ROW, not the entry: a day heading is an item too, and it needs a key that
         // cannot collide with an entry id. Without keys at all, LazyColumn identifies items by
@@ -289,23 +326,23 @@ private fun FeedList(
             key = { row ->
                 when (row) {
                     is FeedRow.Day -> "day-${row.date}"
-                    is FeedRow.Entry -> row.entry.id
+                    is FeedRow.Entry -> row.item.entry.id
                 }
             },
         ) { row ->
             when (row) {
                 is FeedRow.Day -> FeedDayHeader(date = row.date, today = today)
                 is FeedRow.Entry ->
-                    FeedTimelineRow(
-                        entry = row.entry,
+                    FeedEventRow(
+                        item = row.item,
                         // Recomputed per row rather than carried on FeedRow.Entry: the day the row
                         // sits under is already known here, and duplicating it into the model
                         // would let the two disagree after midnight.
                         isToday =
-                            row.entry.createdAt
+                            row.item.entry.createdAt
                                 .atZone(zone)
                                 .toLocalDate() == today,
-                        onClick = { onEntryClick(row.entry) },
+                        onClick = { onEntryClick(row.item.entry) },
                     )
             }
         }

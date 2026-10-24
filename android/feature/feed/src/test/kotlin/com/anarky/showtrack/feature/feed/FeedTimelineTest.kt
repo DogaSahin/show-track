@@ -33,9 +33,9 @@ class FeedTimelineTest {
         assertEquals(
             listOf(
                 FeedRow.Day(LocalDate.of(2026, 9, 6)),
-                FeedRow.Entry(entries[0]),
+                FeedRow.Entry(FeedItem(entries[0])),
                 FeedRow.Day(LocalDate.of(2026, 9, 5)),
-                FeedRow.Entry(entries[1]),
+                FeedRow.Entry(FeedItem(entries[1])),
             ),
             rows,
         )

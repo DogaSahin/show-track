@@ -27,6 +27,12 @@ sealed interface AuthError {
 
     data object AccountCreatedNotSignedIn : AuthError
 
+    /** 429 from login: too many attempts for this email. */
+    data object TooManyAttempts : AuthError
+
+    /** 503 from login or register: the server could not check a password right now. */
+    data object ServerBusy : AuthError
+
     data object Offline : AuthError
 
     data object Unknown : AuthError

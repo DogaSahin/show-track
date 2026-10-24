@@ -2,6 +2,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- In-app updates: lets the app hand a downloaded APK to the system installer, which still
+         asks the user to confirm. The user also has to allow "Install unknown apps" once. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <application
         android:name=".ShowTrackApplication"
         android:allowBackup="true"
@@ -25,7 +29,7 @@
             </intent-filter>
 
             <!--
-                The door a push notification's tap comes through. The URI is built by
+                The door an episode alert's tap comes through. The URI is built by
                 :core:navigation's detailDeepLink() and answered by :feature:detail's
                 navDeepLink<DetailRoute>, so this filter is the ONLY place the scheme and host are
                 written as literals — a change to DEEP_LINK_SCHEME that forgets this file makes
@@ -40,7 +44,7 @@
                 A custom scheme rather than an https:// App Link because App Links need a verified
                 domain and hosting is still undecided (design doc §11). Any app may claim a custom
                 scheme, so nothing sensitive travels in it — the media id is a public identifier
-                and every screen behind it needs a token. PushNotifier pins the intent to this
+                and every screen behind it needs a token. EpisodeAlertNotifier pins the intent to this
                 package for the outbound half.
             -->
             <intent-filter>
@@ -54,6 +58,40 @@
                     android:scheme="showtrack" />
             </intent-filter>
         </activity>
+
+        <!--
+            WorkManager's own startup initializer is removed: ShowTrackApplication is its
+            Configuration.Provider, so the alert workers are built by Hilt's worker factory.
+            MergedManifestTest fails if this removal is lost.
+        -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.work.WorkManagerInitializer"
+                android:value="androidx.startup"
+                tools:node="remove" />
+        </provider>
+
+        <!--
+            Serves downloaded updates to the system installer. Not exported: the installer gets a
+            one-off read grant on the single APK URI (ApkInstaller), and update_paths.xml exposes
+            only cacheDir/updates/. The authority is what ApkInstaller asks FileProvider for.
+            MergedManifestTest pins the authority, that the provider is private, and that
+            cacheDir/updates/ resolves while the rest of the cache does not; that the directory
+            matches :core:data's UPDATES_DIR is a literal in that test, not a shared constant.
+        -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.updates"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/update_paths" />
+        </provider>
     </application>
 
 </manifest>

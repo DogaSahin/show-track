@@ -303,6 +303,14 @@ internal fun NavHostController.navigateToAuthClearingStack() {
     navigate(AuthRoute) {
         popUpTo(graph.id) { inclusive = true }
     }
+    // The tabs' SAVED stacks too. Switching tabs saves each tab's stack (and its ViewModels) for
+    // restoreState; popping the live stack leaves those saved ones behind, so the next account to
+    // sign in would tap a tab and get the previous account's screen back. Both sign-out and
+    // session expiry (AuthGate) come through here. Only tabs the graph has: clearBackStack throws
+    // for a route it does not know, and a sign-out must never crash.
+    TopLevelDestination.entries
+        .filter { destination -> graph.findNode(destination.route) != null }
+        .forEach { destination -> clearBackStack(destination.route) }
 }
 
 /**

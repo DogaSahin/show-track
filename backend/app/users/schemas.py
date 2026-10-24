@@ -1,7 +1,18 @@
+import unicodedata
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+
+
+def normalise_username(value: str) -> str:
+    """What makes two usernames "the same" to a reader. Order matters: invisible characters go
+    FIRST, so one sitting between a letter and a combining mark can't block NFKC composition;
+    then NFKC folds fullwidth and compatibility forms; then surrounding whitespace goes.
+    The migration that normalised existing rows (0019) carries a frozen copy — keep them equal.
+    """
+    visible = "".join(ch for ch in value if unicodedata.category(ch) not in ("Cf", "Cc"))
+    return unicodedata.normalize("NFKC", visible).strip()
 
 
 class RegisterRequest(BaseModel):
@@ -24,10 +35,18 @@ class RegisterRequest(BaseModel):
     # was written for. 64 also fits a `openssl rand -hex 32` REGISTRATION_CODE exactly.
     invite_code: str = Field(min_length=1, max_length=64)
 
+    @field_validator("username", mode="before")
+    @classmethod
+    def _normalise_username(cls, value: object) -> object:
+        # Non-strings pass through untouched so pydantic reports a 422, not a TypeError 500.
+        return normalise_username(value) if isinstance(value, str) else value
+
 
 class LoginRequest(BaseModel):
     email: EmailStr
-    password: str
+    # Request-body sanity, matching RegisterRequest's bound. No minimum: a short wrong password
+    # is a 401, not a validation error.
+    password: str = Field(max_length=256)
 
 
 class RefreshRequest(BaseModel):

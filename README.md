@@ -13,21 +13,32 @@ Self-hosted. It runs on your own machine and is reached over Tailscale.
 ## What it does
 
 - **Track** anime and TV in one library — status, 1–10 score, episode progress, favourites.
-- **Know when the next episode airs.** A background job refreshes airing dates and queues a
-  notification before an episode airs; a second job drains that queue to your phone. Push is
-  delivered by a self-hosted [ntfy](https://ntfy.sh) server over UnifiedPush — not Firebase.
+- **Know when the next episode airs.** The server refreshes airing dates; the phone schedules its
+  own alerts from them, 24 hours and 6 hours before each episode of a show you're watching. No
+  second app, no Google services, and an alert shows even if the phone is offline at the time.
 - **Import** an existing AniList list by username. The profile must be public (the import sends no
   credentials). Read-only and one-way — ShowTrack never writes back.
 - **Share with a group** — an activity feed, reviews, a shared watchlist, and side-by-side progress.
   You get in with an invite code, which is also all a new member needs to create an account.
+  When an owner removes a member, the group's invite code is rotated so the old one stops working.
+  A member leaving on their own does not rotate it; after a contentious departure the owner can
+  rotate the code by hand (`POST /v1/groups/{id}/invite/rotate`).
 - **Get recommendations** seeded from titles you rated 7+, favourited or finished, ranked by how
   well each candidate's genres match your taste profile. Content-based, not collaborative filtering
   — nothing about what anyone else watched feeds a suggestion.
+- **Update from inside the app.** Signed-in users see a banner when a newer build is out, and a
+  minimum version can block older apps until they update. The APK comes from your own server, checked
+  against its published size and SHA-256 and against the installed app's signing key, then handed to
+  Android's installer — no app store, no second app.
 
 Data comes from **AniList** (anime, GraphQL) and **TMDB** (TV, REST), normalised behind one provider
 interface. `GET /v1/media/search` fans out to both live with a per-provider timeout, so a slow
-provider degrades its own share of results rather than failing the search. Every other read path is
-database-only.
+provider degrades its own share of results rather than failing the search. Each result says whether
+the title is already stored and whether it is in your library; opening one that isn't stored yet
+(`POST /v1/media/resolve`) fetches that single title, as adding it does. Every other read path is
+database-only. Each tracked title's season and episode list is stored too: fetched when the title is
+added, then kept fresh by the sync job while the show is airing. Progress is tracked per episode,
+so gaps are kept, and a title's progress is the number of episodes ticked.
 
 ## Layout
 
@@ -44,7 +55,8 @@ One repo, because backend and client share one API contract: a change to an endp
 that calls it lands as a single reviewable unit.
 
 **Backend** — each domain is four files (`models.py`, `schemas.py`, `service.py`, `routes.py`)
-across `users`, `media`, `library`, `sync`, `notifications`, `recommendations`, `groups`. Routes
+across `users`, `media`, `library`, `sync`, `recommendations`, `groups`, plus `releases`, which is
+file-backed (it reads `release.json` and the APK from a directory) and has no models. Routes
 mount under `/v1`; `/health` stays unversioned because it's an infra probe, not client contract.
 
 **Android** — 16 Gradle modules: `:app`, six `:core:*` (`model`, `designsystem`, `navigation`,
@@ -73,8 +85,11 @@ uv pip install -r requirements-dev.txt
 
 cp .env.example .env           # REQUIRED before any compose command: docker-compose.yml
                                # interpolates POSTGRES_PASSWORD, SECRET_KEY and REGISTRATION_CODE
-                               # from it and refuses to start if any is unset. The shipped
-                               # defaults work for development as-is.
+                               # from it and refuses to start if any is unset. The three ship
+                               # empty: fill each with `openssl rand -hex 32`, and put the same
+                               # password into DATABASE_URL. The server also refuses to start with
+                               # a SECRET_KEY under 32 characters, a REGISTRATION_CODE under 16,
+                               # or an old example value.
 docker compose up -d db        # PostgreSQL on :5432
 
 .venv/bin/alembic upgrade head    # REQUIRED before the tests — they run against a real schema
@@ -144,8 +159,9 @@ Four of these are less obvious than they look:
   root invocation does not reach it.
 - **`testDebugUnitTest` also runs `:build-logic:test`** — the TestKit tests that prove the two
   architecture rules actually fail a build. Without the root lifecycle task they are never executed.
-- **`assembleDebugAndroidTest` compiles instrumentation sources** that CI cannot run without an
-  emulator, so an androidTest that stops building is caught immediately rather than rotting.
+- **`assembleDebugAndroidTest` compiles instrumentation sources** that need an emulator to run, so
+  an androidTest that stops building is caught immediately rather than rotting. CI executes them on
+  an emulator on pushes to `main` that touch the app.
 - **`lintDebug` cannot see a hardcoded string in a Compose screen.** `HardcodedText` understands XML
   `android:text` attributes, and this project has no XML layouts. Measured, not assumed. It stays
   for the surfaces it *can* see; a Compose-aware replacement is an open follow-up.
@@ -185,6 +201,38 @@ openssl rand -hex 32        # -> POSTGRES_PASSWORD
 initialising an empty data directory; changing it later leaves the old password in the volume and
 the api unable to connect.
 
+**Upgrading from a version that shipped example secrets:** the server now refuses to start with
+short or example `SECRET_KEY` / `REGISTRATION_CODE` values, so regenerate them
+(`openssl rand -hex 32`). Changing `POSTGRES_PASSWORD` on an existing volume needs
+`ALTER USER showtrack PASSWORD '...'` first; otherwise keep the old password.
+
+**Upgrading with existing accounts:** usernames are now normalised (invisible characters removed,
+Unicode NFKC, trimmed) and unique regardless of case. The migration applies this to existing
+accounts and **refuses to run**, listing the names, if it would make two usernames collide, blank
+one, or push one past 64 characters. Rename those accounts, then upgrade again.
+
+### What production switches off
+
+With `ENVIRONMENT=production` (hardcoded in `docker-compose.yml`; the dev override sets `local`) the
+API serves no `/docs`, `/redoc` or `/openapi.json`, and no debug sync route.
+
+### Sign-in limits
+
+These apply in every environment, not only production.
+
+Sign-in is rate-limited: 5 failed attempts per email in 15 minutes returns `429` with `Retry-After`,
+and a successful login clears the count. Password hashing runs off the event loop with a bounded
+queue; when it is full, login and registration return `503` with `Retry-After: 1`. Passwords longer
+than 256 characters are rejected at login. Limits are per email, not per IP, because behind Docker
+every client shares one address. The trade-off: someone who knows a member's email can keep that
+account locked out for 15 minutes at a time. For a closed group on a private network that is
+accepted.
+
+Signing out ends that sign-in session on the server: every refresh token issued since that login
+is revoked, even if the app's copy was already rotated. Other devices stay signed in. The app keeps
+you signed in when a token refresh fails because the connection dropped or the server returned an
+error, and signs you out when the server rejects the token.
+
 ### The production image
 
 Multi-stage. `build-essential` exists only in a discarded builder stage and pytest/ruff only in the
@@ -200,12 +248,11 @@ database is up.
 
 ### TLS, and why it is not optional
 
-Neither service publishes beyond `127.0.0.1`. `tailscale serve` runs on the host, terminates TLS
+Nothing publishes beyond `127.0.0.1`. `tailscale serve` runs on the host, terminates TLS
 with a real Let's Encrypt certificate for the machine's `*.ts.net` name, and proxies to loopback:
 
 ```bash
 sudo tailscale serve --bg 8000                  # https://<machine>.ts.net      -> the API
-sudo tailscale serve --bg --https=8443 8080     # https://<machine>.ts.net:8443 -> ntfy
 sudo tailscale serve status
 ```
 
@@ -214,8 +261,9 @@ so the TLS endpoint is the only way the client can reach the server at all.
 
 ### The host must never sleep
 
-APScheduler runs in-process, so a suspended machine silently stops episode sync and notification
-dispatch. There is no error to notice — you find out by not being told about an episode.
+APScheduler runs in-process, so a suspended machine silently stops the episode sync, and the
+phones' alerts drift from the real air dates. There is no error to notice — you find out by an
+alert for an episode that moved.
 
 ```bash
 sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target
@@ -228,34 +276,70 @@ and the same disk is not a backup.
 
 ## Notifications
 
-Two things are easy to get wrong, and both fail silently.
+Episode alerts are scheduled **on the phone**, with WorkManager, from the next-episode air dates
+the library already carries. Turn them on in Profile → Episode alerts; Android 13+ asks for
+notification permission at that point. Only shows you're **Watching** get alerts: one 24 hours
+before and one 6 hours before (just one if the episode is first seen less than 6 hours out).
 
-**Push needs a second app on the phone.** ShowTrack delivers over UnifiedPush, which requires a
-distributor app — install ntfy from F-Droid or Google Play. Without one, registration simply reports
-that push is unavailable; nothing is broken.
+- **Refreshing needs the server, showing does not.** Every 6 hours, and after any library change,
+  the app re-reads your Watching titles and moves or cancels alerts to match. That refresh needs
+  the tailnet; an alert that is already scheduled shows offline.
+- **Doze can make an alert a few minutes late.** There are no exact alarms. The wording ("airs in
+  3 hours") is worked out when the alert shows, so a late one is still accurate.
+- **Signing out cancels everything** and turns alerts off, including alerts already in the
+  notification shade; whoever signs in next opts in for themselves. An alert scheduled before a
+  sign-out never shows, for a signed-out phone or for whoever signs in next.
 
-**The phone must be on the VPN.** ntfy runs on your server, so off the tailnet, notifications queue
-server-side until the phone can reach it. This is the accepted cost of self-hosting over FCM.
+## Releasing
 
-The compose service runs `NTFY_AUTH_DEFAULT_ACCESS=deny-all`, so nobody — including the backend —
-can publish until you mint credentials:
+Release builds are signed with your own key, and the server hands the newest one to the apps, which
+offer it as an in-app update.
 
-```bash
-docker compose exec ntfy ntfy user add showtrack
-docker compose exec ntfy ntfy access showtrack '*' wo
-docker compose exec ntfy ntfy token add showtrack     # prints tk_… — this is NTFY_TOKEN
+1. **One time: make a signing key.** Keep the keystore outside the repo and back it up off the
+   machine. Losing it means nobody can update the installed app again.
 
-docker compose exec ntfy ntfy user add phone          # prompts for a password
-docker compose exec ntfy ntfy access phone <topic> ro
-```
+   ```bash
+   keytool -genkeypair -v -keystore showtrack-release.jks -keyalg RSA -keysize 4096 \
+     -validity 10000 -alias showtrack
+   ```
 
-`NTFY_BASE_URL` is where the **backend** reaches ntfy. `NTFY_PUBLIC_URL` is ntfy's own idea of its
-public address, stamped into link targets — set it to the address the **phone** uses, which behind
-`tailscale serve` is the `https://<machine>.ts.net:8443` URL. Left at localhost, a phone following a
-link is sent to its own localhost. Affects link targets only, never delivery.
+   Then point Gradle at it in `~/.gradle/gradle.properties` (never the repo's):
 
-Exempt both Tailscale and ntfy from battery optimisation on every device. Doze killing the VPN stops
-notifications with no error.
+   ```properties
+   showtrack.release.storeFile=/path/to/showtrack-release.jks
+   showtrack.release.storePassword=...
+   showtrack.release.keyAlias=showtrack
+   showtrack.release.keyPassword=...
+   ```
+
+2. **Each release.** Bump `versionCode` and `versionName` in `android/app/build.gradle.kts` (and
+   `minVersionCode` only when older apps must stop working until they update), then build and copy
+   the result to the server:
+
+   ```bash
+   cd android
+   ./gradlew :app:assembleRelease     # optionally -Pshowtrack.release.notes="What changed"
+   scp app/build/release-out/showtrack-*.apk <server>:<path>/backend/releases/
+   scp app/build/release-out/release.json <server>:<path>/backend/releases/
+   ```
+
+   `assembleRelease` refuses to run unless all four signing properties are set. It writes
+   `showtrack-<versionCode>.apk` and `release.json` (version, minimum version, file name, SHA-256,
+   notes) into `android/app/build/release-out/`. The server picks the new release up from
+   `backend/releases/` without a restart.
+
+   Copy the APK first and `release.json` last: the server offers whatever `release.json` names, so
+   copied the other way round it would advertise a file that is missing or still half-written, and
+   every phone that checked in the meantime would see a failed download. Older `showtrack-<n>.apk`
+   files in `backend/releases/` are no longer served and can be deleted.
+
+3. **First install.** Send each friend the release-signed APK from `assembleRelease` once. After
+   that they update from inside the app. A debug build cannot take these updates: it is signed with
+   a different key, and Android refuses an update whose signature does not match. Debug and release
+   builds share an application id, so a phone with a debug build installed has to uninstall it before
+   the release build will go on.
+4. **Allow installs.** The first time an update is installed, the app explains that Android needs
+   permission and opens the setting; the phone asks once to let ShowTrack install apps.
 
 ## Contributing
 
@@ -266,7 +350,10 @@ Tests are required for new logic and bugfixes. **Write useful tests, not exhaust
 the meaningful paths and the tricky edge that would actually break. A test must earn its place by
 catching a real regression in behaviour we own.
 
-Any API-contract change updates backend and client in the same PR.
+Any API-contract change updates backend and client in the same PR. The API schema is snapshotted in
+`backend/openapi.json`; regenerate it with `.venv/bin/python scripts/export_openapi.py` (from
+`backend/`) whenever the API changes. The backend test fails if it drifts, and the Android contract
+test checks the app's DTOs against it.
 
 A few things that will otherwise cost you an afternoon:
 
@@ -279,8 +366,6 @@ A few things that will otherwise cost you an afternoon:
   DB-side mutation, re-read with `populate_existing=True`. Any `SELECT … FOR UPDATE` must carry it
   too, or the lock serialises the transactions and then acts on a stale value. This has been
   rediscovered three times in three disguises.
-- **Notifications are never sent from the sync job.** Sync inserts a `NotificationTask`; the
-  dispatcher sends. Dedup is a unique constraint, not application logic.
 - **Always read a generated Alembic migration against the model before committing it.**
   Autogenerate is a starting point, not a trustworthy output.
 
@@ -301,20 +386,20 @@ both get worse the longer they wait.
 
 | Phase | | |
 |---|---|---|
-| 0–7.5b | Backend — foundations, auth, providers, library, AniList import, sync, notifications, recommendations, groups | done |
+| 0–7.5b | Backend — foundations, auth, providers, library, AniList import, sync, recommendations, groups | done |
 | 8 | Android foundations — 16 modules, build-enforced rules, design system, HTTP + token store, Room cache, navigation, Hilt | done |
-| 8.9 | Push over UnifiedPush | code complete, unverified on device |
+| 8.9 | Episode alerts, scheduled on the phone | code complete, unverified on device |
 | 9a–9c | Nine feature screens, end to end | code complete, unverified on device |
-| 9.5 | Visual redesign — palette, nav icons, auth, discover, feed, profile | done |
+| 9.5 | Visual redesign — palette, nav icons, auth, library, discover, feed, profile, favourites, groups, search, show details | done |
 | 10 | Polish and deployment | in progress |
+| 10 | In-app updates — signed release builds, update banner, minimum-version block | code complete, unverified on device |
 
 **Nothing has been run on a physical device by this repository's own tooling** — there is no device
 or emulator in the environment it was built in. Screens have been rendered headlessly and the gate
 is green, but "code complete" above means exactly that and not more.
 
-Open before this is finished: release signing (there is no `signingConfig`, so `assembleRelease`
-produces an unsigned APK Android will refuse to install), off-machine backups, and a manual pass on
-a real phone.
+Open before this is finished: off-machine backups, and a manual pass on a real phone — including a
+first install and an in-app update end to end.
 
 Architecture documentation lives outside this repository alongside the working copy — a design doc,
 a phased task breakdown and a decision record. This README is the orientation a fresh clone gets.

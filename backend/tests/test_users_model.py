@@ -52,5 +52,19 @@ async def test_duplicate_username_is_rejected(db_session: AsyncSession) -> None:
     with pytest.raises(IntegrityError) as excinfo:
         await db_session.flush()
 
-    assert "uq_users_username" in str(excinfo.value)
+    assert "uq_users_lower_username" in str(excinfo.value)
+    await db_session.rollback()
+
+
+async def test_username_uniqueness_is_case_insensitive(db_session: AsyncSession) -> None:
+    """The index, not only the request schema, enforces it: a write that skips the schema
+    still can't create a case-variant duplicate."""
+    db_session.add(make_user(username="Doga", email="one@example.com"))
+    await db_session.flush()
+
+    db_session.add(make_user(username="doga", email="two@example.com"))
+    with pytest.raises(IntegrityError) as excinfo:
+        await db_session.flush()
+
+    assert "uq_users_lower_username" in str(excinfo.value)
     await db_session.rollback()

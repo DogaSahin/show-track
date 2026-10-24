@@ -1,12 +1,16 @@
+import logging
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from enum import StrEnum
 from typing import ClassVar, Protocol, runtime_checkable
 
 from app.media.models import MediaSource, MediaStatus, MediaType
+from app.media.providers.errors import ProviderError, ProviderRateLimited
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,6 +33,18 @@ class NextEpisode:
     # tz-aware. TMDB supplies a date only, so TMDB values are midnight UTC — fabricated
     # precision, documented in the spec. AniList supplies a real airing timestamp.
     airs_at: datetime | None
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderEpisode:
+    """One episode as a provider lists it. Specials (TMDB season 0) never appear here."""
+
+    season_number: int
+    number: int
+    # None when the provider has no title (AniList never does).
+    title: str | None
+    # Day granularity: TMDB gives a date, and an AniList airing timestamp is cut to its UTC date.
+    air_date: date | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,13 +88,30 @@ class ProviderSearchPage:
 SIMILAR_LIMIT = 20
 
 
+# After this many failures in a row, a provider is treated as down for the rest of the batch: an
+# outage then costs a few timeouts rather than one per title. A success resets the run.
+MAX_CONSECUTIVE_FAILURES = 3
+
+
+@dataclass(frozen=True)
+class ProviderBatch:
+    """The answer to get_many. An id in `found` was fetched. An id in `failed` got no usable
+    answer (transport, upstream, rate limit, outage) and should be retried later. An id in
+    neither is one the provider doesn't know — or whose payload could not be mapped, which is
+    treated the same way so one broken title can't be re-fetched every cycle forever.
+    """
+
+    found: Mapping[str, ProviderMedia]
+    failed: frozenset[str]
+
+
 class MediaProvider(ABC):
     """One external source of titles, normalized.
 
-    An ABC rather than a Protocol: providers share a constructor taking the HTTP client, and a
-    future batched get_many() wants a default implementation that loops with AniList overriding
-    it (one GraphQL query can fetch many ids; TMDB's REST API cannot). Protocols carry no
-    defaults. get_many() is not defined here — Phase 5 does not exist yet.
+    An ABC rather than a Protocol: providers share a constructor taking the HTTP client, and
+    get_many() has a default implementation here that loops over get_by_id and returns a
+    ProviderBatch. AniList overrides it with batched requests (one GraphQL query can fetch many
+    ids); TMDB's REST API cannot, so it keeps the default. Protocols carry no defaults.
 
     There is deliberately no get_next_episode(): both upstreams return the next episode inside
     the detail payload, so a separate method would issue a second identical request per title
@@ -95,6 +128,13 @@ class MediaProvider(ABC):
     @abstractmethod
     async def get_by_id(self, external_id: str) -> ProviderMedia | None:
         """None when the provider has no such title. Raises ProviderError subclasses otherwise."""
+
+    @abstractmethod
+    async def get_episodes(self, external_id: str) -> tuple[ProviderEpisode, ...] | None:
+        """Every regular episode of a title, in no particular order; None when the provider has
+        no such title. Raises ProviderError subclasses otherwise, never returns a partial list:
+        a caller replaces what it stored with this answer, so a half list would delete episodes.
+        """
 
     @abstractmethod
     async def fetch_similar(self, external_id: str) -> Sequence[MediaRef]:
@@ -117,16 +157,23 @@ class MediaProvider(ABC):
         silently contribute nothing to the candidate pool.
         """
 
-    async def get_many(self, external_ids: Sequence[str]) -> Mapping[str, ProviderMedia]:
-        """Fetch many titles at once, keyed by external_id.
+    async def get_many(self, external_ids: Sequence[str]) -> ProviderBatch:
+        """Fetch many titles at once, as a ProviderBatch.
 
-        A MISSING KEY means the provider has no such title — the same meaning get_by_id gives to
-        None. Never raises for an unknown id; raises ProviderError subclasses for transport and
-        upstream failures.
+        An id in `found` was fetched, keyed by external_id. An id in `failed` got no usable answer
+        and should be retried later. An id in NEITHER is one the provider has no such title for —
+        the same meaning get_by_id gives to None — or whose payload could not be mapped. Upstream
+        failures are REPORTED in `failed`, not raised: one bad title must not cost the others in
+        the same call their answer.
 
-        Returns a Mapping, not a list, because a provider may answer in any order: AniList's batch
-        endpoint returns results id-ordered rather than request-ordered (verified against the live
-        API), so positional pairing would silently attach every title's data to the wrong title.
+        A rate limit fails the id that hit it and every id not yet asked for (asking again now
+        would only be refused). MAX_CONSECUTIVE_FAILURES other failures in a row fail the rest, so
+        an outage costs a few timeouts rather than one per title.
+
+        `found` is a Mapping, not a list, because a provider may answer in any order: AniList's
+        batch endpoint returns results id-ordered rather than request-ordered (verified against the
+        live API), so positional pairing would silently attach every title's data to the wrong
+        title.
 
         CONCRETE, not abstract. This default is correct for TMDB, whose REST API has no batch
         endpoint, so a looping implementation is the honest one rather than a stub. AniList
@@ -135,12 +182,36 @@ class MediaProvider(ABC):
         capability Protocol like UserListProvider — that models something only one provider can do
         at all.
         """
-        results: dict[str, ProviderMedia] = {}
-        for external_id in external_ids:
-            detail = await self.get_by_id(external_id)
+        found: dict[str, ProviderMedia] = {}
+        failed: set[str] = set()
+        consecutive = 0
+        for index, external_id in enumerate(external_ids):
+            try:
+                detail = await self.get_by_id(external_id)
+            except ProviderRateLimited:
+                logger.warning(
+                    "%s rate limited; %d titles left for the next cycle", self.source, len(external_ids) - index
+                )
+                failed.update(external_ids[index:])
+                break
+            except ProviderError:
+                logger.warning("%s failed for %s", self.source, external_id, exc_info=True)
+                failed.add(external_id)
+                consecutive += 1
+                if consecutive >= MAX_CONSECUTIVE_FAILURES:
+                    failed.update(external_ids[index + 1 :])
+                    break
+                continue
+            except (KeyError, TypeError, ValueError, AttributeError):
+                # A payload the mapper can't read. Logged with its traceback so a genuine bug is
+                # visible, and treated as "unknown" so it is stamped rather than retried hourly.
+                logger.exception("unmappable %s payload for %s; skipping it", self.source, external_id)
+                consecutive = 0
+                continue
+            consecutive = 0
             if detail is not None:
-                results[external_id] = detail
-        return results
+                found[external_id] = detail
+        return ProviderBatch(found=found, failed=frozenset(failed))
 
 
 class ListEntryStatus(StrEnum):

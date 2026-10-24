@@ -2,7 +2,14 @@ from collections.abc import Sequence
 from typing import Any, ClassVar
 
 from app.media.models import MediaSource, MediaType
-from app.media.providers.base import SIMILAR_LIMIT, MediaProvider, MediaRef, ProviderMedia, ProviderSearchPage
+from app.media.providers.base import (
+    SIMILAR_LIMIT,
+    MediaProvider,
+    MediaRef,
+    ProviderEpisode,
+    ProviderMedia,
+    ProviderSearchPage,
+)
 from app.media.providers.errors import ProviderUnavailable
 from app.media.providers.http import ProviderHTTPClient
 from app.media.providers.tmdb import mapper
@@ -38,6 +45,23 @@ class TMDBProvider(MediaProvider):
     async def get_by_id(self, external_id: str) -> ProviderMedia | None:
         raw = await self._get(f"/tv/{external_id}", {})
         return mapper.to_media(raw) if raw is not None else None
+
+    async def get_episodes(self, external_id: str) -> tuple[ProviderEpisode, ...] | None:
+        """The show for its season list, then one request per regular season. Sequential, not
+        concurrent: a show has a handful of seasons and TMDB's rate limit is shared with search.
+        """
+        raw_show = await self._get(f"/tv/{external_id}", {})
+        if raw_show is None:
+            return None
+        episodes: list[ProviderEpisode] = []
+        for season_number in mapper.season_numbers(raw_show):
+            raw_season = await self._get(f"/tv/{external_id}/season/{season_number}", {})
+            if raw_season is None:
+                # The show listed this season a moment ago, so a 404 now is not "no episodes":
+                # answering without it would delete the season's stored episodes.
+                raise ProviderUnavailable(f"TMDB season {season_number} of {external_id} returned 404")
+            episodes.extend(mapper.to_episodes(season_number, raw_season))
+        return tuple(episodes)
 
     async def fetch_similar(self, external_id: str) -> Sequence[MediaRef]:
         raw = await self._get(f"/tv/{external_id}/recommendations", {"page": 1})

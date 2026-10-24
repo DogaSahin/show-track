@@ -14,6 +14,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.testing.TestNavHostController
 import androidx.test.core.app.ApplicationProvider
 import com.anarky.showtrack.core.data.repository.AuthRepository
+import com.anarky.showtrack.core.model.CurrentUser
 import com.anarky.showtrack.core.navigation.AppRoute
 import com.anarky.showtrack.core.navigation.AuthRoute
 import com.anarky.showtrack.core.navigation.FavoritesRoute
@@ -350,6 +351,8 @@ class ShowTrackGraphRebuildTest {
         private val hasSession: Boolean,
     ) : AuthRepository {
         override suspend fun hasSession(): Boolean = hasSession
+
+        override suspend fun currentUser(): CurrentUser = error("not exercised by ShowTrackGraphRebuildTest")
 
         override suspend fun currentUserId(): String = error("not exercised by ShowTrackGraphRebuildTest")
 

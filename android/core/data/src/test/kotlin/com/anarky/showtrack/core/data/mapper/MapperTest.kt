@@ -2,17 +2,24 @@ package com.anarky.showtrack.core.data.mapper
 
 import com.anarky.showtrack.core.database.LibraryEntryEntity
 import com.anarky.showtrack.core.model.GenreCount
+import com.anarky.showtrack.core.model.GroupRole
 import com.anarky.showtrack.core.model.MediaSource
 import com.anarky.showtrack.core.model.MediaStatus
 import com.anarky.showtrack.core.model.MediaType
 import com.anarky.showtrack.core.model.UserMediaStatus
 import com.anarky.showtrack.core.network.dto.GenreCountDto
+import com.anarky.showtrack.core.network.dto.GroupActorDto
+import com.anarky.showtrack.core.network.dto.GroupDto
 import com.anarky.showtrack.core.network.dto.LibraryEntryDto
+import com.anarky.showtrack.core.network.dto.LibraryEntryRefDto
 import com.anarky.showtrack.core.network.dto.LibraryStatsDto
 import com.anarky.showtrack.core.network.dto.MediaDto
+import com.anarky.showtrack.core.network.dto.MemberDto
 import com.anarky.showtrack.core.network.dto.PersistedMediaDto
+import com.anarky.showtrack.core.network.dto.ProgressEntryDto
 import com.anarky.showtrack.core.network.dto.RecommendationDto
 import com.anarky.showtrack.core.network.dto.RecommendationReasonDto
+import com.anarky.showtrack.core.network.dto.SearchItemDto
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -111,11 +118,13 @@ class MapperTest {
         assertEquals("Cached Title", entry.media.title)
         assertEquals("https://example.com/cached.jpg", entry.media.coverImageUrl)
         assertEquals(5, entry.media.daysUntilNextEpisode)
+        assertEquals(28, entry.media.totalEpisodes)
     }
 
     @Test
     fun `the domain maps onto the cache row a list needs and nothing more`() {
         val entity = cachedEntity().toDomain().toEntity()
+        assertEquals(28, entity.totalEpisodes)
 
         assertEquals("cached", entity.id)
         // `status.name`, not the wire spelling — which is why the entity mapper reads it back
@@ -308,5 +317,150 @@ class MapperTest {
             title = "Cached Title",
             coverUrl = "https://example.com/cached.jpg",
             daysUntilNextEpisode = 5,
+            totalEpisodes = 28,
         )
+
+    @Test
+    fun `a search item maps its stored id and library status`() {
+        val result =
+            searchItemDto(
+                mediaId = "m-1",
+                entry = LibraryEntryRefDto(id = "e-1", status = "watching"),
+            ).toDomain()!!
+
+        assertEquals("Frieren", result.media.title)
+        assertEquals(MediaSource.ANILIST, result.media.source)
+        assertEquals("m-1", result.mediaId)
+        assertEquals(UserMediaStatus.WATCHING, result.libraryStatus)
+    }
+
+    @Test
+    fun `an untracked search item has no library status`() {
+        val result = searchItemDto(mediaId = null, entry = null).toDomain()!!
+
+        assertNull(result.mediaId)
+        assertNull(result.libraryStatus)
+    }
+
+    /** A title the user tracks must not look addable just because its status is new to this client. */
+    @Test
+    fun `a tracked search item with an unknown status stays tracked`() {
+        val result =
+            searchItemDto(
+                mediaId = "m-1",
+                entry = LibraryEntryRefDto(id = "e-1", status = "rewatching"),
+            ).toDomain()!!
+
+        assertEquals("m-1", result.mediaId)
+        assertEquals(UserMediaStatus.UNKNOWN, result.libraryStatus)
+    }
+
+    @Test
+    fun `a search item with an unknown source is dropped`() {
+        assertNull(searchItemDto(mediaId = null, entry = null).copy(source = "mal").toDomain())
+    }
+
+    @Test
+    fun `a search item with an unknown type is dropped`() {
+        assertNull(searchItemDto(mediaId = null, entry = null).copy(type = "game").toDomain())
+    }
+
+    @Test
+    fun `an unknown media status maps to unknown and the media still maps`() {
+        val media = mediaDto().copy(status = "cancelled").toDomain()
+
+        assertEquals(MediaStatus.UNKNOWN, media.status)
+        assertEquals("One Piece", media.title)
+        assertEquals(MediaSource.ANILIST, media.source)
+        assertEquals(1176, media.nextEpisodeNumber)
+    }
+
+    @Test
+    fun `an unknown media type and source map to unknown`() {
+        val media = mediaDto().copy(type = "movie", source = "mal").toDomain()
+
+        assertEquals(MediaType.UNKNOWN, media.type)
+        assertEquals(MediaSource.UNKNOWN, media.source)
+    }
+
+    @Test
+    fun `a feed or watchlist title with an unknown type and source maps to unknown`() {
+        val summary = mediaDto().copy(type = "movie", source = "mal").toSummary()
+
+        assertEquals(MediaType.UNKNOWN, summary.type)
+        assertEquals(MediaSource.UNKNOWN, summary.source)
+        assertEquals("One Piece", summary.title)
+    }
+
+    @Test
+    fun `a member's progress with an unknown status maps to unknown`() {
+        val progress =
+            ProgressEntryDto(member = GroupActorDto(id = "u-1", username = "mira"), status = "rewatching", progress = 3)
+                .toDomain()
+
+        assertEquals(UserMediaStatus.UNKNOWN, progress.status)
+        assertEquals(3, progress.progress)
+    }
+
+    @Test
+    fun `a recommended title with an unknown type and source maps to unknown`() {
+        val media = persistedMediaDto().copy(type = "movie", source = "mal").toDomain()
+
+        assertEquals(MediaType.UNKNOWN, media.type)
+        assertEquals(MediaSource.UNKNOWN, media.source)
+    }
+
+    @Test
+    fun `a known value still maps case-insensitively`() {
+        assertEquals(MediaStatus.AIRING, mediaDto().copy(status = "Airing").toDomain().status)
+    }
+
+    @Test
+    fun `an unknown library status maps to unknown`() {
+        val entry = libraryEntryDto().copy(status = "rewatching").toDomain()
+
+        assertEquals(UserMediaStatus.UNKNOWN, entry.status)
+        assertEquals("entry-1", entry.id)
+    }
+
+    @Test
+    fun `a cached unknown status round-trips by name`() {
+        val entity = cachedEntity().toDomain().copy(status = UserMediaStatus.UNKNOWN).toEntity()
+
+        assertEquals("UNKNOWN", entity.status)
+        assertEquals(UserMediaStatus.UNKNOWN, entity.toDomain().status)
+        assertEquals(UserMediaStatus.WATCHING, cachedEntity().toDomain().status)
+    }
+
+    @Test
+    fun `an unknown member role maps to unknown`() {
+        val member = MemberDto(userId = "u-1", username = "mia", role = "moderator", joinedAt = "2026-08-26T13:41:10Z")
+
+        assertEquals(GroupRole.UNKNOWN, member.toDomain().role)
+        assertEquals(GroupRole.OWNER, member.copy(role = "owner").toDomain().role)
+    }
+
+    @Test
+    fun `an unknown my_role maps to unknown while a missing one stays null`() {
+        val group = GroupDto(id = "g-1", name = "Couch", createdAt = "2026-08-26T13:41:10Z")
+
+        assertEquals(GroupRole.UNKNOWN, group.copy(myRole = "moderator").toDomain().myRole)
+        assertNull(group.toDomain().myRole)
+        assertEquals(GroupRole.MEMBER, group.copy(myRole = "member").toDomain().myRole)
+    }
+
+    private fun searchItemDto(
+        mediaId: String?,
+        entry: LibraryEntryRefDto?,
+    ) = SearchItemDto(
+        source = "anilist",
+        externalId = "154587",
+        type = "anime",
+        title = "Frieren",
+        year = 2023,
+        genres = listOf("drama"),
+        coverImageUrl = null,
+        mediaId = mediaId,
+        libraryEntry = entry,
+    )
 }

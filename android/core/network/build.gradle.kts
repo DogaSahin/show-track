@@ -35,6 +35,14 @@ android {
     }
 }
 
+// OpenApiContractTest checks every DTO against the backend's committed schema snapshot. The
+// input declaration is what re-runs the test when only the snapshot changes.
+val openApiSnapshot = rootProject.file("../backend/openapi.json")
+tasks.withType<Test>().configureEach {
+    inputs.file(openApiSnapshot).withPropertyName("openApiSnapshot").withPathSensitivity(PathSensitivity.NONE)
+    systemProperty("showtrack.openapi", openApiSnapshot.absolutePath)
+}
+
 dependencies {
     implementation(project(":core:model"))
 

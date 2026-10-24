@@ -16,14 +16,6 @@ import org.junit.Test
  * `GET /v1/library` — with only the credentials in `token_pair.json` replaced. A MockWebServer
  * body written by hand proves the DTOs match the author's assumptions; this proves they match
  * the server. Re-record them whenever the API contract moves.
- *
- * `push_target_created.json` and `push_target_existing.json` were recorded the same way on
- * 2026-08-31, against a backend run with `NTFY_BASE_URL=http://localhost:8080`: register, log in,
- * then POST the same endpoint twice. They were the LAST endpoints to get fixtures and the FIRST
- * that should have — `POST /v1/notifications/targets` is the one contract this phase actually
- * changed, and it was the only one pinned to nothing but the author's reading of the server.
- * The endpoint in them is a made-up topic pointing at localhost; a real one is a bearer secret
- * and would not belong in the repository.
  */
 class WireContractTest {
     // THE instance production uses, taken from the module rather than reconstructed. A private
@@ -35,6 +27,40 @@ class WireContractTest {
         checkNotNull(javaClass.classLoader?.getResourceAsStream("wire/$name")) {
             "missing fixture wire/$name"
         }.use { it.readBytes().decodeToString() }
+
+    /** A body shaped exactly like the backend's GroupSummary. A misspelled @SerialName fails here. */
+    @Test
+    fun `a group summary decodes every field`() {
+        val group =
+            json.decodeFromString<GroupDto>(
+                """
+                {"id": "g-1", "name": "Home", "created_at": "2026-09-01T10:00:00Z", "my_role": "owner",
+                 "member_count": 4, "member_preview": [{"id": "u-1", "username": "mira"}],
+                 "watchlist_count": 6, "watchlist_preview": [{"media_id": "m-1", "cover_image_url": null}]}
+                """.trimIndent(),
+            )
+
+        assertEquals("owner", group.myRole)
+        assertEquals(4, group.memberCount)
+        assertEquals(listOf(GroupActorDto(id = "u-1", username = "mira")), group.memberPreview)
+        assertEquals(6, group.watchlistCount)
+        assertEquals(listOf(WatchlistPreviewDto(mediaId = "m-1", coverImageUrl = null)), group.watchlistPreview)
+    }
+
+    /** A server from before the summary fields still decodes, with every summary field "unknown". */
+    @Test
+    fun `a group without the summary fields still decodes`() {
+        val group =
+            json.decodeFromString<GroupDto>(
+                """{"id": "g-1", "name": "Home", "created_at": "2026-09-01T10:00:00Z"}""",
+            )
+
+        assertNull(group.myRole)
+        assertNull(group.memberCount)
+        assertEquals(emptyList<GroupActorDto>(), group.memberPreview)
+        assertNull(group.watchlistCount)
+        assertEquals(emptyList<WatchlistPreviewDto>(), group.watchlistPreview)
+    }
 
     @Test
     fun `a real library page decodes`() {
@@ -99,38 +125,6 @@ class WireContractTest {
     }
 
     @Test
-    fun `a real push target creation decodes`() {
-        val created = json.decodeFromString<PushTargetDto>(fixture("push_target_created.json"))
-
-        assertEquals("efc74ca0-0359-4cea-9674-449737947621", created.id)
-        // A plain String and not an enum, deliberately — the backend's PushTransport is a VARCHAR
-        // + CHECK it can widen in a migration, and it just did to add this very value.
-        assertEquals("unifiedpush", created.transport)
-        // THE field that makes this response different from every other one on this API: the
-        // creation response is the only place `target` is ever returned. `id` is what the client
-        // stores, because DELETE takes an id and the list shape withholds `target`.
-        assertEquals("http://localhost:8080/upFixtureTopicAbC123", created.target)
-        // Present and null, not absent — the client sends no label.
-        assertNull(created.label)
-        assertEquals("2026-08-30T23:21:37.082496Z", created.createdAt)
-        // Null until the first successful send, which is how a UI can say "registered, never used".
-        assertNull(created.lastSeenAt)
-    }
-
-    @Test
-    fun `a repeat registration returns the same body as the creation`() {
-        // Decision A-O: `onNewEndpoint` fires on every app start, so the second POST is a 200 and
-        // not a 409. The STATUS differs and the BODY does not — Retrofit hands the client the same
-        // shape either way, which is why `PushRepositoryImpl` reads `created.id` without caring
-        // which of the two it got. A server that started returning a different shape on the 200
-        // would break that silently; this is what notices.
-        val created = json.decodeFromString<PushTargetDto>(fixture("push_target_created.json"))
-        val existing = json.decodeFromString<PushTargetDto>(fixture("push_target_existing.json"))
-
-        assertEquals(created, existing)
-    }
-
-    @Test
     fun `request bodies encode the snake_case keys the server requires`() {
         // The failure this catches is silent: a missing @SerialName sends `refreshToken`, the
         // server 422s, and nothing in the client says why.
@@ -145,37 +139,6 @@ class WireContractTest {
     }
 
     @Test
-    fun `the push registration body is byte-identical to the one the server accepted`() {
-        // The exact bytes curl sent to get push_target_created.json back. Encoding the DTO and
-        // comparing to that string is what makes this a CONTRACT test rather than a restatement
-        // of the DTO: it pins the field names, their order, and the two omissions below.
-        assertEquals(
-            """{"transport":"unifiedpush","target":"http://localhost:8080/upFixtureTopicAbC123"}""",
-            json.encodeToString(
-                RegisterTargetRequest(
-                    transport = "unifiedpush",
-                    target = "http://localhost:8080/upFixtureTopicAbC123",
-                    label = null,
-                ),
-            ),
-        )
-    }
-
-    @Test
-    fun `an ntfy registration omits target rather than sending null`() {
-        // NOT cosmetic. The server REJECTS an ntfy registration that supplies a target with a 422
-        // (6-L: it mints the topic itself), and `encodeDefaults` is false, so a null-valued
-        // default is dropped. Turn `encodeDefaults` on in NetworkModule.json and this body becomes
-        // `{"transport":"ntfy","target":null,"label":null}` — which is a different request. This
-        // test is the tripwire on that config, the way the token-pair test is on
-        // `ignoreUnknownKeys`.
-        assertEquals(
-            """{"transport":"ntfy"}""",
-            json.encodeToString(RegisterTargetRequest(transport = "ntfy")),
-        )
-    }
-
-    @Test
     fun `a real registration response decodes`() {
         // Captured from the real POST /v1/auth/register route (task 9a.2's stubbed-provider
         // pytest, not curl) rather than hand-written, so this pins the server's actual UserOut
@@ -186,5 +149,93 @@ class WireContractTest {
         assertEquals("someone", user.username)
         assertEquals("someone@example.com", user.email)
         assertEquals("2026-09-01T08:58:37.582626Z", user.createdAt)
+    }
+
+    /** A body shaped exactly like the backend's SearchItem. A misspelled @SerialName fails here. */
+    @Test
+    fun `a search item decodes what the caller already has of it`() {
+        val item =
+            json.decodeFromString<SearchItemDto>(
+                """
+                {"source": "anilist", "external_id": "154587", "type": "anime", "title": "Frieren",
+                 "year": 2023, "genres": ["drama"], "cover_image_url": null,
+                 "media_id": "m-1", "library_entry": {"id": "e-1", "status": "planned"}}
+                """.trimIndent(),
+            )
+
+        assertEquals("m-1", item.mediaId)
+        assertEquals(LibraryEntryRefDto(id = "e-1", status = "planned"), item.libraryEntry)
+    }
+
+    /** A server from before these fields still decodes: the title is simply unknown to the client. */
+    @Test
+    fun `a search item without the library fields still decodes`() {
+        val item =
+            json.decodeFromString<SearchItemDto>(
+                """
+                {"source": "tmdb", "external_id": "95396", "type": "tv", "title": "Severance",
+                 "year": 2022, "genres": [], "cover_image_url": null}
+                """.trimIndent(),
+            )
+
+        assertNull(item.mediaId)
+        assertNull(item.libraryEntry)
+    }
+
+    @Test
+    fun `a resolve request is sent with the server's field names`() {
+        assertEquals(
+            """{"source":"anilist","external_id":"154587"}""",
+            json.encodeToString(ResolveMediaRequestDto(source = "anilist", externalId = "154587")),
+        )
+    }
+
+    /** A body shaped exactly like the backend's EpisodeList. A misspelled @SerialName fails here. */
+    @Test
+    fun `an episode list decodes every field`() {
+        val list =
+            json.decodeFromString<EpisodeListDto>(
+                """
+                {"synced_at": "2026-10-01T08:00:00Z", "total_episodes": 19,
+                 "seasons": [{"number": 1, "episode_count": 1,
+                   "episodes": [{"id": "e-1", "number": 1, "title": "Good News About Hell",
+                                 "air_date": "2022-02-18", "aired": true}]}]}
+                """.trimIndent(),
+            )
+
+        assertEquals(19, list.totalEpisodes)
+        assertEquals(1, list.seasons.single().episodeCount)
+        assertEquals(
+            EpisodeDto(id = "e-1", number = 1, title = "Good News About Hell", airDate = "2022-02-18", aired = true),
+            list.seasons
+                .single()
+                .episodes
+                .single(),
+        )
+    }
+
+    /** total_episodes rides on every media object; a server without it still decodes. */
+    @Test
+    fun `a media object carries its episode total when the server sends one`() {
+        val base =
+            """"id": "m-1", "source": "tmdb", "external_id": "95396", "type": "tv", "title": "Severance",
+               "year": 2022, "genres": [], "cover_image_url": null, "status": "airing",
+               "next_episode_season": null, "next_episode_number": null, "next_episode_date": null,
+               "days_until_next_episode": null"""
+
+        assertEquals(19, json.decodeFromString<MediaDto>("{$base, \"total_episodes\": 19}").totalEpisodes)
+        assertNull(json.decodeFromString<MediaDto>("{$base}").totalEpisodes)
+    }
+
+    @Test
+    fun `watched episodes travel with the server's field names`() {
+        assertEquals(
+            """{"episode_ids":["e-4","e-5"],"watched":true}""",
+            json.encodeToString(SetWatchedRequestDto(episodeIds = listOf("e-4", "e-5"), watched = true)),
+        )
+        assertEquals(
+            listOf("e-1"),
+            json.decodeFromString<WatchedEpisodesDto>("""{"episode_ids": ["e-1"]}""").episodeIds,
+        )
     }
 }

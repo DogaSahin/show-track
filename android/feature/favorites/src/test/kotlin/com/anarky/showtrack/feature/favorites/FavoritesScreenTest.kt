@@ -1,191 +1,126 @@
 package com.anarky.showtrack.feature.favorites
 
 import android.content.Context
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ApplicationProvider
 import com.anarky.showtrack.core.model.LibraryEntry
-import com.anarky.showtrack.core.model.Media
-import com.anarky.showtrack.core.model.MediaSource
-import com.anarky.showtrack.core.model.MediaStatus
 import com.anarky.showtrack.core.model.MediaType
-import com.anarky.showtrack.core.model.UserMediaStatus
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
-import java.time.Instant
+import org.robolectric.annotation.Config
 import com.anarky.showtrack.core.designsystem.R as DesignSystemR
 
 /**
- * The one user-visible thing this screen can get wrong that no ViewModel test sees (task 9b.4's
- * brief): the empty-state copy. `FavoritesViewModelTest` can only pin that [FavoritesUiState.Success]
- * carries an empty [FavoritesUiState.Success.entries] list; only a composed screen can pin which
- * STRING renders for it.
- *
- * Drives the stateless overload directly, the same shape `LibraryScreenTest`/`DiscoverScreenTest`
- * use. `createComposeRule`, not `createAndroidComposeRule`: no Activity is needed. Robolectric
- * supplies the Android runtime `stringResource` needs; `sdk = 35` is pinned in
- * `src/test/resources/robolectric.properties`.
+ * What the tab renders for each state. The stateless overload, no ViewModel. The display is taller
+ * than a phone so the podium and both shelves are laid out at once.
  */
 @RunWith(RobolectricTestRunner::class)
+@Config(qualifiers = "w411dp-h1400dp")
 class FavoritesScreenTest {
     @get:Rule
     val composeRule = createComposeRule()
 
-    /**
-     * The regression this guards: "Nothing in your library yet" (`LibraryScreen`'s default-filter
-     * empty copy, `library_empty_default`) is FALSE on this screen — a user with a full library
-     * and zero favourites would read it as data loss. [LIBRARY_EMPTY_DEFAULT_COPY] is a literal
-     * snapshot of that string rather than a dependency on `:feature:library`'s `R` class:
-     * `:feature:favorites` does not depend on `:feature:library` even in test sources
-     * (architecture rule 1's whole point — decision D-H duplicates the layout precisely so these
-     * two modules stay independent), so the comparison value has to be copied in, not imported.
-     */
+    private val context = ApplicationProvider.getApplicationContext<Context>()
+
     @Test
-    fun `the empty state shows the favourites copy, not the library copy`() {
-        composeRule.setContent {
-            FavoritesScreen(
-                state = FavoritesUiState.Success(entries = emptyList()),
-                onRetry = {},
-                onLoadMore = {},
-                onEntryClick = {},
-            )
-        }
+    fun `no favourites shows the favourites copy and how to add one`() {
+        setScreen(FavoritesUiState.Success(podium = emptyList(), anime = FavoriteShelf(), tv = FavoriteShelf()))
 
-        val context = ApplicationProvider.getApplicationContext<Context>()
-        composeRule
-            .onNodeWithText(context.getString(R.string.favorites_empty_message))
-            .assertIsDisplayed()
-
-        assertTrue(
-            "favorites_empty_message must not read the same as library's default-filter empty copy",
-            context.getString(R.string.favorites_empty_message) != LIBRARY_EMPTY_DEFAULT_COPY,
-        )
+        composeRule.onNodeWithText(context.getString(R.string.favorites_empty_message)).assertIsDisplayed()
+        composeRule.onNodeWithText(context.getString(R.string.favorites_empty_hint)).assertIsDisplayed()
     }
 
     @Test
-    fun `tapping an entry invokes onEntryClick for that entry`() {
-        var clicked: LibraryEntry? = null
+    fun `the podium reads in rank order and asks for scores when it is not full`() {
+        setScreen(SUCCESS)
 
-        composeRule.setContent {
-            FavoritesScreen(
-                state = FavoritesUiState.Success(entries = listOf(FRIEREN)),
-                onRetry = {},
-                onLoadMore = {},
-                onEntryClick = { clicked = it },
-            )
-        }
-
-        composeRule.onNodeWithText(FRIEREN.media.title).performClick()
-
-        assertEquals(FRIEREN, clicked)
+        // Drawn #2, #1, #3; read #1, #2, #3. The order lives in each place's traversal index.
+        val first = composeRule.onNodeWithContentDescription("Number 1, Frieren, score 9.5").fetchSemanticsNode()
+        val second = composeRule.onNodeWithContentDescription("Number 2, Severance, score 9.0").fetchSemanticsNode()
+        assertTrue(first.config[SemanticsProperties.TraversalIndex] < second.config[SemanticsProperties.TraversalIndex])
+        assertTrue(first.boundsInRoot.left > second.boundsInRoot.left)
+        composeRule.onNodeWithText(context.getString(R.string.favorites_podium_hint)).assertIsDisplayed()
     }
 
-    /**
-     * Decision C-B made real (review finding, round 3): a stale [FavoritesUiState.Success] must
-     * show the `StaleDataBanner` ABOVE the rows, not replace them and not render them silently
-     * unmarked — either of those was the actual bug this state exists to fix. `StaleDataBanner`'s
-     * own retry action is wired straight to [onRetry], the same button `ErrorState`'s uses.
-     */
     @Test
-    fun `a stale success shows the stale banner above the entries, and its retry invokes onRetry`() {
+    fun `see all opens that shelf's grid, and a shelf with no favourites is hidden`() {
+        var seeAll: MediaType? = null
+        setScreen(SUCCESS.copy(tv = FavoriteShelf()), onSeeAll = { seeAll = it })
+
+        composeRule.onNodeWithText(context.getString(R.string.favorites_row_tv)).assertDoesNotExist()
+        composeRule.onNodeWithText(context.getString(R.string.favorites_see_all)).performClick()
+
+        assertEquals(MediaType.ANIME, seeAll)
+    }
+
+    @Test
+    fun `tapping a shelf poster opens it`() {
+        var opened: LibraryEntry? = null
+        setScreen(SUCCESS, onOpen = { opened = it })
+
+        composeRule.onNodeWithText(UNSCORED.media.title).performClick()
+
+        assertEquals(UNSCORED, opened)
+    }
+
+    @Test
+    fun `a stale screen keeps its rows under the banner, and the banner retries`() {
         var retried = false
+        setScreen(SUCCESS.copy(isStale = true), onRetry = { retried = true })
 
-        composeRule.setContent {
-            FavoritesScreen(
-                state = FavoritesUiState.Success(entries = listOf(FRIEREN), isStale = true),
-                onRetry = { retried = true },
-                onLoadMore = {},
-                onEntryClick = {},
-            )
-        }
-
-        composeRule.onNodeWithText(FRIEREN.media.title).assertIsDisplayed()
-
-        val context = ApplicationProvider.getApplicationContext<Context>()
-        composeRule
-            .onNodeWithText(context.getString(DesignSystemR.string.stale_data_notice))
-            .assertIsDisplayed()
-        composeRule
-            .onNodeWithText(context.getString(DesignSystemR.string.action_retry))
-            .performClick()
+        composeRule.onNodeWithText(UNSCORED.media.title).assertIsDisplayed()
+        composeRule.onNodeWithText(context.getString(DesignSystemR.string.action_retry)).performClick()
 
         assertTrue(retried)
     }
 
     @Test
-    fun `a non-stale success shows no stale banner`() {
-        composeRule.setContent {
-            FavoritesScreen(
-                state = FavoritesUiState.Success(entries = listOf(FRIEREN), isStale = false),
-                onRetry = {},
-                onLoadMore = {},
-                onEntryClick = {},
-            )
-        }
-
-        val context = ApplicationProvider.getApplicationContext<Context>()
-        composeRule
-            .onNodeWithText(context.getString(DesignSystemR.string.stale_data_notice))
-            .assertDoesNotExist()
-    }
-
-    @Test
-    fun `an error state's retry action invokes onRetry`() {
+    fun `an error offers retry`() {
         var retried = false
+        setScreen(FavoritesUiState.Error(IllegalStateException("offline")), onRetry = { retried = true })
 
-        composeRule.setContent {
-            FavoritesScreen(
-                state = FavoritesUiState.Error(IllegalStateException("offline")),
-                onRetry = { retried = true },
-                onLoadMore = {},
-                onEntryClick = {},
-            )
-        }
-
-        val context = ApplicationProvider.getApplicationContext<Context>()
-        composeRule
-            .onNodeWithText(context.getString(DesignSystemR.string.action_retry))
-            .performClick()
+        composeRule.onNodeWithText(context.getString(R.string.favorites_error_message)).assertIsDisplayed()
+        composeRule.onNodeWithText(context.getString(DesignSystemR.string.action_retry)).performClick()
 
         assertTrue(retried)
+    }
+
+    private fun setScreen(
+        state: FavoritesUiState,
+        onRetry: () -> Unit = {},
+        onOpen: (LibraryEntry) -> Unit = {},
+        onSeeAll: (MediaType) -> Unit = {},
+    ) {
+        composeRule.setContent {
+            FavoritesScreen(
+                state = state,
+                onRetry = onRetry,
+                onLoadMore = {},
+                onOpen = onOpen,
+                onRemove = {},
+                onSeeAll = onSeeAll,
+            )
+        }
     }
 
     private companion object {
-        // A literal snapshot of `feature/library/src/main/res/values/strings.xml`'s
-        // `library_empty_default` — see the test above's KDoc for why this is copied rather than
-        // imported.
-        const val LIBRARY_EMPTY_DEFAULT_COPY = "Nothing in your library yet"
-
-        val FRIEREN =
-            LibraryEntry(
-                id = "entry-frieren",
-                status = UserMediaStatus.WATCHING,
-                score = null,
-                progress = 3,
-                favorite = true,
-                updatedAt = Instant.parse("2026-08-28T10:15:30Z"),
-                media =
-                    Media(
-                        id = "media-frieren",
-                        source = MediaSource.ANILIST,
-                        externalId = "154587",
-                        type = MediaType.ANIME,
-                        title = "Frieren",
-                        year = 2023,
-                        genres = listOf("fantasy"),
-                        coverImageUrl = null,
-                        status = MediaStatus.AIRING,
-                        nextEpisodeSeason = null,
-                        nextEpisodeNumber = null,
-                        nextEpisodeDate = null,
-                        daysUntilNextEpisode = null,
-                    ),
+        val FRIEREN = favourite(id = "frieren", title = "Frieren: Beyond Journey's End", score = "9.5")
+        val SEVERANCE = favourite(id = "severance", title = "Severance", type = MediaType.TV, score = "9.0")
+        val UNSCORED = favourite(id = "unscored", title = "Mushishi")
+        val SUCCESS =
+            FavoritesUiState.Success(
+                podium = listOf(FRIEREN, SEVERANCE),
+                anime = FavoriteShelf(entries = listOf(FRIEREN, UNSCORED)),
+                tv = FavoriteShelf(entries = listOf(SEVERANCE)),
             )
     }
 }

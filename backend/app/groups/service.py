@@ -1,7 +1,7 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select, tuple_
+from sqlalchemy import case, func, select, tuple_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,7 +9,15 @@ from app.config import get_settings
 from app.db import FOREIGN_KEY_VIOLATION, UNIQUE_VIOLATION
 from app.groups import invites
 from app.groups.models import Group, GroupMember, GroupRole, GroupWatchlist
-from app.groups.schemas import FeedActor, FeedItem, ProgressEntry, WatchlistItem
+from app.groups.schemas import (
+    FeedActor,
+    FeedItem,
+    GroupSummary,
+    MemberPreview,
+    ProgressEntry,
+    WatchlistItem,
+    WatchlistPreview,
+)
 from app.library.models import Activity, Review, UserMedia
 from app.library.schemas import ReviewRead
 from app.library.service import MediaMissing, to_review_read
@@ -63,7 +71,17 @@ async def resolve_invite_code(session: AsyncSession, code: str, *, now: datetime
     and normalise_code("---") both return "", and equality against a column whose every value
     is 12 characters can never match that; a prefix match would match everything.
     """
-    group = await session.scalar(select(Group).where(Group.invite_code == invites.normalise_code(code)))
+    group = await session.scalar(
+        select(Group)
+        .where(Group.invite_code == invites.normalise_code(code))
+        # FOR SHARE conflicts with remove_member's FOR UPDATE on this row. A join or register that
+        # resolves while a removal is in flight waits for it, then Postgres re-checks
+        # `invite_code = :code` against the rotated row and finds nothing - so the removed member
+        # can't slip back in through the gap. On the register path the lock is held across the
+        # argon2 hash, delaying a concurrent removal by about one hash; fine at this scale.
+        .with_for_update(read=True)
+        .execution_options(populate_existing=True)
+    )
     if group is None or group.invite_code_expires_at <= now:
         return None
     return group
@@ -111,13 +129,15 @@ async def join_by_code(session: AsyncSession, *, code: str, user: User, now: dat
         # the constraint is the arbiter, and the loser gets the same answer it would have got a
         # millisecond earlier.
         #
-        # A foreign-key violation means the group was deleted underneath us: remove_member takes
-        # FOR UPDATE on the `groups` row and drops the group when its last member leaves, while
-        # this INSERT needs FOR KEY SHARE on that same row. A join that resolved the code just
-        # before a departure commits therefore blocks for the whole leave transaction and then
-        # fails the FK deterministically. Reporting `(group, False)` there would answer 200 with
-        # GroupWithInvite — handing the caller a group AND its invite code that no longer exist
-        # (expire_on_commit=False lets the stale object serialise without a murmur).
+        # A foreign-key violation means the group was deleted underneath us. remove_member takes
+        # FOR UPDATE on the `groups` row and drops the group when its last member leaves, and
+        # resolve_invite_code already holds FOR SHARE on that row, so the two serialise: a leave
+        # that locked first makes the resolve wait and then find nothing (None above), and a join
+        # that resolved first makes the leave wait for it. This branch is therefore a fallback
+        # for an ordering that should not occur, not an expected path. If it is reached anyway,
+        # reporting `(group, False)` would answer 200 with GroupWithInvite — handing the caller a
+        # group AND its invite code that no longer exist (expire_on_commit=False lets the stale
+        # object serialise without a murmur).
         already = await session.scalar(
             select(GroupMember.id).where(GroupMember.group_id == group.id, GroupMember.user_id == user.id)
         )
@@ -125,14 +145,106 @@ async def join_by_code(session: AsyncSession, *, code: str, user: User, now: dat
     return group, True
 
 
-async def list_groups(session: AsyncSession, *, user_id: uuid.UUID) -> list[Group]:
-    statement = (
-        select(Group)
-        .join(GroupMember, GroupMember.group_id == Group.id)
-        .where(GroupMember.user_id == user_id)
-        .order_by(Group.created_at.asc(), Group.id.asc())
+MEMBER_PREVIEW_SIZE = 4
+WATCHLIST_PREVIEW_SIZE = 4
+
+
+async def list_group_summaries(session: AsyncSession, *, user_id: uuid.UUID) -> list[GroupSummary]:
+    """The caller's groups with their role, counts and previews, in THREE queries however many
+    groups there are: the groups with the caller's role, then one ranked query each for members
+    and watchlist. Each ranked query carries its partition's total as a window count, computed
+    before the rank filter, so the counts cost no extra query.
+
+    Scoping: the first query only returns groups the caller belongs to, and the other two only
+    read rows of those group ids.
+    """
+    rows = (
+        await session.execute(
+            select(Group, GroupMember.role)
+            .join(GroupMember, GroupMember.group_id == Group.id)
+            .where(GroupMember.user_id == user_id)
+            .order_by(Group.created_at.asc(), Group.id.asc())
+        )
+    ).all()
+    if not rows:
+        return []
+    group_ids = [group.id for group, _ in rows]
+
+    owner_first = case((GroupMember.role == GroupRole.OWNER, 0), else_=1)
+    members = (
+        select(
+            GroupMember.group_id,
+            User.id.label("user_id"),
+            User.username,
+            func.row_number()
+            .over(
+                partition_by=GroupMember.group_id,
+                order_by=(owner_first, GroupMember.joined_at.asc(), GroupMember.id.asc()),
+            )
+            .label("rank"),
+            func.count().over(partition_by=GroupMember.group_id).label("total"),
+        )
+        .join(User, User.id == GroupMember.user_id)
+        .where(GroupMember.group_id.in_(group_ids))
+        .subquery()
     )
-    return list(await session.scalars(statement))
+    member_rows = (
+        await session.execute(
+            select(members).where(members.c.rank <= MEMBER_PREVIEW_SIZE).order_by(members.c.group_id, members.c.rank)
+        )
+    ).all()
+
+    watchlist = (
+        select(
+            GroupWatchlist.group_id,
+            GroupWatchlist.media_id,
+            Media.cover_image_url,
+            func.row_number()
+            .over(
+                partition_by=GroupWatchlist.group_id,
+                order_by=(GroupWatchlist.created_at.desc(), GroupWatchlist.id.desc()),
+            )
+            .label("rank"),
+            func.count().over(partition_by=GroupWatchlist.group_id).label("total"),
+        )
+        .join(Media, Media.id == GroupWatchlist.media_id)
+        .where(GroupWatchlist.group_id.in_(group_ids))
+        .subquery()
+    )
+    watchlist_rows = (
+        await session.execute(
+            select(watchlist)
+            .where(watchlist.c.rank <= WATCHLIST_PREVIEW_SIZE)
+            .order_by(watchlist.c.group_id, watchlist.c.rank)
+        )
+    ).all()
+
+    member_preview: dict[uuid.UUID, list[MemberPreview]] = {}
+    member_count: dict[uuid.UUID, int] = {}
+    for row in member_rows:
+        member_preview.setdefault(row.group_id, []).append(MemberPreview(id=row.user_id, username=row.username))
+        member_count[row.group_id] = row.total
+    watchlist_preview: dict[uuid.UUID, list[WatchlistPreview]] = {}
+    watchlist_count: dict[uuid.UUID, int] = {}
+    for row in watchlist_rows:
+        watchlist_preview.setdefault(row.group_id, []).append(
+            WatchlistPreview(media_id=row.media_id, cover_image_url=row.cover_image_url)
+        )
+        watchlist_count[row.group_id] = row.total
+
+    return [
+        GroupSummary(
+            id=group.id,
+            name=group.name,
+            created_at=group.created_at,
+            my_role=role,
+            member_count=member_count.get(group.id, 0),
+            member_preview=member_preview.get(group.id, []),
+            watchlist_count=watchlist_count.get(group.id, 0),
+            watchlist_preview=watchlist_preview.get(group.id, []),
+        )
+        for group, role in rows
+    ]
 
 
 async def list_members(session: AsyncSession, *, group_id: uuid.UUID) -> list[tuple[GroupMember, User]]:
@@ -164,7 +276,7 @@ class NotPermitted(Exception):
 
 
 async def remove_member(
-    session: AsyncSession, *, group_id: uuid.UUID, actor: GroupMember, target_user_id: uuid.UUID
+    session: AsyncSession, *, group_id: uuid.UUID, actor: GroupMember, target_user_id: uuid.UUID, now: datetime
 ) -> None:
     """Remove `target_user_id` from the group, applying G-E's two lifecycle rules.
 
@@ -187,7 +299,9 @@ async def remove_member(
     # skipped the transfer branch and simply deleted the row tx1 had just made owner.) The group
     # row is the natural lock: it is the one row every participant in the race touches, so no
     # ordering between two locks exists to deadlock on.
-    group = await session.scalar(select(Group).where(Group.id == group_id).with_for_update())
+    group = await session.scalar(
+        select(Group).where(Group.id == group_id).with_for_update().execution_options(populate_existing=True)
+    )
 
     target = await session.scalar(
         select(GroupMember)
@@ -221,6 +335,11 @@ async def remove_member(
 
     await session.delete(target)
     await session.flush()
+    if not is_self:
+        # An owner removing someone: the removed member holds the invite code (create and join
+        # both return it), so it must die with their membership. Same transaction, under the
+        # group row lock taken above. Leaving on your own doesn't rotate - nothing to revoke.
+        await rotate_invite_code(session, group=group, now=now)
 
 
 FEED_SORT_KEY = "created_at"

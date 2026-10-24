@@ -11,6 +11,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.testing.TestNavHostController
 import androidx.navigation.toRoute
 import androidx.test.core.app.ApplicationProvider
+import com.anarky.showtrack.core.data.paging.Page
 import com.anarky.showtrack.core.data.repository.LibraryRepository
 import com.anarky.showtrack.core.model.LibraryEntry
 import com.anarky.showtrack.core.model.Media
@@ -19,6 +20,7 @@ import com.anarky.showtrack.core.model.MediaStatus
 import com.anarky.showtrack.core.model.MediaType
 import com.anarky.showtrack.core.model.UserMediaStatus
 import com.anarky.showtrack.core.navigation.DetailRoute
+import com.anarky.showtrack.core.navigation.FavoritesGridRoute
 import com.anarky.showtrack.core.navigation.FavoritesRoute
 import dagger.hilt.android.testing.BindValue
 import dagger.hilt.android.testing.HiltAndroidRule
@@ -58,7 +60,8 @@ class FavoritesEntryHiltTest {
     // reach in and set `refreshResult` afterward.
     @BindValue
     @JvmField
-    val libraryRepository: LibraryRepository = FakeLibraryRepository(refreshResult = listOf(favouriteEntry()))
+    val libraryRepository: LibraryRepository =
+        FakeLibraryRepository(mutableMapOf((MediaType.ANIME to null) to Page(listOf(favouriteEntry()), null)))
 
     @Before
     fun setUp() = hiltRule.inject()
@@ -90,6 +93,30 @@ class FavoritesEntryHiltTest {
         // (measured, round 1 fix: it did not).
         val mediaId = navController.currentBackStackEntry?.toRoute<DetailRoute>()?.mediaId
         assertEquals("media-1", mediaId)
+    }
+
+    @Test
+    fun `see all navigates to the grid for that shelf's type`() {
+        lateinit var navController: TestNavHostController
+
+        composeRule.setContent {
+            navController =
+                remember {
+                    TestNavHostController(ApplicationProvider.getApplicationContext<Context>()).apply {
+                        navigatorProvider.addNavigator(ComposeNavigator())
+                    }
+                }
+            NavHost(navController = navController, startDestination = FavoritesRoute) {
+                favoritesEntry(onNavigate = navController::navigate)
+                composable<FavoritesGridRoute> { }
+            }
+        }
+
+        composeRule
+            .onNodeWithText(ApplicationProvider.getApplicationContext<Context>().getString(R.string.favorites_see_all))
+            .performClick()
+
+        assertEquals("anime", navController.currentBackStackEntry?.toRoute<FavoritesGridRoute>()?.type)
     }
 
     private companion object {

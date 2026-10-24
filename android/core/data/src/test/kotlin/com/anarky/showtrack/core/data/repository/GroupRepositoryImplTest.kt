@@ -1,13 +1,17 @@
 package com.anarky.showtrack.core.data.repository
 
 import com.anarky.showtrack.core.model.ActivityKind
+import com.anarky.showtrack.core.model.GroupActor
 import com.anarky.showtrack.core.model.GroupFailure
 import com.anarky.showtrack.core.model.GroupRole
 import com.anarky.showtrack.core.model.UserMediaStatus
+import com.anarky.showtrack.core.model.WatchlistCover
 import com.anarky.showtrack.core.network.api.ShowTrackApi
 import com.anarky.showtrack.core.network.dto.AddLibraryEntryRequest
+import com.anarky.showtrack.core.network.dto.AppReleaseDto
 import com.anarky.showtrack.core.network.dto.CreateGroupRequestDto
 import com.anarky.showtrack.core.network.dto.CreateReviewRequestDto
+import com.anarky.showtrack.core.network.dto.EpisodeListDto
 import com.anarky.showtrack.core.network.dto.FeedItemDto
 import com.anarky.showtrack.core.network.dto.FeedPageDto
 import com.anarky.showtrack.core.network.dto.GroupActorDto
@@ -24,19 +28,22 @@ import com.anarky.showtrack.core.network.dto.MediaSearchResponseDto
 import com.anarky.showtrack.core.network.dto.MemberDto
 import com.anarky.showtrack.core.network.dto.ProgressEntryDto
 import com.anarky.showtrack.core.network.dto.ProposeTitleRequestDto
-import com.anarky.showtrack.core.network.dto.PushTargetDto
 import com.anarky.showtrack.core.network.dto.RecommendationPageDto
-import com.anarky.showtrack.core.network.dto.RegisterTargetRequest
+import com.anarky.showtrack.core.network.dto.ResolveMediaRequestDto
 import com.anarky.showtrack.core.network.dto.ReviewDto
+import com.anarky.showtrack.core.network.dto.SetWatchedRequestDto
 import com.anarky.showtrack.core.network.dto.UserDto
+import com.anarky.showtrack.core.network.dto.WatchedEpisodesDto
 import com.anarky.showtrack.core.network.dto.WatchlistItemDto
 import com.anarky.showtrack.core.network.dto.WatchlistPageDto
+import com.anarky.showtrack.core.network.dto.WatchlistPreviewDto
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import okhttp3.ResponseBody
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -159,6 +166,49 @@ class GroupRepositoryImplTest {
             assertNull((groupFailure as GroupFailure.AlreadyReviewed).existingReviewId)
         }
 
+    @Test
+    fun `groups map the summary, and a role this client does not know reads as unknown`() =
+        runTest {
+            val api = FakeApi()
+            api.groupsResponse =
+                listOf(
+                    GroupDto(
+                        id = "group-1",
+                        name = "Home",
+                        createdAt = "2026-09-01T10:00:00Z",
+                        myRole = "owner",
+                        memberCount = 4,
+                        memberPreview = listOf(GroupActorDto(id = "user-1", username = "mira")),
+                        watchlistCount = 6,
+                        watchlistPreview = listOf(WatchlistPreviewDto(mediaId = "media-1", coverImageUrl = null)),
+                    ),
+                    GroupDto(id = "group-2", name = "Club", createdAt = "2026-09-02T10:00:00Z", myRole = "moderator"),
+                )
+
+            val (home, club) = repository(api).groups()
+
+            assertEquals(GroupRole.OWNER, home.myRole)
+            assertEquals(4, home.memberCount)
+            assertEquals(listOf(GroupActor(id = "user-1", username = "mira")), home.memberPreview)
+            assertEquals(6, home.watchlistCount)
+            assertEquals(listOf(WatchlistCover(mediaId = "media-1", coverImageUrl = null)), home.watchlistPreview)
+            assertEquals(GroupRole.UNKNOWN, club.myRole)
+            assertNull(club.memberCount)
+        }
+
+    @Test
+    fun `invite reads the current code, and a 403 surfaces NotPermitted`() =
+        runTest {
+            val api = FakeApi()
+
+            val current = repository(api).invite("group-1")
+            api.inviteFailure = httpError(403)
+            val failure = runCatching { repository(api).invite("group-1") }.exceptionOrNull()
+
+            assertEquals(api.groupWithInviteResponse.inviteCode, current.inviteCode)
+            assertEquals(GroupFailure.NotPermitted, (failure as GroupOperationException).failure)
+        }
+
     /**
      * The UI hides owner-only actions (E-F), so this should be unreachable — which is exactly why
      * it needs a test: if the hiding regresses, this is the behaviour the user gets.
@@ -253,6 +303,19 @@ class GroupRepositoryImplTest {
                 runCatching {
                     repository(api).updateReview(reviewId = "review-1", body = "edited", containsSpoilers = null)
                 }.exceptionOrNull()
+
+            assertEquals(GroupFailure.NoSuchEntry, (failure as GroupOperationException).failure)
+        }
+
+    @Test
+    fun `deleting a review sends its id, and someone else's or a missing one is NoSuchEntry`() =
+        runTest {
+            val api = FakeApi()
+            repository(api).deleteReview("review-1")
+            assertEquals(listOf("review-1"), api.deletedReviews)
+
+            api.deleteReviewFailure = httpError(404)
+            val failure = runCatching { repository(api).deleteReview("review-2") }.exceptionOrNull()
 
             assertEquals(GroupFailure.NoSuchEntry, (failure as GroupOperationException).failure)
         }
@@ -600,6 +663,13 @@ class GroupRepositoryImplTest {
 
         override suspend fun groupMembers(groupId: String): List<MemberDto> = membersResponse
 
+        var inviteFailure: Throwable? = null
+
+        override suspend fun groupInvite(groupId: String): GroupWithInviteDto {
+            inviteFailure?.let { throw it }
+            return groupWithInviteResponse
+        }
+
         override suspend fun rotateGroupInvite(groupId: String): GroupWithInviteDto {
             rotateFailure?.let { throw it }
             return groupWithInviteResponse
@@ -668,6 +738,14 @@ class GroupRepositoryImplTest {
 
         var updateReviewFailure: Throwable? = null
 
+        var deleteReviewFailure: Throwable? = null
+        val deletedReviews = mutableListOf<String>()
+
+        override suspend fun deleteReview(id: String) {
+            deleteReviewFailure?.let { throw it }
+            deletedReviews += id
+        }
+
         override suspend fun updateReview(
             id: String,
             patch: JsonObject,
@@ -685,11 +763,16 @@ class GroupRepositoryImplTest {
             sort: String?,
             mediaId: String?,
             favorite: Boolean?,
+            type: String?,
         ): LibraryPageDto = error("not used")
 
         override suspend fun addLibraryEntry(request: AddLibraryEntryRequest): LibraryEntryDto = error("not used")
 
         override suspend fun libraryStats(): LibraryStatsDto = error("not used")
+
+        override suspend fun latestRelease(): Response<AppReleaseDto> = error("not used")
+
+        override suspend fun downloadRelease(): ResponseBody = error("not used")
 
         override suspend fun importAniList(request: ImportAniListRequest): ImportSummaryDto = error("not used")
 
@@ -705,14 +788,23 @@ class GroupRepositoryImplTest {
 
         override suspend fun mediaDetail(id: String): MediaDto = error("not used")
 
+        override suspend fun resolveMedia(request: ResolveMediaRequestDto): MediaDto = error("not used")
+
+        override suspend fun mediaEpisodes(id: String): EpisodeListDto = error("not used")
+
+        override suspend fun deleteLibraryEntry(id: String): Unit = error("not used here")
+
+        override suspend fun watchedEpisodes(id: String): WatchedEpisodesDto = error("not used")
+
+        override suspend fun setWatchedEpisodes(
+            id: String,
+            request: SetWatchedRequestDto,
+        ): LibraryEntryDto = error("not used")
+
         // GroupRepositoryImpl no longer calls api.me() (round 1 review moved currentUserId() to
         // AuthRepositoryImpl — see GroupRepository.kt's own KDoc) — kept as a loud failure, not a
         // stub answer, so a regression that reintroduces the call here is caught immediately.
         override suspend fun me(): UserDto = error("not used")
-
-        override suspend fun registerPushTarget(request: RegisterTargetRequest): PushTargetDto = error("not used")
-
-        override suspend fun deletePushTarget(id: String): Unit = error("not used")
 
         override suspend fun recommendations(
             cursor: String?,

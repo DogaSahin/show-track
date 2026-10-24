@@ -40,7 +40,7 @@ import java.time.Instant
 fun LibraryEntryDto.toDomain(): LibraryEntry =
     LibraryEntry(
         id = id,
-        status = UserMediaStatus.valueOf(status.uppercase()),
+        status = wireEnum(status, UserMediaStatus.UNKNOWN),
         score = score?.let(::BigDecimal),
         progress = progress,
         favorite = favorite,
@@ -49,12 +49,9 @@ fun LibraryEntryDto.toDomain(): LibraryEntry =
     )
 
 /**
- * `by_status` keys that don't map to a known [UserMediaStatus] are DROPPED, not thrown on —
- * `mapNotNull` here matches `SearchMapper.toDomain`'s treatment of an unknown `MediaSource`: the
- * client must not crash when the server reports a status it has never heard of. The conversion
- * itself, `UserMediaStatus.valueOf(status.uppercase())`, is the exact expression [LibraryEntryDto.toDomain]
- * above uses for a single entry's status — reused rather than re-invented, just guarded with
- * `runCatching` here because THIS caller must survive an unknown key instead of throwing on it.
+ * `by_status` keys that don't map to a known [UserMediaStatus] are DROPPED rather than kept as an
+ * `UNKNOWN` bucket: the stats screen has no row to show for a status it cannot name. Decoding is
+ * [wireEnum], the same tolerant rule [LibraryEntryDto.toDomain] uses for a single entry.
  *
  * `average_score` is `BigDecimal(String)`, never a trip through `Double` — see
  * [LibraryEntryDto.toDomain]'s own KDoc for why that conversion specifically (not
@@ -68,7 +65,9 @@ fun LibraryStatsDto.toDomain(): LibraryStats =
         byStatus =
             byStatus
                 .mapNotNull { (status, count) ->
-                    runCatching { UserMediaStatus.valueOf(status.uppercase()) }.getOrNull()?.let { it to count }
+                    wireEnum(status, UserMediaStatus.UNKNOWN)
+                        .takeIf { it != UserMediaStatus.UNKNOWN }
+                        ?.let { it to count }
                 }.toMap(),
         averageScore = averageScore?.let(::BigDecimal),
         ratedCount = ratedCount,
@@ -92,13 +91,13 @@ fun ImportSummaryDto.toDomain(): ImportSummary =
  * truth. Widening the table to make this mapper total is the change that would quietly turn
  * Room into the thing the app believes, so it is not a gap to be "fixed" in passing.
  *
- * `status` needs no `uppercase()` here, unlike the DTO mapper: [toEntity] writes `status.name`,
- * so the column already holds the enum's own spelling.
+ * `status` is decoded with [wireEnum] like the DTO mapper: [toEntity] writes `status.name`, so the
+ * column holds the enum's own spelling (including `UNKNOWN`, which round-trips by name).
  */
 fun LibraryEntryEntity.toDomain(): LibraryEntry =
     LibraryEntry(
         id = id,
-        status = UserMediaStatus.valueOf(status),
+        status = wireEnum(status, UserMediaStatus.UNKNOWN),
         score = score?.let(::BigDecimal),
         progress = progress,
         favorite = favorite,
@@ -120,6 +119,7 @@ fun LibraryEntryEntity.toDomain(): LibraryEntry =
                 nextEpisodeNumber = null,
                 nextEpisodeDate = null,
                 daysUntilNextEpisode = daysUntilNextEpisode,
+                totalEpisodes = totalEpisodes,
             ),
     )
 
@@ -140,4 +140,5 @@ fun LibraryEntry.toEntity(): LibraryEntryEntity =
         title = media.title,
         coverUrl = media.coverImageUrl,
         daysUntilNextEpisode = media.daysUntilNextEpisode,
+        totalEpisodes = media.totalEpisodes,
     )

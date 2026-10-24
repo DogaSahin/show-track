@@ -16,4 +16,40 @@
     <!-- A failed loadMore() (FavoritesUiState.Success.pageError) — the already-loaded list stays
          on screen underneath this footer, mirroring library_page_error/discover_page_error. -->
     <string name="favorites_page_error">Couldn\'t load more. Tap to retry.</string>
+
+    <!-- Under favorites_empty_message: how a title gets here. -->
+    <string name="favorites_empty_hint">Tap the heart on any show to add it here.</string>
+
+    <!-- The two shelves, their See all, and the grid each opens. -->
+    <string name="favorites_row_anime">Anime</string>
+    <string name="favorites_row_tv">TV</string>
+    <string name="favorites_see_all">See all</string>
+    <string name="favorites_see_all_title_anime">Anime favorites</string>
+    <string name="favorites_see_all_title_tv">TV favorites</string>
+    <string name="favorites_back">Back</string>
+    <!-- The grid's count, shown once every page has loaded. -->
+    <plurals name="favorites_grid_count">
+        <item quantity="one">%d show</item>
+        <item quantity="other">%d shows</item>
+    </plurals>
+    <string name="favorites_sort_score">By score</string>
+    <string name="favorites_sort_title">By title</string>
+    <!-- What TalkBack says for the grid's sort button. %1$s is the current sort. -->
+    <string name="favorites_sort_description">Sort: %1$s</string>
+
+    <!-- The podium. Shown above it when fewer than three favorites have a score. -->
+    <string name="favorites_podium_hint">Score your favorites to fill the podium.</string>
+    <!-- How TalkBack reads a poster's score badge, instead of "black star 9.5". -->
+    <string name="favorites_score_description">score %1$s</string>
+    <!-- How TalkBack reads one podium place, in rank order: "Number 1, Frieren, score 9.5". -->
+    <string name="favorites_podium_place">Number %1$d, %2$s, score %3$s</string>
+
+    <!-- The long-press menu on any poster, and what follows a removal. %1$s is the title. -->
+    <string name="favorites_open_action">Open</string>
+    <string name="favorites_remove_action">Remove from favorites</string>
+    <string name="favorites_removed_snackbar">Removed %1$s from favorites</string>
+    <string name="favorites_removed_undo">Undo</string>
+    <!-- A removal or an undo the server refused; the poster is back where it was. Same wording as
+         show details' own edit error, which this module cannot reach. -->
+    <string name="favorites_edit_error">Couldn\'t save your change. Try again.</string>
 </resources>

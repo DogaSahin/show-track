@@ -73,7 +73,17 @@ class GroupDetailViewModel
         private val groupRepository: GroupRepository,
         private val authRepository: AuthRepository,
     ) : ViewModel() {
-        private val groupId: String = savedStateHandle.toRoute<GroupDetailRoute>().groupId
+        private val route = savedStateHandle.toRoute<GroupDetailRoute>()
+        val groupId: String = route.groupId
+
+        /** The name the groups list passed along, for the header; null when the caller had none. */
+        val groupName: String? = route.groupName
+
+        private val mutableInvite = MutableStateFlow<InviteState>(InviteState.Unknown)
+
+        /** The owner's current invite code. See [loadInvite]. */
+        val invite: StateFlow<InviteState> = mutableInvite.asStateFlow()
+        private var inviteRequested = false
 
         private val mutableState = MutableStateFlow<GroupDetailUiState>(GroupDetailUiState.Loading)
         val state: StateFlow<GroupDetailUiState> = mutableState.asStateFlow()
@@ -332,7 +342,12 @@ class GroupDetailViewModel
                 // watchlistItems' own nothingToShow check, suppressed the empty state in favour of a
                 // bare error row even once the reload genuinely came back empty.
                 mutableState.value =
-                    current.copy(watchlist = items, watchlistIsStale = false, watchlistPageError = null)
+                    current.copy(
+                        watchlist = items,
+                        watchlistIsStale = false,
+                        watchlistPageError = null,
+                        watchlistComplete = !watchlistPaginator.hasMore.value,
+                    )
             } catch (failure: GroupOperationException) {
                 val current = mutableState.value as? GroupDetailUiState.Success ?: return
                 mutableState.value = current.copy(watchlistIsStale = true)
@@ -399,6 +414,7 @@ class GroupDetailViewModel
                     mutableState.value =
                         latest.copy(
                             watchlist = watchlistPaginator.items.value,
+                            watchlistComplete = !watchlistPaginator.hasMore.value,
                             watchlistLoadingMore = false,
                             watchlistPageError = null,
                         )
@@ -481,6 +497,30 @@ class GroupDetailViewModel
         }
 
         /**
+         * Reads the current invite code for the strip, once. The screen calls this only after its
+         * own owner check (members + [currentUserId], E-F) says the viewer owns the group, so a
+         * member never sends the request. Not a rotate: the code already shared keeps working. A
+         * failure (including a 403 if ownership moved meanwhile) leaves the strip on its fallback.
+         */
+        fun loadInvite() {
+            if (inviteRequested) return
+            inviteRequested = true
+            viewModelScope.launch {
+                val loaded =
+                    try {
+                        InviteState.Ready(groupRepository.invite(groupId))
+                    } catch (_: GroupOperationException) {
+                        inviteRequested = false
+                        InviteState.Unavailable
+                    }
+                // Never over a code already showing: a rotate that landed while this read was in
+                // flight has put the NEW code there, and the read's answer is the old, now-dead one.
+                // A retry after a failure (Unavailable) does fill in.
+                if (mutableInvite.value !is InviteState.Ready) mutableInvite.value = loaded
+            }
+        }
+
+        /**
          * Owner only — the server enforces it ([com.anarky.showtrack.core.model.GroupFailure.NotPermitted]
          * for a non-owner), and [GroupDetailScreen] hides the control for a non-owner in the first
          * place (E-F) — this function itself has no role check of its own, matching
@@ -502,6 +542,7 @@ class GroupDetailViewModel
          * anything [groupRepository.rotateInvite] throws other than [GroupOperationException] used
          * to leave the rotate button permanently disabled with no retry affordance.
          */
+
         fun rotateInvite() {
             if (mutableState.value !is GroupDetailUiState.Success) return
             if (mutableActionState.value.rotating) return
@@ -514,6 +555,8 @@ class GroupDetailViewModel
                     if (current != null) {
                         mutableState.value = current.copy(rotatedInvite = invite)
                     }
+                    // The strip shows the new code straight away.
+                    mutableInvite.value = InviteState.Ready(invite)
                 } catch (failure: GroupOperationException) {
                     mutableActionState.value =
                         mutableActionState.value.copy(rotating = false, rotateError = failure.failure)

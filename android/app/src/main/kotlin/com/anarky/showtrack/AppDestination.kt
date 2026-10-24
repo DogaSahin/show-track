@@ -6,6 +6,7 @@ import com.anarky.showtrack.core.navigation.AppRoute
 import com.anarky.showtrack.core.navigation.AuthRoute
 import com.anarky.showtrack.core.navigation.DetailRoute
 import com.anarky.showtrack.core.navigation.DiscoverRoute
+import com.anarky.showtrack.core.navigation.FavoritesGridRoute
 import com.anarky.showtrack.core.navigation.FavoritesRoute
 import com.anarky.showtrack.core.navigation.FeedRoute
 import com.anarky.showtrack.core.navigation.GroupDetailRoute
@@ -18,6 +19,7 @@ import com.anarky.showtrack.feature.auth.authEntry
 import com.anarky.showtrack.feature.detail.detailEntry
 import com.anarky.showtrack.feature.discover.discoverEntry
 import com.anarky.showtrack.feature.favorites.favoritesEntry
+import com.anarky.showtrack.feature.favorites.favoritesGridEntry
 import com.anarky.showtrack.feature.feed.feedEntry
 import com.anarky.showtrack.feature.groups.groupDetailEntry
 import com.anarky.showtrack.feature.groups.groupsEntry
@@ -104,7 +106,10 @@ internal fun appDestinations(
         AppDestination(DetailRoute::class) { detailEntry(activeGroup = activeGroup) },
         AppDestination(DiscoverRoute::class) { onNavigate -> discoverEntry(onNavigate) },
         AppDestination(FavoritesRoute::class) { onNavigate -> favoritesEntry(onNavigate) },
-        AppDestination(ProfileRoute::class) { onNavigate -> profileEntry(onNavigate) },
+        AppDestination(FavoritesGridRoute::class) { onNavigate -> favoritesGridEntry(onNavigate) },
+        AppDestination(
+            ProfileRoute::class,
+        ) { onNavigate -> profileEntry(activeGroup = activeGroup, onNavigate = onNavigate) },
         AppDestination(SearchRoute::class) { onNavigate -> searchEntry(onNavigate) },
         AppDestination(GroupsRoute::class) { onNavigate ->
             // onRetryGroups was the one asymmetry in this table: feedEntry received all three
@@ -112,7 +117,6 @@ internal fun appDestinations(
             // the Groups screen had no retry to wire and rendered nothing at all (fix round, M3).
             groupsEntry(
                 activeGroup = activeGroup,
-                onSwitchGroup = onSwitchGroup,
                 onRetryGroups = onRetryGroups,
                 onNavigate = onNavigate,
             )

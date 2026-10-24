@@ -1,6 +1,7 @@
 package com.anarky.showtrack.core.data.repository
 
 import com.anarky.showtrack.core.model.AuthFailure
+import com.anarky.showtrack.core.model.CurrentUser
 
 /**
  * The session. `:app` asks [hasSession] before choosing a start destination — the reactive
@@ -34,6 +35,14 @@ interface AuthRepository {
      * `GroupRepository` to ask a non-group question.
      */
     suspend fun currentUserId(): String
+
+    /**
+     * `GET /v1/users/me` in full: id, username, email and join date, for the Profile header.
+     * Always asks the server, unlike [currentUserId], because the header should reflect a renamed
+     * account; it refreshes [currentUserId]'s cache with the answer as a side effect. Throws
+     * [com.anarky.showtrack.core.model.AuthFailure] with the same two cases as [currentUserId].
+     */
+    suspend fun currentUser(): CurrentUser
 
     /** Throws [AuthFailure] — `:feature:auth` catches its cases to tell a wrong password from being offline. */
     suspend fun login(
