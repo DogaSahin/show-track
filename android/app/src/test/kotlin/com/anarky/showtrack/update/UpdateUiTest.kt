@@ -76,49 +76,80 @@ class UpdateUiTest {
     }
 
     @Test
-    fun `the required screen offers Install and no Later`() {
+    fun `the required screen offers Install and Sign out, and no Later`() {
         var installs = 0
+        var signOuts = 0
         composeRule.setContent {
-            UpdateRequiredScreen(release = RELEASE, progress = null, failed = false, onInstall = { installs++ })
+            UpdateRequiredScreen(
+                release = RELEASE,
+                progress = null,
+                failed = false,
+                signOutFailed = false,
+                onInstall = { installs++ },
+                onSignOut = { signOuts++ },
+            )
         }
 
         composeRule.onNodeWithText(string(R.string.update_required_title)).assertExists()
         composeRule.onNodeWithText(string(R.string.update_later)).assertDoesNotExist()
         composeRule.onNodeWithText(string(R.string.update_install)).performClick()
+        composeRule.onNodeWithText(string(R.string.update_sign_out)).performClick()
 
         assertEquals(1, installs)
+        assertEquals(1, signOuts)
     }
 
     @Test
-    fun `signed out, nothing is checked and no prompt covers the screen`() {
-        var checks = 0
+    fun `signed out, the session's update state ends and no prompt covers the screen`() {
+        val actions = RecordingActions()
         composeRule.setContent {
             UpdatePrompts(
                 ui = UpdateUi(state = UpdateState.Required(RELEASE)),
-                signedIn = false,
-                actions = UpdateActions(onCheck = { checks++ }, onInstall = {}, onLater = {}),
+                session = UpdateSession.SignedOut,
+                actions = actions,
+                onSignedOut = {},
             ) { modifier -> Text(CONTENT, modifier = modifier) }
         }
 
         composeRule.onNodeWithText(CONTENT).assertExists()
         composeRule.onNodeWithText(string(R.string.update_required_title)).assertDoesNotExist()
-        assertEquals(0, checks)
+        assertEquals(0, actions.checks)
+        assertEquals(1, actions.sessionsEnded)
+    }
+
+    @Test
+    fun `an unknown session neither checks nor resets`() {
+        val actions = RecordingActions()
+        composeRule.setContent {
+            UpdatePrompts(
+                ui = UpdateUi(),
+                session = UpdateSession.Unknown,
+                actions = actions,
+                onSignedOut = {},
+            ) { modifier -> Text(CONTENT, modifier = modifier) }
+        }
+
+        composeRule.waitForIdle()
+        assertEquals(0, actions.checks)
+        assertEquals(0, actions.sessionsEnded)
     }
 
     @Test
     fun `signed in, the check runs and an available update shows the banner over the app`() {
-        var checks = 0
+        val actions = RecordingActions()
         composeRule.setContent {
             UpdatePrompts(
                 ui = UpdateUi(state = UpdateState.Available(RELEASE)),
-                signedIn = true,
-                actions = UpdateActions(onCheck = { checks++ }, onInstall = {}, onLater = {}),
+                session = UpdateSession.SignedIn,
+                actions = actions,
+                onSignedOut = {},
             ) { modifier -> Text(CONTENT, modifier = modifier) }
         }
 
         composeRule.onNodeWithText(context.getString(R.string.update_available_title, "1.1")).assertExists()
         composeRule.onNodeWithText(CONTENT).assertExists()
-        assertEquals(1, checks)
+        assertEquals(1, actions.checks)
+        assertEquals(1, actions.resumes)
     }
 
     @Test
@@ -126,13 +157,79 @@ class UpdateUiTest {
         composeRule.setContent {
             UpdatePrompts(
                 ui = UpdateUi(state = UpdateState.Required(RELEASE)),
-                signedIn = true,
-                actions = UpdateActions(onCheck = {}, onInstall = {}, onLater = {}),
+                session = UpdateSession.SignedIn,
+                actions = RecordingActions(),
+                onSignedOut = {},
             ) { modifier -> Text(CONTENT, modifier = modifier) }
         }
 
         composeRule.onNodeWithText(string(R.string.update_required_title)).assertExists()
         composeRule.onNodeWithText(CONTENT).assertDoesNotExist()
+    }
+
+    @Test
+    fun `the permission explanation is shown, and Open settings confirms it`() {
+        val actions = RecordingActions()
+        composeRule.setContent {
+            UpdatePrompts(
+                ui = UpdateUi(state = UpdateState.Available(RELEASE), explainPermission = true),
+                session = UpdateSession.SignedIn,
+                actions = actions,
+                onSignedOut = {},
+            ) { modifier -> Text(CONTENT, modifier = modifier) }
+        }
+
+        composeRule.onNodeWithText(string(R.string.update_permission_body)).assertExists()
+        composeRule.onNodeWithText(string(R.string.update_permission_open)).performClick()
+
+        assertEquals(1, actions.permissionsConfirmed)
+    }
+
+    @Test
+    fun `a finished sign out hands over to the host's navigation`() {
+        var navigated = 0
+        composeRule.setContent {
+            UpdatePrompts(
+                ui = UpdateUi(state = UpdateState.Required(RELEASE), signedOut = true),
+                session = UpdateSession.SignedIn,
+                actions = RecordingActions(),
+                onSignedOut = { navigated++ },
+            ) { modifier -> Text(CONTENT, modifier = modifier) }
+        }
+
+        composeRule.waitForIdle()
+        assertEquals(1, navigated)
+    }
+
+    private class RecordingActions : UpdateActions {
+        var checks = 0
+        var resumes = 0
+        var sessionsEnded = 0
+        var permissionsConfirmed = 0
+
+        override fun check() {
+            checks++
+        }
+
+        override fun install() = Unit
+
+        override fun later() = Unit
+
+        override fun confirmPermission() {
+            permissionsConfirmed++
+        }
+
+        override fun dismissPermission() = Unit
+
+        override fun resumed() {
+            resumes++
+        }
+
+        override fun signOut() = Unit
+
+        override fun sessionEnded() {
+            sessionsEnded++
+        }
     }
 
     private companion object {

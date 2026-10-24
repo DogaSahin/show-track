@@ -42,6 +42,7 @@ import com.anarky.showtrack.core.navigation.GroupsRoute
 import com.anarky.showtrack.core.navigation.LibraryRoute
 import com.anarky.showtrack.core.navigation.ProfileRoute
 import com.anarky.showtrack.update.UpdatePrompts
+import com.anarky.showtrack.update.UpdateSession
 import com.anarky.showtrack.update.UpdateViewModel
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.Flow
@@ -153,12 +154,12 @@ fun ShowTrackApp(authEvents: Flow<AuthEvent>) {
     val currentDestination = currentBackStackEntry?.destination
     ActiveGroupDestinationEffect(destination = currentDestination, viewModel = activeGroupViewModel)
 
-    // In-app updates: the check, banner and blocking screen all wait for isSignedIn, so none of
-    // them runs from, or covers, the sign-in screen. UpdatePrompts' KDoc has the rest.
+    // In-app updates: the check, banner and blocking screen all wait for a signed-in session, so
+    // none of them runs from, or covers, the sign-in screen. UpdatePrompts' KDoc has the rest.
     val updateViewModel: UpdateViewModel = hiltViewModel()
     val updateUi by updateViewModel.ui.collectAsStateWithLifecycle()
-    val signedIn = isSignedIn(start, currentDestination)
-    val updateRequired = signedIn && updateUi.state is UpdateState.Required
+    val updateSession = updateSessionFor(start, currentDestination)
+    val updateRequired = updateSession == UpdateSession.SignedIn && updateUi.state is UpdateState.Required
 
     // Hoisted out of navigationSuiteItems below, which is a plain builder DSL rather than a
     // composable scope (its own KDoc, further down, explains the same constraint for
@@ -232,8 +233,9 @@ fun ShowTrackApp(authEvents: Flow<AuthEvent>) {
         Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
             UpdatePrompts(
                 ui = updateUi,
-                signedIn = signedIn,
-                actions = updateViewModel.actions,
+                session = updateSession,
+                actions = updateViewModel,
+                onSignedOut = navController::navigateToAuthClearingStack,
                 modifier = Modifier.padding(innerPadding),
             ) { contentModifier ->
                 ShowTrackNavHost(navController = navController, authEvents = authEvents, modifier = contentModifier)
@@ -465,17 +467,22 @@ enum class TopLevelDestination(
 }
 
 /**
- * Whether a signed-in session is on screen, for the in-app update check and prompts. The same two
- * signals [shouldShowNavigationTabs] reads, for the same reasons: [start] says a session was decided
- * (it never moves back on a sign-out), and [currentDestination] says it is still current (it lands
- * on [AuthRoute] for a sign-out or an expired session). `null` is "not known yet", so not signed in.
+ * Where the session stands, for the in-app update check and prompts. The same two signals
+ * [shouldShowNavigationTabs] reads, for the same reasons: [start] says a session was decided (it
+ * never moves back on a sign-out), and [currentDestination] says whether it is still current (it
+ * lands on [AuthRoute] for a sign-out or an expired session). `null` is "not known yet" — the one
+ * frame a configuration change re-seeds — so [UpdateSession.Unknown], which resets nothing.
  */
-internal fun isSignedIn(
+internal fun updateSessionFor(
     start: AppStart,
     currentDestination: NavDestination?,
-): Boolean =
-    (start == AppStart.Library || start == AppStart.Onboarding) &&
-        currentDestination?.hasRoute(AuthRoute::class) == false
+): UpdateSession =
+    when {
+        currentDestination == null -> UpdateSession.Unknown
+        currentDestination.hasRoute(AuthRoute::class) -> UpdateSession.SignedOut
+        start == AppStart.Library || start == AppStart.Onboarding -> UpdateSession.SignedIn
+        else -> UpdateSession.Unknown
+    }
 
 /**
  * The tab items' colours. Material's default indicator is `secondaryContainer`, which in this
