@@ -1,11 +1,20 @@
 import uuid
 from datetime import date, datetime
 from enum import StrEnum
+from typing import Annotated
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PlainSerializer
 
 from app.library.models import UserMediaStatus
 from app.media.models import MediaSource, MediaStatus, MediaType
+from app.media.providers.images import relay_cover_url
+
+# Serialization-only: validation still takes the stored URL as is, and the row is never rewritten.
+CoverImageUrl = Annotated[
+    str | None,
+    PlainSerializer(relay_cover_url, return_type=str | None),
+    Field(description="Absolute URL, or a path relative to the API root (resolve it against the API base URL)."),
+]
 
 
 class SourceStatus(StrEnum):
@@ -31,7 +40,7 @@ class MediaSummary(BaseModel):
     title: str
     year: int | None
     genres: list[str]
-    cover_image_url: str | None
+    cover_image_url: CoverImageUrl
 
 
 class PersistedMedia(MediaSummary):

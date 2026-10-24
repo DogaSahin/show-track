@@ -695,6 +695,7 @@
                 "type": "null"
               }
             ],
+            "description": "Absolute URL, or a path relative to the API root (resolve it against the API base URL).",
             "title": "Cover Image Url"
           },
           "days_until_next_episode": {
@@ -935,6 +936,7 @@
                 "type": "null"
               }
             ],
+            "description": "Absolute URL, or a path relative to the API root (resolve it against the API base URL).",
             "title": "Cover Image Url"
           },
           "external_id": {
@@ -1242,6 +1244,7 @@
                 "type": "null"
               }
             ],
+            "description": "Absolute URL, or a path relative to the API root (resolve it against the API base URL).",
             "title": "Cover Image Url"
           },
           "external_id": {
@@ -1708,6 +1711,7 @@
                 "type": "null"
               }
             ],
+            "description": "Absolute URL, or a path relative to the API root (resolve it against the API base URL).",
             "title": "Cover Image Url"
           },
           "media_id": {

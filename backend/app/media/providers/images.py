@@ -22,3 +22,18 @@ def tmdb_upstream_url(size: str, file_name: str) -> str | None:
     if size not in RELAY_SIZES or FILE_NAME_PATTERN.fullmatch(file_name) is None:
         return None
     return f"{TMDB_IMAGE_PREFIX}{size}/{file_name}"
+
+
+def relay_cover_url(url: str | None) -> str | None:
+    """The relay path for a TMDB poster URL; anything else comes back unchanged.
+
+    Applied on the way out, never to the stored value: the row keeps the real upstream URL, so
+    the relay can be dropped later without a data migration. A TMDB URL the relay would refuse
+    (another size, an odd file name) is left alone rather than rewritten to a path that 404s.
+    """
+    if url is None or not url.startswith(TMDB_IMAGE_PREFIX):
+        return url
+    size, _, file_name = url.removeprefix(TMDB_IMAGE_PREFIX).partition("/")
+    if tmdb_upstream_url(size, file_name) is None:
+        return url
+    return f"{RELAY_PREFIX}{size}/{file_name}"
