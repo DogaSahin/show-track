@@ -61,6 +61,10 @@ services:
       - --upstream=https://1.1.1.1/dns-query
       - --upstream=https://9.9.9.9/dns-query
       - --cache
+      # On Docker Engine older than 28, a container port that is not published can still be
+      # reachable from the LAN; these keep the proxy from being a useful open resolver there.
+      - --refuse-any
+      - --ratelimit=50
     networks:
       default:
         ipv4_address: ${DNS_PROXY_IP:-172.29.53.53}
@@ -111,13 +115,18 @@ services:
       dns:
         condition: service_started
 
-# A fixed subnet so the `dns` service can have a static address. Override DNS_SUBNET and
+# A fixed subnet so the `dns` service can have a static address. Docker also hands addresses
+# from the whole subnet to containers that have none pinned (db, api), so without `ip_range` one
+# of them could be given the proxy's address first and the proxy would then fail to start.
+# `ip_range` confines that dynamic allocation to the upper half; the proxy's address (.53) sits
+# outside it, in the half Docker never hands out. Override DNS_SUBNET, DNS_IP_RANGE and
 # DNS_PROXY_IP together in .env if 172.29.53.0/24 clashes with something on the host.
 networks:
   default:
     ipam:
       config:
         - subnet: ${DNS_SUBNET:-172.29.53.0/24}
+          ip_range: ${DNS_IP_RANGE:-172.29.53.128/25}
 
 volumes:
   showtrack-pgdata:

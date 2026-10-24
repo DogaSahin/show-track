@@ -198,11 +198,12 @@ start** rather than falling back to a placeholder nobody chose.
 
 ### Encrypted DNS for the server
 
-Some providers block TMDB at the DNS level. The compose stack therefore runs a small `dns` service
+Some internet providers block TMDB at the DNS level. The compose stack therefore runs a small `dns` service
 (a DNS-over-HTTPS proxy) that the `api` container uses to resolve external names; Docker still
 answers `db` itself. It listens only inside the compose network and sits on a fixed subnet
 (`172.29.53.0/24`, proxy at `172.29.53.53`). If that subnet clashes with something on the host,
-set `DNS_SUBNET` and `DNS_PROXY_IP` in `.env` (see `.env.example`). If the proxy is down the api
+set `DNS_SUBNET`, `DNS_IP_RANGE` and `DNS_PROXY_IP` in `.env` (see `.env.example`); changing any
+of them needs the one-time `docker compose -f docker-compose.yml down` before `up`. If the proxy is down the api
 cannot resolve external names (AniList included) until it restarts.
 
 **First deploy with this version:** the compose network changes, so run
