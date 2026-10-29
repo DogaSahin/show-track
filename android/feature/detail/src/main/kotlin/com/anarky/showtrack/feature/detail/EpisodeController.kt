@@ -127,10 +127,15 @@ internal class EpisodeController(
      * again. Refreshed in place (seasons stay as the reader left them, no spinner over the list);
      * a list not loaded yet takes the full [load]. Waits behind any save still going out so the
      * answer includes it. A failed fetch keeps what is shown — the status itself did save.
+     *
+     * Taps made while the fetch is queued or in flight are kept: the answer is the server's set as
+     * of when it was read, so whatever changed on screen since [before] was taken is laid back
+     * over it (each such tap has its own save going out, which does not touch the circles).
      */
     @Suppress("TooGenericExceptionCaught")
     fun onCompleted(entry: LibraryEntry) {
-        if (ready() == null) {
+        val before = ready()?.watched
+        if (before == null) {
             load(entry)
             return
         }
@@ -145,7 +150,11 @@ internal class EpisodeController(
                 }
             // Only onto the same entry: one removed meanwhile keeps its circles off.
             if (read()?.data?.entry?.id != entry.id) return@launch
-            updateReady { it.copy(watched = fetched, catchUp = null) }
+            updateReady {
+                val ticked = it.watched - before
+                val unticked = before - it.watched
+                it.copy(watched = fetched + ticked - unticked, catchUp = null)
+            }
         }
     }
 

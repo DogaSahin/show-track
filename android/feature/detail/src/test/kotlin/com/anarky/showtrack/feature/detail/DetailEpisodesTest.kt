@@ -97,6 +97,57 @@ class DetailEpisodesTest {
         }
 
     @Test
+    fun `taps made while the completed re-fetch is in flight keep their state`() =
+        runTest(dispatcher) {
+            val library =
+                DetailViewModelTest
+                    .FakeLibrary(
+                        entry = ENTRY,
+                        updateResult = ENTRY.copy(status = UserMediaStatus.COMPLETED),
+                    ).also { it.watched = setOf("e1") }
+            val viewModel = viewModel(library)
+            advanceUntilIdle()
+
+            val gate = CompletableDeferred<Unit>()
+            library.watchedGate = gate
+            library.watched = setOf("e1", "e2")
+            viewModel.setStatus(UserMediaStatus.COMPLETED)
+            advanceUntilIdle()
+            // The re-fetch is suspended: un-tick one episode and tick another meanwhile.
+            viewModel.toggleEpisode(EP1)
+            viewModel.toggleEpisode(EP3)
+            gate.complete(Unit)
+            advanceUntilIdle()
+
+            assertEquals(setOf("e2", "e3"), viewModel.ready.watched)
+        }
+
+    @Test
+    fun `completing before the episode list has loaded loads it`() =
+        runTest(dispatcher) {
+            val library =
+                DetailViewModelTest.FakeLibrary(
+                    entry = ENTRY,
+                    updateResult = ENTRY.copy(status = UserMediaStatus.COMPLETED),
+                )
+            val media =
+                DetailViewModelTest.FakeMedia().also {
+                    it.episodesResult = LIST
+                    it.episodesFailure = IOException("offline")
+                }
+            val viewModel = viewModel(library, media)
+            advanceUntilIdle()
+            assertEquals(EpisodesState.Failed, (viewModel.state.value as DetailUiState.Success).episodes)
+
+            media.episodesFailure = null
+            library.watched = setOf("e1", "e2", "e3")
+            viewModel.setStatus(UserMediaStatus.COMPLETED)
+            advanceUntilIdle()
+
+            assertEquals(setOf("e1", "e2", "e3"), viewModel.ready.watched)
+        }
+
+    @Test
     fun `another status leaves the watched episodes alone`() =
         runTest(dispatcher) {
             val library =
