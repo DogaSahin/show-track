@@ -521,6 +521,9 @@
             ],
             "title": "Score"
           },
+          "section": {
+            "$ref": "#/components/schemas/LibrarySection"
+          },
           "status": {
             "$ref": "#/components/schemas/UserMediaStatus"
           },
@@ -533,6 +536,7 @@
         "required": [
           "id",
           "status",
+          "section",
           "score",
           "progress",
           "favorite",
@@ -588,6 +592,19 @@
         "title": "LibraryPage",
         "type": "object"
       },
+      "LibrarySection": {
+        "description": "Where an entry is shown on Home: derived, never stored.\n\nThe non-watching statuses map to themselves. A saved `watching` entry splits three ways:\n`completed` when the title has finished and every episode is counted, `caught_up` when every\naired episode is counted and nothing more is due this season, else `watching`. The rule lives\nin service.section_expression; this is only the vocabulary.",
+        "enum": [
+          "watching",
+          "caught_up",
+          "paused",
+          "planned",
+          "completed",
+          "dropped"
+        ],
+        "title": "LibrarySection",
+        "type": "string"
+      },
       "LibrarySort": {
         "description": "The `sort=` vocabulary.\n\nA StrEnum rather than a validated string so an unknown value is FastAPI's own 422 listing the\nlegal ones, and so OpenAPI documents them. Direction is a fixed property of each field\n(decision 4-J) — there is no `order=` parameter.",
         "enum": [
@@ -615,6 +632,16 @@
               }
             ],
             "title": "Average Score"
+          },
+          "by_section": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "propertyNames": {
+              "$ref": "#/components/schemas/LibrarySection"
+            },
+            "title": "By Section",
+            "type": "object"
           },
           "by_status": {
             "additionalProperties": {
@@ -653,6 +680,7 @@
         "required": [
           "total",
           "by_status",
+          "by_section",
           "average_score",
           "rated_count",
           "episodes_watched",
@@ -2851,6 +2879,22 @@
                 }
               ],
               "title": "Type"
+            }
+          },
+          {
+            "in": "query",
+            "name": "section",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/LibrarySection"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Section"
             }
           },
           {

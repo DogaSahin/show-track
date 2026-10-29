@@ -13,6 +13,8 @@ import java.math.BigDecimal
  * produces rows for statuses that occur. Rendering an absent key as zero is a client-side
  * invention the server never asked for.
  *
+ * [bySection] follows the same absent-not-zero rule, keyed by the server-derived display section.
+ *
  * [averageScore] is `BigDecimal`, NEVER `Double` — the wire field is a JSON STRING for the same
  * reason [LibraryEntry.score] is (backend decision 4-N): a JSON number is an IEEE 754 double, and
  * this is a NUMERIC average. Null when nothing is rated — a null average is a different and true
@@ -39,6 +41,7 @@ import java.math.BigDecimal
 data class LibraryStats(
     val total: Int,
     val byStatus: Map<UserMediaStatus, Int>,
+    val bySection: Map<LibrarySection, Int> = emptyMap(),
     val averageScore: BigDecimal?,
     val ratedCount: Int,
     val episodesWatched: Int,

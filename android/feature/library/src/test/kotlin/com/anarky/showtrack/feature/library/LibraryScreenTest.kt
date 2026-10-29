@@ -1,14 +1,22 @@
 package com.anarky.showtrack.feature.library
 
 import android.content.Context
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasScrollAction
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToNode
 import androidx.test.core.app.ApplicationProvider
 import com.anarky.showtrack.core.model.LibraryEntry
 import com.anarky.showtrack.core.model.LibraryFilter
+import com.anarky.showtrack.core.model.LibrarySection
 import com.anarky.showtrack.core.model.LibrarySort
 import com.anarky.showtrack.core.model.LibraryStats
 import com.anarky.showtrack.core.model.Media
@@ -55,12 +63,14 @@ class LibraryScreenTest {
 
         composeRule.setContent {
             LibraryScreen(
+                home = HomeUiState.Ready(sections = emptyList(), isStale = false),
                 state = LibraryUiState.Success(entries = emptyList(), loadingMore = false),
                 filter = LibraryFilter(),
                 stats = null,
                 airingSoon = emptyList(),
                 onStatusSelected = {},
                 onSortSelected = {},
+                onToggleSection = {},
                 onLoadMore = {},
                 onRetry = {},
                 onEntryClick = {},
@@ -113,7 +123,7 @@ class LibraryScreenTest {
     @Test
     fun `airing soon shows on all shows`() {
         val upcoming = ENTRY.copy(id = "entry-2", media = ENTRY.media.copy(id = "media-2", title = "Dandadan"))
-        setScreen(entries = listOf(ENTRY), airingSoon = listOf(upcoming))
+        setScreen(home = ready(section(LibrarySection.WATCHING, listOf(ENTRY))), airingSoon = listOf(upcoming))
         composeRule.onNodeWithText("Airing soon").assertIsDisplayed()
         composeRule.onNodeWithText("Dandadan").assertIsDisplayed()
     }
@@ -141,58 +151,252 @@ class LibraryScreenTest {
     }
 
     @Test
-    fun `a row says which episode is next and when`() {
-        setScreen(entries = listOf(ENTRY))
+    fun `home shows section headers in order with counts`() {
+        setScreen(
+            home =
+                ready(
+                    section(LibrarySection.WATCHING, entries("w", 2), count = 2),
+                    section(LibrarySection.PLANNED, entries("p", 3), count = 3),
+                    section(LibrarySection.DROPPED, entries("d", 1), count = null),
+                ),
+        )
 
-        composeRule.onNodeWithText("Watching · Ep 1100 in 4 days").assertIsDisplayed()
+        val headers =
+            composeRule
+                .onAllNodesWithTag(SECTION_HEADER_TAG)
+                .fetchSemanticsNodes()
+                .map { node -> node.config[SemanticsProperties.Text].joinToString(" ") { it.text } }
+        // A count the server has not reported yet is left out, never shown as the loaded size.
+        assertEquals(listOf("Watching 2", "Planned 3", "Dropped"), headers)
+    }
+
+    @Test
+    fun `section with more than twelve shows a Show all button and only twelve posters`() {
+        setScreen(home = ready(section(LibrarySection.PLANNED, entries("p", 13), count = 13)))
+
+        composeRule.onNode(hasScrollAction()).performScrollToNode(hasText("Show all 13"))
+        composeRule.onNodeWithText("Show p12").assertExists()
+        composeRule.onNodeWithText("Show p13").assertDoesNotExist()
+    }
+
+    @Test
+    fun `a section of twelve or fewer has no button`() {
+        setScreen(home = ready(section(LibrarySection.PLANNED, entries("p", 12), count = 12)))
+
+        composeRule.onNode(hasScrollAction()).performScrollToNode(hasText("Show p12"))
+        composeRule.onNodeWithText("Show all 12").assertDoesNotExist()
+        composeRule.onNodeWithText("Show less").assertDoesNotExist()
+    }
+
+    @Test
+    fun `tapping Show all calls toggleSection`() {
+        var toggled: LibrarySection? = null
+        setScreen(
+            home = ready(section(LibrarySection.PLANNED, entries("p", 13), count = 20)),
+            onToggleSection = { toggled = it },
+        )
+
+        composeRule.onNode(hasScrollAction()).performScrollToNode(hasText("Show all 20"))
+        composeRule.onNodeWithText("Show all 20").performClick()
+
+        assertEquals(LibrarySection.PLANNED, toggled)
+    }
+
+    @Test
+    fun `expanded section shows Show less`() {
+        var toggled: LibrarySection? = null
+        setScreen(
+            home = ready(section(LibrarySection.PLANNED, entries("p", 13), count = 13, expanded = true)),
+            onToggleSection = { toggled = it },
+        )
+
+        composeRule.onNode(hasScrollAction()).performScrollToNode(hasText("Show less"))
+        composeRule.onNodeWithText("Show p13").assertExists()
+        composeRule.onNodeWithText("Show less").performClick()
+
+        assertEquals(LibrarySection.PLANNED, toggled)
+    }
+
+    @Test
+    fun `an expanded section a reload left short offers Show all again`() {
+        setScreen(
+            home =
+                ready(
+                    section(LibrarySection.PLANNED, entries("p", 100), count = 130, expanded = true)
+                        .copy(nextCursor = "more"),
+                ),
+        )
+
+        composeRule.onNode(hasScrollAction()).performScrollToNode(hasText("Show all 130"))
+        composeRule.onNodeWithText("Show less").assertDoesNotExist()
+    }
+
+    @Test
+    fun `caught up poster shows S2 soon when the next season is known`() {
+        val caughtUp =
+            ENTRY.copy(
+                id = "c1",
+                section = LibrarySection.CAUGHT_UP,
+                media = ENTRY.media.copy(id = "mc1", title = "Frieren", nextEpisodeSeason = 2),
+            )
+        setScreen(home = ready(section(LibrarySection.WATCHING, listOf(caughtUp))))
+
+        composeRule.onNodeWithText("S2 soon").assertIsDisplayed()
+    }
+
+    @Test
+    fun `caught up poster shows More soon when nothing is scheduled`() {
+        val caughtUp =
+            ENTRY.copy(
+                id = "c1",
+                section = LibrarySection.CAUGHT_UP,
+                media =
+                    ENTRY.media.copy(
+                        id = "mc1",
+                        title = "Frieren",
+                        nextEpisodeSeason = 1,
+                        nextEpisodeNumber = null,
+                        nextEpisodeDate = null,
+                        daysUntilNextEpisode = null,
+                    ),
+            )
+        // A watching show with an episode coming carries no label at all.
+        val watching = ENTRY.copy(section = LibrarySection.WATCHING, media = ENTRY.media.copy(nextEpisodeSeason = 1))
+        setScreen(home = ready(section(LibrarySection.WATCHING, listOf(watching, caughtUp))))
+
+        composeRule.onAllNodesWithText("More soon").assertCountEquals(1)
+        composeRule.onNodeWithText("More soon").assertIsDisplayed()
+        composeRule.onNodeWithText("S1 soon").assertDoesNotExist()
+    }
+
+    @Test
+    fun `a cached caught up poster still knows the next season`() {
+        // The Room cache keeps the countdown but not the air date itself.
+        val cached =
+            ENTRY.copy(
+                id = "c1",
+                section = LibrarySection.CAUGHT_UP,
+                media =
+                    ENTRY.media.copy(
+                        id = "mc1",
+                        nextEpisodeSeason = 3,
+                        nextEpisodeDate = null,
+                        daysUntilNextEpisode = 40,
+                    ),
+            )
+        setScreen(home = ready(section(LibrarySection.WATCHING, listOf(cached))))
+
+        composeRule.onNodeWithText("S3 soon").assertIsDisplayed()
+    }
+
+    @Test
+    fun `single status filter shows the grid without section headers`() {
+        setScreen(
+            filter = LibraryFilter(status = UserMediaStatus.PLANNED),
+            entries = entries("p", 3, section = LibrarySection.PLANNED),
+        )
+
+        composeRule.onNodeWithText("Show p1").assertIsDisplayed()
+        composeRule.onNodeWithText("Show p3").assertIsDisplayed()
+        composeRule.onAllNodesWithTag(SECTION_HEADER_TAG).assertCountEquals(0)
+    }
+
+    @Test
+    fun `tapping a poster opens the show`() {
+        var opened: LibraryEntry? = null
+        val shows = entries("w", 2)
+        setScreen(home = ready(section(LibrarySection.WATCHING, shows)), onEntryClick = { opened = it })
+
+        composeRule.onNodeWithText("Show w2").performClick()
+
+        assertEquals(shows[1], opened)
+    }
+
+    @Test
+    fun `stale home shows the saved data banner`() {
+        setScreen(
+            home = HomeUiState.Ready(listOf(section(LibrarySection.WATCHING, entries("w", 1))), isStale = true),
+        )
+
+        composeRule.onNodeWithText("Retry").assertIsDisplayed()
+    }
+
+    @Test
+    fun `an empty library shows the empty state`() {
+        setScreen(home = ready())
+
+        composeRule.onNodeWithText("Nothing in your library yet").assertIsDisplayed()
+    }
+
+    @Test
+    fun `a failed home load offers a retry`() {
+        var retried = false
+        setScreen(home = HomeUiState.Error(IllegalStateException("offline")), onRetry = { retried = true })
+
+        composeRule.onNodeWithText("Retry").performClick()
+
+        assertTrue(retried)
     }
 
     @Suppress("LongParameterList")
     private fun setScreen(
         filter: LibraryFilter = LibraryFilter(),
         stats: LibraryStats? = null,
+        home: HomeUiState = ready(),
         entries: List<LibraryEntry> = emptyList(),
         airingSoon: List<LibraryEntry> = emptyList(),
         onStatusSelected: (UserMediaStatus?) -> Unit = {},
+        onToggleSection: (LibrarySection) -> Unit = {},
+        onRetry: () -> Unit = {},
+        onEntryClick: (LibraryEntry) -> Unit = {},
     ) {
         composeRule.setContent {
             LibraryScreen(
+                home = home,
                 state = LibraryUiState.Success(entries = entries, loadingMore = false),
                 filter = filter,
                 stats = stats,
                 airingSoon = airingSoon,
                 onStatusSelected = onStatusSelected,
                 onSortSelected = {},
+                onToggleSection = onToggleSection,
                 onLoadMore = {},
-                onRetry = {},
-                onEntryClick = {},
+                onRetry = onRetry,
+                onEntryClick = onEntryClick,
                 onSearchClick = {},
             )
         }
     }
 
-    @Test
-    fun `with the episode count, a row says how far through the show you are`() {
-        val noUpcoming =
-            ENTRY.media.copy(
-                nextEpisodeNumber = null,
-                nextEpisodeSeason = null,
-                nextEpisodeDate = null,
-                daysUntilNextEpisode = null,
-            )
-        setScreen(
-            entries =
-                listOf(
-                    ENTRY.copy(id = "a", progress = 14, media = ENTRY.media.copy(id = "ma", totalEpisodes = 1200)),
-                    ENTRY.copy(id = "b", progress = 14, media = noUpcoming.copy(id = "mb", totalEpisodes = 28)),
-                    ENTRY.copy(id = "c", progress = 0, media = noUpcoming.copy(id = "mc", totalEpisodes = 28)),
-                ),
-        )
+    private fun ready(vararg sections: HomeSection) = HomeUiState.Ready(sections = sections.toList(), isStale = false)
 
-        composeRule.onNodeWithText("Watching · 14/1200 · Ep 1100 in 4 days").assertIsDisplayed()
-        composeRule.onNodeWithText("Watching · 14 of 28 watched").assertIsDisplayed()
-        composeRule.onNodeWithText("Watching · Not started · 28 eps").assertIsDisplayed()
-    }
+    private fun section(
+        section: LibrarySection,
+        entries: List<LibraryEntry>,
+        count: Int? = entries.size,
+        expanded: Boolean = false,
+    ) = HomeSection(
+        section = section,
+        entries = entries,
+        count = count,
+        expanded = expanded,
+        nextCursor = null,
+        loadingMore = false,
+    )
+
+    /** [count] shows titled "Show {prefix}1"…, each with its own entry and media id. */
+    private fun entries(
+        prefix: String,
+        count: Int,
+        section: LibrarySection = LibrarySection.WATCHING,
+    ): List<LibraryEntry> =
+        (1..count).map { n ->
+            ENTRY.copy(
+                id = "$prefix$n",
+                section = section,
+                media = ENTRY.media.copy(id = "m-$prefix$n", title = "Show $prefix$n"),
+            )
+        }
 
     private companion object {
         val STATS =

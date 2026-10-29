@@ -14,4 +14,6 @@ data class LibraryEntryDto(
     val favorite: Boolean,
     @SerialName("updated_at") val updatedAt: String,
     val media: MediaDto,
+    // Defaulted so a response from a server that predates the field still decodes.
+    val section: String? = null,
 )

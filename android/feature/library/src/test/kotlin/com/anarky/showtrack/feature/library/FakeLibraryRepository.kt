@@ -5,10 +5,14 @@ import com.anarky.showtrack.core.data.repository.LibraryRepository
 import com.anarky.showtrack.core.model.LibraryEntry
 import com.anarky.showtrack.core.model.LibraryFilter
 import com.anarky.showtrack.core.model.LibraryPatch
+import com.anarky.showtrack.core.model.LibrarySection
 import com.anarky.showtrack.core.model.LibrarySort
+import com.anarky.showtrack.core.model.LibraryStats
 import com.anarky.showtrack.core.model.MediaSource
 import com.anarky.showtrack.core.model.MediaType
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
 import javax.inject.Inject
 
@@ -22,13 +26,70 @@ import javax.inject.Inject
  *
  * `@Inject constructor()` is what lets [TestDataModule]'s `@Binds` method construct this with no
  * `@Provides` boilerplate.
+ *
+ * Home's surface ([observeHomeCache], [refreshHome], [sectionPage]) is driven by `HomeSectionsTest`
+ * through the mutable fields below; their defaults are an empty library, which keeps
+ * [LibraryEntryHiltTest]'s composition quiet.
  */
 internal class FakeLibraryRepository
     @Inject
     constructor() : LibraryRepository {
+        val homeCache = MutableStateFlow<Map<LibrarySection, List<LibraryEntry>>>(emptyMap())
+        var homePages: Map<LibrarySection, Page<LibraryEntry>> = emptyMap()
+        var refreshHomeFailure: Throwable? = null
+
+        // Stands in for a request still in flight: awaited before the failure/success check.
+        var refreshHomeGate: CompletableDeferred<Unit>? = null
+        val refreshHomeSorts = mutableListOf<LibrarySort>()
+
+        /** Pages served by [sectionPage], keyed by section and the cursor asked for. */
+        var sectionPages: Map<Pair<LibrarySection, String?>, Page<LibraryEntry>> = emptyMap()
+        var sectionPageFailure: Throwable? = null
+
+        /** A failure for one section's requests only; [sectionPageFailure] fails them all. */
+        var sectionPageFailures: Map<LibrarySection, Throwable> = emptyMap()
+        var sectionPageGate: CompletableDeferred<Unit>? = null
+        val sectionPageCalls = mutableListOf<SectionPageCall>()
+
+        var stats: LibraryStats? = null
+        var statsCalls = 0
+        var upcomingCalls = 0
+
+        data class SectionPageCall(
+            val section: LibrarySection,
+            val sort: LibrarySort,
+            val cursor: String?,
+            val limit: Int,
+        )
+
         override fun observeLibrary(): Flow<List<LibraryEntry>> = flowOf(emptyList())
 
         override suspend fun refresh() = Unit
+
+        override fun observeHomeCache(): Flow<Map<LibrarySection, List<LibraryEntry>>> = homeCache
+
+        override suspend fun refreshHome(
+            sort: LibrarySort,
+            perSection: Int,
+        ): Map<LibrarySection, Page<LibraryEntry>> {
+            refreshHomeSorts += sort
+            refreshHomeGate?.await()
+            refreshHomeFailure?.let { throw it }
+            return homePages
+        }
+
+        override suspend fun sectionPage(
+            section: LibrarySection,
+            sort: LibrarySort,
+            cursor: String?,
+            limit: Int,
+        ): Page<LibraryEntry> {
+            sectionPageCalls += SectionPageCall(section, sort, cursor, limit)
+            sectionPageGate?.await()
+            sectionPageFailure?.let { throw it }
+            sectionPageFailures[section]?.let { throw it }
+            return sectionPages[section to cursor] ?: Page(emptyList(), nextCursor = null)
+        }
 
         override suspend fun loadMore() = Unit
 
@@ -57,11 +118,6 @@ internal class FakeLibraryRepository
         override suspend fun entryForMedia(mediaId: String): LibraryEntry? =
             error("not exercised by LibraryEntryHiltTest")
 
-        // Unlike `refresh`/`loadMore`/`applyFilter` above (silent no-ops, because `LibraryViewModel`
-        // genuinely calls those during ordinary composition and the test needs them to succeed
-        // quietly), `LibraryViewModel` never touches the favourites surface at all — so a call
-        // reaching here is a bug, and should fail loudly the same way `add`/`update`/
-        // `entryForMedia` already do, rather than passing unnoticed.
         override suspend fun favoritesPage(
             type: MediaType?,
             sort: LibrarySort,
@@ -69,9 +125,16 @@ internal class FakeLibraryRepository
             limit: Int,
         ): Page<LibraryEntry> = Page(emptyList(), null)
 
-        override suspend fun libraryStats() = error("not exercised by LibraryEntryHiltTest")
+        // `LibraryViewModel.refreshOverview` swallows this failure; a test that wants counts sets [stats].
+        override suspend fun libraryStats(): LibraryStats {
+            statsCalls++
+            return stats ?: error("no stats in this test")
+        }
 
-        override suspend fun upcomingWatching(limit: Int): List<LibraryEntry> = emptyList()
+        override suspend fun upcomingWatching(limit: Int): List<LibraryEntry> {
+            upcomingCalls++
+            return emptyList()
+        }
 
         override suspend fun allWatching(): List<LibraryEntry> = emptyList()
 

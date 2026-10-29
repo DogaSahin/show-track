@@ -6,6 +6,7 @@ import com.anarky.showtrack.core.model.ImportSummary
 import com.anarky.showtrack.core.model.LibraryEntry
 import com.anarky.showtrack.core.model.LibraryFilter
 import com.anarky.showtrack.core.model.LibraryPatch
+import com.anarky.showtrack.core.model.LibrarySection
 import com.anarky.showtrack.core.model.LibrarySort
 import com.anarky.showtrack.core.model.LibraryStats
 import com.anarky.showtrack.core.model.MediaSource
@@ -21,6 +22,21 @@ internal class EntryFakeLibraryRepository : LibraryRepository {
     override fun observeLibrary(): Flow<List<LibraryEntry>> = error("DiscoverEntryHiltTest does not exercise add")
 
     override suspend fun refresh(): Unit = error("DiscoverEntryHiltTest does not exercise add")
+
+    override fun observeHomeCache(): Flow<Map<LibrarySection, List<LibraryEntry>>> =
+        error("Home sections are not exercised here")
+
+    override suspend fun refreshHome(
+        sort: LibrarySort,
+        perSection: Int,
+    ): Map<LibrarySection, Page<LibraryEntry>> = error("Home sections are not exercised here")
+
+    override suspend fun sectionPage(
+        section: LibrarySection,
+        sort: LibrarySort,
+        cursor: String?,
+        limit: Int,
+    ): Page<LibraryEntry> = error("Home sections are not exercised here")
 
     override suspend fun loadMore(): Unit = error("DiscoverEntryHiltTest does not exercise add")
 

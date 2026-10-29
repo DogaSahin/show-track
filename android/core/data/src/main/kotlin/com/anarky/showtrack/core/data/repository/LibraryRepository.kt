@@ -5,6 +5,7 @@ import com.anarky.showtrack.core.model.ImportSummary
 import com.anarky.showtrack.core.model.LibraryEntry
 import com.anarky.showtrack.core.model.LibraryFilter
 import com.anarky.showtrack.core.model.LibraryPatch
+import com.anarky.showtrack.core.model.LibrarySection
 import com.anarky.showtrack.core.model.LibrarySort
 import com.anarky.showtrack.core.model.LibraryStats
 import com.anarky.showtrack.core.model.MediaSource
@@ -41,16 +42,47 @@ import kotlinx.coroutines.flow.Flow
  */
 @Suppress("TooManyFunctions")
 interface LibraryRepository {
-    /** Cold-start content, from the cache, then whatever [refresh] last wrote over it. */
+    /**
+     * The loaded pages of the current filter, network-only: empty until the first [refresh]. The
+     * Room cache belongs to Home ([observeHomeCache]), so it never stands in for this list.
+     */
     fun observeLibrary(): Flow<List<LibraryEntry>>
 
-    /** Discards the paged state and re-reads from the first page. */
+    /** Discards the paged state and re-reads from the first page. Never writes the cache. */
     suspend fun refresh()
+
+    /**
+     * What Home draws before (or without) the network: the cached rows grouped by section, each
+     * list in Title order. Sections with no cached rows are absent from the map.
+     */
+    fun observeHomeCache(): Flow<Map<LibrarySection, List<LibraryEntry>>>
+
+    /**
+     * The first page of each of Home's six sections (Caught up included), fetched concurrently in
+     * [sort] order with [perSection] rows each. Under [LibrarySort.TITLE] — the default view — the
+     * returned rows replace the cache in one write; other sorts leave it alone. Throws if any request
+     * fails, and then nothing is written.
+     */
+    suspend fun refreshHome(
+        sort: LibrarySort,
+        perSection: Int,
+    ): Map<LibrarySection, Page<LibraryEntry>>
+
+    /**
+     * One page of a single section, from [cursor]. Stateless and network-only, like [favoritesPage]:
+     * the caller (a section's "Show all") keeps the cursor.
+     */
+    suspend fun sectionPage(
+        section: LibrarySection,
+        sort: LibrarySort,
+        cursor: String?,
+        limit: Int,
+    ): Page<LibraryEntry>
 
     /** Appends the next page, or does nothing once the list is exhausted. */
     suspend fun loadMore()
 
-    /** Re-queries from page one under [filter]. Only the default filter is cached (decision C-B). */
+    /** Re-queries from page one under [filter]. Nothing here is cached; Home owns the cache. */
     suspend fun applyFilter(filter: LibraryFilter)
 
     /** `POST /v1/library`, then refreshes so the new title appears in the list (decision C-K). */
@@ -92,7 +124,7 @@ interface LibraryRepository {
      * One page of your favourites, optionally only anime or only TV ([type]), in [sort] order.
      * Stateless: the caller keeps the cursor, so Favorites' podium, its two shelves and the See all
      * grid each page on their own without resetting one another. Network-only, like every
-     * favourites read: Room caches only the default library view.
+     * favourites read: Room caches only Home's sections.
      */
     suspend fun favoritesPage(
         type: MediaType?,

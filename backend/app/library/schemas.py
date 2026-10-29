@@ -36,6 +36,23 @@ class LibrarySort(StrEnum):
     TITLE = "title"
 
 
+class LibrarySection(StrEnum):
+    """Where an entry is shown on Home: derived, never stored.
+
+    The non-watching statuses map to themselves. A saved `watching` entry splits three ways:
+    `completed` when the title has finished and every episode is counted, `caught_up` when every
+    aired episode is counted and nothing more is due this season, else `watching`. The rule lives
+    in service.section_expression; this is only the vocabulary.
+    """
+
+    WATCHING = "watching"
+    CAUGHT_UP = "caught_up"
+    PAUSED = "paused"
+    PLANNED = "planned"
+    COMPLETED = "completed"
+    DROPPED = "dropped"
+
+
 class LibraryEntry(BaseModel):
     """Media is embedded rather than referenced by id: a list screen needs titles and cover art,
     and an id-only response makes rendering one page N+1 requests. Reusing MediaDetail rather
@@ -48,6 +65,9 @@ class LibraryEntry(BaseModel):
 
     id: uuid.UUID
     status: UserMediaStatus
+    # Derived for display; `status` stays what the user saved. Computed in SQL from the episode
+    # rows on every read, so it is never a column a sync must remember to update.
+    section: LibrarySection
     score: Decimal | None
     progress: int
     favorite: bool
@@ -85,6 +105,8 @@ class LibraryStats(BaseModel):
 
     total: int
     by_status: dict[UserMediaStatus, int]
+    # The derived display grouping (LibrarySection), not the saved status; absent sections are absent.
+    by_section: dict[LibrarySection, int]
     # A STRING for the same reason LibraryEntry.score is one (decision 4-N): a JSON number is an
     # IEEE 754 double, and this is a NUMERIC average. Null when nothing is rated.
     average_score: Decimal | None

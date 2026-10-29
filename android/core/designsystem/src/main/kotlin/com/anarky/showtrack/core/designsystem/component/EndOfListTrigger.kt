@@ -19,18 +19,11 @@ private const val DEFAULT_THRESHOLD = 3
  * caller still needs its own re-entrancy guard for the in-flight case — a `LazyColumn` near its end
  * recomposes on every frame, but this only *emits* on the edge.
  *
- * **This changed `:feature:library`'s own firing point, not merely its implementation.** Before
- * this extraction, `LibraryList`'s inline condition fired only once the LAST row itself was
- * visible: `lastVisibleIndex >= entries.lastIndex`, i.e. `>= itemCount - 1`, equivalent to
- * `threshold = 1` in this function's own `lastVisibleIndex >= itemCount - threshold` terms — NOT
- * `threshold = 0` (fix round 2: a first pass at this comment got that off by one). Every call site
- * that does not pass [threshold] explicitly — `LibraryList` included — now gets [DEFAULT_THRESHOLD]
- * (3), so Library prefetches two rows earlier than it used to (`(itemCount - 1) - (itemCount - 3)
- * = 2`), not three. That is the shape the task brief specified verbatim and is benign
- * (`LibraryViewModel.loadMore`'s re-entrancy guard and `CursorPaginator`'s own exhaustion check
- * both still hold at the new firing point), but it is a real behaviour change, not a
- * like-for-like refactor — no `:feature:library` test exercised the composable's scroll trigger
- * before or after, so nothing would have gone red either way.
+ * Used by the lists that page on scroll (Feed, Discover, Favourites, group detail). Library does
+ * not: its Home is a sectioned grid that expands in place ("Show all N"), and a single-status view
+ * pages through [EndOfGridTrigger]. Call sites that do not pass [threshold] get
+ * [DEFAULT_THRESHOLD], i.e. the next page is asked for when the last visible item is within three
+ * of the end.
  *
  * **[rearmKey] exists because [itemCount] is not always what changes when a page lands.** Every
  * flat list here indexes one row per item, so a new page grows [itemCount] and the
