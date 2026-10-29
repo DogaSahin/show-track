@@ -16,6 +16,7 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
 import com.anarky.showtrack.core.model.CurrentUser
+import com.anarky.showtrack.core.model.GenreCount
 import com.anarky.showtrack.core.model.LibraryStats
 import com.anarky.showtrack.core.model.UserMediaStatus
 import org.junit.Assert.assertEquals
@@ -372,6 +373,29 @@ class ProfileScreenTest {
                 onSearchClick = onSearchClick,
             )
         }
+    }
+
+    @Test
+    fun `top genres show names, not raw codes`() {
+        val stats = UNRATED_STATS.copy(topGenres = listOf(GenreCount(genre = "sci_fi", count = 3)))
+        composeRule.setContent {
+            ProfileScreen(
+                user = null,
+                groupNames = null,
+                statsState = LibraryStatsUiState.Success(stats),
+                signOutError = false,
+                alerts = AlertsRowState.Off,
+                onAlertsClick = {},
+                onStatsRetry = {},
+                onSignOut = {},
+                onGroupsClick = {},
+                onImportClick = {},
+                onSearchClick = {},
+            )
+        }
+
+        composeRule.onNodeWithText("Sci-Fi").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("sci_fi").assertDoesNotExist()
     }
 
     private companion object {

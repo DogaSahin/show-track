@@ -103,6 +103,13 @@ class SearchScreenTest {
         composeRule.onNodeWithText(context.getString(R.string.search_recent_heading)).assertDoesNotExist()
     }
 
+    @Test
+    fun `a row shows genre names, not raw codes`() {
+        setResults(SearchResult(BLUE_LOCK.copy(genres = listOf("sci_fi", "slice_of_life", "drama"))))
+
+        composeRule.onNodeWithContentDescription("Blue Lock, Anime, 2022, Sci-Fi, Slice of Life").assertExists()
+    }
+
     private fun setResults(
         result: SearchResult,
         actions: SearchActions = SearchActions(),

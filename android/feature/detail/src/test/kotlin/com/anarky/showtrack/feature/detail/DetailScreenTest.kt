@@ -1027,6 +1027,15 @@ class DetailScreenTest {
         composeRule.onNodeWithText(add).assertExists()
     }
 
+    @Test
+    fun `genre chips show names, not raw codes`() {
+        composeRule.setContent { GenreChips(genres = listOf("sci_fi", "slice_of_life")) }
+
+        composeRule.onNodeWithText("Sci-Fi").assertExists()
+        composeRule.onNodeWithText("Slice of Life").assertExists()
+        composeRule.onNodeWithText("sci_fi").assertDoesNotExist()
+    }
+
     private fun successState(
         groupSection: GroupSectionState,
         justProposedToGroupId: String? = null,
