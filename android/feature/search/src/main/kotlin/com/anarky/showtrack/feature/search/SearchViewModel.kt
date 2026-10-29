@@ -85,6 +85,9 @@ class SearchViewModel
         // to publish (or to set the repository's query).
         private var searchJob: Job? = null
 
+        // One library re-check at a time: an older one landing after a newer one would overwrite it.
+        private var refreshJob: Job? = null
+
         // The query whose results are on screen or loading, so retyping it is not a new search.
         private var shownQuery: String? = null
 
@@ -270,32 +273,39 @@ class SearchViewModel
                     ?.items
                     .orEmpty()
                     .filter { it.mediaId != null && it.libraryStatus != null }
+            refreshJob?.cancel()
             if (tracked.isEmpty()) return
-            viewModelScope.launch {
-                val gate = Semaphore(REFRESH_CONCURRENCY)
-                val fresh =
-                    tracked
-                        .map { result ->
-                            async {
-                                gate.withPermit {
-                                    try {
-                                        val mediaId = checkNotNull(result.mediaId)
-                                        val status = libraryRepository.entryForMedia(mediaId)?.status
-                                        result to ResultPatch(mediaId, status, authoritative = true)
-                                    } catch (cancellation: CancellationException) {
-                                        throw cancellation
-                                    } catch (_: Exception) {
-                                        null
+            val before = tracked.associate { it.media.key to patches[it.media.key] }
+            refreshJob =
+                viewModelScope.launch {
+                    val gate = Semaphore(REFRESH_CONCURRENCY)
+                    val fresh =
+                        tracked
+                            .map { result ->
+                                async {
+                                    gate.withPermit {
+                                        try {
+                                            val mediaId = checkNotNull(result.mediaId)
+                                            val status = libraryRepository.entryForMedia(mediaId)?.status
+                                            result to ResultPatch(mediaId, status, authoritative = true)
+                                        } catch (cancellation: CancellationException) {
+                                            throw cancellation
+                                        } catch (_: Exception) {
+                                            null
+                                        }
                                     }
                                 }
-                            }
-                        }.awaitAll()
-                        .filterNotNull()
-                // A newer search replaced the list while this ran: its rows are not these.
-                if (shownQuery != shown) return@launch
-                fresh.forEach { (result, patch) -> patches[result.media.key] = patch }
-                replaceSuccess { it.copy(results = patched(it.results)) }
-            }
+                            }.awaitAll()
+                            .filterNotNull()
+                    // A newer search replaced the list while this ran: its rows are not these.
+                    if (shownQuery != shown) return@launch
+                    // Rows an add is landing on, or whose patch moved since the snapshot, know better.
+                    fresh.forEach { (result, patch) ->
+                        val key = result.media.key
+                        if (key != addInFlight && patches[key] === before[key]) patches[key] = patch
+                    }
+                    replaceSuccess { it.copy(results = patched(it.results)) }
+                }
         }
 
         /**

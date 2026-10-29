@@ -437,6 +437,71 @@ class SearchViewModelTest {
         }
 
     @Test
+    fun `a refresh that lands after a new search is dropped`() =
+        runTest(dispatcher) {
+            val library = FakeLibraryRepository()
+            val viewModel = searchedViewModel(FakeMediaRepository(resultsAfterSearch = ONE_RESULT), library)
+            viewModel.add(SearchResult(SUMMARY))
+            advanceUntilIdle()
+            val gate = CompletableDeferred<Unit>()
+            library.entryGate = gate
+            library.entries["m-1"] = ENTRY_WITH_MEDIA_ID_M1.copy(status = UserMediaStatus.WATCHING)
+            viewModel.refreshLibraryState()
+            advanceUntilIdle()
+
+            viewModel.onQueryChange("dandadan")
+            advanceUntilIdle()
+            gate.complete(Unit)
+            advanceUntilIdle()
+
+            // The new list shows the server's own view, not the old refresh's answer.
+            assertEquals(null, onlyRow(viewModel).libraryStatus)
+        }
+
+    @Test
+    fun `a refresh does not overwrite an add that landed while it ran`() =
+        runTest(dispatcher) {
+            val library = FakeLibraryRepository()
+            val viewModel = searchedViewModel(FakeMediaRepository(resultsAfterSearch = ONE_RESULT), library)
+            viewModel.add(SearchResult(SUMMARY))
+            advanceUntilIdle()
+            // The lookup answers "not in library" (stale by the time it lands).
+            val gate = CompletableDeferred<Unit>()
+            library.entryGate = gate
+            viewModel.refreshLibraryState()
+            advanceUntilIdle()
+
+            viewModel.add(SearchResult(SUMMARY))
+            advanceUntilIdle()
+            gate.complete(Unit)
+            advanceUntilIdle()
+
+            assertEquals(UserMediaStatus.PLANNED, onlyRow(viewModel).libraryStatus)
+        }
+
+    @Test
+    fun `a newer refresh replaces an older one still running`() =
+        runTest(dispatcher) {
+            val library = FakeLibraryRepository()
+            val viewModel = searchedViewModel(FakeMediaRepository(resultsAfterSearch = ONE_RESULT), library)
+            viewModel.add(SearchResult(SUMMARY))
+            advanceUntilIdle()
+            val staleGate = CompletableDeferred<Unit>()
+            library.entryGate = staleGate
+            viewModel.refreshLibraryState() // would answer "not in library"
+            advanceUntilIdle()
+
+            library.entryGate = null
+            library.entries["m-1"] = ENTRY_WITH_MEDIA_ID_M1.copy(status = UserMediaStatus.WATCHING)
+            viewModel.refreshLibraryState()
+            advanceUntilIdle()
+            staleGate.complete(Unit)
+            advanceUntilIdle()
+
+            assertEquals(UserMediaStatus.WATCHING, onlyRow(viewModel).libraryStatus)
+        }
+
+    @Test
     fun `refresh failure keeps the row`() =
         runTest(dispatcher) {
             val library = FakeLibraryRepository()
@@ -832,9 +897,15 @@ class SearchViewModelTest {
         val entries = mutableMapOf<String, LibraryEntry>()
         var entryFailure: Throwable? = null
 
+        // Holds each entryForMedia call until completed; the answer is read BEFORE the wait, so it
+        // goes stale if `entries` changes while a refresh is in flight. Null: no suspension.
+        var entryGate: CompletableDeferred<Unit>? = null
+
         override suspend fun entryForMedia(mediaId: String): LibraryEntry? {
             entryFailure?.let { throw it }
-            return entries[mediaId]
+            val answer = entries[mediaId]
+            entryGate?.await()
+            return answer
         }
 
         override suspend fun favoritesPage(
