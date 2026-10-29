@@ -518,9 +518,9 @@ async def recompute(session: AsyncSession, *, user_id: uuid.UUID, now: datetime)
     entries, entry_count = await _taste_profile(session, user_id)
     # Seeds are the POSITIVE entries only, and that filter is load-bearing rather than an
     # optimisation: _candidates attributes every candidate to one of these ids, so widening it
-    # would let "because you liked X" name a title the user gave no positive signal for. Every
-    # non-dropped entry carries at least LIBRARY_WEIGHT, so in practice this excludes only dropped
-    # titles with no explicit signal.
+    # would let "more like X" name a title the user gave no positive signal for. Every entry that
+    # is neither dropped nor scored below the threshold carries at least LIBRARY_WEIGHT, so in
+    # practice this excludes only dropped and sub-threshold titles with no favourite/completion.
     seed_ids = [entry.media_id for entry in entries if scoring.signal_weight(entry) > 0]
     candidates = await _candidates(session, user_id=user_id, seed_ids=seed_ids)
     ranked = scoring.rank_candidates(candidates, entries, await _genre_counts(session))
