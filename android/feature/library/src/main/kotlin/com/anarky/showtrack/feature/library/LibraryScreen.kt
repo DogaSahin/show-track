@@ -31,7 +31,6 @@ import com.anarky.showtrack.core.designsystem.component.EndOfListTrigger
 import com.anarky.showtrack.core.designsystem.component.ErrorState
 import com.anarky.showtrack.core.designsystem.component.LargeTitleScaffold
 import com.anarky.showtrack.core.designsystem.component.LoadingState
-import com.anarky.showtrack.core.designsystem.component.StaleDataBanner
 import com.anarky.showtrack.core.model.LibraryEntry
 import com.anarky.showtrack.core.model.LibraryFilter
 import com.anarky.showtrack.core.model.LibrarySort
@@ -50,8 +49,8 @@ private const val AIRING_SOON_KEY = "airing-soon"
  *
  * The counts and the "Airing soon" row reload on every resume ([LibraryViewModel.refreshOverview]):
  * an add or status change made in Detail or Search changes both, and this ViewModel outlives that
- * round trip. The list itself also reloads quietly on every resume
- * ([LibraryViewModel.refreshOnReturn]), so a title added elsewhere or a changed sort order settles in.
+ * round trip. On "All shows" the same call reloads Home's sections; a single-status list reloads
+ * quietly through [LibraryViewModel.refreshOnReturn], so a title added elsewhere settles in.
  */
 @Composable
 fun LibraryScreen(
@@ -150,7 +149,6 @@ internal fun LibraryScreen(
                             airingSoon = if (filter.status == null) airingSoon else emptyList(),
                             listState = listState,
                             onShowAll = { onStatusSelected(null) },
-                            onRetry = onRetry,
                             onLoadMore = onLoadMore,
                             onEntryClick = onEntryClick,
                         )
@@ -161,7 +159,7 @@ internal fun LibraryScreen(
 }
 
 /**
- * The stale banner above the list (it never replaces it), then the list or its empty state.
+ * The list or its empty state.
  *
  * The empty message differs by filter: "Nothing in your library yet" is only true on the default
  * view; under a filter it would read as data loss, so it says "Nothing here" and offers to clear a
@@ -175,12 +173,10 @@ private fun LibraryContent(
     airingSoon: List<LibraryEntry>,
     listState: LazyListState,
     onShowAll: () -> Unit,
-    onRetry: () -> Unit,
     onLoadMore: () -> Unit,
     onEntryClick: (LibraryEntry) -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
-        if (success.isStale) StaleDataBanner(onRetry = onRetry)
         Box(modifier = Modifier.weight(weight = 1f).fillMaxWidth()) {
             if (success.entries.isEmpty()) {
                 EmptyState(
