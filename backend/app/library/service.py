@@ -585,8 +585,8 @@ async def get_stats(session: AsyncSession, *, user_id: uuid.UUID) -> LibraryStat
     by_status = {row.status: row.count for row in status_rows}
 
     # The derived display grouping (see section_expression), counted over the same caller-scoped
-    # rows. A fifth-looking statement but a different dimension: it needs the join to `media` and
-    # the episode subqueries that `by_status` deliberately avoids.
+    # rows. One of the five statements rather than folded into `by_status`: it is a different
+    # dimension, and it needs the join to `media` and the episode subqueries `by_status` avoids.
     section = section_expression(clock.utcnow().date()).label("section")
     section_rows = (
         await session.execute(
@@ -599,8 +599,8 @@ async def get_stats(session: AsyncSession, *, user_id: uuid.UUID) -> LibraryStat
     ).all()
     by_section = {LibrarySection(row.section): row.count for row in section_rows}
 
-    # FILTER (WHERE favorite), not a fifth statement: it is the same scan of the same rows, and
-    # Postgres evaluates every aggregate in one pass.
+    # FILTER (WHERE favorite) rather than a statement of its own: it is the same scan of the same
+    # rows, and Postgres evaluates every aggregate in one pass.
     average_score, rated_count, episodes_watched, favorites = (
         await session.execute(
             select(
