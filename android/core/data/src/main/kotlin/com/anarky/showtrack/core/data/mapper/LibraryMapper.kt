@@ -4,6 +4,7 @@ import com.anarky.showtrack.core.database.LibraryEntryEntity
 import com.anarky.showtrack.core.model.GenreCount
 import com.anarky.showtrack.core.model.ImportSummary
 import com.anarky.showtrack.core.model.LibraryEntry
+import com.anarky.showtrack.core.model.LibrarySection
 import com.anarky.showtrack.core.model.LibraryStats
 import com.anarky.showtrack.core.model.Media
 import com.anarky.showtrack.core.model.MediaSource
@@ -46,12 +47,15 @@ fun LibraryEntryDto.toDomain(): LibraryEntry =
         favorite = favorite,
         updatedAt = Instant.parse(updatedAt),
         media = media.toDomain(),
+        section = wireEnum(section, LibrarySection.UNKNOWN),
     )
 
 /**
  * `by_status` keys that don't map to a known [UserMediaStatus] are DROPPED rather than kept as an
  * `UNKNOWN` bucket: the stats screen has no row to show for a status it cannot name. Decoding is
  * [wireEnum], the same tolerant rule [LibraryEntryDto.toDomain] uses for a single entry.
+ *
+ * `by_section` drops unknown keys the same way.
  *
  * `average_score` is `BigDecimal(String)`, never a trip through `Double` — see
  * [LibraryEntryDto.toDomain]'s own KDoc for why that conversion specifically (not
@@ -67,6 +71,13 @@ fun LibraryStatsDto.toDomain(): LibraryStats =
                 .mapNotNull { (status, count) ->
                     wireEnum(status, UserMediaStatus.UNKNOWN)
                         .takeIf { it != UserMediaStatus.UNKNOWN }
+                        ?.let { it to count }
+                }.toMap(),
+        bySection =
+            bySection
+                .mapNotNull { (section, count) ->
+                    wireEnum(section, LibrarySection.UNKNOWN)
+                        .takeIf { it != LibrarySection.UNKNOWN }
                         ?.let { it to count }
                 }.toMap(),
         averageScore = averageScore?.let(::BigDecimal),

@@ -108,6 +108,7 @@ class NetworkModuleTest {
                     mediaId = null,
                     favorite = null,
                     type = null,
+                    section = null,
                 )
         }
 

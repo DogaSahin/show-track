@@ -1006,6 +1006,7 @@ private class FakeShowTrackApi(
         mediaId: String?,
         favorite: Boolean?,
         type: String?,
+        section: String?,
     ): LibraryPageDto {
         requestedCursors += cursor
         requestedLimits += limit

@@ -15,6 +15,7 @@ import kotlinx.serialization.Serializable
 data class LibraryStatsDto(
     val total: Int,
     @SerialName("by_status") val byStatus: Map<String, Int>,
+    @SerialName("by_section") val bySection: Map<String, Int> = emptyMap(),
     @SerialName("average_score") val averageScore: String?,
     @SerialName("rated_count") val ratedCount: Int,
     @SerialName("episodes_watched") val episodesWatched: Int,

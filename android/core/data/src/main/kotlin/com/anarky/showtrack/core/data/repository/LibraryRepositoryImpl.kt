@@ -103,6 +103,7 @@ class LibraryRepositoryImpl
                         mediaId = null,
                         favorite = null,
                         type = null,
+                        section = null,
                     )
                 Page(page.items.map(LibraryEntryDto::toDomain), page.nextCursor)
             }
@@ -354,6 +355,7 @@ class LibraryRepositoryImpl
                     mediaId = mediaId,
                     favorite = null,
                     type = null,
+                    section = null,
                 ).items
                 .firstOrNull()
                 ?.toDomain()
@@ -373,6 +375,7 @@ class LibraryRepositoryImpl
                     mediaId = null,
                     favorite = true,
                     type = type?.wireValue(),
+                    section = null,
                 )
             return Page(page.items.map(LibraryEntryDto::toDomain), page.nextCursor)
         }
@@ -390,6 +393,7 @@ class LibraryRepositoryImpl
                     mediaId = null,
                     favorite = null,
                     type = null,
+                    section = null,
                 ).items
                 .map(LibraryEntryDto::toDomain)
 
@@ -406,6 +410,7 @@ class LibraryRepositoryImpl
                         mediaId = null,
                         favorite = null,
                         type = null,
+                        section = null,
                     )
                 entries += page.items.map(LibraryEntryDto::toDomain)
                 cursor = page.nextCursor

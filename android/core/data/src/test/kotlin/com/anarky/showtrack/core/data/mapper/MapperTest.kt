@@ -3,6 +3,7 @@ package com.anarky.showtrack.core.data.mapper
 import com.anarky.showtrack.core.database.LibraryEntryEntity
 import com.anarky.showtrack.core.model.GenreCount
 import com.anarky.showtrack.core.model.GroupRole
+import com.anarky.showtrack.core.model.LibrarySection
 import com.anarky.showtrack.core.model.MediaSource
 import com.anarky.showtrack.core.model.MediaStatus
 import com.anarky.showtrack.core.model.MediaType
@@ -263,6 +264,31 @@ class MapperTest {
 
         assertEquals(mapOf(UserMediaStatus.WATCHING to 4), stats.byStatus)
         assertEquals(6, stats.total)
+    }
+
+    @Test
+    fun `a known display section maps and an unknown or missing one falls back to UNKNOWN`() {
+        assertEquals(LibrarySection.CAUGHT_UP, libraryEntryDto().copy(section = "caught_up").toDomain().section)
+        assertEquals(LibrarySection.UNKNOWN, libraryEntryDto().copy(section = "bogus").toDomain().section)
+        assertEquals(LibrarySection.UNKNOWN, libraryEntryDto().copy(section = null).toDomain().section)
+    }
+
+    @Test
+    fun `an unrecognised by_section key is dropped from the map`() {
+        val stats =
+            LibraryStatsDto(
+                total = 7,
+                byStatus = emptyMap(),
+                bySection = mapOf("caught_up" to 3, "watching" to 2, "future_section" to 2),
+                averageScore = null,
+                ratedCount = 0,
+                episodesWatched = 0,
+                topGenres = emptyList(),
+                addedThisMonth = 0,
+                favorites = 0,
+            ).toDomain()
+
+        assertEquals(mapOf(LibrarySection.CAUGHT_UP to 3, LibrarySection.WATCHING to 2), stats.bySection)
     }
 
     private fun persistedMediaDto() =

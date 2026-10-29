@@ -14,4 +14,6 @@ data class LibraryEntry(
     val favorite: Boolean,
     val updatedAt: Instant,
     val media: Media,
+    /** Server-derived display section; [LibrarySection.UNKNOWN] when absent or unrecognised. */
+    val section: LibrarySection = LibrarySection.UNKNOWN,
 )

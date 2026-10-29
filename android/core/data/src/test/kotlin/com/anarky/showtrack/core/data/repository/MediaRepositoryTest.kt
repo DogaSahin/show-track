@@ -332,6 +332,7 @@ class MediaRepositoryTest {
             mediaId: String?,
             favorite: Boolean?,
             type: String?,
+            section: String?,
         ): LibraryPageDto = TODO("not used")
 
         override suspend fun addLibraryEntry(request: AddLibraryEntryRequest): LibraryEntryDto = TODO("not used")
