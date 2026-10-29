@@ -111,8 +111,8 @@ android {
 
     defaultConfig {
         applicationId = "com.anarky.showtrack"
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
         check(minVersionCode <= versionCode!!) {
             "minVersionCode ($minVersionCode) must not exceed versionCode ($versionCode)"
         }
