@@ -132,18 +132,12 @@ private fun EpisodeTile(
         )
     val shape = MaterialTheme.shapes.small
     val primary = MaterialTheme.colorScheme.primary
+    val (fill, content) = tileColors(episode, watched = watched, highlighted = episode.id in state.highlighted)
     val base =
         modifier
             .aspectRatio(1f)
             .clip(shape)
-            .background(
-                when {
-                    watched -> primary
-                    episode.id in state.highlighted -> MaterialTheme.colorScheme.primaryContainer
-                    episode.aired -> MaterialTheme.colorScheme.surfaceContainerHigh
-                    else -> Color.Transparent
-                },
-            )
+            .background(fill)
     val outlined =
         when {
             isNext && !watched -> base.border(BorderStroke(1.5.dp, primary), shape)
@@ -167,12 +161,26 @@ private fun EpisodeTile(
             text = episode.number.toString(),
             style = MaterialTheme.typography.labelMedium,
             textAlign = TextAlign.Center,
-            color =
-                when {
-                    watched -> MaterialTheme.colorScheme.onPrimary
-                    episode.aired -> MaterialTheme.colorScheme.onSurface
-                    else -> MaterialTheme.colorScheme.onSurfaceVariant
-                },
+            color = content,
         )
+    }
+}
+
+/**
+ * A tile's fill and number colour. A catch-up suggestion takes the teal tertiary role so purple
+ * only ever means "watched".
+ */
+@Composable
+private fun tileColors(
+    episode: Episode,
+    watched: Boolean,
+    highlighted: Boolean,
+): Pair<Color, Color> {
+    val colors = MaterialTheme.colorScheme
+    return when {
+        watched -> colors.primary to colors.onPrimary
+        highlighted -> colors.tertiaryContainer to colors.onTertiaryContainer
+        episode.aired -> colors.surfaceContainerHigh to colors.onSurface
+        else -> Color.Transparent to colors.onSurfaceVariant
     }
 }

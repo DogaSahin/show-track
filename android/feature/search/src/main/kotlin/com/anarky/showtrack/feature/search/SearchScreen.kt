@@ -29,6 +29,7 @@ import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.anarky.showtrack.core.designsystem.component.EmptyState
 import com.anarky.showtrack.core.designsystem.component.EndOfListTrigger
@@ -75,6 +76,12 @@ fun SearchScreen(
                 )
             if (result == SnackbarResult.ActionPerformed) onAction()
         }
+    }
+
+    // A title may have been removed or changed on its detail page: re-check the rows on return.
+    LifecycleResumeEffect(viewModel) {
+        viewModel.refreshLibraryState()
+        onPauseOrDispose { }
     }
 
     LaunchedEffect(viewModel) {

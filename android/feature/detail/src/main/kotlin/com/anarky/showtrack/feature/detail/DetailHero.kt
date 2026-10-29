@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import com.anarky.showtrack.core.designsystem.component.BlurredCoverBackdrop
 import com.anarky.showtrack.core.designsystem.component.MediaCover
 import com.anarky.showtrack.core.designsystem.component.countdownLabel
+import com.anarky.showtrack.core.designsystem.component.genreLabel
 import com.anarky.showtrack.core.designsystem.component.nextEpisodeLabel
 import com.anarky.showtrack.core.designsystem.component.typeAndYear
 import com.anarky.showtrack.core.model.Media
@@ -130,7 +131,7 @@ internal fun GenreChips(
         genres.forEach { genre ->
             Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
                 Text(
-                    text = genre,
+                    text = genreLabel(genre),
                     style = MaterialTheme.typography.labelSmall,
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
                 )

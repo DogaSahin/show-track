@@ -28,6 +28,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.anarky.showtrack.core.designsystem.component.MediaCover
+import com.anarky.showtrack.core.designsystem.component.genreLabel
 import com.anarky.showtrack.core.designsystem.component.typeAndYear
 import com.anarky.showtrack.core.model.Recommendation
 
@@ -130,7 +131,7 @@ internal fun DiscoverShelfRow(
             )
             if (sharedGenres.isNotEmpty()) {
                 Text(
-                    text = sharedGenres.joinToString(separator = " · "),
+                    text = sharedGenres.map { genreLabel(it) }.joinToString(separator = " · "),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

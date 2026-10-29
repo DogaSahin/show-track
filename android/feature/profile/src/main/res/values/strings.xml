@@ -68,7 +68,7 @@
          title was rated zero, which is a different and false statement from "nothing is rated".
          The label beneath it says so in words. -->
     <string name="profile_stats_no_ratings_figure">—</string>
-    <string name="profile_stats_no_ratings">No ratings yet</string>
+    <string name="profile_stats_no_ratings">no ratings yet</string>
     <string name="profile_stats_error">Couldn\'t load your library stats.</string>
 
     <!-- Profile's own door to the groups screen (decision E-A, GroupsRoute). Group management is

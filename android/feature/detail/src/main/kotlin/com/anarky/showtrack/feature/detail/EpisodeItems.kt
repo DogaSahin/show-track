@@ -291,19 +291,15 @@ private fun EpisodeRow(
     val watched = episode.id in state.watched
     val title = episode.title ?: stringResource(R.string.detail_episode_fallback_title, episode.number)
     val spoken = episodeDescription(episode, watched, state.tracking, today)
+    val highlighted = episode.id in state.highlighted
     Column(
         modifier =
             Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp)
                 .background(
-                    if (episode.id in
-                        state.highlighted
-                    ) {
-                        MaterialTheme.colorScheme.primaryContainer
-                    } else {
-                        Color.Transparent
-                    },
+                    // Teal tertiary role for catch-up suggestions: purple only ever means "watched".
+                    if (highlighted) MaterialTheme.colorScheme.tertiaryContainer else Color.Transparent,
                 ),
     ) {
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -322,13 +318,23 @@ private fun EpisodeRow(
             Text(
                 text = episode.number.toString(),
                 style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color =
+                    if (highlighted) {
+                        MaterialTheme.colorScheme.onTertiaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
             )
             val colors = MaterialTheme.colorScheme
             Text(
                 text = title,
                 style = MaterialTheme.typography.bodyMedium,
-                color = if (episode.aired) colors.onSurface else colors.onSurfaceVariant,
+                color =
+                    when {
+                        highlighted -> colors.onTertiaryContainer
+                        episode.aired -> colors.onSurface
+                        else -> colors.onSurfaceVariant
+                    },
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),

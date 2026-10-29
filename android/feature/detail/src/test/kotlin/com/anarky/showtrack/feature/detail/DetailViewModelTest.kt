@@ -13,6 +13,7 @@ import com.anarky.showtrack.core.model.GroupActor
 import com.anarky.showtrack.core.model.GroupFailure
 import com.anarky.showtrack.core.model.LibraryEntry
 import com.anarky.showtrack.core.model.LibraryPatch
+import com.anarky.showtrack.core.model.LibrarySection
 import com.anarky.showtrack.core.model.LibrarySort
 import com.anarky.showtrack.core.model.Media
 import com.anarky.showtrack.core.model.MediaSource
@@ -28,6 +29,7 @@ import com.anarky.showtrack.core.model.WatchlistEntry
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -1976,6 +1978,21 @@ class DetailViewModelTest {
 
         override suspend fun refresh(): Unit = error("not exercised by DetailViewModel")
 
+        override fun observeHomeCache(): Flow<Map<LibrarySection, List<LibraryEntry>>> =
+            error("Home sections are not exercised here")
+
+        override suspend fun refreshHome(
+            sort: LibrarySort,
+            perSection: Int,
+        ): Map<LibrarySection, Page<LibraryEntry>> = error("Home sections are not exercised here")
+
+        override suspend fun sectionPage(
+            section: LibrarySection,
+            sort: LibrarySort,
+            cursor: String?,
+            limit: Int,
+        ): Page<LibraryEntry> = error("Home sections are not exercised here")
+
         override suspend fun loadMore(): Unit = error("not exercised by DetailViewModel")
 
         override suspend fun applyFilter(filter: com.anarky.showtrack.core.model.LibraryFilter): Unit =
@@ -2002,7 +2019,13 @@ class DetailViewModelTest {
 
         var watched: Set<String> = emptySet()
 
-        override suspend fun watchedEpisodes(entryId: String): Set<String> = watched
+        // Holds watchedEpisodes() suspended so a re-fetch can be observed in flight.
+        var watchedGate: CompletableDeferred<Unit>? = null
+
+        override suspend fun watchedEpisodes(entryId: String): Set<String> {
+            watchedGate?.await()
+            return watched
+        }
 
         val setWatchedCalls = mutableListOf<Pair<Set<String>, Boolean>>()
         var setWatchedFailure: Throwable? = null

@@ -3,6 +3,7 @@ package com.anarky.showtrack.feature.discover
 import android.content.Context
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -369,6 +370,28 @@ class DiscoverScreenTest {
             ).toShelves().single()
 
         assertEquals(listOf("Fantasy", "Adventure"), shelf.sharedGenres())
+    }
+
+    @Test
+    fun `the top pick and its shelf show genre names, not raw codes`() {
+        val pick =
+            FRIEREN.copy(
+                media = FRIEREN.media.copy(genres = listOf("sci_fi")),
+                reason = FRIEREN.reason.copy(matchedGenres = listOf("sci_fi")),
+            )
+        composeRule.setContent {
+            DiscoverScreen(
+                state = DiscoverUiState.Success(items = listOf(pick, BEBOP)),
+                onRetry = {},
+                onLoadMore = {},
+                onAdd = {},
+                onRowClick = {},
+                onSearch = {},
+            )
+        }
+
+        assertTrue(composeRule.onAllNodesWithText("Sci-Fi", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty())
+        composeRule.onNodeWithText("sci_fi", useUnmergedTree = true).assertDoesNotExist()
     }
 
     private companion object {

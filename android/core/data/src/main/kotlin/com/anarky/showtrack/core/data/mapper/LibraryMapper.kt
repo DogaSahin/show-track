@@ -4,6 +4,7 @@ import com.anarky.showtrack.core.database.LibraryEntryEntity
 import com.anarky.showtrack.core.model.GenreCount
 import com.anarky.showtrack.core.model.ImportSummary
 import com.anarky.showtrack.core.model.LibraryEntry
+import com.anarky.showtrack.core.model.LibrarySection
 import com.anarky.showtrack.core.model.LibraryStats
 import com.anarky.showtrack.core.model.Media
 import com.anarky.showtrack.core.model.MediaSource
@@ -46,12 +47,15 @@ fun LibraryEntryDto.toDomain(): LibraryEntry =
         favorite = favorite,
         updatedAt = Instant.parse(updatedAt),
         media = media.toDomain(),
+        section = wireEnum(section, LibrarySection.UNKNOWN),
     )
 
 /**
  * `by_status` keys that don't map to a known [UserMediaStatus] are DROPPED rather than kept as an
  * `UNKNOWN` bucket: the stats screen has no row to show for a status it cannot name. Decoding is
  * [wireEnum], the same tolerant rule [LibraryEntryDto.toDomain] uses for a single entry.
+ *
+ * `by_section` drops unknown keys the same way.
  *
  * `average_score` is `BigDecimal(String)`, never a trip through `Double` — see
  * [LibraryEntryDto.toDomain]'s own KDoc for why that conversion specifically (not
@@ -67,6 +71,13 @@ fun LibraryStatsDto.toDomain(): LibraryStats =
                 .mapNotNull { (status, count) ->
                     wireEnum(status, UserMediaStatus.UNKNOWN)
                         .takeIf { it != UserMediaStatus.UNKNOWN }
+                        ?.let { it to count }
+                }.toMap(),
+        bySection =
+            bySection
+                .mapNotNull { (section, count) ->
+                    wireEnum(section, LibrarySection.UNKNOWN)
+                        .takeIf { it != LibrarySection.UNKNOWN }
                         ?.let { it to count }
                 }.toMap(),
         averageScore = averageScore?.let(::BigDecimal),
@@ -92,7 +103,8 @@ fun ImportSummaryDto.toDomain(): ImportSummary =
  * Room into the thing the app believes, so it is not a gap to be "fixed" in passing.
  *
  * `status` is decoded with [wireEnum] like the DTO mapper: [toEntity] writes `status.name`, so the
- * column holds the enum's own spelling (including `UNKNOWN`, which round-trips by name).
+ * column holds the enum's own spelling (including `UNKNOWN`, which round-trips by name). `section`
+ * follows the same rule.
  */
 fun LibraryEntryEntity.toDomain(): LibraryEntry =
     LibraryEntry(
@@ -115,12 +127,13 @@ fun LibraryEntryEntity.toDomain(): LibraryEntry =
                 genres = emptyList(),
                 coverImageUrl = coverUrl,
                 status = MediaStatus.AIRING,
-                nextEpisodeSeason = null,
+                nextEpisodeSeason = nextEpisodeSeason,
                 nextEpisodeNumber = null,
                 nextEpisodeDate = null,
                 daysUntilNextEpisode = daysUntilNextEpisode,
                 totalEpisodes = totalEpisodes,
             ),
+        section = wireEnum(section, LibrarySection.UNKNOWN),
     )
 
 /**
@@ -141,4 +154,6 @@ fun LibraryEntry.toEntity(): LibraryEntryEntity =
         coverUrl = media.coverImageUrl,
         daysUntilNextEpisode = media.daysUntilNextEpisode,
         totalEpisodes = media.totalEpisodes,
+        section = section.name,
+        nextEpisodeSeason = media.nextEpisodeSeason,
     )

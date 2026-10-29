@@ -23,6 +23,11 @@ SCORE_FLOOR, SCORE_SPAN = Decimal("6"), Decimal("4")
 FAVORITE_WEIGHT = 1.0
 # Finishing a show is a revealed preference, deliberately weaker than an explicit 7 (0.25).
 COMPLETED_WEIGHT = 0.15
+# "It's in your library" is the weakest signal of all, weaker than COMPLETED_WEIGHT: adding a title
+# says you expect to like it, not that you did. Unscored or well-scored library titles carry it;
+# Dropped titles and sub-threshold scores carry none — both say you did not like it, and "more like
+# a show you rated 3" would be wrong. Still no negative weights (7-H), simply no signal.
+LIBRARY_WEIGHT = 0.05
 # Reciprocal-rank decay over the provider's ordering: 1st -> 1.0, 2nd -> 0.5, 3rd -> 0.33.
 RR_NUMERATOR = 1.0
 # How much of a candidate's score survives with zero genre overlap. Genre is coarse and blind to
@@ -46,6 +51,7 @@ class TasteEntry:
     score: Decimal | None
     favorite: bool
     completed: bool
+    dropped: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,10 +78,13 @@ class Scored:
 def signal_weight(entry: TasteEntry) -> float:
     """How much this entry says about your taste. Strongest applicable signal wins (7-H).
 
-    Returns 0.0 for an entry that says nothing — an unscored `planned` title, or one scored below
-    the threshold. Zero-weight entries contribute to neither side of the TF ratio.
+    A library entry that is neither dropped nor scored below the threshold carries at least
+    LIBRARY_WEIGHT, so an unscored `planned` title still seeds Discover. Returns 0.0 for a dropped
+    or sub-threshold entry with no favourite or completion behind it. Zero-weight entries
+    contribute to neither side of the TF ratio.
     """
-    weights: list[float] = []
+    disliked = entry.dropped or (entry.score is not None and entry.score < SCORE_THRESHOLD)
+    weights: list[float] = [] if disliked else [LIBRARY_WEIGHT]
     if entry.score is not None and entry.score >= SCORE_THRESHOLD:
         weights.append(float((entry.score - SCORE_FLOOR) / SCORE_SPAN))
     if entry.favorite:

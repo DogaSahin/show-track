@@ -110,6 +110,7 @@ class LibraryRepositoryImplTest {
             title = "Cached Title",
             coverUrl = "https://example.com/cached.jpg",
             daysUntilNextEpisode = 5,
+            section = "WATCHING",
         )
 
     @Before
@@ -135,43 +136,26 @@ class LibraryRepositoryImplTest {
         database.close()
     }
 
+    /**
+     * Home owns the cache now: the paged list is network-only, so the cached rows (which are
+     * sections, not "the first page of the default view") never stand in for it, and a refresh
+     * leaves them alone.
+     */
     @Test
-    fun `the cache emits before the network resolves`() =
+    fun `observeLibrary is the paged list only and refresh leaves the cache untouched`() =
         runTest {
             dao.replaceAll(listOf(cachedEntry))
 
             repository.observeLibrary().test {
-                // No network call yet: the first emission is purely the cold-start cache.
-                // Fields, not `cachedEntry.toDomain()` — comparing the emission to the mapper's
-                // own output asserts the mapper against itself and holds for a broken mapper too.
-                val cold = awaitItem().single()
-                assertEquals("cached", cold.id)
-                assertEquals("Cached Title", cold.media.title)
-                assertEquals(BigDecimal("7.0"), cold.score)
-                assertEquals(3, cold.progress)
-                assertEquals(emptyList<String?>(), api.requestedCursors)
+                assertEquals(emptyList<String>(), awaitItem().map { it.id })
 
                 repository.refresh()
 
                 val fresh = awaitItem().single()
                 assertEquals("1", fresh.id)
-                assertEquals("Title 1", fresh.media.title)
                 assertEquals(UserMediaStatus.WATCHING, fresh.status)
-                // Full microsecond precision, and that is the assertion doing the work: the
-                // network list takes over WHOLESALE, so what is emitted here came straight off
-                // the wire rather than back out of SQLite. Asserting the truncated value would
-                // pass whether the emission came from the cache or the network, which is exactly
-                // the distinction this test exists to pin.
-                assertEquals(Instant.parse("2026-08-26T13:41:10.558339Z"), fresh.updatedAt)
-
-                // The other half of the asymmetry, and the reason a mapper round trip is NOT a
-                // cache round trip: the row that was written for the next cold start is
-                // truncated to millis, because `library_entries.updated_at` is INTEGER epoch
-                // millis. Harmless (the field feeds ordering and display, never equality) but a
-                // hand-written fake DAO would never have shown it.
-                val cachedRow = dao.observeAll().first().single()
-                assertEquals(Instant.parse("2026-08-26T13:41:10.558Z"), cachedRow.updatedAt)
             }
+            assertEquals(listOf(cachedEntry), dao.observeAll().first())
         }
 
     /**
@@ -193,19 +177,6 @@ class LibraryRepositoryImplTest {
 
                 assertEquals(listOf("1", "2"), awaitItem().map { it.id })
             }
-        }
-
-    /**
-     * The cold-start property the `combine` must not break: with nothing paged yet, the cache is
-     * what renders. `ifEmpty` rather than a `started`-style flag because the paginator's own list
-     * already carries that information.
-     */
-    @Test
-    fun `the cache still wins when nothing has been paged`() =
-        runTest {
-            dao.replaceAll(listOf(cachedEntry))
-
-            assertEquals(listOf("cached"), repository.observeLibrary().first().map { it.id })
         }
 
     /**
@@ -248,17 +219,6 @@ class LibraryRepositoryImplTest {
 
         assertEquals("10", entry.toEntity().score)
     }
-
-    @Test
-    fun `a failed refresh leaves the cache intact`() =
-        runTest {
-            dao.replaceAll(listOf(cachedEntry))
-            api.failNext()
-
-            runCatching { repository.refresh() }
-
-            assertEquals(listOf(cachedEntry), dao.observeAll().first())
-        }
 
     /**
      * The half the DAO assertion above cannot see. `CursorPaginator.restart` fetches before it
@@ -316,11 +276,7 @@ class LibraryRepositoryImplTest {
             }
         }
 
-    /**
-     * `refresh()` must reset the paginator, not continue it. Without the reset the second call
-     * would request `c1` and write page 2 into the cache as though it were page 1 — a cold start
-     * would then open on the middle of the list.
-     */
+    /** `refresh()` must reset the paginator, not continue it from page 2. */
     @Test
     fun `refresh restarts from the first page rather than continuing`() =
         runTest {
@@ -330,16 +286,7 @@ class LibraryRepositoryImplTest {
             repository.refresh()
 
             assertEquals(listOf(null, "c1", null), api.requestedCursors)
-            assertEquals(listOf("1"), dao.observeAll().first().map { it.id })
-        }
-
-    @Test
-    fun `only the first page is cached, however many are loaded`() =
-        runTest {
-            repository.refresh()
-            repository.loadMore()
-
-            assertEquals(listOf("1"), dao.observeAll().first().map { it.id })
+            assertEquals(listOf("1"), repository.observeLibrary().first().map { it.id })
         }
 
     @Test
@@ -400,20 +347,6 @@ class LibraryRepositoryImplTest {
         }
 
     @Test
-    fun `a non-default filter is NOT written to the cache`() =
-        runTest {
-            // Decision C-B. Caching a filtered page would make a later cold start render
-            // "Watching" as if it were the whole library.
-            api.enqueueLibraryPage(pageOf("Cached title"))
-            repository.refresh()
-            api.enqueueLibraryPage(pageOf("Only planned"))
-
-            repository.applyFilter(LibraryFilter(status = UserMediaStatus.PLANNED))
-
-            assertEquals(listOf("Cached title"), dao.observeAll().first().map { it.title })
-        }
-
-    @Test
     fun `applying a filter sends it as query parameters and starts from page one`() =
         runTest {
             api.enqueueLibraryPage(pageOf("Anything", nextCursor = "cursor-2"))
@@ -429,17 +362,11 @@ class LibraryRepositoryImplTest {
             assertNull(api.requestedCursors.last())
         }
 
-    /**
-     * The read half of decision C-B, which `a non-default filter is NOT written to the cache`
-     * does not reach: that test asserts on `dao.observeAll()` directly, never on
-     * `observeLibrary()`, so it cannot see whether the `combine`'s `else paged` branch (as
-     * opposed to `paged.ifEmpty { cached }`) is actually wired in. Without it, an empty filtered
-     * result would render the stale unfiltered cache instead of an empty list — the exact failure
-     * C-B exists to prevent, and the reason `filter` is a third source of the `combine` at all.
-     */
+    /** An empty filtered result renders as empty, never as the cached Home rows. */
     @Test
     fun `observeLibrary shows an empty filtered result, not the unfiltered cache`() =
         runTest {
+            dao.replaceAll(listOf(cachedEntry))
             api.enqueueLibraryPage(pageOf("Cached title"))
             repository.refresh()
             api.enqueueLibraryPage(LibraryPageDto(items = emptyList(), nextCursor = null))
@@ -516,8 +443,8 @@ class LibraryRepositoryImplTest {
     @Test
     fun `removing deletes the entry, drops its cached row, and survives a failed refresh`() =
         runTest {
+            dao.replaceAll(listOf(cachedEntry.copy(id = "1")))
             repository.refresh()
-            assertEquals(true, dao.observeAll().first().any { it.id == "1" })
             api.failNext()
 
             repository.remove("1")
@@ -690,7 +617,7 @@ class LibraryRepositoryImplTest {
             val created = repository.add(MediaSource.ANILIST, "154587")
 
             assertEquals("Newly added", created.media.title)
-            assertEquals(listOf("Newly added"), dao.observeAll().first().map { it.title })
+            assertEquals(listOf("Newly added"), repository.observeLibrary().first().map { it.media.title })
             // The source enum is lowercased for the wire, matching what `library()`'s status/sort
             // params do above.
             assertEquals(AddLibraryEntryRequest(source = "anilist", externalId = "154587"), api.addRequests.single())
@@ -743,6 +670,7 @@ class LibraryRepositoryImplTest {
     @Test
     fun `clearing user data empties the cache, the loaded pages and the filter`() =
         runTest {
+            dao.replaceAll(listOf(cachedEntry))
             repository.refresh()
             repository.loadMore()
             assertEquals(listOf("1", "2"), repository.observeLibrary().first().map { it.id })
@@ -944,7 +872,7 @@ class LibraryRepositoryImplTest {
  * sequencing — which cursor it asks for, and when — and recording the arguments directly is what
  * makes that assertable. `:core:network`'s own tests already cover the wire.
  */
-private class FakeShowTrackApi(
+internal class FakeShowTrackApi(
     private val pages: Map<String?, LibraryPageDto>,
 ) : ShowTrackApi {
     val requestedCursors = mutableListOf<String?>()
@@ -954,6 +882,12 @@ private class FakeShowTrackApi(
     val requestedMediaIds = mutableListOf<String?>()
     val requestedFavorites = mutableListOf<Boolean?>()
     val requestedTypes = mutableListOf<String?>()
+    val requestedSections = mutableListOf<String?>()
+
+    // Section requests answer from here (an empty page when absent), never from [pages]: Home's six
+    // concurrent first-page reads would otherwise race for the same one-shot queue.
+    val sectionPages = mutableMapOf<String, LibraryPageDto>()
+    val failingSections = mutableSetOf<String>()
     val addRequests = mutableListOf<AddLibraryEntryRequest>()
     val updateRequests = mutableListOf<Pair<String, JsonObject>>()
     val watchedRequests = mutableListOf<Pair<String, SetWatchedRequestDto>>()
@@ -1006,6 +940,7 @@ private class FakeShowTrackApi(
         mediaId: String?,
         favorite: Boolean?,
         type: String?,
+        section: String?,
     ): LibraryPageDto {
         requestedCursors += cursor
         requestedLimits += limit
@@ -1014,13 +949,17 @@ private class FakeShowTrackApi(
         requestedMediaIds += mediaId
         requestedFavorites += favorite
         requestedTypes += type
+        requestedSections += section
         libraryGate?.await()
         if (shouldFail) {
             shouldFail = false
             throw IOException("simulated network failure")
         }
-        queuedPages.removeFirstOrNull()?.let { return it }
-        return pages.getValue(cursor)
+        if (section != null && section in failingSections) throw IOException("simulated failure for $section")
+        return when (section) {
+            null -> queuedPages.removeFirstOrNull() ?: pages.getValue(cursor)
+            else -> sectionPages[section] ?: LibraryPageDto(items = emptyList(), nextCursor = null)
+        }
     }
 
     // The rest of the interface. `error(...)` rather than a silent no-op: a library test that
@@ -1153,7 +1092,7 @@ private class FakeShowTrackApi(
     ): ReviewDto = error("the library repository must not touch groups")
 }
 
-private class CountingAlerts : EpisodeAlerts {
+internal class CountingAlerts : EpisodeAlerts {
     var syncRequests = 0
 
     override suspend fun requestSync() {

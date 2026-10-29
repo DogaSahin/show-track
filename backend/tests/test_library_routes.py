@@ -10,6 +10,8 @@ from app.library.models import UserMedia, UserMediaStatus
 from app.media.models import Media, MediaSource, MediaStatus, MediaType
 from app.media.providers.base import MediaProvider, MediaRef, NextEpisode, ProviderMedia
 from app.media.providers.errors import ProviderTimeout
+from app.recommendations import service as recommendations_service
+from app.recommendations.models import MediaSimilarity
 from tests.factories import make_media, make_user, make_user_media
 
 FRIEREN = ProviderMedia(
@@ -32,10 +34,17 @@ class StubProvider(MediaProvider):
     source: ClassVar[MediaSource] = MediaSource.ANILIST
     media_type: ClassVar[MediaType] = MediaType.ANIME
 
-    def __init__(self, result: ProviderMedia | None = None, error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        result: ProviderMedia | None = None,
+        error: Exception | None = None,
+        similar: tuple[MediaRef, ...] = (),
+    ) -> None:
         self._result = result
         self._error = error
+        self._similar = similar
         self.calls = 0
+        self.similar_calls = 0
 
     async def search(self, query: str, page: int):
         raise AssertionError("not used in these tests")
@@ -50,7 +59,8 @@ class StubProvider(MediaProvider):
         return ()
 
     async def fetch_similar(self, external_id: str):
-        raise AssertionError("not used in these tests")
+        self.similar_calls += 1
+        return self._similar
 
 
 def _add_body(external_id: str = "154587") -> dict[str, str]:
@@ -124,6 +134,55 @@ async def test_adding_a_title_already_tracked_does_not_reset_it(auth_client, db_
     # in the session.
     stored = await db_session.scalar(select(UserMedia.score).where(UserMedia.id == uuid.UUID(body["id"])))
     assert stored == Decimal("9.0")
+
+
+async def test_adding_a_never_seeded_title_fetches_its_similar_titles_right_away(
+    auth_client, db_session, use_providers
+):
+    """Discover should not wait for the next seed sweep to know what a newly added title is like."""
+    similar = make_media(source=MediaSource.ANILIST, external_id="52991", title="Sousou no Frieren 2")
+    db_session.add(similar)
+    # Commit, not flush: the add path rolls back before its provider call (decision 4-M), which in
+    # this savepoint-joined session would discard a merely flushed row.
+    await db_session.commit()
+    # Read now: that same rollback expires the object, and a later attribute read is a lazy load.
+    similar_id = similar.id
+    provider = StubProvider(FRIEREN, similar=(MediaRef(source=MediaSource.ANILIST, external_id="52991"),))
+    use_providers({MediaSource.ANILIST: provider})
+
+    response = await auth_client.post("/v1/library", json=_add_body())
+
+    assert response.status_code == 201
+    assert provider.similar_calls == 1
+    edges = (await db_session.execute(select(MediaSimilarity.similar_media_id))).scalars().all()
+    assert edges == [similar_id]
+
+
+async def test_adding_an_already_seeded_title_does_not_seed_it_again(
+    auth_client, db_session, use_providers, monkeypatch
+):
+    media = make_media(source=MediaSource.ANILIST, external_id="154587")
+    other = make_media(source=MediaSource.ANILIST, external_id="52991")
+    db_session.add_all([media, other])
+    await db_session.flush()
+    db_session.add(
+        MediaSimilarity(
+            source_media_id=media.id, similar_media_id=other.id, position=0, fetched_at=datetime.now(tz=UTC)
+        )
+    )
+    await db_session.flush()
+    scheduled = []
+
+    async def record(*args, **kwargs):
+        scheduled.append(args)
+
+    monkeypatch.setattr(recommendations_service, "seed_media", record)
+    use_providers({MediaSource.ANILIST: StubProvider(FRIEREN)})
+
+    response = await auth_client.post("/v1/library", json=_add_body())
+
+    assert response.status_code == 201
+    assert scheduled == []
 
 
 async def test_an_unknown_external_id_is_a_404(auth_client, use_providers):

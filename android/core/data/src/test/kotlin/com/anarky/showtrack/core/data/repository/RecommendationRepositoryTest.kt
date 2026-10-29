@@ -392,6 +392,7 @@ class RecommendationRepositoryTest {
             mediaId: String?,
             favorite: Boolean?,
             type: String?,
+            section: String?,
         ): LibraryPageDto = error("this fake only serves refresh/loadMore/remove")
 
         override suspend fun addLibraryEntry(request: AddLibraryEntryRequest): LibraryEntryDto =

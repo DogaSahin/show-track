@@ -6,6 +6,7 @@ import com.anarky.showtrack.core.model.ImportSummary
 import com.anarky.showtrack.core.model.LibraryEntry
 import com.anarky.showtrack.core.model.LibraryFilter
 import com.anarky.showtrack.core.model.LibraryPatch
+import com.anarky.showtrack.core.model.LibrarySection
 import com.anarky.showtrack.core.model.LibrarySort
 import com.anarky.showtrack.core.model.LibraryStats
 import com.anarky.showtrack.core.model.MediaSource
@@ -63,6 +64,21 @@ internal class FakeLibraryRepository(
     override fun observeLibrary(): Flow<List<LibraryEntry>> = error("not exercised by ProfileViewModel")
 
     override suspend fun refresh(): Unit = error("not exercised by ProfileViewModel")
+
+    override fun observeHomeCache(): Flow<Map<LibrarySection, List<LibraryEntry>>> =
+        error("Home sections are not exercised here")
+
+    override suspend fun refreshHome(
+        sort: LibrarySort,
+        perSection: Int,
+    ): Map<LibrarySection, Page<LibraryEntry>> = error("Home sections are not exercised here")
+
+    override suspend fun sectionPage(
+        section: LibrarySection,
+        sort: LibrarySort,
+        cursor: String?,
+        limit: Int,
+    ): Page<LibraryEntry> = error("Home sections are not exercised here")
 
     override suspend fun loadMore(): Unit = error("not exercised by ProfileViewModel")
 

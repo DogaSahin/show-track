@@ -37,6 +37,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.anarky.showtrack.core.designsystem.component.MediaCover
 import com.anarky.showtrack.core.designsystem.component.SkeletonBlock
+import com.anarky.showtrack.core.designsystem.component.genreLabel
 import com.anarky.showtrack.core.designsystem.component.label
 import com.anarky.showtrack.core.designsystem.component.markColor
 import com.anarky.showtrack.core.model.MediaSummary
@@ -57,7 +58,12 @@ private const val SKELETON_LINE_FRACTION = 0.45f
 /** "Anime · 2024 · Romance · Sports": type, year, at most two genres. */
 @Composable
 private fun MediaSummary.subtitle(separator: String): String =
-    (listOfNotNull(type.label(), year?.toString()) + genres.take(MAX_GENRES)).joinToString(separator)
+    (
+        listOfNotNull(
+            type.label(),
+            year?.toString(),
+        ) + genres.take(MAX_GENRES).map { genreLabel(it) }
+    ).joinToString(separator)
 
 /**
  * One result. The whole row opens the title; + Add is its own button, and a title already in the

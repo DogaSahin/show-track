@@ -91,6 +91,7 @@ class ShowTrackApiTest {
                 mediaId = "m-1",
                 favorite = true,
                 type = "anime",
+                section = null,
             )
 
             val url = server.takeRequest().url
@@ -128,6 +129,7 @@ class ShowTrackApiTest {
                 mediaId = null,
                 favorite = false,
                 type = null,
+                section = null,
             )
 
             assertEquals("false", server.takeRequest().url.queryParameter("favorite"))

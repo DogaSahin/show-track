@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import com.anarky.showtrack.core.designsystem.component.SkeletonBlock
 import com.anarky.showtrack.core.designsystem.component.StaleDataBanner
+import com.anarky.showtrack.core.designsystem.component.genreLabel
 import com.anarky.showtrack.core.designsystem.component.label
 import com.anarky.showtrack.core.designsystem.component.markColor
 import com.anarky.showtrack.core.designsystem.theme.StarGold
@@ -278,7 +279,7 @@ private fun GenreRanking(genres: List<GenreCount>) {
                 horizontalArrangement = Arrangement.spacedBy(space = 10.dp),
             ) {
                 Text(
-                    text = entry.genre,
+                    text = genreLabel(entry.genre),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,

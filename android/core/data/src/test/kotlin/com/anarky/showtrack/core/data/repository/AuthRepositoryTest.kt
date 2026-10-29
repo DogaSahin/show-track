@@ -431,6 +431,7 @@ class AuthRepositoryTest {
             mediaId: String?,
             favorite: Boolean?,
             type: String?,
+            section: String?,
         ): LibraryPageDto = error("not used")
 
         override suspend fun addLibraryEntry(request: AddLibraryEntryRequest): LibraryEntryDto = error("not used")
