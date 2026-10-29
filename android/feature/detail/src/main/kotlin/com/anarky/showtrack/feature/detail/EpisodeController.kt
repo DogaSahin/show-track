@@ -122,6 +122,33 @@ internal class EpisodeController(
      */
     fun onAdded(entry: LibraryEntry) = load(entry)
 
+    /**
+     * Just set to Completed: the server has marked every aired episode watched, so fetch the set
+     * again. Refreshed in place (seasons stay as the reader left them, no spinner over the list);
+     * a list not loaded yet takes the full [load]. Waits behind any save still going out so the
+     * answer includes it. A failed fetch keeps what is shown — the status itself did save.
+     */
+    @Suppress("TooGenericExceptionCaught")
+    fun onCompleted(entry: LibraryEntry) {
+        if (ready() == null) {
+            load(entry)
+            return
+        }
+        scope.launch {
+            val fetched =
+                try {
+                    saveLock.withLock { libraryRepository.watchedEpisodes(entry.id) }
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (_: Exception) {
+                    return@launch
+                }
+            // Only onto the same entry: one removed meanwhile keeps its circles off.
+            if (read()?.data?.entry?.id != entry.id) return@launch
+            updateReady { it.copy(watched = fetched, catchUp = null) }
+        }
+    }
+
     /** Just removed: back to seasons without circles. A load in flight reads the entry when it lands. */
     fun onRemoved() = updateReady { it.copy(tracking = false, watched = emptySet(), catchUp = null) }
 

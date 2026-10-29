@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -189,7 +190,9 @@ private fun DetailContent(
     CatchUpSnackbar(success = success, actions = actions, snackbarHostState = snackbarHostState)
 
     Box(modifier = Modifier.fillMaxSize()) {
-        LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+        // enableEdgeToEdge() turns adjustResize off, so the list shrinks itself above the keyboard;
+        // the scroll container then keeps the focused review field in view as the viewport shrinks.
+        LazyColumn(state = listState, modifier = Modifier.fillMaxSize().imePadding()) {
             item(key = "hero") { DetailHero(media = media) }
             item(key = "genres") { GenreChips(genres = media.genres, modifier = Modifier.padding(top = 12.dp)) }
             item(key = "next") { NextEpisodeBar(media = media, modifier = Modifier.padding(top = 12.dp)) }
