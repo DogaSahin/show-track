@@ -13,6 +13,12 @@ Self-hosted. It runs on your own machine and is reached over Tailscale.
 ## What it does
 
 - **Track** anime and TV in one library — status, 1–10 score, episode progress, favourites.
+  The Library's "All shows" view groups everything into status sections (Watching, Paused,
+  Planned, Completed, Dropped) in a four-across poster grid. Each section shows its first three rows,
+  and "Show all N" expands it in place. Shows you've fully caught up on but that are still waiting
+  for a new season sit at the end of Watching with an "S3 soon" or "More soon" label, and a
+  Watching show that has ended and is fully watched appears under Completed. Picking one status
+  shows just that status in the same grid. Offline, Home shows the cached first rows of each section.
 - **Know when the next episode airs.** The server refreshes airing dates; the phone schedules its
   own alerts from them, 24 hours and 6 hours before each episode of a show you're watching. No
   second app, no Google services, and an alert shows even if the phone is offline at the time.

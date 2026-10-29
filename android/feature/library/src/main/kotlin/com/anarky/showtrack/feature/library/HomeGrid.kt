@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.grid.LazyGridScope
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -29,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
@@ -188,14 +190,16 @@ private fun SectionFooter(
                 )
             else ->
                 TextButton(onClick = onToggle) {
-                    Text(
-                        text =
-                            if (section.expanded) {
-                                stringResource(R.string.library_show_less)
-                            } else {
-                                stringResource(R.string.library_show_all, section.count ?: section.entries.size)
-                            },
-                    )
+                    if (section.expanded) {
+                        Text(text = stringResource(R.string.library_show_less))
+                    } else {
+                        Text(text = stringResource(R.string.library_show_all, section.count ?: section.entries.size))
+                        Icon(
+                            painter = painterResource(R.drawable.ic_expand_more),
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
                 }
         }
     }

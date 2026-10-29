@@ -2,11 +2,10 @@
     <string name="library_title">Library</string>
     <string name="library_search_content_description">Search</string>
 
-    <!-- The empty message differs by filter (decision C-B made visible in the UI): Room caches
-         ONLY the default view, so under a status filter or a non-default sort the list is always
-         a fresh network read with nothing local to fall back to. "Nothing in your library yet" is
-         true on the unfiltered default tab but FALSE under a filter — it reads as data loss when
-         the real answer is "nothing matches this filter".
+    <!-- The empty message differs by view: Home (no status picked, the sectioned grid) has no
+         sections at all, so "Nothing in your library yet" is true there. A single-status view
+         can be empty while the library is not, and that wording would read as data loss when the
+         real answer is "nothing has this status" (library_empty_filtered).
 
          `:feature:favorites`'s `FavoritesScreenTest` (`the empty state shows the favourites copy,
          not the library copy`) keeps a LITERAL COPY of this exact string as a regression guard —
