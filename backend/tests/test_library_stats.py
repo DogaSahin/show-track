@@ -3,7 +3,8 @@ from decimal import Decimal
 
 from app import clock
 from app.library.models import ActivityKind, UserMediaStatus
-from tests.factories import make_activity, make_media, make_user, make_user_media
+from app.media.models import MediaStatus
+from tests.factories import make_activity, make_episode, make_media, make_user, make_user_media
 
 
 async def test_stats_counts_by_status_and_averages_only_rated_titles(auth_client, db_session, auth_user):
@@ -193,3 +194,39 @@ async def test_stats_on_an_empty_library_report_zero_rather_than_null_aggregates
     assert body["favorites"] == 0
     assert body["added_this_month"] == 0
     assert body["top_genres"] == []
+
+
+async def test_by_section_counts(auth_client, db_session, auth_user):
+    """`by_section` is the derived display grouping; `by_status` stays the saved status."""
+    now = datetime.now(tz=UTC)
+    today = now.date()
+
+    async def seed(title, status, *, progress=0, media_status=MediaStatus.AIRING, total=None, aired=0):
+        media = make_media(
+            external_id=title,
+            title=title,
+            status=media_status,
+            total_episodes=total,
+            episodes_synced_at=now,
+        )
+        db_session.add(media)
+        await db_session.flush()
+        for n in range(1, aired + 1):
+            db_session.add(make_episode(media.id, season_number=1, number=n, air_date=today - timedelta(days=7 * n)))
+        db_session.add(make_user_media(auth_user.id, media.id, status=status, progress=progress))
+        await db_session.flush()
+
+    # Two behind on an airing show, one caught up, one finished and fully watched (saved Watching).
+    await seed("behind-a", UserMediaStatus.WATCHING, progress=1, aired=3, total=None)
+    await seed("behind-b", UserMediaStatus.WATCHING, progress=0, aired=2)
+    await seed("caught-up", UserMediaStatus.WATCHING, progress=4, aired=4)
+    await seed(
+        "done-watching", UserMediaStatus.WATCHING, progress=3, media_status=MediaStatus.FINISHED, total=3, aired=3
+    )
+    await seed("done", UserMediaStatus.COMPLETED)
+    await seed("later", UserMediaStatus.PLANNED)
+
+    body = (await auth_client.get("/v1/library/stats")).json()
+
+    assert body["by_section"] == {"watching": 2, "caught_up": 1, "completed": 2, "planned": 1}
+    assert body["by_status"]["watching"] == 4

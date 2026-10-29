@@ -557,7 +557,7 @@ async def list_entries(
 
 
 async def get_stats(session: AsyncSession, *, user_id: uuid.UUID) -> LibraryStats:
-    """Four statements, each doing one thing, rather than one clever one.
+    """Five statements, each doing one thing, rather than one clever one.
 
     `by_status` needs a GROUP BY status; the scalar aggregates must NOT be grouped by anything (an
     average grouped by status is five numbers, not one); the genre ranking needs a join to `media`
@@ -584,6 +584,21 @@ async def get_stats(session: AsyncSession, *, user_id: uuid.UUID) -> LibraryStat
     ).all()
     by_status = {row.status: row.count for row in status_rows}
 
+    # The derived display grouping (see section_expression), counted over the same caller-scoped
+    # rows. A fifth-looking statement but a different dimension: it needs the join to `media` and
+    # the episode subqueries that `by_status` deliberately avoids.
+    section = section_expression(clock.utcnow().date()).label("section")
+    section_rows = (
+        await session.execute(
+            select(section, func.count().label("count"))
+            .select_from(UserMedia)
+            .join(Media, Media.id == UserMedia.media_id)
+            .where(UserMedia.user_id == user_id)
+            .group_by(section)
+        )
+    ).all()
+    by_section = {LibrarySection(row.section): row.count for row in section_rows}
+
     # FILTER (WHERE favorite), not a fifth statement: it is the same scan of the same rows, and
     # Postgres evaluates every aggregate in one pass.
     average_score, rated_count, episodes_watched, favorites = (
@@ -603,6 +618,7 @@ async def get_stats(session: AsyncSession, *, user_id: uuid.UUID) -> LibraryStat
     return LibraryStats(
         total=sum(by_status.values()),
         by_status=by_status,
+        by_section=by_section,
         average_score=average_score,
         rated_count=rated_count,
         episodes_watched=episodes_watched,

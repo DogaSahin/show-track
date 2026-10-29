@@ -105,6 +105,8 @@ class LibraryStats(BaseModel):
 
     total: int
     by_status: dict[UserMediaStatus, int]
+    # The derived display grouping (LibrarySection), not the saved status; absent sections are absent.
+    by_section: dict[LibrarySection, int]
     # A STRING for the same reason LibraryEntry.score is one (decision 4-N): a JSON number is an
     # IEEE 754 double, and this is a NUMERIC average. Null when nothing is rated.
     average_score: Decimal | None

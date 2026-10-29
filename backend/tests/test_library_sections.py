@@ -3,8 +3,10 @@
 import uuid
 from datetime import UTC, date, datetime, timedelta
 
+from sqlalchemy import select
+
 from app.library.models import UserMediaStatus
-from app.media.models import MediaStatus
+from app.media.models import Episode, MediaSource, MediaStatus
 from tests.factories import make_episode, make_media, make_user, make_user_media
 
 TODAY = datetime.now(tz=UTC).date()
@@ -221,3 +223,56 @@ async def test_patch_response_carries_section(auth_client, db_session, auth_user
     body = response.json()
     assert body["status"] == "watching"
     assert body["section"] == "completed"
+
+
+async def test_finished_but_behind_stays_watching(auth_client, db_session, auth_user):
+    """Finished and synced, but not every episode watched: neither completed nor caught up."""
+    entry = await _seed(
+        db_session,
+        auth_user.id,
+        progress=8,
+        media_status=MediaStatus.FINISHED,
+        total_episodes=12,
+        air_dates=_past(12),
+    )
+
+    assert (await _sections(auth_client))[str(entry.id)] == "watching"
+
+
+async def test_next_episode_without_season_stays_watching(auth_client, db_session, auth_user):
+    """Everything aired is watched, but a next episode with no season can't be told apart from a
+    mid-season week, so the entry stays watching."""
+    entry = await _seed(
+        db_session,
+        auth_user.id,
+        progress=5,
+        air_dates=_past(5),
+        next_episode_season=None,
+        next_episode_in_days=3,
+    )
+
+    assert (await _sections(auth_client))[str(entry.id)] == "watching"
+
+
+async def test_add_response_carries_section(auth_client, db_session):
+    media = make_media(source=MediaSource.ANILIST, external_id="777001", title="Already Cached")
+    db_session.add(media)
+    await db_session.flush()
+
+    response = await auth_client.post("/v1/library", json={"source": "anilist", "external_id": "777001"})
+
+    assert response.status_code == 201, response.text
+    assert response.json()["section"] == "planned"
+
+
+async def test_mark_watched_response_carries_section(auth_client, db_session, auth_user):
+    entry = await _seed(db_session, auth_user.id, progress=0, air_dates=_past(2))
+    episodes = list(await db_session.scalars(select(Episode).where(Episode.media_id == entry.media_id)))
+
+    response = await auth_client.put(
+        f"/v1/library/{entry.id}/episodes/watched",
+        json={"episode_ids": [str(e.id) for e in episodes], "watched": True},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["section"] == "caught_up"
