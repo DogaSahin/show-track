@@ -3,14 +3,14 @@ package com.anarky.showtrack.feature.library
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyGridScope
+import androidx.compose.foundation.lazy.grid.LazyGridState
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -18,6 +18,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -27,12 +28,14 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.anarky.showtrack.core.designsystem.component.EmptyState
-import com.anarky.showtrack.core.designsystem.component.EndOfListTrigger
+import com.anarky.showtrack.core.designsystem.component.EndOfGridTrigger
 import com.anarky.showtrack.core.designsystem.component.ErrorState
 import com.anarky.showtrack.core.designsystem.component.LargeTitleScaffold
 import com.anarky.showtrack.core.designsystem.component.LoadingState
+import com.anarky.showtrack.core.designsystem.component.StaleDataBanner
 import com.anarky.showtrack.core.model.LibraryEntry
 import com.anarky.showtrack.core.model.LibraryFilter
+import com.anarky.showtrack.core.model.LibrarySection
 import com.anarky.showtrack.core.model.LibrarySort
 import com.anarky.showtrack.core.model.LibraryStats
 import com.anarky.showtrack.core.model.UserMediaStatus
@@ -59,6 +62,7 @@ fun LibraryScreen(
     modifier: Modifier = Modifier,
     viewModel: LibraryViewModel = hiltViewModel(),
 ) {
+    val home by viewModel.home.collectAsStateWithLifecycle()
     val state by viewModel.state.collectAsStateWithLifecycle()
     val filter by viewModel.filter.collectAsStateWithLifecycle()
     val stats by viewModel.stats.collectAsStateWithLifecycle()
@@ -69,12 +73,14 @@ fun LibraryScreen(
         onPauseOrDispose { }
     }
     LibraryScreen(
+        home = home,
         state = state,
         filter = filter,
         stats = stats,
         airingSoon = airingSoon,
         onStatusSelected = viewModel::selectStatus,
         onSortSelected = viewModel::selectSort,
+        onToggleSection = viewModel::toggleSection,
         onLoadMore = viewModel::loadMore,
         onRetry = viewModel::refresh,
         onEntryClick = onEntryClick,
@@ -87,12 +93,16 @@ fun LibraryScreen(
  * The stateless half, split out so it can be previewed and driven by a test without a graph or a
  * ViewModel.
  *
+ * "All shows" (`filter.status == null`) renders [home], the status sections; one status renders
+ * [state], that status's paged list. Both draw the same four-across poster grid.
+ *
  * [filter] is a separate parameter from [state] on purpose: it drives the two dropdowns directly,
  * and it stays valid (and keeps showing whatever the user picked) even while [state] is
  * [LibraryUiState.Loading] or [LibraryUiState.Error] — see [LibraryViewModel.filter]'s KDoc.
  *
- * The filter row sits outside the list, so it stays pinned while the list scrolls and the large
- * title collapses; a divider appears under it once the list has moved.
+ * The filter row (and the stale banner under it) sit outside the grid, so they stay pinned while
+ * the grid scrolls and the large title collapses; a divider appears under them once the grid has
+ * moved. Each view keeps its own scroll position: switching status starts the new grid at the top.
  *
  * The parameter count trips detekt's `LongParameterList`; suppressed rather than bundling the
  * callbacks into an `Actions` holder that would exist for this one call site only.
@@ -100,19 +110,21 @@ fun LibraryScreen(
 @Suppress("LongParameterList")
 @Composable
 internal fun LibraryScreen(
+    home: HomeUiState,
     state: LibraryUiState,
     filter: LibraryFilter,
     stats: LibraryStats?,
     airingSoon: List<LibraryEntry>,
     onStatusSelected: (UserMediaStatus?) -> Unit,
     onSortSelected: (LibrarySort) -> Unit,
+    onToggleSection: (LibrarySection) -> Unit,
     onLoadMore: () -> Unit,
     onRetry: () -> Unit,
     onEntryClick: (LibraryEntry) -> Unit,
     onSearchClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val listState = rememberLazyListState()
+    val gridState = rememberSaveable(filter.status, saver = LazyGridState.Saver) { LazyGridState() }
     LargeTitleScaffold(
         title = stringResource(R.string.library_title),
         modifier = modifier.fillMaxSize(),
@@ -132,26 +144,29 @@ internal fun LibraryScreen(
                 onStatusSelected = onStatusSelected,
                 onSortSelected = onSortSelected,
             )
-            if (listState.canScrollBackward) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            if (filter.status == null && home is HomeUiState.Ready && home.isStale) {
+                StaleDataBanner(onRetry = onRetry)
+            }
+            if (gridState.canScrollBackward) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             Box(modifier = Modifier.weight(weight = 1f).fillMaxWidth()) {
-                when (state) {
-                    is LibraryUiState.Loading -> LoadingState(modifier = Modifier.fillMaxSize())
-                    is LibraryUiState.Error ->
-                        ErrorState(
-                            message = stringResource(R.string.library_error_message),
-                            onRetry = onRetry,
-                            modifier = Modifier.fillMaxSize(),
-                        )
-                    is LibraryUiState.Success ->
-                        LibraryContent(
-                            success = state,
-                            filter = filter,
-                            airingSoon = if (filter.status == null) airingSoon else emptyList(),
-                            listState = listState,
-                            onShowAll = { onStatusSelected(null) },
-                            onLoadMore = onLoadMore,
-                            onEntryClick = onEntryClick,
-                        )
+                if (filter.status == null) {
+                    HomeContent(
+                        home = home,
+                        airingSoon = airingSoon,
+                        gridState = gridState,
+                        onToggleSection = onToggleSection,
+                        onRetry = onRetry,
+                        onEntryClick = onEntryClick,
+                    )
+                } else {
+                    StatusContent(
+                        state = state,
+                        gridState = gridState,
+                        onShowAll = { onStatusSelected(null) },
+                        onLoadMore = onLoadMore,
+                        onRetry = onRetry,
+                        onEntryClick = onEntryClick,
+                    )
                 }
             }
         }
@@ -159,99 +174,128 @@ internal fun LibraryScreen(
 }
 
 /**
- * The list or its empty state.
- *
- * The empty message differs by filter: "Nothing in your library yet" is only true on the default
- * view; under a filter it would read as data loss, so it says "Nothing here" and offers to clear a
- * status filter.
+ * "All shows": Airing soon, then the status sections, in one grid. An empty Home means an empty
+ * library — empty sections are dropped, and a failed load with nothing cached is [HomeUiState.Error].
  */
 @Suppress("LongParameterList")
 @Composable
-private fun LibraryContent(
-    success: LibraryUiState.Success,
-    filter: LibraryFilter,
+private fun HomeContent(
+    home: HomeUiState,
     airingSoon: List<LibraryEntry>,
-    listState: LazyListState,
-    onShowAll: () -> Unit,
-    onLoadMore: () -> Unit,
+    gridState: LazyGridState,
+    onToggleSection: (LibrarySection) -> Unit,
+    onRetry: () -> Unit,
     onEntryClick: (LibraryEntry) -> Unit,
 ) {
-    Column(modifier = Modifier.fillMaxSize()) {
-        Box(modifier = Modifier.weight(weight = 1f).fillMaxWidth()) {
-            if (success.entries.isEmpty()) {
+    when (home) {
+        is HomeUiState.Loading -> PosterGridSkeleton(withHeader = true)
+        is HomeUiState.Error ->
+            ErrorState(
+                message = stringResource(R.string.library_error_message),
+                onRetry = onRetry,
+                modifier = Modifier.fillMaxSize(),
+            )
+        is HomeUiState.Ready ->
+            if (home.sections.isEmpty()) {
                 EmptyState(
-                    message =
-                        stringResource(
-                            if (filter.isDefault) R.string.library_empty_default else R.string.library_empty_filtered,
-                        ),
-                    actionLabel = if (filter.status != null) stringResource(R.string.library_empty_show_all) else null,
-                    onAction = if (filter.status != null) onShowAll else null,
+                    message = stringResource(R.string.library_empty_default),
                     modifier = Modifier.fillMaxSize(),
                 )
             } else {
-                LibraryList(
-                    success = success,
-                    airingSoon = airingSoon,
-                    listState = listState,
-                    onLoadMore = onLoadMore,
-                    onEntryClick = onEntryClick,
-                )
+                PosterGrid(gridState = gridState) {
+                    if (airingSoon.isNotEmpty()) {
+                        item(key = AIRING_SOON_KEY, span = { GridItemSpan(maxLineSpan) }) {
+                            AiringSoonSection(
+                                entries = airingSoon,
+                                onEntryClick = onEntryClick,
+                                modifier = Modifier.bleedPast(GridGutter),
+                            )
+                        }
+                    }
+                    homeSections(
+                        sections = home.sections,
+                        onToggleSection = onToggleSection,
+                        onEntryClick = onEntryClick,
+                    )
+                }
             }
-        }
     }
 }
 
 /**
- * "Airing soon" (when there is one), then the list, plus paging via [EndOfListTrigger].
+ * One status: its whole list in the grid, no row cap, paged through [EndOfGridTrigger].
  *
- * `itemCount` is this LazyColumn's own index space, the airing row included, so the trigger
- * measures "near the end" against what is actually laid out. [LibraryViewModel.loadMore]'s own
- * re-entry guard is what makes it SAFE for this call site to fire without checking whether a fetch
- * is already in flight.
+ * The empty message is "Nothing here", never "Nothing in your library yet": under a filter the
+ * latter would read as data loss, so it offers to clear the filter instead.
  *
- * [LibraryUiState.Success.pageError] renders as a footer rather than replacing the list; tapping
- * it retries by calling [onLoadMore] again.
+ * [LibraryUiState.Success.pageError] renders as a footer rather than replacing the grid; tapping
+ * it retries by calling [onLoadMore] again. [LibraryViewModel.loadMore]'s own re-entry guard is
+ * what makes it safe for the trigger to fire without checking whether a fetch is in flight.
  */
+@Suppress("LongParameterList")
 @Composable
-private fun LibraryList(
-    success: LibraryUiState.Success,
-    airingSoon: List<LibraryEntry>,
-    listState: LazyListState,
+private fun StatusContent(
+    state: LibraryUiState,
+    gridState: LazyGridState,
+    onShowAll: () -> Unit,
     onLoadMore: () -> Unit,
+    onRetry: () -> Unit,
     onEntryClick: (LibraryEntry) -> Unit,
 ) {
-    val entries = success.entries
-    val headerCount = if (airingSoon.isNotEmpty()) 1 else 0
-
-    EndOfListTrigger(listState = listState, itemCount = entries.size + headerCount, onTriggered = onLoadMore)
-
-    LazyColumn(
-        state = listState,
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(bottom = 12.dp),
-    ) {
-        if (airingSoon.isNotEmpty()) {
-            item(key = AIRING_SOON_KEY) { AiringSoonSection(entries = airingSoon, onEntryClick = onEntryClick) }
-        }
-        items(items = entries, key = LibraryEntry::id) { entry ->
-            LibraryRow(entry = entry, onClick = { onEntryClick(entry) })
-        }
-        if (success.loadingMore) {
-            item { LoadingState() }
-        } else if (success.pageError != null) {
-            item {
-                Text(
-                    text = stringResource(R.string.library_page_error),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                    textAlign = TextAlign.Center,
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .clickable(onClick = onLoadMore)
-                            .padding(all = 12.dp),
+    when (state) {
+        is LibraryUiState.Loading -> PosterGridSkeleton(withHeader = false)
+        is LibraryUiState.Error ->
+            ErrorState(
+                message = stringResource(R.string.library_error_message),
+                onRetry = onRetry,
+                modifier = Modifier.fillMaxSize(),
+            )
+        is LibraryUiState.Success ->
+            if (state.entries.isEmpty()) {
+                EmptyState(
+                    message = stringResource(R.string.library_empty_filtered),
+                    actionLabel = stringResource(R.string.library_empty_show_all),
+                    onAction = onShowAll,
+                    modifier = Modifier.fillMaxSize(),
                 )
+            } else {
+                EndOfGridTrigger(gridState = gridState, itemCount = state.entries.size, onTriggered = onLoadMore)
+                PosterGrid(gridState = gridState) {
+                    posters(entries = state.entries, keyPrefix = "status", onEntryClick = onEntryClick)
+                    if (state.loadingMore) {
+                        item(span = { GridItemSpan(maxLineSpan) }) { LoadingState() }
+                    } else if (state.pageError != null) {
+                        item(span = { GridItemSpan(maxLineSpan) }) {
+                            Text(
+                                text = stringResource(R.string.library_page_error),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                                textAlign = TextAlign.Center,
+                                modifier =
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .clickable(onClick = onLoadMore)
+                                        .padding(all = 12.dp),
+                            )
+                        }
+                    }
+                }
             }
-        }
     }
+}
+
+@Composable
+private fun PosterGrid(
+    gridState: LazyGridState,
+    content: LazyGridScope.() -> Unit,
+) {
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(POSTER_COLUMNS),
+        state = gridState,
+        contentPadding = PosterGridPadding,
+        horizontalArrangement = PosterGridSpacing,
+        verticalArrangement = PosterGridRowSpacing,
+        modifier = Modifier.fillMaxSize(),
+        content = content,
+    )
 }

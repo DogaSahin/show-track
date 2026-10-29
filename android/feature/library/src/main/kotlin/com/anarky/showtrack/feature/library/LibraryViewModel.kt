@@ -187,13 +187,21 @@ class LibraryViewModel
         // Writing to [mutableError]/[mutableLoading] (both combine sources) is what forces one;
         // without it the tab row would select the new status while the screen kept rendering the
         // old tab's rows.
+        //
+        // Re-picking the status already shown is a no-op: it would reload for nothing, and on
+        // "All shows" mid sort change it would turn that load into a cold one and flash the cache.
         fun selectStatus(status: UserMediaStatus?) {
+            if (status == mutableFilter.value.status) return
             mutableFilter.value = mutableFilter.value.copy(status = status)
             reload(blank = true)
         }
 
-        /** On "All shows" a sort change collapses every section and reloads Home under it. */
+        /**
+         * On "All shows" a sort change collapses every section and reloads Home under it. Re-picking
+         * the sort already in effect does nothing — see [selectStatus].
+         */
         fun selectSort(sort: LibrarySort) {
+            if (sort == mutableFilter.value.sort) return
             mutableFilter.value = mutableFilter.value.copy(sort = sort)
             reload(blank = true)
         }

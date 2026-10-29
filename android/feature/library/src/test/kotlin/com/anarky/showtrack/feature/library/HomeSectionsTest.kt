@@ -485,6 +485,44 @@ class HomeSectionsTest {
             assertEquals(emptyList<LibrarySort>(), repository.refreshHomeSorts)
         }
 
+    @Test
+    fun `re-selecting the current sort mid sort change keeps loading, not the cache`() =
+        runTest(dispatcher) {
+            val repository = FakeLibraryRepository()
+            repository.homeCache.value =
+                mapOf(LibrarySection.PLANNED to listOf(entry("cached", LibrarySection.PLANNED)))
+            repository.homePages = pages(LibrarySection.PLANNED to listOf(entry("title", LibrarySection.PLANNED)))
+            val viewModel = LibraryViewModel(repository)
+            advanceUntilIdle()
+            repository.refreshHomeGate = CompletableDeferred()
+            viewModel.selectSort(LibrarySort.SCORE)
+            runCurrent()
+            repository.refreshHomeSorts.clear()
+
+            viewModel.selectSort(LibrarySort.SCORE)
+            runCurrent()
+
+            assertEquals(HomeUiState.Loading, viewModel.home.value)
+            assertEquals(emptyList<LibrarySort>(), repository.refreshHomeSorts)
+        }
+
+    @Test
+    fun `re-selecting the current status does not reload`() =
+        runTest(dispatcher) {
+            val repository = FakeLibraryRepository()
+            repository.homePages = pages(LibrarySection.PLANNED to listOf(entry("p1", LibrarySection.PLANNED)))
+            val viewModel = LibraryViewModel(repository)
+            advanceUntilIdle()
+            val before = viewModel.home.value
+            repository.refreshHomeSorts.clear()
+
+            viewModel.selectStatus(null)
+            advanceUntilIdle()
+
+            assertEquals(emptyList<LibrarySort>(), repository.refreshHomeSorts)
+            assertEquals(before, viewModel.home.value)
+        }
+
     private fun LibraryViewModel.ready(): HomeUiState.Ready = home.value as HomeUiState.Ready
 
     private fun LibraryViewModel.section(section: LibrarySection): HomeSection =

@@ -22,16 +22,6 @@
     <!-- The row of Watching shows with an episode coming, at the top of "All shows". -->
     <string name="library_airing_soon">Airing soon</string>
 
-    <!-- A row's last line after the status. %1$s is the episode ("Ep 15", "S2 E7"), %2$s when it
-         airs ("in 2 days", "Tomorrow"). Totals ("14 of 28") join these once shows carry an
-         episode count. -->
-    <string name="library_episode_when">%1$s %2$s</string>
-    <plurals name="library_eps_watched">
-        <item quantity="one">%d ep watched</item>
-        <item quantity="other">%d eps watched</item>
-    </plurals>
-    <string name="library_not_started">Not started</string>
-
     <string name="library_error_message">Couldn\'t load your library. Check your connection and try again.</string>
 
     <!-- A failed loadMore() (LibraryUiState.Success.pageError) — the already-loaded list stays on
@@ -54,12 +44,12 @@
     <string name="library_sort_score">Score</string>
     <string name="library_sort_next_episode">Next episode</string>
 
-    <!-- With the title's episode count. -->
-    <string name="library_eps_watched_of">%1$d of %2$d watched</string>
-    <!-- Before an upcoming episode: "14/28 · Ep 15 in 2 days". -->
-    <string name="library_eps_count_short">%1$d/%2$d</string>
-    <plurals name="library_not_started_with_total">
-        <item quantity="one">Not started · %d ep</item>
-        <item quantity="other">Not started · %d eps</item>
-    </plurals>
+    <!-- Home: under a section holding more than three rows of posters. %1$d is how many shows the
+         section holds. -->
+    <string name="library_show_all">Show all %1$d</string>
+    <string name="library_show_less">Show less</string>
+    <!-- The pill on a caught-up poster: the show is waiting for its next season. %1$d is that
+         season's number; "More soon" when no date is known yet. -->
+    <string name="library_caught_up_season">S%1$d soon</string>
+    <string name="library_caught_up_more">More soon</string>
 </resources>
