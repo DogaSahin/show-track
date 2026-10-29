@@ -405,6 +405,53 @@ class SearchViewModelTest {
         }
 
     @Test
+    fun `removed title shows as not in library after returning`() =
+        runTest(dispatcher) {
+            val library = FakeLibraryRepository()
+            val viewModel = searchedViewModel(FakeMediaRepository(resultsAfterSearch = ONE_RESULT), library)
+            viewModel.add(SearchResult(SUMMARY))
+            advanceUntilIdle()
+            assertEquals(UserMediaStatus.PLANNED, onlyRow(viewModel).libraryStatus)
+
+            // Removed on the show page: the library no longer holds it.
+            viewModel.refreshLibraryState()
+            advanceUntilIdle()
+
+            assertEquals(null, onlyRow(viewModel).libraryStatus)
+            assertEquals("m-1", onlyRow(viewModel).mediaId)
+        }
+
+    @Test
+    fun `status change elsewhere is reflected on return`() =
+        runTest(dispatcher) {
+            val library = FakeLibraryRepository()
+            val viewModel = searchedViewModel(FakeMediaRepository(resultsAfterSearch = ONE_RESULT), library)
+            viewModel.add(SearchResult(SUMMARY))
+            advanceUntilIdle()
+            library.entries["m-1"] = ENTRY_WITH_MEDIA_ID_M1.copy(status = UserMediaStatus.WATCHING)
+
+            viewModel.refreshLibraryState()
+            advanceUntilIdle()
+
+            assertEquals(UserMediaStatus.WATCHING, onlyRow(viewModel).libraryStatus)
+        }
+
+    @Test
+    fun `refresh failure keeps the row`() =
+        runTest(dispatcher) {
+            val library = FakeLibraryRepository()
+            val viewModel = searchedViewModel(FakeMediaRepository(resultsAfterSearch = ONE_RESULT), library)
+            viewModel.add(SearchResult(SUMMARY))
+            advanceUntilIdle()
+            library.entryFailure = IOException("offline")
+
+            viewModel.refreshLibraryState()
+            advanceUntilIdle()
+
+            assertEquals(UserMediaStatus.PLANNED, onlyRow(viewModel).libraryStatus)
+        }
+
+    @Test
     fun `a failed add leaves the row as it was and says so`() =
         runTest(dispatcher) {
             val library = FakeLibraryRepository(addFailure = IOException("offline"))
@@ -660,6 +707,11 @@ class SearchViewModelTest {
             assertEquals(SearchUiState.QueryTooLong, viewModel.state.value)
         }
 
+    private fun onlyRow(viewModel: SearchViewModel): SearchResult =
+        (viewModel.state.value as SearchUiState.Success)
+            .results.items
+            .single()
+
     private suspend fun kotlinx.coroutines.test.TestScope.searchedViewModel(
         media: FakeMediaRepository,
         library: FakeLibraryRepository = FakeLibraryRepository(),
@@ -776,7 +828,14 @@ class SearchViewModelTest {
             patch: LibraryPatch,
         ): LibraryEntry = error("not exercised by SearchViewModel")
 
-        override suspend fun entryForMedia(mediaId: String): LibraryEntry? = error("not exercised by SearchViewModel")
+        // What the library holds right now, by media id; absent means not in the library.
+        val entries = mutableMapOf<String, LibraryEntry>()
+        var entryFailure: Throwable? = null
+
+        override suspend fun entryForMedia(mediaId: String): LibraryEntry? {
+            entryFailure?.let { throw it }
+            return entries[mediaId]
+        }
 
         override suspend fun favoritesPage(
             type: MediaType?,
