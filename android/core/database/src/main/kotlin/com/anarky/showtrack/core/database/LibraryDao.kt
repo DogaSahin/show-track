@@ -9,7 +9,12 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface LibraryDao {
-    @Query("SELECT * FROM library_entries ORDER BY updated_at DESC")
+    /**
+     * Every cached row in Title order, which is the order Home draws each section in. Case-blind
+     * (`NOCASE`) to sit close to the server's title sort; `id` breaks ties so equal titles keep a
+     * stable order across emissions.
+     */
+    @Query("SELECT * FROM library_entries ORDER BY title COLLATE NOCASE, id")
     fun observeAll(): Flow<List<LibraryEntryEntity>>
 
     /**

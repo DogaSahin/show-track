@@ -103,7 +103,8 @@ fun ImportSummaryDto.toDomain(): ImportSummary =
  * Room into the thing the app believes, so it is not a gap to be "fixed" in passing.
  *
  * `status` is decoded with [wireEnum] like the DTO mapper: [toEntity] writes `status.name`, so the
- * column holds the enum's own spelling (including `UNKNOWN`, which round-trips by name).
+ * column holds the enum's own spelling (including `UNKNOWN`, which round-trips by name). `section`
+ * follows the same rule.
  */
 fun LibraryEntryEntity.toDomain(): LibraryEntry =
     LibraryEntry(
@@ -126,12 +127,13 @@ fun LibraryEntryEntity.toDomain(): LibraryEntry =
                 genres = emptyList(),
                 coverImageUrl = coverUrl,
                 status = MediaStatus.AIRING,
-                nextEpisodeSeason = null,
+                nextEpisodeSeason = nextEpisodeSeason,
                 nextEpisodeNumber = null,
                 nextEpisodeDate = null,
                 daysUntilNextEpisode = daysUntilNextEpisode,
                 totalEpisodes = totalEpisodes,
             ),
+        section = wireEnum(section, LibrarySection.UNKNOWN),
     )
 
 /**
@@ -152,4 +154,6 @@ fun LibraryEntry.toEntity(): LibraryEntryEntity =
         coverUrl = media.coverImageUrl,
         daysUntilNextEpisode = media.daysUntilNextEpisode,
         totalEpisodes = media.totalEpisodes,
+        section = section.name,
+        nextEpisodeSeason = media.nextEpisodeSeason,
     )

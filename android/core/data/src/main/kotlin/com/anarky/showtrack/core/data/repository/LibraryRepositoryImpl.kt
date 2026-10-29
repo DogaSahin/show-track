@@ -15,6 +15,7 @@ import com.anarky.showtrack.core.model.ImportSummary
 import com.anarky.showtrack.core.model.LibraryEntry
 import com.anarky.showtrack.core.model.LibraryFilter
 import com.anarky.showtrack.core.model.LibraryPatch
+import com.anarky.showtrack.core.model.LibrarySection
 import com.anarky.showtrack.core.model.LibrarySort
 import com.anarky.showtrack.core.model.LibraryStats
 import com.anarky.showtrack.core.model.MediaSource
@@ -29,9 +30,10 @@ import com.anarky.showtrack.core.network.dto.LibraryPatchFields
 import com.anarky.showtrack.core.network.dto.SetWatchedRequestDto
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
@@ -54,6 +56,18 @@ private const val HTTP_TOO_MANY_REQUESTS = 429
 private const val HTTP_BAD_GATEWAY = 502
 private const val HTTP_GATEWAY_TIMEOUT = 504
 private val UPSTREAM_FAILURE_CODES = setOf(HTTP_TOO_MANY_REQUESTS, HTTP_BAD_GATEWAY, HTTP_GATEWAY_TIMEOUT)
+
+// Every section the server can answer for. Caught up is fetched (and cached) on its own even though
+// Home renders it inside Watching; UNKNOWN is client-only and never requested.
+private val HOME_SECTIONS =
+    listOf(
+        LibrarySection.WATCHING,
+        LibrarySection.CAUGHT_UP,
+        LibrarySection.PAUSED,
+        LibrarySection.PLANNED,
+        LibrarySection.COMPLETED,
+        LibrarySection.DROPPED,
+    )
 
 /**
  * `@Singleton` here on the CLASS rather than on `DataModule`'s `@Binds` method: scoping the bind
@@ -109,48 +123,72 @@ class LibraryRepositoryImpl
             }
 
         /**
-         * The cache wins only before the first network page arrives, and only for the default
-         * view. Under a filter the cached rows are the WRONG rows, so they are never shown — an
-         * empty filtered list renders as empty rather than as the unfiltered cache, which is why
-         * the `else` branch below is `paged` with no `ifEmpty` fallback.
-         *
-         * `ifEmpty` on the default branch is a cold-start sentinel, not the failure path: a
-         * failed [refresh] leaves [paginator] untouched (see its KDoc), so `paged` still holds
-         * whatever was there before and this never falls back to the cache on a failure — except
-         * after a [remove] that empties the loaded pages on the default view, where the cache
-         * (which took the same delete) shows instead. Its one inherent edge: a [refresh] that
-         * legitimately answers zero rows is indistinguishable from "nothing fetched yet" until
-         * [dao]'s write a moment later catches up, so a genuinely empty default library flickers
-         * the stale cache for a frame. Not worth chasing for a single-frame flicker on an empty
-         * library.
-         *
-         * `distinctUntilChanged` is not tidying: [combine] re-emits on every emission of ANY of
-         * the three sources, and both [refresh] and [applyFilter] move more than one of them in
-         * the same call ([refresh] loads the paginator and then writes the cache; [applyFilter]
-         * additionally moves [filter]), so without it a single logical update delivers duplicate
-         * lists to a collector.
+         * The loaded pages, and nothing else. The cache used to stand in for the default view
+         * before its first page arrived; Home owns the cache now (its rows are sections, not this
+         * list's first page), so the list is network-only and empty until the first [refresh].
          */
-        override fun observeLibrary(): Flow<List<LibraryEntry>> =
-            combine(
-                dao.observeAll().map { entities -> entities.map(LibraryEntryEntity::toDomain) },
-                paginator.items,
-                filter,
-            ) { cached, paged, current ->
-                if (current.isDefault) paged.ifEmpty { cached } else paged
-            }.distinctUntilChanged()
+        override fun observeLibrary(): Flow<List<LibraryEntry>> = paginator.items
 
+        /**
+         * `CursorPaginator.restart` fetches before it mutates, so a failed refresh leaves the
+         * paginator's state — and the on-screen list — exactly as it was. No cache write: see
+         * [refreshHome].
+         */
         override suspend fun refresh() {
+            paginator.restart()
+        }
+
+        override fun observeHomeCache(): Flow<Map<LibrarySection, List<LibraryEntry>>> =
+            dao
+                .observeAll()
+                .map { entities -> entities.map(LibraryEntryEntity::toDomain).groupBy(LibraryEntry::section) }
+                .distinctUntilChanged()
+
+        /**
+         * All six requests run concurrently and are awaited together: `coroutineScope` cancels the
+         * rest and rethrows when one fails, so a partial set never reaches the cache. Only the Title
+         * sort is cached — it is Home's default view, and caching every sort would make Room a
+         * queryable mirror of the server's orderings rather than a cold-start cache.
+         */
+        override suspend fun refreshHome(
+            sort: LibrarySort,
+            perSection: Int,
+        ): Map<LibrarySection, Page<LibraryEntry>> {
             val startedIn = session.current()
-            // The RETURNED page, never a re-read of `paginator.items.value`: CursorPaginator.restart
-            // fetches before it mutates, so a failed refresh leaves the paginator's state — and the
-            // on-screen list — exactly as it was.
-            val firstPage = paginator.restart()
-            // Decision C-B: only the default view is cached. Caching a filtered page would make
-            // Room a queryable mirror of fifteen (status x sort) combinations, which is the
-            // source-of-truth inversion architecture rule 2 forbids.
-            if (filter.value.isDefault) {
-                session.ifStill(startedIn) { dao.replaceAll(firstPage.map(LibraryEntry::toEntity)) }
+            val pages =
+                coroutineScope {
+                    HOME_SECTIONS
+                        .map { section ->
+                            section to
+                                async { sectionPage(section, sort, cursor = null, limit = perSection) }
+                        }.associate { (section, page) -> section to page.await() }
+                }
+            if (sort == LibrarySort.TITLE) {
+                session.ifStill(startedIn) {
+                    dao.replaceAll(pages.values.flatMap { page -> page.items.map(LibraryEntry::toEntity) })
+                }
             }
+            return pages
+        }
+
+        override suspend fun sectionPage(
+            section: LibrarySection,
+            sort: LibrarySort,
+            cursor: String?,
+            limit: Int,
+        ): Page<LibraryEntry> {
+            val page =
+                api.library(
+                    cursor = cursor,
+                    limit = limit,
+                    status = null,
+                    sort = sort.wire,
+                    mediaId = null,
+                    favorite = null,
+                    type = null,
+                    section = section.wireValue(),
+                )
+            return Page(page.items.map(LibraryEntryDto::toDomain), page.nextCursor)
         }
 
         /** Sign-out: the cache, the loaded pages and the filter all go. */
@@ -325,9 +363,9 @@ class LibraryRepositoryImpl
             // A single-row upsert rather than a full refresh: an edit is one known row, and a
             // network round trip per progress tap would be felt. `insertAll` is REPLACE-on-conflict
             // (LibraryDao), so `insertAll(listOf(...))` upserts this one row rather than needing a
-            // dedicated DAO method. Accepted consequence: an edited entry outside the cached first
-            // page gets ADDED to the cache; `observeAll()` orders by `updated_at DESC` so it sorts
-            // to the top, and the next `refresh()` rebuilds the cache to match the server anyway.
+            // dedicated DAO method. Accepted consequence: an edited entry outside the cached rows
+            // gets ADDED to the cache (one extra row in its section, carrying the section the server
+            // just sent), and the next `refreshHome()` rebuilds the cache to match the server anyway.
             // The loaded list is patched in the same step (see showInLoadedPages), so the Library
             // screen shows the edit without waiting for a reload.
             session.ifStill(startedIn) {

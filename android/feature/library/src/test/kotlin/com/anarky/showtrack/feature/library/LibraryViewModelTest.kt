@@ -6,6 +6,7 @@ import com.anarky.showtrack.core.data.repository.LibraryRepository
 import com.anarky.showtrack.core.model.LibraryEntry
 import com.anarky.showtrack.core.model.LibraryFilter
 import com.anarky.showtrack.core.model.LibraryPatch
+import com.anarky.showtrack.core.model.LibrarySection
 import com.anarky.showtrack.core.model.LibrarySort
 import com.anarky.showtrack.core.model.LibraryStats
 import com.anarky.showtrack.core.model.Media
@@ -757,6 +758,21 @@ class LibraryViewModelTest {
         // apart the way LibraryRepositoryImpl's own KDoc warns applyFilter/refresh can (task
         // 9a.5's carried-forward note).
         override suspend fun refresh(): Unit = error("not exercised by LibraryViewModel; it always calls applyFilter")
+
+        override fun observeHomeCache(): Flow<Map<LibrarySection, List<LibraryEntry>>> =
+            error("Home sections are not exercised here")
+
+        override suspend fun refreshHome(
+            sort: LibrarySort,
+            perSection: Int,
+        ): Map<LibrarySection, Page<LibraryEntry>> = error("Home sections are not exercised here")
+
+        override suspend fun sectionPage(
+            section: LibrarySection,
+            sort: LibrarySort,
+            cursor: String?,
+            limit: Int,
+        ): Page<LibraryEntry> = error("Home sections are not exercised here")
 
         // Appended to [entries] by a successful loadMore; empty stands for an exhausted list.
         var nextPage: List<LibraryEntry> = emptyList()

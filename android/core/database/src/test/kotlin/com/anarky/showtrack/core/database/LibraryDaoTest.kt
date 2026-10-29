@@ -67,25 +67,43 @@ class LibraryDaoTest {
         }
 
     /**
-     * [LibraryEntryEntity.updatedAt] is not optional per the entity's own doc comment: it exists
-     * specifically so `observeAll`'s `ORDER BY updated_at DESC` is well-defined. A fixture where
-     * every row shares one timestamp cannot tell a correct `ORDER BY` apart from none at all —
-     * this test is the one that would actually fail if the column, the converter, or the query
-     * direction regressed.
+     * Home draws each section in Title order straight from this flow, so the ORDER BY is what the
+     * offline screen shows. A fixture inserted in title order could not tell a correct ORDER BY
+     * from none, hence the shuffled insert; the lower-case title pins the case-insensitive collation.
      */
     @Test
-    fun observeAll_orders_by_updatedAt_descending() =
+    fun observeAll_orders_by_title_ignoring_case() =
         runTest {
             dao.replaceAll(
                 listOf(
-                    libraryEntry(id = "oldest", updatedAt = Instant.ofEpochMilli(1_000L)),
-                    libraryEntry(id = "newest", updatedAt = Instant.ofEpochMilli(3_000L)),
-                    libraryEntry(id = "middle", updatedAt = Instant.ofEpochMilli(2_000L)),
+                    libraryEntry(id = "c", title = "Cowboy Bebop"),
+                    libraryEntry(id = "a", title = "akira"),
+                    libraryEntry(id = "b", title = "Berserk"),
                 ),
             )
 
             dao.observeAll().test {
-                assertEquals(listOf("newest", "middle", "oldest"), awaitItem().map { it.id })
+                assertEquals(listOf("a", "b", "c"), awaitItem().map { it.id })
+            }
+        }
+
+    @Test
+    fun section_next_episode_season_and_updatedAt_round_trip() =
+        runTest {
+            val caughtUp =
+                libraryEntry(id = "1").copy(
+                    section = "CAUGHT_UP",
+                    nextEpisodeSeason = 2,
+                    updatedAt = Instant.ofEpochMilli(3_000L),
+                )
+
+            dao.replaceAll(listOf(caughtUp, libraryEntry(id = "2")))
+
+            dao.observeAll().test {
+                val rows = awaitItem().associateBy { it.id }
+                assertEquals(caughtUp, rows.getValue("1"))
+                assertEquals("WATCHING", rows.getValue("2").section)
+                assertEquals(null, rows.getValue("2").nextEpisodeSeason)
             }
         }
 
@@ -112,17 +130,18 @@ class LibraryDaoTest {
 
     private fun libraryEntry(
         id: String,
-        updatedAt: Instant = Instant.ofEpochMilli(1_700_000_000_000L),
+        title: String = "Title $id",
     ) = LibraryEntryEntity(
         id = id,
         status = "WATCHING",
         score = "8.5",
         progress = 3,
         favorite = false,
-        updatedAt = updatedAt,
+        updatedAt = Instant.ofEpochMilli(1_700_000_000_000L),
         mediaId = "media-$id",
-        title = "Title $id",
+        title = title,
         coverUrl = "https://example.com/$id.jpg",
         daysUntilNextEpisode = 2,
+        section = "WATCHING",
     )
 }

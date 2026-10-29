@@ -120,6 +120,8 @@ class MapperTest {
         assertEquals("https://example.com/cached.jpg", entry.media.coverImageUrl)
         assertEquals(5, entry.media.daysUntilNextEpisode)
         assertEquals(28, entry.media.totalEpisodes)
+        assertEquals(LibrarySection.CAUGHT_UP, entry.section)
+        assertEquals(3, entry.media.nextEpisodeSeason)
     }
 
     @Test
@@ -139,6 +141,8 @@ class MapperTest {
         assertEquals("Cached Title", entity.title)
         assertEquals("https://example.com/cached.jpg", entity.coverUrl)
         assertEquals(5, entity.daysUntilNextEpisode)
+        assertEquals("CAUGHT_UP", entity.section)
+        assertEquals(3, entity.nextEpisodeSeason)
     }
 
     /**
@@ -344,6 +348,8 @@ class MapperTest {
             coverUrl = "https://example.com/cached.jpg",
             daysUntilNextEpisode = 5,
             totalEpisodes = 28,
+            section = "CAUGHT_UP",
+            nextEpisodeSeason = 3,
         )
 
     @Test

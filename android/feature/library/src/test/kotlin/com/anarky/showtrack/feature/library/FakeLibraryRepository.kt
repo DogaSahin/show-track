@@ -5,6 +5,7 @@ import com.anarky.showtrack.core.data.repository.LibraryRepository
 import com.anarky.showtrack.core.model.LibraryEntry
 import com.anarky.showtrack.core.model.LibraryFilter
 import com.anarky.showtrack.core.model.LibraryPatch
+import com.anarky.showtrack.core.model.LibrarySection
 import com.anarky.showtrack.core.model.LibrarySort
 import com.anarky.showtrack.core.model.MediaSource
 import com.anarky.showtrack.core.model.MediaType
@@ -29,6 +30,20 @@ internal class FakeLibraryRepository
         override fun observeLibrary(): Flow<List<LibraryEntry>> = flowOf(emptyList())
 
         override suspend fun refresh() = Unit
+
+        override fun observeHomeCache(): Flow<Map<LibrarySection, List<LibraryEntry>>> = flowOf(emptyMap())
+
+        override suspend fun refreshHome(
+            sort: LibrarySort,
+            perSection: Int,
+        ): Map<LibrarySection, Page<LibraryEntry>> = emptyMap()
+
+        override suspend fun sectionPage(
+            section: LibrarySection,
+            sort: LibrarySort,
+            cursor: String?,
+            limit: Int,
+        ): Page<LibraryEntry> = Page(emptyList(), nextCursor = null)
 
         override suspend fun loadMore() = Unit
 

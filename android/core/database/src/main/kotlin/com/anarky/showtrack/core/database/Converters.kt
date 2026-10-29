@@ -8,9 +8,8 @@ import java.time.Instant
  * one explicit converter pair to compile at all. Registered on [ShowTrackDatabase] rather than
  * per-entity, so a second entity added later reuses it instead of redeclaring it.
  *
- * The column this produces is INTEGER epoch millis, which is what makes
- * `LibraryDao.observeAll()`'s `ORDER BY updated_at DESC` a numeric comparison rather than a
- * lexicographic one over a formatted string.
+ * The column this produces is INTEGER epoch millis, so any ORDER BY on it is a numeric comparison
+ * rather than a lexicographic one over a formatted string.
  */
 class Converters {
     @TypeConverter
