@@ -326,6 +326,9 @@ async def update_entry(
         await _lock_entry(session, entry)
         await _replace_with_first_aired(session, entry, now or datetime.now(tz=UTC))
 
+    if changes.get("status") == UserMediaStatus.COMPLETED:
+        await _mark_all_aired(session, entry, now or datetime.now(tz=UTC))
+
     kind = activity.kind_for(changes)
     if kind is not None:
         await _emit(
@@ -336,6 +339,30 @@ async def update_entry(
             payload=activity.payload_for(changes),
         )
     return entry
+
+
+async def _mark_all_aired(session: AsyncSession, entry: UserMedia, now: datetime) -> None:
+    """Completing a title means every episode out so far was watched: tick them all, keeping
+    existing ticks (a gap-filling top-up, not a replace), then recount `progress` from the rows.
+    Without synced episodes there is nothing to tick and progress stays as it was. No activity
+    here: the status change already emits `completed`.
+    """
+    await _lock_entry(session, entry)
+    aired = _first_aired(entry.media_id, None, now.astimezone(UTC).date())
+    inserted = await session.execute(
+        pg_insert(WatchedEpisode)
+        .from_select(["user_media_id", "episode_id"], select(literal(entry.id, Uuid()), aired.subquery().c.id))
+        .on_conflict_do_nothing()
+    )
+    if inserted.rowcount == 0:
+        return
+    count = await session.scalar(
+        select(func.count()).select_from(WatchedEpisode).where(WatchedEpisode.user_media_id == entry.id)
+    )
+    if count != entry.progress:
+        entry.progress = count
+        await session.flush()
+        await session.refresh(entry)
 
 
 class EpisodesNotLoaded(Exception):

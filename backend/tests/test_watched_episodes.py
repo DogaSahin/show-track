@@ -180,6 +180,66 @@ async def test_the_legacy_progress_patch_ticks_the_first_n_aired_episodes(auth_c
     assert await _watched(db_session, entry.id) == {episodes[0].id, episodes[1].id}
 
 
+async def test_completed_marks_all_aired_episodes(auth_client, auth_user, db_session):
+    media, episodes = await _show(db_session, aired=5, upcoming=2)
+    entry = await _entry(db_session, auth_user.id, media)
+
+    response = await auth_client.patch(f"/v1/library/{entry.id}", json={"status": "completed"})
+
+    assert response.status_code == 200
+    assert response.json()["progress"] == 5
+    assert await _watched(db_session, entry.id) == {episode.id for episode in episodes[:5]}
+
+
+async def test_completed_keeps_existing_ticks(auth_client, auth_user, db_session):
+    media, episodes = await _show(db_session, aired=5, upcoming=1)
+    entry = await _entry(db_session, auth_user.id, media)
+    await auth_client.put(
+        f"/v1/library/{entry.id}/episodes/watched", json={"episode_ids": _ids(episodes[1]), "watched": True}
+    )
+
+    response = await auth_client.patch(f"/v1/library/{entry.id}", json={"status": "completed"})
+
+    assert response.json()["progress"] == 5
+    count = await db_session.scalar(
+        select(func.count()).select_from(WatchedEpisode).where(WatchedEpisode.user_media_id == entry.id)
+    )
+    assert count == 5
+
+
+async def test_completed_without_episodes_only_changes_status(auth_client, auth_user, db_session):
+    media, _ = await _show(db_session, synced=False)
+    entry = await _entry(db_session, auth_user.id, media, progress=2)
+
+    response = await auth_client.patch(f"/v1/library/{entry.id}", json={"status": "completed"})
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "completed"
+    assert response.json()["progress"] == 2
+    assert await _watched(db_session, entry.id) == set()
+
+
+async def test_leaving_completed_unmarks_nothing(auth_client, auth_user, db_session):
+    media, episodes = await _show(db_session, aired=3, upcoming=0)
+    entry = await _entry(db_session, auth_user.id, media)
+    await auth_client.patch(f"/v1/library/{entry.id}", json={"status": "completed"})
+
+    response = await auth_client.patch(f"/v1/library/{entry.id}", json={"status": "watching"})
+
+    assert response.json()["progress"] == 3
+    assert await _watched(db_session, entry.id) == {episode.id for episode in episodes}
+
+
+async def test_completed_emits_one_activity(auth_client, auth_user, db_session):
+    media, _ = await _show(db_session, aired=3, upcoming=0)
+    entry = await _entry(db_session, auth_user.id, media)
+
+    await auth_client.patch(f"/v1/library/{entry.id}", json={"status": "completed"})
+
+    kinds = list(await db_session.scalars(select(Activity.kind).where(Activity.user_id == auth_user.id)))
+    assert kinds == [ActivityKind.COMPLETED]
+
+
 async def test_progress_from_before_episode_tracking_is_backfilled_when_the_list_arrives(db_session):
     media, _ = await _show(db_session, synced=False)
     user = make_user(username="backfill", email="backfill@example.com")
