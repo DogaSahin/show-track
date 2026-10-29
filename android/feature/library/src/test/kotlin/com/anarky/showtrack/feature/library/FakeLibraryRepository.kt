@@ -45,10 +45,15 @@ internal class FakeLibraryRepository
         /** Pages served by [sectionPage], keyed by section and the cursor asked for. */
         var sectionPages: Map<Pair<LibrarySection, String?>, Page<LibraryEntry>> = emptyMap()
         var sectionPageFailure: Throwable? = null
+
+        /** A failure for one section's requests only; [sectionPageFailure] fails them all. */
+        var sectionPageFailures: Map<LibrarySection, Throwable> = emptyMap()
         var sectionPageGate: CompletableDeferred<Unit>? = null
         val sectionPageCalls = mutableListOf<SectionPageCall>()
 
         var stats: LibraryStats? = null
+        var statsCalls = 0
+        var upcomingCalls = 0
 
         data class SectionPageCall(
             val section: LibrarySection,
@@ -82,6 +87,7 @@ internal class FakeLibraryRepository
             sectionPageCalls += SectionPageCall(section, sort, cursor, limit)
             sectionPageGate?.await()
             sectionPageFailure?.let { throw it }
+            sectionPageFailures[section]?.let { throw it }
             return sectionPages[section to cursor] ?: Page(emptyList(), nextCursor = null)
         }
 
@@ -120,9 +126,15 @@ internal class FakeLibraryRepository
         ): Page<LibraryEntry> = Page(emptyList(), null)
 
         // `LibraryViewModel.refreshOverview` swallows this failure; a test that wants counts sets [stats].
-        override suspend fun libraryStats(): LibraryStats = stats ?: error("no stats in this test")
+        override suspend fun libraryStats(): LibraryStats {
+            statsCalls++
+            return stats ?: error("no stats in this test")
+        }
 
-        override suspend fun upcomingWatching(limit: Int): List<LibraryEntry> = emptyList()
+        override suspend fun upcomingWatching(limit: Int): List<LibraryEntry> {
+            upcomingCalls++
+            return emptyList()
+        }
 
         override suspend fun allWatching(): List<LibraryEntry> = emptyList()
 

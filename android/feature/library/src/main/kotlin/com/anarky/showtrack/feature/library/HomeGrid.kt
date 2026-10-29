@@ -65,7 +65,9 @@ private val DotSize = 8.dp
 /**
  * Home's sections into a [POSTER_COLUMNS]-across grid: each section's header, its posters
  * (the first [HOME_COLLAPSED_COUNT] while collapsed, every loaded one expanded), then its
- * "Show all N" / "Show less" button when it holds more than a collapsed section shows.
+ * "Show all N" / "Show less" button when it holds more than a collapsed section shows. An
+ * expanded section a reload re-read only in part ([HomeSection.hasMore]) offers "Show all N"
+ * again under its rows.
  *
  * An extension on the grid's scope rather than a grid of its own, so Airing soon above it scrolls
  * with the sections in one list. Item keys carry the section: an entry whose display section moves
@@ -85,13 +87,22 @@ internal fun LazyGridScope.homeSections(
             keyPrefix = section.section.name,
             onEntryClick = onEntryClick,
         )
-        if (section.hasMore || section.error != null) {
+        if (section.hasFooter) {
             item(key = "footer-${section.section}", span = { GridItemSpan(maxLineSpan) }) {
                 SectionFooter(section = section, onToggle = { onToggleSection(section.section) })
             }
         }
     }
 }
+
+/** A button (or its spinner or error) under the posters: more to show, or a "Show less" worth having. */
+private val HomeSection.hasFooter: Boolean
+    get() =
+        when {
+            hasMore || loadingMore -> true
+            error != null -> true
+            else -> expanded && entries.size > HOME_COLLAPSED_COUNT
+        }
 
 /** One poster per entry, the Caught up pill on those waiting for their next season. */
 internal fun LazyGridScope.posters(
@@ -190,7 +201,7 @@ private fun SectionFooter(
                 )
             else ->
                 TextButton(onClick = onToggle) {
-                    if (section.expanded) {
+                    if (section.expanded && !section.hasMore) {
                         Text(text = stringResource(R.string.library_show_less))
                     } else {
                         Text(text = stringResource(R.string.library_show_all, section.count ?: section.entries.size))

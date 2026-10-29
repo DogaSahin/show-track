@@ -218,6 +218,20 @@ class LibraryScreenTest {
     }
 
     @Test
+    fun `an expanded section a reload left short offers Show all again`() {
+        setScreen(
+            home =
+                ready(
+                    section(LibrarySection.PLANNED, entries("p", 100), count = 130, expanded = true)
+                        .copy(nextCursor = "more"),
+                ),
+        )
+
+        composeRule.onNode(hasScrollAction()).performScrollToNode(hasText("Show all 130"))
+        composeRule.onNodeWithText("Show less").assertDoesNotExist()
+    }
+
+    @Test
     fun `caught up poster shows S2 soon when the next season is known`() {
         val caughtUp =
             ENTRY.copy(

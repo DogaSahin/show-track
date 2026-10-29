@@ -136,8 +136,10 @@ class LibraryViewModel
         private val mutableAiringSoon = MutableStateFlow<List<LibraryEntry>>(emptyList())
         val airingSoon: StateFlow<List<LibraryEntry>> = mutableAiringSoon.asStateFlow()
 
+        // The first load. Nothing collects [state] yet, so it blanks; the counts and the row
+        // wait for the first resume ([refreshOverview]).
         init {
-            refresh()
+            reload(blank = true)
         }
 
         /**
@@ -210,16 +212,22 @@ class LibraryViewModel
         fun toggleSection(section: LibrarySection) = homeController.toggle(section)
 
         /**
-         * Re-fetches under whatever [filter] currently holds — the initial load, and a retry from
-         * an error state's Retry button.
+         * The Retry buttons (the stale banner, an error state): re-fetches under whatever [filter]
+         * currently holds. On "All shows" it also re-reads the counts and "Airing soon": the banner
+         * means the last attempt was offline, so the header counts and each section's "Show all N"
+         * are as stale as the sections.
          *
          * For a single status, `blank = `[state]`.value !is `[LibraryUiState.Success]: a genuine
          * [LibraryUiState.Error] blanks to [LibraryUiState.Loading] immediately, while a list on
          * screen stays there for the round trip. Reading `state.value` is safe because `refresh()`
-         * is only invoked from composition that is already collecting [state]; with nothing
-         * collecting it reads `initialValue` (`Loading`) and blanks, the conservative fallback.
+         * is only invoked from composition that is already collecting [state].
          */
-        fun refresh() = reload(blank = state.value !is LibraryUiState.Success)
+        fun refresh() {
+            reload(blank = state.value !is LibraryUiState.Success)
+            // Home's load is now running under the same sort, so [refreshOverview] skips it and
+            // re-reads only the counts and the row.
+            if (mutableFilter.value.status == null) refreshOverview()
+        }
 
         /**
          * A quiet reload of page 1 of the single-status list when the Library tab comes back into
