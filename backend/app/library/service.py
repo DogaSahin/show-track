@@ -1,11 +1,25 @@
 import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import ColumnElement, Uuid, delete, func, literal, select, true, tuple_
+from sqlalchemy import (
+    ColumnElement,
+    String,
+    Uuid,
+    and_,
+    case,
+    cast,
+    delete,
+    func,
+    literal,
+    or_,
+    select,
+    true,
+    tuple_,
+)
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,21 +32,26 @@ from app.library.models import Activity, ActivityKind, Review, UserMedia, UserMe
 from app.library.schemas import (
     GenreCount,
     LibraryEntry,
+    LibrarySection,
     LibrarySort,
     LibraryStats,
     ReviewAuthor,
     ReviewRead,
 )
 from app.media import service as media_service
-from app.media.models import Episode, Media, MediaType
+from app.media.models import Episode, Media, MediaStatus, MediaType
 from app.pagination import Cursor, encode_cursor
 from app.users.models import User
 
 
-def to_entry(entry: UserMedia, media: Media, now: datetime) -> LibraryEntry:
+def to_entry(entry: UserMedia, media: Media, now: datetime, section: LibrarySection) -> LibraryEntry:
+    """`section` is passed in, not computed here: it comes from SQL (section_expression), and this
+    function does no I/O.
+    """
     return LibraryEntry(
         id=entry.id,
         status=entry.status,
+        section=section,
         score=entry.score,
         progress=entry.progress,
         favorite=entry.favorite,
@@ -199,6 +218,61 @@ SORTS: dict[LibrarySort, SortSpec] = {
 
 def sort_expression(spec: SortSpec) -> ColumnElement[Any]:
     return func.coalesce(spec.column, spec.sentinel) if spec.sentinel is not None else spec.column
+
+
+def section_expression(today: date) -> ColumnElement[str]:
+    """The display section as SQL, over `UserMedia` joined to `Media`, for a select list, a WHERE
+    or a GROUP BY. Derived on read from the episode rows rather than stored, so nothing has to
+    keep it in step when a sync moves `next_episode_*` or adds episodes.
+
+    Only a saved `watching` entry is reclassified, and only once the title's episode list is
+    synced: before that the counts below would be guesses. `completed` needs the title finished
+    and every episode counted; `caught_up` needs every AIRED episode counted (unaired rows of the
+    current season don't count against you) and nothing more due this season — either no next
+    episode at all, or the next one opens a later season than any that has aired. A next episode
+    with a NULL season makes that comparison NULL, so the entry stays `watching`: deliberately,
+    because then we can't tell a mid-season week from a season break.
+
+    The status branch casts to text so every branch has one type; a bare enum column would make
+    the CASE an Enum and bind the derived literals through it.
+    """
+    aired = (Episode.media_id == Media.id, media_service.aired_clause(today))
+    aired_count = select(func.count()).select_from(Episode).where(*aired).correlate(Media).scalar_subquery()
+    last_aired_season = (
+        select(func.max(Episode.season_number)).select_from(Episode).where(*aired).correlate(Media).scalar_subquery()
+    )
+    synced = Media.episodes_synced_at.is_not(None)
+    return case(
+        (UserMedia.status != UserMediaStatus.WATCHING, cast(UserMedia.status, String)),
+        (
+            and_(synced, Media.status == MediaStatus.FINISHED, UserMedia.progress >= Media.total_episodes),
+            LibrarySection.COMPLETED.value,
+        ),
+        (
+            and_(
+                synced,
+                Media.status != MediaStatus.FINISHED,
+                aired_count > 0,
+                UserMedia.progress >= aired_count,
+                or_(Media.next_episode_date.is_(None), Media.next_episode_season > last_aired_season),
+            ),
+            LibrarySection.CAUGHT_UP.value,
+        ),
+        else_=LibrarySection.WATCHING.value,
+    )
+
+
+async def section_of(session: AsyncSession, entry_id: uuid.UUID, now: datetime) -> LibrarySection:
+    """One entry's section, by the same expression the listing uses. Scoped by id only: every
+    caller has already loaded the entry through get_entry, which is where ownership is checked.
+    """
+    section = await session.scalar(
+        select(section_expression(now.astimezone(UTC).date()))
+        .select_from(UserMedia)
+        .join(Media, UserMedia.media_id == Media.id)
+        .where(UserMedia.id == entry_id)
+    )
+    return LibrarySection(section)
 
 
 async def get_entry(
@@ -424,6 +498,7 @@ async def list_entries(
     media_id: uuid.UUID | None = None,
     favorite: bool | None = None,
     media_type: MediaType | None = None,
+    section: LibrarySection | None = None,
 ) -> tuple[list[LibraryEntry], str | None]:
     """Keyset pagination over a composite (sort_value, id).
 
@@ -441,12 +516,13 @@ async def list_entries(
     """
     spec = SORTS[sort]
     expression = sort_expression(spec)
+    section_column = section_expression(now.astimezone(UTC).date())
 
     # The sort value is selected as a column so the cursor is built from the value POSTGRES
     # computed, not from one recomputed in Python. Recomputing is where a coalesce and a
     # comparison drift apart.
     statement = (
-        select(UserMedia, Media, expression.label("sort_value"))
+        select(UserMedia, Media, expression.label("sort_value"), section_column.label("section"))
         .join(Media, UserMedia.media_id == Media.id)
         .where(UserMedia.user_id == user_id)
         .limit(limit + 1)
@@ -461,6 +537,9 @@ async def list_entries(
         # Not part of the sort key, so the cursor is unchanged: like `status`, a client must send
         # the same filters with the cursor it was given.
         statement = statement.where(Media.type == media_type)
+    if section is not None:
+        # Not part of the sort key either, so the cursor is unchanged — same rule as `status`.
+        statement = statement.where(section_column == section.value)
     if cursor is not None:
         key = tuple_(expression, UserMedia.id)
         position = (cursor.value, cursor.id)
@@ -474,7 +553,7 @@ async def list_entries(
     has_more = len(rows) > limit
     rows = rows[:limit]
     next_cursor = encode_cursor(sort.value, rows[-1].sort_value, rows[-1].UserMedia.id) if has_more and rows else None
-    return [to_entry(row.UserMedia, row.Media, now) for row in rows], next_cursor
+    return [to_entry(row.UserMedia, row.Media, now, LibrarySection(row.section)) for row in rows], next_cursor
 
 
 async def get_stats(session: AsyncSession, *, user_id: uuid.UUID) -> LibraryStats:

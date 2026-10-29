@@ -16,6 +16,7 @@ from app.library.schemas import (
     ImportSummary,
     LibraryEntry,
     LibraryPage,
+    LibrarySection,
     LibrarySort,
     LibraryStats,
     ReviewRead,
@@ -101,7 +102,8 @@ async def add_to_library(
         )
     if not created:
         response.status_code = status.HTTP_200_OK
-    return service.to_entry(entry, media, datetime.now(tz=UTC))
+    now = datetime.now(tz=UTC)
+    return service.to_entry(entry, media, now, await service.section_of(session, entry.id, now))
 
 
 @router.get("", response_model=LibraryPage, responses={400: {"description": "unusable cursor"}})
@@ -122,6 +124,9 @@ async def list_library(
     # Anime or TV only, for Favorites' two shelves. Aliased because `type` shadows the builtin;
     # an unknown value is a 422 from the enum, the same as `status`.
     media_type: Annotated[MediaType | None, Query(alias="type")] = None,
+    # Home's display section (derived; see service.section_expression). Combinable with every
+    # other filter: `status=watching&section=completed` is the finished-but-still-Watching set.
+    section: LibrarySection | None = None,
     sort: LibrarySort = LibrarySort.TITLE,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     # Capped: decode_cursor contains RecursionError, but not paying for a megabyte of nesting in
@@ -150,6 +155,7 @@ async def list_library(
         media_id=media_id,
         favorite=favorite,
         media_type=media_type,
+        section=section,
     )
     return LibraryPage(items=items, next_cursor=next_cursor)
 
@@ -215,7 +221,8 @@ async def update_library_entry(
     # distinguishable from a body that omits score entirely.
     await service.update_entry(session, entry, payload.model_dump(exclude_unset=True))
     await session.commit()
-    return service.to_entry(entry, media, datetime.now(tz=UTC))
+    now = datetime.now(tz=UTC)
+    return service.to_entry(entry, media, now, await service.section_of(session, entry.id, now))
 
 
 @router.get(
@@ -259,7 +266,7 @@ async def set_watched_episodes(
     except service.EpisodeNotAired as exc:
         raise HTTPException(status_code=422, detail="episode not aired yet") from exc
     await session.commit()
-    return service.to_entry(entry, media, now)
+    return service.to_entry(entry, media, now, await service.section_of(session, entry.id, now))
 
 
 @router.delete(
