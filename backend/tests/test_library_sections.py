@@ -191,6 +191,30 @@ async def test_section_filter(auth_client, db_session, auth_user):
     assert set(await _sections(auth_client, section="completed", status="watching")) == {str(finished_watching.id)}
 
 
+async def test_section_filter_pages_across_a_cursor(auth_client, db_session, auth_user):
+    """The section filter holds on every page: no row twice, none missing, none from elsewhere."""
+    planned = {
+        str((await _seed(db_session, auth_user.id, status=UserMediaStatus.PLANNED, title=f"Planned {n}")).id)
+        for n in range(3)
+    }
+    for n in range(2):
+        await _seed(db_session, auth_user.id, status=UserMediaStatus.DROPPED, title=f"Dropped {n}")
+    await _seed(db_session, auth_user.id, progress=4, air_dates=_past(4), title="Caught")
+
+    first = (await auth_client.get("/v1/library", params={"section": "planned", "limit": 2})).json()
+    assert len(first["items"]) == 2
+    assert first["next_cursor"] is not None
+    second = (
+        await auth_client.get("/v1/library", params={"section": "planned", "limit": 2, "cursor": first["next_cursor"]})
+    ).json()
+    assert second["next_cursor"] is None
+
+    ids = [item["id"] for item in first["items"] + second["items"]]
+    assert len(ids) == len(set(ids))
+    assert set(ids) == planned
+    assert {item["section"] for item in first["items"] + second["items"]} == {"planned"}
+
+
 async def test_section_filter_rejects_unknown_value(auth_client):
     response = await auth_client.get("/v1/library", params={"section": "binging"})
 
