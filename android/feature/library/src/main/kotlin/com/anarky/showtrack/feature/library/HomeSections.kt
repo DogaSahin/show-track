@@ -71,18 +71,24 @@ sealed interface HomeUiState {
  * Every mutation runs on [scope]'s (main, single-threaded) dispatcher, so the plain fields below
  * need no locking; [publish] rebuilds [state] from them after each change.
  *
- * **Loads.** With live sections for the current sort already on screen, a load is quiet: they stay
- * until the answer replaces them, and a failure is dropped (the same promise the single-status
- * list's resume reload makes). Otherwise — first load, a sort change, after an error, or while
- * showing the cache — the cache renders first, marked stale, and the network answer replaces it.
- * Expanded sections are re-expanded as part of a quiet load, so coming back from a show's page
- * neither collapses them nor leaves them missing what was added meanwhile.
+ * **Loads** come in three kinds ([LoadKind]):
+ * - *Quiet* — live sections for the current sort are on screen (a resume, a retry): they stay until
+ *   the answer replaces them, and a failure is dropped (the same promise the single-status list's
+ *   resume reload makes). Expanded sections are re-expanded as part of it, so coming back from a
+ *   show's page neither collapses them nor misses what was added meanwhile. If re-fetching an
+ *   expanded section's pages fails, the whole quiet reload is dropped rather than half-applied.
+ * - *Cold* — nothing live yet (first load, a retry after an error or over the cache): the cache
+ *   renders first, marked stale and collapsed, and the network answer replaces it.
+ * - *Sort change* — every section collapses and the screen shows Loading until the network
+ *   answers. The cache is in Title order, so it is only the fallback when that answer fails.
  *
- * **Cancellation.** Every load cancels the previous load and every in-flight "Show all", and does
- * so again at the moment it writes new pages (a "Show all" tapped while the load was running read
- * the pages being replaced): a page fetched under the old sort, or after a cursor the load just
- * superseded, would splice stale rows into fresh data. Such a tap is dropped, not retried; the
- * section stays collapsed. Each job re-checks [ensureActive] before writing back.
+ * **"Show all" and loads.** A "Show all" fetches pages after a cursor, which only means something
+ * against the pages it read, so it never runs alongside a load. One already in flight is cancelled
+ * and, under the same sort, carried into the load as a request ([requested]); one tapped while a
+ * load runs is queued the same way. A successful load fetches the requested sections' remaining
+ * pages against its own fresh first pages and expands them; a failed quiet load starts them
+ * against the pages still on screen. A sort change drops them: the user sees a fresh, collapsed
+ * list. Each job re-checks [ensureActive] before writing back.
  */
 internal class HomeSectionsController(
     private val scope: CoroutineScope,
@@ -97,22 +103,37 @@ internal class HomeSectionsController(
     private var live = false
     private var counts: Map<LibrarySection, Int>? = null
     private val expanded = mutableSetOf<LibrarySection>()
+
+    /** Sections whose "Show all" waits on the running load; see the class KDoc. */
+    private val requested = mutableSetOf<LibrarySection>()
     private val sectionErrors = mutableMapOf<LibrarySection, Throwable>()
     private var loadJob: Job? = null
     private val expandJobs = mutableMapOf<LibrarySection, Job>()
 
-    /** Reloads under [sort]. A different sort than last time starts over, collapsed. */
+    /** Reloads under [sort]. A different sort than last time starts over, collapsed, on Loading. */
     fun load(sort: LibrarySort) {
-        if (sort != this.sort) {
-            this.sort = sort
+        val previous = this.sort
+        val kind =
+            when {
+                previous != null && sort != previous -> LoadKind.SORT_CHANGE
+                live -> LoadKind.QUIET
+                else -> LoadKind.COLD
+            }
+        loadJob?.cancel()
+        this.sort = sort
+        if (kind == LoadKind.SORT_CHANGE) {
+            cancelExpansions()
+            requested.clear()
+            expanded.clear()
             pages = emptyMap()
             live = false
-            expanded.clear()
+            mutableState.value = HomeUiState.Loading
+        } else {
+            requested += expandJobs.keys
+            cancelExpansions()
+            if (mutableState.value is HomeUiState.Ready) publish()
         }
-        cancelExpansions()
-        loadJob?.cancel()
-        val quiet = live
-        loadJob = scope.launch { runLoad(sort, quiet) }
+        loadJob = scope.launch { runLoad(sort, kind) }
     }
 
     /** The resume path: a reload, unless one is already running (the first resume follows `init`'s). */
@@ -130,29 +151,36 @@ internal class HomeSectionsController(
     /**
      * Collapses an expanded section (keeping what it loaded), or expands a collapsed one — after
      * fetching whatever it has not loaded yet. A cached section is fetched from the start, since
-     * the cache holds no cursor and may be out of date.
+     * the cache holds no cursor and may be out of date. While a load runs, the fetch waits for it.
      */
-    @Suppress("TooGenericExceptionCaught")
     fun toggle(section: LibrarySection) {
         if (section in expanded) {
             expanded -= section
             publish()
             return
         }
-        if (expandJobs[section]?.isActive == true) return
+        if (expandJobs[section]?.isActive == true || section in requested) return
         val sort = sort ?: return
-        val raws = rawSections(section)
-        if (raws.none { pages.needsFetch(it) }) {
-            expanded += section
-            publish()
-            return
-        }
         sectionErrors -= section
+        when {
+            rawSections(section).none { pages.needsFetch(it, live) } -> expanded += section
+            loadJob?.isActive == true -> requested += section
+            else -> startExpansion(section, sort)
+        }
+        publish()
+    }
+
+    @Suppress("TooGenericExceptionCaught")
+    private fun startExpansion(
+        section: LibrarySection,
+        sort: LibrarySort,
+    ) {
+        val raws = rawSections(section)
         expandJobs[section] =
             scope.launch {
                 try {
                     var fetched = pages
-                    for (raw in raws) fetched = fetched.withRest(raw, sort)
+                    for (raw in raws) fetched = fetched.withRest(repository, raw, sort, live)
                     ensureActive()
                     pages = pages + raws.associateWith { fetched.getValue(it) }
                     expanded += section
@@ -165,44 +193,71 @@ internal class HomeSectionsController(
                 expandJobs -= section
                 publish()
             }
-        publish()
     }
 
     @Suppress("TooGenericExceptionCaught")
     private suspend fun runLoad(
         sort: LibrarySort,
-        quiet: Boolean,
+        kind: LoadKind,
     ) {
-        if (!quiet) showCache()
+        if (kind == LoadKind.COLD) showCache()
         try {
             val firstPages = repository.refreshHome(sort, perSection = HOME_COLLAPSED_COUNT)
-            var fresh =
+            val firstPageMap =
                 HOME_RAW_SECTIONS.associateWith { raw ->
                     val page = firstPages[raw] ?: Page(emptyList(), nextCursor = null)
                     SectionPages(page.items, page.nextCursor, fromStart = true)
                 }
             // Fetched before anything is written, so a failure here leaves the old sections whole.
-            // A snapshot: a "Show less" tapped meanwhile must not break the iteration.
-            for (section in expanded.toList()) {
-                for (raw in rawSections(section)) fresh = fresh.withRest(raw, sort)
-            }
+            val fresh = withExpandedRest(firstPageMap, sort)
             currentCoroutineContext().ensureActive()
             cancelExpansions()
             pages = fresh
             live = true
+            expanded += requested
+            requested.clear()
             publish()
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (failure: Exception) {
-            when {
-                quiet -> Unit // the live sections stay; see the class KDoc
-                pages.values.any { it.items.isNotEmpty() } -> publish()
-                else -> mutableState.value = HomeUiState.Error(failure)
+            if (kind == LoadKind.QUIET) {
+                // The live sections stay; queued "Show all"s run against them now.
+                requested.forEach { section -> startExpansion(section, sort) }
+                requested.clear()
+                publish()
+                return
             }
+            if (kind == LoadKind.SORT_CHANGE) showCache()
+            requested.clear()
+            val showing = pages.values.any { it.items.isNotEmpty() }
+            if (showing) publish() else mutableState.value = HomeUiState.Error(failure)
         }
     }
 
-    /** Renders the cache (at most a collapsed section's worth each), or Loading when it is empty. */
+    /**
+     * [firstPages] with the rest of every expanded or requested section. Re-read each round: a
+     * "Show all" tapped meanwhile joins, and a "Show less" must not break the iteration.
+     */
+    private suspend fun withExpandedRest(
+        firstPages: Map<LibrarySection, SectionPages>,
+        sort: LibrarySort,
+    ): Map<LibrarySection, SectionPages> {
+        var fresh = firstPages
+        val done = mutableSetOf<LibrarySection>()
+        var todo = expanded + requested
+        while (todo.isNotEmpty()) {
+            for (raw in todo.flatMap(::rawSections)) fresh = fresh.withRest(repository, raw, sort, live = true)
+            done += todo
+            todo = (expanded + requested) - done
+        }
+        return fresh
+    }
+
+    /**
+     * Renders the cache (at most a collapsed section's worth each, every section collapsed), or
+     * Loading when it is empty. Sections expanded over the cache become requests, so a successful
+     * load re-expands them with real pages.
+     */
     @Suppress("TooGenericExceptionCaught")
     private suspend fun showCache() {
         val cached =
@@ -215,37 +270,14 @@ internal class HomeSectionsController(
             }
         currentCoroutineContext().ensureActive()
         cancelExpansions()
+        requested += expanded
+        expanded.clear()
         pages =
             cached
                 .filterKeys { it in HOME_RAW_SECTIONS }
                 .mapValues { (_, items) -> SectionPages(items.take(HOME_COLLAPSED_COUNT), null, fromStart = false) }
         live = false
         if (pages.values.any { it.items.isNotEmpty() }) publish() else mutableState.value = HomeUiState.Loading
-    }
-
-    /**
-     * This map with [raw]'s remaining pages appended. A section not yet fetched from the network
-     * (cached, or absent from the cache) is read from its first page and replaces what was there.
-     */
-    private suspend fun Map<LibrarySection, SectionPages>.withRest(
-        raw: LibrarySection,
-        sort: LibrarySort,
-    ): Map<LibrarySection, SectionPages> {
-        if (!needsFetch(raw)) return this
-        val current = this[raw]?.takeIf { it.fromStart }
-        val items = current?.items.orEmpty().toMutableList()
-        var cursor = current?.cursor
-        do {
-            val page = repository.sectionPage(raw, sort, cursor, limit = HOME_SHOW_ALL_PAGE)
-            items += page.items
-            cursor = page.nextCursor
-        } while (cursor != null)
-        return this + (raw to SectionPages(items, cursor = null, fromStart = true))
-    }
-
-    private fun Map<LibrarySection, SectionPages>.needsFetch(raw: LibrarySection): Boolean {
-        val current = this[raw] ?: return !live
-        return !current.fromStart || current.cursor != null
     }
 
     private fun publish() {
@@ -260,7 +292,7 @@ internal class HomeSectionsController(
                     count = counts?.let { known -> raws.mapNotNull { known[it] }.takeIf { it.isNotEmpty() }?.sum() },
                     expanded = section in expanded,
                     nextCursor = raws.firstNotNullOfOrNull { pages[it]?.cursor },
-                    loadingMore = expandJobs[section]?.isActive == true,
+                    loadingMore = expandJobs[section]?.isActive == true || section in requested,
                     error = sectionErrors[section],
                 )
             }
@@ -272,6 +304,8 @@ internal class HomeSectionsController(
         expandJobs.clear()
         sectionErrors.clear()
     }
+
+    private enum class LoadKind { QUIET, COLD, SORT_CHANGE }
 
     /**
      * What is loaded for one raw section. [fromStart] is false for cached rows: they carry no
@@ -286,6 +320,37 @@ internal class HomeSectionsController(
     private companion object {
         /** The server's sections Home reads: its five headings plus Caught up. */
         val HOME_RAW_SECTIONS: List<LibrarySection> = LibrarySection.homeOrder + LibrarySection.CAUGHT_UP
+
+        /**
+         * This map with [raw]'s remaining pages appended. A section not yet fetched from the network
+         * (cached, or absent from the cache) is read from its first page and replaces what was there.
+         */
+        suspend fun Map<LibrarySection, SectionPages>.withRest(
+            repository: LibraryRepository,
+            raw: LibrarySection,
+            sort: LibrarySort,
+            live: Boolean,
+        ): Map<LibrarySection, SectionPages> {
+            if (!needsFetch(raw, live)) return this
+            val current = this[raw]?.takeIf { it.fromStart }
+            val items = current?.items.orEmpty().toMutableList()
+            var cursor = current?.cursor
+            do {
+                val page = repository.sectionPage(raw, sort, cursor, limit = HOME_SHOW_ALL_PAGE)
+                items += page.items
+                cursor = page.nextCursor
+            } while (cursor != null)
+            return this + (raw to SectionPages(items, cursor = null, fromStart = true))
+        }
+
+        /** Whether [raw] has pages left to read. An absent section counts only before anything is live. */
+        private fun Map<LibrarySection, SectionPages>.needsFetch(
+            raw: LibrarySection,
+            live: Boolean,
+        ): Boolean {
+            val current = this[raw] ?: return !live
+            return !current.fromStart || current.cursor != null
+        }
 
         fun rawSections(section: LibrarySection): List<LibrarySection> =
             if (section == LibrarySection.WATCHING) {

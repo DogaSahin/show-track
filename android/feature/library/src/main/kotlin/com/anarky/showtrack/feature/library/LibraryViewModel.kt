@@ -202,8 +202,8 @@ class LibraryViewModel
         fun toggleSection(section: LibrarySection) = homeController.toggle(section)
 
         /**
-         * Re-fetches under whatever [filter] currently holds — the initial load, and a retry
-         * (`ErrorState`'s and `StaleDataBanner`'s Retry both call this).
+         * Re-fetches under whatever [filter] currently holds — the initial load, and a retry from
+         * an error state's Retry button.
          *
          * For a single status, `blank = `[state]`.value !is `[LibraryUiState.Success]: a genuine
          * [LibraryUiState.Error] blanks to [LibraryUiState.Loading] immediately, while a list on

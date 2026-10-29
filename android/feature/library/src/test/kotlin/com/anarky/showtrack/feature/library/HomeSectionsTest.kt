@@ -294,7 +294,7 @@ class HomeSectionsTest {
         }
 
     @Test
-    fun `a show all tapped during a reload is dropped rather than spliced into the new pages`() =
+    fun `a show all tapped during a reload expands against the new pages`() =
         runTest(dispatcher) {
             val repository = FakeLibraryRepository()
             repository.homePages =
@@ -305,23 +305,117 @@ class HomeSectionsTest {
             repository.refreshHomeGate = reload
             repository.homePages =
                 mapOf(LibrarySection.PLANNED to entries("n", LibrarySection.PLANNED, 12, cursor = "new"))
+            val more = entry("n-more", LibrarySection.PLANNED)
+            repository.sectionPages = mapOf((LibrarySection.PLANNED to "new") to Page(listOf(more), nextCursor = null))
             viewModel.refreshOverview() // quiet reload, in flight
             runCurrent()
+
+            viewModel.toggleSection(LibrarySection.PLANNED)
+            runCurrent()
+            assertTrue("waits on the reload", viewModel.section(LibrarySection.PLANNED).loadingMore)
+            reload.complete(Unit)
+            advanceUntilIdle()
+
+            val planned = viewModel.section(LibrarySection.PLANNED)
+            assertTrue(planned.expanded)
+            assertFalse(planned.loadingMore)
+            assertEquals(13, planned.entries.size)
+            assertEquals(
+                "never the superseded cursor",
+                listOf(FakeLibraryRepository.SectionPageCall(LibrarySection.PLANNED, LibrarySort.TITLE, "new", 100)),
+                repository.sectionPageCalls,
+            )
+        }
+
+    @Test
+    fun `a show all in flight survives a failed quiet reload`() =
+        runTest(dispatcher) {
+            val repository = FakeLibraryRepository()
+            repository.homePages =
+                mapOf(LibrarySection.PLANNED to entries("p", LibrarySection.PLANNED, 12, cursor = "p-1"))
+            val more = entry("p-more", LibrarySection.PLANNED)
+            repository.sectionPages = mapOf((LibrarySection.PLANNED to "p-1") to Page(listOf(more), nextCursor = null))
+            val viewModel = LibraryViewModel(repository)
+            advanceUntilIdle()
             val page = CompletableDeferred<Unit>()
             repository.sectionPageGate = page
-            viewModel.toggleSection(LibrarySection.PLANNED) // reads the "old" cursor
+            viewModel.toggleSection(LibrarySection.PLANNED)
             runCurrent()
 
-            reload.complete(Unit)
-            runCurrent()
+            repository.refreshHomeFailure = IOException("offline")
+            viewModel.refreshOverview() // the resume: a quiet reload that fails
             page.complete(Unit)
             advanceUntilIdle()
 
             val planned = viewModel.section(LibrarySection.PLANNED)
-            assertFalse(planned.expanded)
-            assertFalse(planned.loadingMore)
-            assertEquals("new", planned.nextCursor)
+            assertFalse("no spinner left behind", planned.loadingMore)
+            assertTrue(planned.expanded)
+            assertEquals(13, planned.entries.size)
+        }
+
+    @Test
+    fun `sort change shows loading, not the cache, until the network answers`() =
+        runTest(dispatcher) {
+            val repository = FakeLibraryRepository()
+            repository.homeCache.value =
+                mapOf(LibrarySection.PLANNED to listOf(entry("cached", LibrarySection.PLANNED)))
+            repository.homePages = pages(LibrarySection.PLANNED to listOf(entry("title", LibrarySection.PLANNED)))
+            val viewModel = LibraryViewModel(repository)
+            advanceUntilIdle()
+            val gate = CompletableDeferred<Unit>()
+            repository.refreshHomeGate = gate
+            val scored = entry("scored", LibrarySection.PLANNED)
+            repository.homePages = pages(LibrarySection.PLANNED to listOf(scored))
+
+            viewModel.selectSort(LibrarySort.SCORE)
+            runCurrent()
+            assertEquals(HomeUiState.Loading, viewModel.home.value)
+
+            gate.complete(Unit)
+            advanceUntilIdle()
+            assertFalse(viewModel.ready().isStale)
+            assertEquals(listOf(scored), viewModel.section(LibrarySection.PLANNED).entries)
+        }
+
+    @Test
+    fun `a failed sort change falls back to the cache, marked stale`() =
+        runTest(dispatcher) {
+            val repository = FakeLibraryRepository()
+            val cached = entry("cached", LibrarySection.PLANNED)
+            repository.homeCache.value = mapOf(LibrarySection.PLANNED to listOf(cached))
+            repository.homePages = pages(LibrarySection.PLANNED to listOf(entry("title", LibrarySection.PLANNED)))
+            val viewModel = LibraryViewModel(repository)
+            advanceUntilIdle()
+
+            repository.refreshHomeFailure = IOException("offline")
+            viewModel.selectSort(LibrarySort.SCORE)
+            advanceUntilIdle()
+
+            assertTrue(viewModel.ready().isStale)
+            assertEquals(listOf(cached), viewModel.section(LibrarySection.PLANNED).entries)
+        }
+
+    @Test
+    fun `a section expanded over the cache collapses when a retry falls back to the cache`() =
+        runTest(dispatcher) {
+            val repository = FakeLibraryRepository()
+            repository.homeCache.value = mapOf(LibrarySection.PLANNED to entries("c", LibrarySection.PLANNED, 15).items)
+            repository.refreshHomeFailure = IOException("offline")
+            repository.sectionPages =
+                mapOf((LibrarySection.PLANNED to null) to entries("live", LibrarySection.PLANNED, 15))
+            val viewModel = LibraryViewModel(repository)
+            advanceUntilIdle()
+            viewModel.toggleSection(LibrarySection.PLANNED) // the network answers this one
+            advanceUntilIdle()
+            assertTrue(viewModel.section(LibrarySection.PLANNED).expanded)
+
+            viewModel.refresh() // still offline for the first pages
+            advanceUntilIdle()
+
+            val planned = viewModel.section(LibrarySection.PLANNED)
+            assertFalse("twelve cached rows must not show as expanded", planned.expanded)
             assertEquals(12, planned.entries.size)
+            assertFalse(planned.loadingMore)
         }
 
     @Test
