@@ -6,6 +6,7 @@ import com.anarky.showtrack.core.model.EpisodeList
 import com.anarky.showtrack.core.model.GroupFailure
 import com.anarky.showtrack.core.model.Review
 import com.anarky.showtrack.core.model.Season
+import com.anarky.showtrack.core.model.UserMediaStatus
 import com.anarky.showtrack.feature.detail.DetailViewModelTest.Companion.ENTRY
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -69,6 +70,99 @@ class DetailEpisodesTest {
             assertEquals(listOf(setOf("e1") to true), library.setWatchedCalls)
             assertTrue("e1" in viewModel.ready.watched)
             assertEquals(1, (viewModel.state.value as DetailUiState.Success).data.entry?.progress)
+        }
+
+    @Test
+    fun `setting completed reloads watched episodes`() =
+        runTest(dispatcher) {
+            val library =
+                DetailViewModelTest.FakeLibrary(
+                    entry = ENTRY,
+                    updateResult = ENTRY.copy(status = UserMediaStatus.COMPLETED),
+                )
+            val viewModel = viewModel(library)
+            advanceUntilIdle()
+            viewModel.toggleSeason(1)
+            assertEquals(emptySet<String>(), viewModel.ready.watched)
+
+            // The server ticks every aired episode when the status becomes Completed.
+            library.watched = setOf("e1", "e2", "e3")
+            viewModel.setStatus(UserMediaStatus.COMPLETED)
+            advanceUntilIdle()
+
+            assertEquals(setOf("e1", "e2", "e3"), viewModel.ready.watched)
+            assertEquals(UserMediaStatus.COMPLETED, (viewModel.state.value as DetailUiState.Success).data.entry?.status)
+            // Refreshed in place, not reloaded: the season the reader closed stays closed.
+            assertEquals(emptySet<Int>(), viewModel.ready.expanded)
+        }
+
+    @Test
+    fun `taps made while the completed re-fetch is in flight keep their state`() =
+        runTest(dispatcher) {
+            val library =
+                DetailViewModelTest
+                    .FakeLibrary(
+                        entry = ENTRY,
+                        updateResult = ENTRY.copy(status = UserMediaStatus.COMPLETED),
+                    ).also { it.watched = setOf("e1") }
+            val viewModel = viewModel(library)
+            advanceUntilIdle()
+
+            val gate = CompletableDeferred<Unit>()
+            library.watchedGate = gate
+            library.watched = setOf("e1", "e2")
+            viewModel.setStatus(UserMediaStatus.COMPLETED)
+            advanceUntilIdle()
+            // The re-fetch is suspended: un-tick one episode and tick another meanwhile.
+            viewModel.toggleEpisode(EP1)
+            viewModel.toggleEpisode(EP3)
+            gate.complete(Unit)
+            advanceUntilIdle()
+
+            assertEquals(setOf("e2", "e3"), viewModel.ready.watched)
+        }
+
+    @Test
+    fun `completing before the episode list has loaded loads it`() =
+        runTest(dispatcher) {
+            val library =
+                DetailViewModelTest.FakeLibrary(
+                    entry = ENTRY,
+                    updateResult = ENTRY.copy(status = UserMediaStatus.COMPLETED),
+                )
+            val media =
+                DetailViewModelTest.FakeMedia().also {
+                    it.episodesResult = LIST
+                    it.episodesFailure = IOException("offline")
+                }
+            val viewModel = viewModel(library, media)
+            advanceUntilIdle()
+            assertEquals(EpisodesState.Failed, (viewModel.state.value as DetailUiState.Success).episodes)
+
+            media.episodesFailure = null
+            library.watched = setOf("e1", "e2", "e3")
+            viewModel.setStatus(UserMediaStatus.COMPLETED)
+            advanceUntilIdle()
+
+            assertEquals(setOf("e1", "e2", "e3"), viewModel.ready.watched)
+        }
+
+    @Test
+    fun `another status leaves the watched episodes alone`() =
+        runTest(dispatcher) {
+            val library =
+                DetailViewModelTest.FakeLibrary(
+                    entry = ENTRY,
+                    updateResult = ENTRY.copy(status = UserMediaStatus.PAUSED),
+                )
+            val viewModel = viewModel(library)
+            advanceUntilIdle()
+
+            library.watched = setOf("e1", "e2", "e3")
+            viewModel.setStatus(UserMediaStatus.PAUSED)
+            advanceUntilIdle()
+
+            assertEquals(emptySet<String>(), viewModel.ready.watched)
         }
 
     @Test

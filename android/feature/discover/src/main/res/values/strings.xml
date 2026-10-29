@@ -18,10 +18,13 @@
          two are styled differently — the eyebrow is a muted label, the seed is the heading — and a
          single %1$s string would give a translator no way to separate them.
 
+         Wording is "More like": planned and unwatched library titles seed recommendations too,
+         so "Because you watched" would be wrong.
+
          matchedGenres no longer appears here: a header carries one line, and five stacked genre
          lists is noise. The genres stay on the detail screen, attached to the title they
          describe. -->
-    <string name="discover_shelf_eyebrow">Because you watched</string>
+    <string name="discover_shelf_eyebrow">More like</string>
 
     <!-- The one-tap add affordance (decision D-I). %1$s is the title, so two rows on screen never
          share an indistinguishable contentDescription (decision C-E). -->
@@ -33,7 +36,7 @@
     <!-- The top pick card. The label is stored in normal case and uppercased in the layout, so
          TalkBack reads words rather than letters. %1$s in the reason is the seed title. -->
     <string name="discover_top_pick_label">Top pick for you</string>
-    <string name="discover_top_pick_reason">Because you watched %1$s</string>
+    <string name="discover_top_pick_reason">More like %1$s</string>
     <string name="discover_add_button">Add to library</string>
     <string name="discover_details_button">Details</string>
 

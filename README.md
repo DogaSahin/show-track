@@ -17,8 +17,10 @@ Self-hosted. It runs on your own machine and is reached over Tailscale.
   Planned, Completed, Dropped) in a four-across poster grid. Each section shows its first three rows,
   and "Show all N" expands it in place. Shows you've fully caught up on but that are still waiting
   for a new season sit at the end of Watching with an "S3 soon" or "More soon" label, and a
-  Watching show that has ended and is fully watched appears under Completed. Picking one status
-  shows just that status in the same grid. Offline, Home shows the cached first rows of each section.
+  Watching show that has ended and is fully watched appears under Completed. Setting a show to
+  Completed marks every episode that has aired as watched (progress is raised to match, never
+  lowered; unaired episodes stay unmarked, and leaving Completed un-marks nothing). Picking one
+  status shows just that status in the same grid. Offline, Home shows the cached first rows of each section.
 - **Know when the next episode airs.** The server refreshes airing dates; the phone schedules its
   own alerts from them, 24 hours and 6 hours before each episode of a show you're watching. No
   second app, no Google services, and an alert shows even if the phone is offline at the time.
@@ -29,8 +31,10 @@ Self-hosted. It runs on your own machine and is reached over Tailscale.
   When an owner removes a member, the group's invite code is rotated so the old one stops working.
   A member leaving on their own does not rotate it; after a contentious departure the owner can
   rotate the code by hand (`POST /v1/groups/{id}/invite/rotate`).
-- **Get recommendations** seeded from titles you rated 7+, favourited or finished, ranked by how
-  well each candidate's genres match your taste profile. Content-based, not collaborative filtering
+- **Get recommendations** seeded from every show in your library except Dropped ones and titles you
+  scored below 7 — ratings of 7+, favourites and Completed shows rank strongest. A show's similar
+  titles are fetched in the background as soon as you add it, and each suggestion reads "More like
+  <title>". Candidates are ranked by how well their genres match your taste profile. Content-based, not collaborative filtering
   — nothing about what anyone else watched feeds a suggestion.
 - **Update from inside the app.** Signed-in users see a banner when a newer build is out, and a
   minimum version can block older apps until they update. The APK comes from your own server, checked

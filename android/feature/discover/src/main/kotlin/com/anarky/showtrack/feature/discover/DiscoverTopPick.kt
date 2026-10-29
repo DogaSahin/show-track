@@ -30,6 +30,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import com.anarky.showtrack.core.designsystem.component.BlurredCoverBackdrop
 import com.anarky.showtrack.core.designsystem.component.MediaCover
+import com.anarky.showtrack.core.designsystem.component.genreLabel
 import com.anarky.showtrack.core.designsystem.component.typeAndYear
 import com.anarky.showtrack.core.model.Recommendation
 
@@ -77,8 +78,8 @@ internal fun Recommendation.genreChips(): List<GenreChip> {
  * The card at the top of Discover: blurred cover behind, sharp cover, why it was picked, its genres,
  * and Add / Details.
  *
- * The text block is ONE accessibility node ("Top pick for you, Frieren, Anime · 2023, Because you
- * watched Made in Abyss"), followed by the two buttons. Read piece by piece it would be five stops
+ * The text block is ONE accessibility node ("Top pick for you, Frieren, Anime · 2023, More like
+ * Made in Abyss"), followed by the two buttons. Read piece by piece it would be five stops
  * before the reader reaches anything they can act on.
  */
 @Composable
@@ -208,7 +209,7 @@ private fun GenreChips(chips: List<GenreChip>) {
                     },
             ) {
                 Text(
-                    text = chip.name,
+                    text = genreLabel(chip.name),
                     style = MaterialTheme.typography.labelSmall,
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
                 )
@@ -217,7 +218,7 @@ private fun GenreChips(chips: List<GenreChip>) {
     }
 }
 
-/** [this] with the first occurrence of [part] emphasised: the seed title inside "Because you watched…". */
+/** [this] with the first occurrence of [part] emphasised: the seed title inside "More like…". */
 private fun String.withEmphasis(
     part: String,
     color: Color,

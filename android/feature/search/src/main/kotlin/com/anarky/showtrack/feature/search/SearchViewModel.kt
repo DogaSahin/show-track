@@ -12,6 +12,8 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -24,6 +26,8 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import javax.inject.Inject
 
 /**
@@ -80,6 +84,9 @@ class SearchViewModel
         // One search at a time: starting another cancels the one in flight, so two can never race
         // to publish (or to set the repository's query).
         private var searchJob: Job? = null
+
+        // One library re-check at a time: an older one landing after a newer one would overwrite it.
+        private var refreshJob: Job? = null
 
         // The query whose results are on screen or loading, so retyping it is not a new search.
         private var shownQuery: String? = null
@@ -252,6 +259,56 @@ class SearchViewModel
         }
 
         /**
+         * Re-reads the library state of the rows shown as added, on every return to the screen: the
+         * title may have been removed (or its status changed) on its detail page since. Rows with no
+         * status are left alone (adding is the only way into the library from here). A lookup that
+         * fails leaves its row as it is.
+         */
+        @Suppress("TooGenericExceptionCaught")
+        fun refreshLibraryState() {
+            val shown = shownQuery
+            val tracked =
+                (mutableState.value as? SearchUiState.Success)
+                    ?.results
+                    ?.items
+                    .orEmpty()
+                    .filter { it.mediaId != null && it.libraryStatus != null }
+            refreshJob?.cancel()
+            if (tracked.isEmpty()) return
+            val before = tracked.associate { it.media.key to patches[it.media.key] }
+            refreshJob =
+                viewModelScope.launch {
+                    val gate = Semaphore(REFRESH_CONCURRENCY)
+                    val fresh =
+                        tracked
+                            .map { result ->
+                                async {
+                                    gate.withPermit {
+                                        try {
+                                            val mediaId = checkNotNull(result.mediaId)
+                                            val status = libraryRepository.entryForMedia(mediaId)?.status
+                                            result to ResultPatch(mediaId, status, authoritative = true)
+                                        } catch (cancellation: CancellationException) {
+                                            throw cancellation
+                                        } catch (_: Exception) {
+                                            null
+                                        }
+                                    }
+                                }
+                            }.awaitAll()
+                            .filterNotNull()
+                    // A newer search replaced the list while this ran: its rows are not these.
+                    if (shownQuery != shown) return@launch
+                    // Rows an add is landing on, or whose patch moved since the snapshot, know better.
+                    fresh.forEach { (result, patch) ->
+                        val key = result.media.key
+                        if (key != addInFlight && patches[key] === before[key]) patches[key] = patch
+                    }
+                    replaceSuccess { it.copy(results = patched(it.results)) }
+                }
+        }
+
+        /**
          * Set to [SearchUiState.Loading] synchronously, so a retry never leaves the old error up for
          * the round trip. Every later write checks the query is still this one: a cleared or changed
          * field makes a superseded search a no-op rather than a race.
@@ -321,7 +378,8 @@ class SearchViewModel
                     items =
                         results.items.map { result ->
                             val patch = patches[result.media.key] ?: return@map result
-                            result.copy(mediaId = patch.mediaId, libraryStatus = patch.status ?: result.libraryStatus)
+                            val status = if (patch.authoritative) patch.status else patch.status ?: result.libraryStatus
+                            result.copy(mediaId = patch.mediaId, libraryStatus = status)
                         },
                 )
             }
@@ -351,10 +409,16 @@ class SearchViewModel
         private data class ResultPatch(
             val mediaId: String,
             val status: UserMediaStatus?,
+            // True when [status] is the library's own answer, null included ("not in library").
+            // Otherwise a null status means "no news" and the server's status stands.
+            val authoritative: Boolean = false,
         )
 
         private companion object {
             const val SEARCH_DEBOUNCE_MS = 300L
+
+            // Library lookups in flight at once when coming back to the results.
+            const val REFRESH_CONCURRENCY = 5
 
             // The server's bound on `q` (backend/app/media/routes.py). Past it the request is a 422.
             const val MAX_QUERY_LENGTH = 100

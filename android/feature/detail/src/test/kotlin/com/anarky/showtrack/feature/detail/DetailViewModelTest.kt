@@ -2019,7 +2019,13 @@ class DetailViewModelTest {
 
         var watched: Set<String> = emptySet()
 
-        override suspend fun watchedEpisodes(entryId: String): Set<String> = watched
+        // Holds watchedEpisodes() suspended so a re-fetch can be observed in flight.
+        var watchedGate: CompletableDeferred<Unit>? = null
+
+        override suspend fun watchedEpisodes(entryId: String): Set<String> {
+            watchedGate?.await()
+            return watched
+        }
 
         val setWatchedCalls = mutableListOf<Pair<Set<String>, Boolean>>()
         var setWatchedFailure: Throwable? = null

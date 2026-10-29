@@ -821,6 +821,11 @@ class DetailViewModel
                             actionError = null,
                         )
                     }
+                    // Completing a title marks every aired episode watched on the server; show
+                    // that without the reader having to leave and come back.
+                    if (patch.status == UserMediaStatus.COMPLETED) {
+                        episodeController.onCompleted(updated)
+                    }
                 } catch (cancellation: CancellationException) {
                     throw cancellation
                 } catch (failure: Exception) {
