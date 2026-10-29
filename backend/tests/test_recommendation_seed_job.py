@@ -325,7 +325,8 @@ async def test_an_unchanged_answer_leaves_the_cache_header_alone(db_session, aut
         (UserMediaStatus.WATCHING, "9", False, 1),
         (UserMediaStatus.WATCHING, None, True, 1),
         (UserMediaStatus.PLANNED, None, False, 1),
-        (UserMediaStatus.WATCHING, "4", False, 1),
+        (UserMediaStatus.WATCHING, "4", False, 0),
+        (UserMediaStatus.WATCHING, "3", True, 1),
         (UserMediaStatus.DROPPED, None, False, 0),
         (UserMediaStatus.DROPPED, "4", False, 0),
         (UserMediaStatus.DROPPED, None, True, 1),
@@ -335,7 +336,8 @@ async def test_an_unchanged_answer_leaves_the_cache_header_alone(db_session, aut
         "scored-at-or-above-threshold",
         "favourited",
         "planned-and-unscored",
-        "scored-low-but-still-in-the-library",
+        "scored-below-threshold",
+        "scored-below-threshold-but-favourited",
         "dropped",
         "dropped-and-scored-low",
         "dropped-but-favourited",
@@ -565,3 +567,22 @@ async def test_seed_media_steps_aside_while_the_sweep_holds_the_lock(db_session,
 
     assert summary.ran is False
     assert provider.similar_calls == 0
+
+
+async def test_seed_media_swallows_a_lock_connection_failure(db_session, auth_user, monkeypatch, caplog):
+    """A background task: anything that escapes it surfaces as an ASGI error, not a log line."""
+    added = await _seed_library(db_session, auth_user.id, external_id="1", status=UserMediaStatus.PLANNED, score=None)
+    provider = SimilarProvider(similar={"1": (MediaRef(source=MediaSource.ANILIST, external_id="99"),)})
+
+    @asynccontextmanager
+    async def broken_lock(key):
+        raise OSError("connection refused")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(service, "advisory_lock", broken_lock)
+
+    summary = await service.seed_media({MediaSource.ANILIST: provider}, added.id, session_factory=_borrowed(db_session))
+
+    assert summary.ran is False
+    assert provider.similar_calls == 0
+    assert "seeding media" in caplog.text

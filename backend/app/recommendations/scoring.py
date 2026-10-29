@@ -24,8 +24,9 @@ FAVORITE_WEIGHT = 1.0
 # Finishing a show is a revealed preference, deliberately weaker than an explicit 7 (0.25).
 COMPLETED_WEIGHT = 0.15
 # "It's in your library" is the weakest signal of all, weaker than COMPLETED_WEIGHT: adding a title
-# says you expect to like it, not that you did. Withheld from DROPPED entries, which are the one
-# status that says the opposite — still not a NEGATIVE weight (7-H), simply no signal.
+# says you expect to like it, not that you did. Unscored or well-scored library titles carry it;
+# Dropped titles and sub-threshold scores carry none — both say you did not like it, and "more like
+# a show you rated 3" would be wrong. Still no negative weights (7-H), simply no signal.
 LIBRARY_WEIGHT = 0.05
 # Reciprocal-rank decay over the provider's ordering: 1st -> 1.0, 2nd -> 0.5, 3rd -> 0.33.
 RR_NUMERATOR = 1.0
@@ -77,12 +78,13 @@ class Scored:
 def signal_weight(entry: TasteEntry) -> float:
     """How much this entry says about your taste. Strongest applicable signal wins (7-H).
 
-    Every library entry that is not dropped carries at least LIBRARY_WEIGHT, so a `planned` title
-    still seeds Discover. Returns 0.0 only for a dropped entry with no explicit signal (score at or
-    above the threshold, or favourite). Zero-weight entries contribute to neither side of the TF
-    ratio.
+    A library entry that is neither dropped nor scored below the threshold carries at least
+    LIBRARY_WEIGHT, so an unscored `planned` title still seeds Discover. Returns 0.0 for a dropped
+    or sub-threshold entry with no favourite or completion behind it. Zero-weight entries
+    contribute to neither side of the TF ratio.
     """
-    weights: list[float] = [] if entry.dropped else [LIBRARY_WEIGHT]
+    disliked = entry.dropped or (entry.score is not None and entry.score < SCORE_THRESHOLD)
+    weights: list[float] = [] if disliked else [LIBRARY_WEIGHT]
     if entry.score is not None and entry.score >= SCORE_THRESHOLD:
         weights.append(float((entry.score - SCORE_FLOOR) / SCORE_SPAN))
     if entry.favorite:

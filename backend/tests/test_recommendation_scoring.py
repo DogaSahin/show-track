@@ -39,14 +39,19 @@ def test_signal_weight_scales_a_score_across_its_useful_range():
     assert signal_weight(entry(score="10")) == 1.0
 
 
-def test_a_score_below_the_threshold_adds_nothing_beyond_being_in_the_library():
-    # Not a NEGATIVE signal — decision 7-H rejects those for the MVP. The score is simply absent,
-    # leaving only the weakest signal of all: the title is in your library.
-    assert signal_weight(entry(score="6.9")) == LIBRARY_WEIGHT
+def test_a_score_below_the_threshold_is_no_signal_at_all():
+    # Not a NEGATIVE signal — decision 7-H rejects those for the MVP. Simply absent: rating a title
+    # 3/10 says you did not like it, so being in the library must not make it a seed either.
+    assert signal_weight(entry(score="6.9")) == 0.0
+    assert signal_weight(entry(score="3")) == 0.0
+    # ...unless something explicit still vouches for it.
+    assert signal_weight(entry(score="3", favorite=True)) == 1.0
+    assert signal_weight(entry(score="3", completed=True)) == signal_weight(entry(completed=True))
 
 
 def test_any_library_title_is_the_weakest_signal_and_a_dropped_one_is_none():
     assert signal_weight(entry()) == LIBRARY_WEIGHT
+    assert signal_weight(entry(score="7")) > LIBRARY_WEIGHT
     assert 0 < LIBRARY_WEIGHT < signal_weight(entry(completed=True))
     assert signal_weight(entry(dropped=True)) == 0.0
     assert signal_weight(entry(score="6.9", dropped=True)) == 0.0

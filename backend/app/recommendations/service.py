@@ -27,20 +27,23 @@ logger = logging.getLogger(__name__)
 
 
 # A library entry is a positive signal when it is scored at or above the threshold, or favourited,
-# or completed — or simply in the library and not dropped, the weakest signal (LIBRARY_WEIGHT).
+# or completed — or simply in the library, not dropped and not scored below the threshold, the
+# weakest signal (LIBRARY_WEIGHT).
 # Expressed once, here, because the seed worklist, the taste profile's seeds and _invalidate all
 # need exactly the same predicate as scoring.signal_weight > 0 — and them drifting apart would mean
 # seeding from titles that then contribute nothing to the ranking.
 #
-# The explicit disjuncts are kept even though the last one covers every non-dropped entry: they are
-# what still lets a DROPPED title you scored highly or favourited seed, exactly as signal_weight
-# still weighs it.
+# The explicit disjuncts are what still let a dropped or low-scored title seed when it is also
+# favourited or completed, exactly as signal_weight still weighs it.
 def positive_signal_clause():
     return (
         (UserMedia.score >= SCORE_THRESHOLD)
         | (UserMedia.favorite.is_(True))
         | (UserMedia.status == UserMediaStatus.COMPLETED)
-        | (UserMedia.status != UserMediaStatus.DROPPED)
+        | (
+            (UserMedia.status != UserMediaStatus.DROPPED)
+            & (UserMedia.score.is_(None) | (UserMedia.score >= SCORE_THRESHOLD))
+        )
     )
 
 
@@ -363,18 +366,25 @@ async def seed_media(
     for the same reason run_seed has one (decision 4-M); `session_factory` exists so the add route
     can hand over the one it is given, which tests bind to their own transaction.
 
-    A background task: nothing above it catches anything, so every failure is logged and swallowed,
-    like fetch_and_store_episodes. The next sweep retries a title that is still unseeded.
+    A background task: nothing above it catches anything, so every failure — including the lock's
+    own connection failing — is logged and swallowed, like fetch_and_store_episodes. The next sweep
+    retries a title that is still unseeded.
     """
-    async with advisory_lock(SEED_LOCK_KEY) as acquired:
-        if not acquired:
-            return SeedSummary(ran=False)
-        try:
-            async with (session_factory or get_sessionmaker())() as session:
-                return await seed_once(session, providers, now=now or datetime.now(tz=UTC), media_id=media_id)
-        except Exception:
-            logger.exception("seeding media %s failed; the next sweep will retry", media_id)
-            return SeedSummary(ran=True, failed=1)
+    try:
+        async with advisory_lock(SEED_LOCK_KEY) as acquired:
+            if not acquired:
+                return SeedSummary(ran=False)
+            try:
+                async with (session_factory or get_sessionmaker())() as session:
+                    return await seed_once(session, providers, now=now or datetime.now(tz=UTC), media_id=media_id)
+            except Exception:
+                logger.exception("seeding media %s failed; the next sweep will retry", media_id)
+                return SeedSummary(ran=True, failed=1)
+    except Exception:
+        # Reached only when the lock itself failed: on acquire nothing ran; on release the seed already
+        # committed, but its summary is lost, and ran=False is the honest "not confirmed".
+        logger.exception("seeding media %s failed to take the seed lock; the next sweep will retry", media_id)
+        return SeedSummary(ran=False)
 
 
 async def is_stale(session: AsyncSession, *, user_id: uuid.UUID, now: datetime) -> bool:
