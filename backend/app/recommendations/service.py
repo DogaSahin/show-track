@@ -15,7 +15,7 @@ from app.library.models import UserMedia, UserMediaStatus
 from app.media.models import Media, MediaSource
 from app.media.providers.base import MediaProvider, MediaRef
 from app.media.providers.errors import ProviderError
-from app.media.service import persist_media_bulk, to_persisted
+from app.media.service import SessionFactory, persist_media_bulk, to_persisted
 from app.pagination import Cursor, encode_cursor
 from app.recommendations import scoring
 from app.recommendations.models import MediaSimilarity, Recommendation, RecommendationRun
@@ -27,14 +27,20 @@ logger = logging.getLogger(__name__)
 
 
 # A library entry is a positive signal when it is scored at or above the threshold, or favourited,
-# or completed. Expressed once, here, because BOTH the seed worklist and the taste profile need
-# exactly the same predicate — and them drifting apart would mean seeding from titles that then
-# contribute nothing to the ranking.
+# or completed — or simply in the library and not dropped, the weakest signal (LIBRARY_WEIGHT).
+# Expressed once, here, because the seed worklist, the taste profile's seeds and _invalidate all
+# need exactly the same predicate as scoring.signal_weight > 0 — and them drifting apart would mean
+# seeding from titles that then contribute nothing to the ranking.
+#
+# The explicit disjuncts are kept even though the last one covers every non-dropped entry: they are
+# what still lets a DROPPED title you scored highly or favourited seed, exactly as signal_weight
+# still weighs it.
 def positive_signal_clause():
     return (
         (UserMedia.score >= SCORE_THRESHOLD)
         | (UserMedia.favorite.is_(True))
         | (UserMedia.status == UserMediaStatus.COMPLETED)
+        | (UserMedia.status != UserMediaStatus.DROPPED)
     )
 
 
@@ -43,12 +49,17 @@ def positive_signal_clause():
 SEED_DUE_SLACK = timedelta(minutes=5)
 
 
-async def collect_seeds(session: AsyncSession, *, now: datetime, force: bool = False) -> Sequence[Media]:
+async def collect_seeds(
+    session: AsyncSession, *, now: datetime, force: bool = False, media_id: uuid.UUID | None = None
+) -> Sequence[Media]:
     """Distinct media that are a positive signal for ANY user and are due a refresh.
 
     GLOBAL, not per user (decision 7-A): titles are shared rows, so three people rating the same
     title highly is one provider call rather than three. Single-user today; structurally correct
     when groups land.
+
+    `media_id` narrows the worklist to that one title (seed_media); every other filter still
+    applies, so a title seeded moments ago by someone else is not fetched again.
     """
     cadence = timedelta(hours=get_settings().recommendations_seed_hours)
     freshest = (
@@ -63,6 +74,8 @@ async def collect_seeds(session: AsyncSession, *, now: datetime, force: bool = F
         .outerjoin(freshest, freshest.c.source_media_id == Media.id)
         .distinct()
     )
+    if media_id is not None:
+        statement = statement.where(Media.id == media_id)
     if not force:
         # NULL means "never seeded", which is always due — the same reading Media.last_synced_at
         # gives NULL in the sync job.
@@ -78,13 +91,15 @@ async def seed_once(
     *,
     now: datetime,
     force: bool = False,
+    media_id: uuid.UUID | None = None,
 ) -> SeedSummary:
-    """One sweep. Takes a session; takes no lock. run_seed owns both of those.
+    """One sweep. Takes a session; takes no lock. run_seed and seed_media own both of those.
 
     Split this way so the job is testable inside the test transaction, the same separation
-    app/sync/service.py draws between run_sync and apply_refresh.
+    app/sync/service.py draws between run_sync and apply_refresh. `media_id` restricts the sweep
+    to one title (see collect_seeds).
     """
-    seeds = await collect_seeds(session, now=now, force=force)
+    seeds = await collect_seeds(session, now=now, force=force, media_id=media_id)
     if not seeds:
         return SeedSummary(ran=True)
 
@@ -324,6 +339,44 @@ async def run_seed(providers: Mapping[MediaSource, MediaProvider], *, now: datet
             return await seed_once(session, providers, now=now or datetime.now(tz=UTC))
 
 
+async def has_been_seeded(session: AsyncSession, media_id: uuid.UUID) -> bool:
+    """Whether any similarity edges have ever been stored with this title as their source."""
+    return bool(
+        await session.scalar(
+            select(select(MediaSimilarity.id).where(MediaSimilarity.source_media_id == media_id).exists())
+        )
+    )
+
+
+async def seed_media(
+    providers: Mapping[MediaSource, MediaProvider],
+    media_id: uuid.UUID,
+    *,
+    now: datetime | None = None,
+    session_factory: SessionFactory | None = None,
+) -> SeedSummary:
+    """Seed ONE title now, rather than at the next sweep. Runs after a title is added to a library,
+    so Discover knows what it is like on the user's next visit.
+
+    Same lock as run_seed, and contention is a skip rather than a wait: the sweep already holding it
+    collects every never-seeded title anyway, so this title is picked up either way. Its own session
+    for the same reason run_seed has one (decision 4-M); `session_factory` exists so the add route
+    can hand over the one it is given, which tests bind to their own transaction.
+
+    A background task: nothing above it catches anything, so every failure is logged and swallowed,
+    like fetch_and_store_episodes. The next sweep retries a title that is still unseeded.
+    """
+    async with advisory_lock(SEED_LOCK_KEY) as acquired:
+        if not acquired:
+            return SeedSummary(ran=False)
+        try:
+            async with (session_factory or get_sessionmaker())() as session:
+                return await seed_once(session, providers, now=now or datetime.now(tz=UTC), media_id=media_id)
+        except Exception:
+            logger.exception("seeding media %s failed; the next sweep will retry", media_id)
+            return SeedSummary(ran=True, failed=1)
+
+
 async def is_stale(session: AsyncSession, *, user_id: uuid.UUID, now: datetime) -> bool:
     """Whether this user's ranking needs rebuilding, cheapest check first.
 
@@ -383,6 +436,7 @@ async def _taste_profile(session: AsyncSession, user_id: uuid.UUID) -> tuple[lis
             score=score,
             favorite=favorite,
             completed=status == UserMediaStatus.COMPLETED,
+            dropped=status == UserMediaStatus.DROPPED,
         )
         for media_id, genres, score, favorite, status in rows
     ]
@@ -454,7 +508,9 @@ async def recompute(session: AsyncSession, *, user_id: uuid.UUID, now: datetime)
     entries, entry_count = await _taste_profile(session, user_id)
     # Seeds are the POSITIVE entries only, and that filter is load-bearing rather than an
     # optimisation: _candidates attributes every candidate to one of these ids, so widening it
-    # would let "because you liked X" name a title the user gave no positive signal for.
+    # would let "because you liked X" name a title the user gave no positive signal for. Every
+    # non-dropped entry carries at least LIBRARY_WEIGHT, so in practice this excludes only dropped
+    # titles with no explicit signal.
     seed_ids = [entry.media_id for entry in entries if scoring.signal_weight(entry) > 0]
     candidates = await _candidates(session, user_id=user_id, seed_ids=seed_ids)
     ranked = scoring.rank_candidates(candidates, entries, await _genre_counts(session))

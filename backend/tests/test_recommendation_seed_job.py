@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import ClassVar
 
@@ -10,6 +11,7 @@ from app.media.providers.base import MediaProvider, MediaRef, ProviderBatch, Pro
 from app.media.providers.errors import ProviderUnavailable
 from app.recommendations import service
 from app.recommendations.models import MediaSimilarity, Recommendation, RecommendationRun
+from app.sync.locks import SEED_LOCK_KEY, advisory_lock
 
 
 class SimilarProvider(MediaProvider):
@@ -322,17 +324,30 @@ async def test_an_unchanged_answer_leaves_the_cache_header_alone(db_session, aut
         (UserMediaStatus.COMPLETED, None, False, 1),
         (UserMediaStatus.WATCHING, "9", False, 1),
         (UserMediaStatus.WATCHING, None, True, 1),
-        (UserMediaStatus.WATCHING, "4", False, 0),
+        (UserMediaStatus.PLANNED, None, False, 1),
+        (UserMediaStatus.WATCHING, "4", False, 1),
+        (UserMediaStatus.DROPPED, None, False, 0),
+        (UserMediaStatus.DROPPED, "4", False, 0),
+        (UserMediaStatus.DROPPED, None, True, 1),
     ],
-    ids=["completed", "scored-at-or-above-threshold", "favourited", "none-of-the-three"],
+    ids=[
+        "completed",
+        "scored-at-or-above-threshold",
+        "favourited",
+        "planned-and-unscored",
+        "scored-low-but-still-in-the-library",
+        "dropped",
+        "dropped-and-scored-low",
+        "dropped-but-favourited",
+    ],
 )
 async def test_only_a_positive_signal_becomes_a_seed(db_session, auth_user, status, score, favorite, expected_seeds):
-    """One case per disjunct of positive_signal_clause, plus the case that satisfies none.
+    """One case per disjunct of positive_signal_clause, plus the cases that satisfy none.
 
     Every other fixture in this file sets COMPLETED *and* a score of 9, so deleting any single
-    disjunct leaves them all green. These four fail individually instead — which matters because
-    this clause is the only thing keeping the seed worklist and the taste profile from drifting
-    apart. If they drift, the job spends provider calls on titles that then score zero.
+    disjunct leaves them all green. These fail individually instead — which matters because this
+    clause is the only thing keeping the seed worklist and the taste profile from drifting apart.
+    If they drift, the job spends provider calls on titles that then score zero.
     """
     await _seed_library(db_session, auth_user.id, external_id="1", status=status, score=score, favorite=favorite)
     provider = SimilarProvider(similar={"1": (MediaRef(source=MediaSource.ANILIST, external_id="99"),)})
@@ -498,3 +513,55 @@ async def test_a_seed_fetched_a_few_ms_late_is_still_due_next_sweep(db_session, 
     due = await service.collect_seeds(db_session, now=now + timedelta(hours=12, milliseconds=3))
 
     assert seed.id in {media.id for media in due}
+
+
+def _borrowed(session):
+    """A session factory that hands out the test's own session, as conftest's client fixture does
+    for background work, so seed_media's writes stay inside the test transaction.
+    """
+
+    @asynccontextmanager
+    async def factory():
+        yield session
+
+    return factory
+
+
+async def test_seed_media_seeds_only_the_title_it_was_given(db_session, auth_user):
+    """The add path's immediate seed: one title, not a sweep of everything that happens to be due."""
+    added = await _seed_library(db_session, auth_user.id, external_id="1", status=UserMediaStatus.PLANNED, score=None)
+    await _seed_library(db_session, auth_user.id, external_id="2", status=UserMediaStatus.PLANNED, score=None)
+    db_session.add(RecommendationRun(user_id=auth_user.id, computed_at=datetime.now(tz=UTC), source_entry_count=2))
+    await db_session.flush()
+    provider = SimilarProvider(
+        similar={
+            "1": (MediaRef(source=MediaSource.ANILIST, external_id="99"),),
+            "2": (MediaRef(source=MediaSource.ANILIST, external_id="98"),),
+        },
+        details={"99": _provider_media("99", "candidate"), "98": _provider_media("98", "other")},
+    )
+
+    summary = await service.seed_media({MediaSource.ANILIST: provider}, added.id, session_factory=_borrowed(db_session))
+
+    assert summary.ran is True
+    assert summary.seeds == 1
+    assert provider.similar_calls == 1
+    edges = (await db_session.scalars(select(MediaSimilarity))).all()
+    assert [edge.source_media_id for edge in edges] == [added.id]
+    remaining = (await db_session.scalars(select(RecommendationRun))).all()
+    assert remaining == [], "the new edges must reach the user's next cursor-less read"
+
+
+async def test_seed_media_steps_aside_while_the_sweep_holds_the_lock(db_session, auth_user):
+    """The scheduled sweep picks a never-seeded title up anyway, so contention is a skip, not a wait."""
+    added = await _seed_library(db_session, auth_user.id, external_id="1", status=UserMediaStatus.PLANNED, score=None)
+    provider = SimilarProvider(similar={"1": (MediaRef(source=MediaSource.ANILIST, external_id="99"),)})
+
+    async with advisory_lock(SEED_LOCK_KEY) as held:
+        assert held is True
+        summary = await service.seed_media(
+            {MediaSource.ANILIST: provider}, added.id, session_factory=_borrowed(db_session)
+        )
+
+    assert summary.ran is False
+    assert provider.similar_calls == 0

@@ -30,6 +30,7 @@ from app.media.models import MediaSource, MediaType
 from app.media.providers import get_providers
 from app.media.providers.base import MediaProvider, MediaRef
 from app.pagination import InvalidCursor, decode_cursor
+from app.recommendations import service as recommendations_service
 from app.users.dependencies import get_current_user
 from app.users.models import User
 
@@ -99,6 +100,12 @@ async def add_to_library(
             providers,
             media.id,
             MediaRef(source=media.source, external_id=media.external_id),
+        )
+    if not await recommendations_service.has_been_seeded(session, media.id):
+        # Likewise for Discover: the title's similar titles are fetched now rather than at the next
+        # seed sweep, so it seeds the user's recommendations on their next visit.
+        background_tasks.add_task(
+            recommendations_service.seed_media, providers, media.id, session_factory=session_factory
         )
     if not created:
         response.status_code = status.HTTP_200_OK

@@ -2,6 +2,7 @@ import uuid
 from decimal import Decimal
 
 from app.recommendations.scoring import (
+    LIBRARY_WEIGHT,
     Candidate,
     Edge,
     TasteEntry,
@@ -22,13 +23,14 @@ _TIEBREAK_WINNER = uuid.UUID("00000000-0000-4000-8000-000000000001")
 _TIEBREAK_LOSER = uuid.UUID("ffffffff-ffff-4fff-bfff-ffffffffffff")
 
 
-def entry(*, genres=("action",), score=None, favorite=False, completed=False, media_id=None):
+def entry(*, genres=("action",), score=None, favorite=False, completed=False, dropped=False, media_id=None):
     return TasteEntry(
         media_id=media_id or _id(),
         genres=genres,
         score=Decimal(score) if score is not None else None,
         favorite=favorite,
         completed=completed,
+        dropped=dropped,
     )
 
 
@@ -37,9 +39,24 @@ def test_signal_weight_scales_a_score_across_its_useful_range():
     assert signal_weight(entry(score="10")) == 1.0
 
 
-def test_a_score_below_the_threshold_is_no_signal_at_all():
-    # Not a NEGATIVE signal — decision 7-H rejects those for the MVP. Simply absent.
-    assert signal_weight(entry(score="6.9")) == 0.0
+def test_a_score_below_the_threshold_adds_nothing_beyond_being_in_the_library():
+    # Not a NEGATIVE signal — decision 7-H rejects those for the MVP. The score is simply absent,
+    # leaving only the weakest signal of all: the title is in your library.
+    assert signal_weight(entry(score="6.9")) == LIBRARY_WEIGHT
+
+
+def test_any_library_title_is_the_weakest_signal_and_a_dropped_one_is_none():
+    assert signal_weight(entry()) == LIBRARY_WEIGHT
+    assert 0 < LIBRARY_WEIGHT < signal_weight(entry(completed=True))
+    assert signal_weight(entry(dropped=True)) == 0.0
+    assert signal_weight(entry(score="6.9", dropped=True)) == 0.0
+
+
+def test_an_explicit_signal_still_wins_over_library_presence():
+    assert signal_weight(entry(favorite=True)) == 1.0
+    # Dropping a title you favourited keeps the favourite; only the "it's in your library" signal
+    # is withheld.
+    assert signal_weight(entry(favorite=True, dropped=True)) == 1.0
 
 
 def test_favorite_outranks_a_bare_seven_and_wins_when_both_apply():
@@ -61,7 +78,7 @@ def test_idf_suppresses_a_genre_that_is_on_everything():
 
 
 def test_an_empty_profile_produces_no_affinity_rather_than_dividing_by_zero():
-    assert genre_affinity([entry(score="3")], {"action": 10}) == {}
+    assert genre_affinity([entry(score="3", dropped=True)], {"action": 10}) == {}
 
 
 def test_genre_stuffing_does_not_win_on_surface_area():

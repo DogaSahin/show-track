@@ -23,6 +23,10 @@ SCORE_FLOOR, SCORE_SPAN = Decimal("6"), Decimal("4")
 FAVORITE_WEIGHT = 1.0
 # Finishing a show is a revealed preference, deliberately weaker than an explicit 7 (0.25).
 COMPLETED_WEIGHT = 0.15
+# "It's in your library" is the weakest signal of all, weaker than COMPLETED_WEIGHT: adding a title
+# says you expect to like it, not that you did. Withheld from DROPPED entries, which are the one
+# status that says the opposite — still not a NEGATIVE weight (7-H), simply no signal.
+LIBRARY_WEIGHT = 0.05
 # Reciprocal-rank decay over the provider's ordering: 1st -> 1.0, 2nd -> 0.5, 3rd -> 0.33.
 RR_NUMERATOR = 1.0
 # How much of a candidate's score survives with zero genre overlap. Genre is coarse and blind to
@@ -46,6 +50,7 @@ class TasteEntry:
     score: Decimal | None
     favorite: bool
     completed: bool
+    dropped: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,10 +77,12 @@ class Scored:
 def signal_weight(entry: TasteEntry) -> float:
     """How much this entry says about your taste. Strongest applicable signal wins (7-H).
 
-    Returns 0.0 for an entry that says nothing — an unscored `planned` title, or one scored below
-    the threshold. Zero-weight entries contribute to neither side of the TF ratio.
+    Every library entry that is not dropped carries at least LIBRARY_WEIGHT, so a `planned` title
+    still seeds Discover. Returns 0.0 only for a dropped entry with no explicit signal (score at or
+    above the threshold, or favourite). Zero-weight entries contribute to neither side of the TF
+    ratio.
     """
-    weights: list[float] = []
+    weights: list[float] = [] if entry.dropped else [LIBRARY_WEIGHT]
     if entry.score is not None and entry.score >= SCORE_THRESHOLD:
         weights.append(float((entry.score - SCORE_FLOOR) / SCORE_SPAN))
     if entry.favorite:
