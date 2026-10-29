@@ -349,17 +349,17 @@ async def _mark_all_aired(session: AsyncSession, entry: UserMedia, now: datetime
     """
     await _lock_entry(session, entry)
     aired = _first_aired(entry.media_id, None, now.astimezone(UTC).date())
-    inserted = await session.execute(
+    await session.execute(
         pg_insert(WatchedEpisode)
         .from_select(["user_media_id", "episode_id"], select(literal(entry.id, Uuid()), aired.subquery().c.id))
         .on_conflict_do_nothing()
     )
-    if inserted.rowcount == 0:
-        return
     count = await session.scalar(
         select(func.count()).select_from(WatchedEpisode).where(WatchedEpisode.user_media_id == entry.id)
     )
-    if count != entry.progress:
+    # Only ever raises: progress ahead of the episodes known (incomplete provider list, import)
+    # is kept on purpose, as in the legacy progress branch.
+    if count > entry.progress:
         entry.progress = count
         await session.flush()
         await session.refresh(entry)

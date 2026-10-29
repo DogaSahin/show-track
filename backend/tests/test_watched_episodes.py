@@ -230,6 +230,26 @@ async def test_leaving_completed_unmarks_nothing(auth_client, auth_user, db_sess
     assert await _watched(db_session, entry.id) == {episode.id for episode in episodes}
 
 
+async def test_completed_never_lowers_progress_ahead_of_the_known_episodes(auth_client, auth_user, db_session):
+    media, episodes = await _show(db_session, aired=24, upcoming=0)
+    entry = await _entry(db_session, auth_user.id, media, progress=30)
+
+    response = await auth_client.patch(f"/v1/library/{entry.id}", json={"status": "completed"})
+
+    assert response.json()["progress"] == 30
+    assert await _watched(db_session, entry.id) == {episode.id for episode in episodes}
+
+
+async def test_completed_together_with_progress_ticks_every_aired_episode(auth_client, auth_user, db_session):
+    media, episodes = await _show(db_session, aired=5, upcoming=1)
+    entry = await _entry(db_session, auth_user.id, media)
+
+    response = await auth_client.patch(f"/v1/library/{entry.id}", json={"progress": 2, "status": "completed"})
+
+    assert response.json()["progress"] == 5
+    assert await _watched(db_session, entry.id) == {episode.id for episode in episodes[:5]}
+
+
 async def test_completed_emits_one_activity(auth_client, auth_user, db_session):
     media, _ = await _show(db_session, aired=3, upcoming=0)
     entry = await _entry(db_session, auth_user.id, media)
